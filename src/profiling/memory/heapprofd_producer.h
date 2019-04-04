@@ -44,6 +44,20 @@ struct Process {
   std::string cmdline;
 };
 
+class LogHistogram {
+ public:
+  static const uint64_t kMaxBucket;
+  static constexpr size_t kBuckets = 20;
+
+  void Add(uint64_t value) { values_[GetBucket(value)]++; }
+  std::vector<std::pair<uint64_t, uint64_t>> GetData();
+
+ private:
+  size_t GetBucket(uint64_t value);
+
+  std::array<uint64_t, kBuckets> values_ = {};
+};
+
 // TODO(rsavitski): central daemon can do less work if it knows that the global
 // operating mode is fork-based, as it then will not be interacting with the
 // clients. This can be implemented as an additional mode here.
@@ -137,11 +151,21 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
   // functionality specific to mode_ == kChild
   void TerminateProcess(int exit_status);
-  bool SourceMatchesTarget(const HeapprofdConfig& cfg);
 
   // Valid only if mode_ == kChild. Adopts the (connected) sockets inherited
   // from the target process, invoking the on-connection callback.
   void AdoptTargetProcessSocket();
+
+  struct ProcessState {
+    ProcessState(GlobalCallstackTrie* callsites) : heap_tracker(callsites) {}
+    bool disconnected = false;
+    uint64_t heap_samples = 0;
+    uint64_t map_reparses = 0;
+    uint64_t unwinding_errors = 0;
+
+    LogHistogram unwinding_time_us;
+    HeapTracker heap_tracker;
+  };
 
   struct DataSource {
     DataSourceInstanceID id;
@@ -149,7 +173,10 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
     HeapprofdConfig config;
     ClientConfiguration client_configuration;
     std::vector<SystemProperties::Handle> properties;
-    std::map<pid_t, HeapTracker> heap_trackers;
+    std::set<pid_t> signaled_pids;
+    std::set<pid_t> rejected_pids;
+    std::map<pid_t, ProcessState> process_states;
+    uint64_t next_index_ = 0;
   };
 
   struct PendingProcess {
@@ -160,7 +187,10 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
   std::map<pid_t, PendingProcess> pending_processes_;
 
+  bool IsPidProfiled(pid_t);
   DataSource* GetDataSourceForProcess(const Process& proc);
+  bool ConfigTargetsProcess(const HeapprofdConfig& cfg, const Process& proc);
+  void RecordOtherSourcesAsRejected(DataSource* active_ds, const Process& proc);
 
   std::map<DataSourceInstanceID, DataSource> data_sources_;
   std::map<FlushRequestID, size_t> flushes_in_progress_;
@@ -170,10 +200,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   std::unique_ptr<TracingService::ProducerEndpoint> endpoint_;
 
   GlobalCallstackTrie callsites_;
-  // Sequence number for ProfilePackets, so the consumer can assert that none
-  // of them were dropped.
-  uint64_t next_index_ = 0;
-
   std::vector<UnwindingWorker> unwinding_workers_;
 
   // state specific to mode_ == kCentral
@@ -181,15 +207,14 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   SystemProperties properties_;
 
   // state specific to mode_ == kChild
-  pid_t target_pid_ = base::kInvalidPid;
-  std::string target_cmdline_;
-  // This is a valid FD between SetTargetProcess and UseTargetProcessSocket
+  Process target_process_{base::kInvalidPid, ""};
+  // This is a valid FD between SetTargetProcess and AdoptTargetProcessSocket
   // only.
   base::ScopedFile inherited_fd_;
 
   SocketDelegate socket_delegate_;
 
-  base::WeakPtrFactory<HeapprofdProducer> weak_factory_;
+  base::WeakPtrFactory<HeapprofdProducer> weak_factory_;  // Keep last.
 };
 
 }  // namespace profiling

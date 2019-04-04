@@ -26,6 +26,7 @@
 #include "perfetto/base/event.h"
 #include "perfetto/base/scoped_file.h"
 #include "perfetto/base/unix_socket.h"
+#include "perfetto/base/watchdog.h"
 #include "src/profiling/memory/heapprofd_producer.h"
 #include "src/profiling/memory/wire_protocol.h"
 #include "src/tracing/ipc/default_socket.h"
@@ -85,7 +86,14 @@ int HeapprofdMain(int argc, char** argv) {
   }
 
   if (cleanup_crash) {
+    PERFETTO_LOG(
+        "Recovering from crash: unsetting heapprofd system properties. "
+        "Expect SELinux denials for unrelated properties.");
     SystemProperties::ResetProperties();
+    PERFETTO_LOG(
+        "Finished unsetting heapprofd system properties. "
+        "SELinux denials about properties are unexpected after "
+        "this point.");
     return 0;
   }
 
@@ -115,6 +123,7 @@ int StartChildHeapprofd(pid_t target_pid,
                         std::string target_cmdline,
                         base::ScopedFile inherited_sock_fd) {
   base::UnixTaskRunner task_runner;
+  base::Watchdog::GetInstance()->Start();  // crash on exceedingly long tasks
   HeapprofdProducer producer(HeapprofdMode::kChild, &task_runner);
   producer.SetTargetProcess(target_pid, target_cmdline,
                             std::move(inherited_sock_fd));
@@ -129,6 +138,7 @@ int StartCentralHeapprofd() {
   g_dump_evt = new base::Event();
 
   base::UnixTaskRunner task_runner;
+  base::Watchdog::GetInstance()->Start();  // crash on exceedingly long tasks
   HeapprofdProducer producer(HeapprofdMode::kCentral, &task_runner);
 
   struct sigaction action = {};
