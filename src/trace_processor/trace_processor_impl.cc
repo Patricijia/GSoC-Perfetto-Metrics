@@ -367,15 +367,13 @@ TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
   sqlite3_stmt* raw_stmt;
   int err = sqlite3_prepare_v2(*db_, sql.data(), static_cast<int>(sql.size()),
                                &raw_stmt, nullptr);
-
-  uint32_t col_count = 0;
   base::Optional<std::string> error;
-  if (err) {
-    error = base::Optional<std::string>(sqlite3_errmsg(*db_));
+  uint32_t col_count = 0;
+  if (err != SQLITE_OK) {
+    error = sqlite3_errmsg(*db_);
   } else {
     col_count = static_cast<uint32_t>(sqlite3_column_count(raw_stmt));
   }
-
   std::unique_ptr<IteratorImpl> impl(
       new IteratorImpl(this, *db_, ScopedStmt(raw_stmt), col_count, error));
   iterators_.emplace_back(impl.get());
@@ -387,6 +385,13 @@ void TraceProcessorImpl::InterruptQuery() {
     return;
   query_interrupted_.store(true);
   sqlite3_interrupt(db_.get());
+}
+
+int TraceProcessorImpl::ComputeMetric(
+    const std::vector<std::string>& metric_names,
+    std::vector<uint8_t>* metrics_proto) {
+  perfetto::base::ignore_result(metric_names, metrics_proto);
+  return 0;
 }
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
