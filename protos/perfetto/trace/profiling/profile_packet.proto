@@ -59,7 +59,7 @@ message ProfilePacket {
     optional uint64 callstack_id = 1;
     // bytes allocated at this frame.
     optional uint64 self_allocated = 2;
-    // bytes freed at this frame.
+    // bytes allocated at this frame that have been freed.
     optional uint64 self_freed = 3;
     optional uint64 timestamp = 4;  // timestamp [opt]
     optional uint64 alloc_count = 5;
@@ -108,6 +108,11 @@ message ProfilePacket {
     // If disconnected, this disconnect was caused by the client overrunning
     // the buffer.
     optional bool buffer_overran = 7;
+
+    // If disconnected, this disconnected was caused by the shared memory
+    // buffer being corrupted. THIS IS ALWAYS A BUG IN HEAPPROFD OR CLIENT
+    // MEMORY CORRUPTION.
+    optional bool buffer_corrupted = 8;
 
     optional ProcessStats stats = 5;
 

@@ -2467,7 +2467,7 @@ message ProfilePacket {
     optional uint64 callstack_id = 1;
     // bytes allocated at this frame.
     optional uint64 self_allocated = 2;
-    // bytes freed at this frame.
+    // bytes allocated at this frame that have been freed.
     optional uint64 self_freed = 3;
     optional uint64 timestamp = 4;  // timestamp [opt]
     optional uint64 alloc_count = 5;
@@ -2516,6 +2516,11 @@ message ProfilePacket {
     // If disconnected, this disconnect was caused by the client overrunning
     // the buffer.
     optional bool buffer_overran = 7;
+
+    // If disconnected, this disconnected was caused by the shared memory
+    // buffer being corrupted. THIS IS ALWAYS A BUG IN HEAPPROFD OR CLIENT
+    // MEMORY CORRUPTION.
+    optional bool buffer_corrupted = 8;
 
     optional ProcessStats stats = 5;
 
@@ -3601,6 +3606,12 @@ message TraceConfig {
     optional uint32 trigger_timeout_ms = 3;
   }
   optional TriggerConfig trigger_config = 17;
+
+  // When this is non-empty the perfetto command line tool will ignore the rest
+  // of this TraceConfig and instead connect to the perfetto service as a
+  // producer and send these triggers, potentially stopping or starting traces
+  // that were previous configured to use a TriggerConfig.
+  repeated string activate_triggers = 18;
 }
 
 // End of protos/perfetto/config/trace_config.proto
@@ -3618,7 +3629,9 @@ message HeapprofdConfig {
 
   // Set to 1 for perfect accuracy.
   // Otherwise, sample every sample_interval_bytes on average.
-  // TODO(fmayer): Add link to docs elaborating on this.
+  //
+  // See https://docs.perfetto.dev/#/heapprofd?id=sampling-interval for more
+  // details.
   optional uint64 sampling_interval_bytes = 1;
 
   // E.g. surfaceflinger, com.android.phone
