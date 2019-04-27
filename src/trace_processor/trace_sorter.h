@@ -21,6 +21,8 @@
 
 #include "perfetto/base/circular_queue.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/fuchsia_provider_view.h"
+#include "src/trace_processor/proto_incremental_state.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_storage.h"
@@ -93,11 +95,21 @@ class TraceSorter {
           // TODO(dproy): Stop requiring TraceBlobView in TimestampedTracePiece.
           blob_view(TraceBlobView(nullptr, 0, 0)) {}
 
+    TimestampedTracePiece(int64_t ts,
+                          uint64_t idx,
+                          TraceBlobView tbv,
+                          std::unique_ptr<FuchsiaProviderView> fpv)
+        : timestamp(ts),
+          packet_idx_(idx),
+          blob_view(std::move(tbv)),
+          fuchsia_provider_view(std::move(fpv)) {}
+
     std::unique_ptr<Json::Value> json_value;
 
     int64_t timestamp;
     uint64_t packet_idx_;
     TraceBlobView blob_view;
+    std::unique_ptr<FuchsiaProviderView> fuchsia_provider_view;
   };
 
   TraceSorter(TraceProcessorContext*, int64_t window_size_ns);
@@ -118,6 +130,17 @@ class TraceSorter {
     MaybeExtractEvents(queue);
   }
 
+  inline void PushFuchsiaRecord(
+      int64_t timestamp,
+      TraceBlobView record,
+      std::unique_ptr<FuchsiaProviderView> provider_view) {
+    DCHECK_ftrace_batch_cpu(kNoBatch);
+    auto* queue = GetQueue(0);
+    queue->Append(TimestampedTracePiece(
+        timestamp, packet_idx_++, std::move(record), std::move(provider_view)));
+    MaybeExtractEvents(queue);
+  }
+
   inline void PushFtraceEvent(uint32_t cpu,
                               int64_t timestamp,
                               TraceBlobView event) {
@@ -129,6 +152,14 @@ class TraceSorter {
     // batch of ftrace events. This is to amortize the overhead of handling
     // global ordering and doing that in batches only after all ftrace events
     // for a bundle are pushed.
+  }
+
+  inline void PushTrackEventPacket(
+      int64_t /*timestamp*/,
+      int64_t /*thread_time*/,
+      ProtoIncrementalState::PacketSequenceState* /*state*/,
+      TraceBlobView /*packet*/) {
+    // TODO(eseckler): Implement.
   }
 
   inline void FinalizeFtraceEventBatch(uint32_t cpu) {
