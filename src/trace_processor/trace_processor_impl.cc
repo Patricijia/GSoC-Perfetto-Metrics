@@ -21,7 +21,9 @@
 #include <functional>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/base/string_utils.h"
 #include "perfetto/base/time.h"
+#include "perfetto/protozero/scattered_heap_buffer.h"
 #include "src/trace_processor/android_logs_table.h"
 #include "src/trace_processor/args_table.h"
 #include "src/trace_processor/args_tracker.h"
@@ -32,6 +34,7 @@
 #include "src/trace_processor/fuchsia_trace_parser.h"
 #include "src/trace_processor/fuchsia_trace_tokenizer.h"
 #include "src/trace_processor/instants_table.h"
+#include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/process_table.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/proto_trace_parser.h"
@@ -52,6 +55,9 @@
 #include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/window_operator_table.h"
 
+#include "perfetto/metrics/android/mem_metric.pbzero.h"
+#include "perfetto/metrics/metrics.pbzero.h"
+
 // JSON parsing is only supported in the standalone build.
 #if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
 #include "src/trace_processor/json_trace_parser.h"
@@ -70,6 +76,12 @@ extern "C" int sqlite3_percentile_init(sqlite3* db,
 namespace perfetto {
 namespace trace_processor {
 namespace {
+
+std::string RemoveWhitespace(const std::string& input) {
+  std::string str(input);
+  str.erase(std::remove_if(str.begin(), str.end(), ::isspace), str.end());
+  return str;
+}
 
 void InitializeSqlite(sqlite3* db) {
   char* error = nullptr;
@@ -169,14 +181,13 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 }
 
-bool IsPrefix(const std::string& a, const std::string& b) {
-  return a.size() <= b.size() && b.substr(0, a.size()) == a;
-}
-
-std::string RemoveWhitespace(const std::string& input) {
-  std::string str(input);
-  str.erase(std::remove_if(str.begin(), str.end(), ::isspace), str.end());
-  return str;
+void CreateMetricsFunctions(TraceProcessorImpl* tp, sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(db, "RUN_METRIC", -1, SQLITE_UTF8, tp,
+                                        metrics::RunMetric, nullptr, nullptr,
+                                        sqlite_utils::kSqliteStatic);
+  if (ret) {
+    PERFETTO_ELOG("Error initializing RUN_METRIC");
+  }
 }
 
 // Fuchsia traces have a magic number as documented here:
@@ -191,9 +202,9 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
   std::string start(reinterpret_cast<const char*>(data),
                     std::min<size_t>(size, 20));
   std::string start_minus_white_space = RemoveWhitespace(start);
-  if (IsPrefix("{\"traceEvents\":[", start_minus_white_space))
+  if (base::StartsWith(start_minus_white_space, "{\"traceEvents\":["))
     return kJsonTraceType;
-  if (IsPrefix("[{", start_minus_white_space))
+  if (base::StartsWith(start_minus_white_space, "[{"))
     return kJsonTraceType;
   if (size >= 8) {
     uint64_t first_word = *reinterpret_cast<const uint64_t*>(data);
@@ -209,6 +220,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) : cfg_(cfg) {
   InitializeSqlite(db);
   CreateBuiltinTables(db);
   CreateBuiltinViews(db);
+  CreateMetricsFunctions(this, db);
   db_.reset(std::move(db));
 
   context_.storage.reset(new TraceStorage());
@@ -295,7 +307,8 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 }
 
 TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
-    const std::string& sql) {
+    const std::string& sql,
+    int64_t time_queued) {
   sqlite3_stmt* raw_stmt;
   int err = sqlite3_prepare_v2(*db_, sql.c_str(), static_cast<int>(sql.size()),
                                &raw_stmt, nullptr);
@@ -306,8 +319,14 @@ TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
   } else {
     col_count = static_cast<uint32_t>(sqlite3_column_count(raw_stmt));
   }
-  std::unique_ptr<IteratorImpl> impl(
-      new IteratorImpl(this, *db_, ScopedStmt(raw_stmt), col_count, error));
+
+  base::TimeNanos t_start = base::GetWallTimeNs();
+  uint32_t sql_stats_row =
+      context_.storage->mutable_sql_stats()->RecordQueryBegin(sql, time_queued,
+                                                              t_start.count());
+
+  std::unique_ptr<IteratorImpl> impl(new IteratorImpl(
+      this, *db_, ScopedStmt(raw_stmt), col_count, error, sql_stats_row));
   iterators_.emplace_back(impl.get());
   return TraceProcessor::Iterator(std::move(impl));
 }
@@ -322,20 +341,21 @@ void TraceProcessorImpl::InterruptQuery() {
 int TraceProcessorImpl::ComputeMetric(
     const std::vector<std::string>& metric_names,
     std::vector<uint8_t>* metrics_proto) {
-  perfetto::base::ignore_result(metric_names, metrics_proto);
-  return 0;
+  return metrics::ComputeMetrics(this, metric_names, metrics_proto);
 }
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
                                            sqlite3* db,
                                            ScopedStmt stmt,
                                            uint32_t column_count,
-                                           base::Optional<std::string> error)
+                                           base::Optional<std::string> error,
+                                           uint32_t sql_stats_row)
     : trace_processor_(trace_processor),
       db_(db),
       stmt_(std::move(stmt)),
       column_count_(column_count),
-      error_(error) {}
+      error_(error),
+      sql_stats_row_(sql_stats_row) {}
 
 TraceProcessor::IteratorImpl::~IteratorImpl() {
   if (trace_processor_) {
@@ -343,11 +363,21 @@ TraceProcessor::IteratorImpl::~IteratorImpl() {
     auto it = std::find(its->begin(), its->end(), this);
     PERFETTO_CHECK(it != its->end());
     its->erase(it);
+
+    base::TimeNanos t_end = base::GetWallTimeNs();
+    auto* sql_stats = trace_processor_->context_.storage->mutable_sql_stats();
+    sql_stats->RecordQueryEnd(sql_stats_row_, t_end.count());
   }
 }
 
 void TraceProcessor::IteratorImpl::Reset() {
-  *this = IteratorImpl(nullptr, nullptr, ScopedStmt(), 0, base::nullopt);
+  *this = IteratorImpl(nullptr, nullptr, ScopedStmt(), 0, base::nullopt, 0);
+}
+
+void TraceProcessor::IteratorImpl::RecordFirstNextInSqlStats() {
+  base::TimeNanos t_first_next = base::GetWallTimeNs();
+  auto* sql_stats = trace_processor_->context_.storage->mutable_sql_stats();
+  sql_stats->RecordQueryFirstNext(sql_stats_row_, t_first_next.count());
 }
 
 }  // namespace trace_processor
