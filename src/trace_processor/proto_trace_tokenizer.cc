@@ -68,7 +68,7 @@ void InternMessage(TraceProcessorContext* context,
 
   auto res = state->GetInternedDataMap<MessageType>()->emplace(
       iid,
-      ProtoIncrementalState::InternedDataView<MessageType>{std::move(message)});
+      ProtoIncrementalState::InternedDataView<MessageType>(std::move(message)));
   // If a message with this ID is already interned, its data should not have
   // changed (this is forbidden by the InternedData proto).
   // TODO(eseckler): This DCHECK assumes that the message is encoded the
@@ -80,6 +80,24 @@ void InternMessage(TraceProcessorContext* context,
 }
 
 }  // namespace
+
+// static
+TraceType ProtoTraceTokenizer::GuessProtoTraceType(const uint8_t* data,
+                                                   size_t size) {
+  // Scan at most the first 128MB for a track event packet.
+  constexpr size_t kMaxScanSize = 128 * 1024 * 1024;
+  protos::pbzero::Trace::Decoder decoder(data, std::min(size, kMaxScanSize));
+  if (!decoder.has_packet())
+    return TraceType::kUnknownTraceType;
+  for (auto it = decoder.packet(); it; ++it) {
+    ProtoDecoder packet_decoder(it->data(), it->size());
+    if (PERFETTO_UNLIKELY(packet_decoder.FindField(
+            protos::pbzero::TracePacket::kTrackEventFieldNumber))) {
+      return TraceType::kProtoWithTrackEventsTraceType;
+    }
+  }
+  return TraceType::kProtoTraceType;
+}
 
 ProtoTraceTokenizer::ProtoTraceTokenizer(TraceProcessorContext* ctx)
     : context_(ctx) {}

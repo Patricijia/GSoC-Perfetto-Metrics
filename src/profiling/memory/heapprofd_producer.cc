@@ -50,6 +50,7 @@ constexpr uint64_t kMaxShmemSize = 500 * 1048576;    // ~500 MB
 ClientConfiguration MakeClientConfiguration(const DataSourceConfig& cfg) {
   ClientConfiguration client_config;
   client_config.interval = cfg.heapprofd_config().sampling_interval_bytes();
+  client_config.block_client = cfg.heapprofd_config().block_client();
   return client_config;
 }
 
@@ -361,6 +362,8 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
       auto buffer_id = static_cast<BufferID>(cfg.target_buffer());
       auto trace_writer = endpoint_->CreateTraceWriter(buffer_id);
       auto trace_packet = trace_writer->NewTracePacket();
+      trace_packet->set_timestamp(
+          static_cast<uint64_t>(base::GetBootTimeNs().count()));
       auto profile_packet = trace_packet->set_profile_packet();
       auto process_dump = profile_packet->add_process_dumps();
       process_dump->set_pid(static_cast<uint64_t>(target_process_.pid));
@@ -634,7 +637,7 @@ void HeapprofdProducer::SocketDelegate::OnNewIncomingConnection(
   Process peer_process;
   peer_process.pid = new_connection->peer_pid();
   if (!GetCmdlineForPID(peer_process.pid, &peer_process.cmdline))
-    PERFETTO_ELOG("Failed to get cmdline for %d", peer_process.pid);
+    PERFETTO_PLOG("Failed to get cmdline for %d", peer_process.pid);
 
   producer_->HandleClientConnection(std::move(new_connection), peer_process);
 }
@@ -680,6 +683,7 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     for (size_t i = 0; i < kHandshakeSize; ++i)
       handoff_data.fds[i] = std::move(fds[i]);
     handoff_data.shmem = std::move(pending_process.shmem);
+    handoff_data.client_config = data_source.client_configuration;
 
     producer_->UnwinderForPID(self->peer_pid())
         .PostHandoffSocket(std::move(handoff_data));
@@ -820,7 +824,8 @@ void HeapprofdProducer::HandleAllocRecord(AllocRecord alloc_rec) {
 
   heap_tracker.RecordMalloc(alloc_rec.frames, alloc_metadata.alloc_address,
                             alloc_metadata.total_size,
-                            alloc_metadata.sequence_number);
+                            alloc_metadata.sequence_number,
+                            alloc_metadata.clock_monotonic_coarse_timestamp);
 }
 
 void HeapprofdProducer::HandleFreeRecord(FreeRecord free_rec) {
@@ -849,7 +854,8 @@ void HeapprofdProducer::HandleFreeRecord(FreeRecord free_rec) {
   }
   for (size_t i = 0; i < num_entries; ++i) {
     const FreeBatchEntry& entry = entries[i];
-    heap_tracker.RecordFree(entry.addr, entry.sequence_number);
+    heap_tracker.RecordFree(entry.addr, entry.sequence_number,
+                            free_batch.clock_monotonic_coarse_timestamp);
   }
 }
 

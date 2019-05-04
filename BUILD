@@ -30,7 +30,7 @@ genrule(
     outs = [
         "src/trace_processor/metrics/sql_metrics.h",
     ],
-    cmd = "$(location gen_merged_sql_metrics_py) --cpp_out=$@ $SRCS",
+    cmd = "$(location gen_merged_sql_metrics_py) --cpp_out=$@ $(SRCS)",
     tools = [
         "gen_merged_sql_metrics_py",
     ],
@@ -179,6 +179,8 @@ cc_library(
         "src/trace_processor/fuchsia_trace_tokenizer.h",
         "src/trace_processor/fuchsia_trace_utils.cc",
         "src/trace_processor/fuchsia_trace_utils.h",
+        "src/trace_processor/heap_profile_tracker.cc",
+        "src/trace_processor/heap_profile_tracker.h",
         "src/trace_processor/instants_table.cc",
         "src/trace_processor/instants_table.h",
         "src/trace_processor/json_trace_parser.cc",
@@ -428,6 +430,8 @@ cc_binary(
         "src/trace_processor/fuchsia_trace_tokenizer.h",
         "src/trace_processor/fuchsia_trace_utils.cc",
         "src/trace_processor/fuchsia_trace_utils.h",
+        "src/trace_processor/heap_profile_tracker.cc",
+        "src/trace_processor/heap_profile_tracker.h",
         "src/trace_processor/instants_table.cc",
         "src/trace_processor/instants_table.h",
         "src/trace_processor/json_trace_parser.cc",
@@ -633,6 +637,8 @@ cc_binary(
         "src/trace_processor/fuchsia_trace_tokenizer.h",
         "src/trace_processor/fuchsia_trace_utils.cc",
         "src/trace_processor/fuchsia_trace_utils.h",
+        "src/trace_processor/heap_profile_tracker.cc",
+        "src/trace_processor/heap_profile_tracker.h",
         "src/trace_processor/instants_table.cc",
         "src/trace_processor/instants_table.h",
         "src/trace_processor/json_trace_parser.cc",
@@ -766,23 +772,21 @@ cc_binary(
 )
 
 gensignature(
-    name = "trace_processor_shell_sig",
+    name = "trace_processor_sig",
     srcs = [
         ":trace_processor_shell",
-    ],
-)
-
-gensignature(
-    name = "trace_to_text_sig",
-    srcs = [
         ":trace_to_text",
+    ],
+    tags = [
+        "__TRACE_PROCESSOR_SIG_TAG1",
+        "__TRACE_PROCESSOR_SIG_TAG2",
     ],
 )
 
 py_binary(
     name = "gen_merged_sql_metrics_py",
     srcs = [
-        "tools/gen_merged_sql_metrics.py"
-    ]
-    main = "tools/gen_merged_sql_metrics.py"
+        "tools/gen_merged_sql_metrics.py",
+    ],
+    main = "tools/gen_merged_sql_metrics.py",
 )

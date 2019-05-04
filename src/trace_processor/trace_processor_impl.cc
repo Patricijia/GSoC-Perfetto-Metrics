@@ -33,6 +33,7 @@
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/fuchsia_trace_parser.h"
 #include "src/trace_processor/fuchsia_trace_tokenizer.h"
+#include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/instants_table.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/process_table.h"
@@ -211,7 +212,7 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
     if (first_word == kFuchsiaMagicNumber)
       return kFuchsiaTraceType;
   }
-  return kProtoTraceType;
+  return ProtoTraceTokenizer::GuessProtoTraceType(data, size);
 }
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) : cfg_(cfg) {
@@ -230,6 +231,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) : cfg_(cfg) {
   context_.process_tracker.reset(new ProcessTracker(&context_));
   context_.syscall_tracker.reset(new SyscallTracker(&context_));
   context_.clock_tracker.reset(new ClockTracker(&context_));
+  context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
 
   ArgsTable::RegisterTable(*db_, context_.storage.get());
   ProcessTable::RegisterTable(*db_, context_.storage.get());
@@ -262,29 +264,40 @@ bool TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data, size_t size) {
   // If this is the first Parse() call, guess the trace type and create the
   // appropriate parser.
   if (!context_.chunk_reader) {
-    TraceType trace_type = GuessTraceType(data.get(), size);
+    TraceType trace_type;
+    {
+      auto scoped_trace = context_.storage->TraceExecutionTimeIntoStats(
+          stats::guess_trace_type_duration_ns);
+      trace_type = GuessTraceType(data.get(), size);
+    }
+    int64_t window_size_ns = static_cast<int64_t>(cfg_.window_size_ns);
     switch (trace_type) {
       case kJsonTraceType:
         PERFETTO_DLOG("Legacy JSON trace detected");
 #if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
         context_.chunk_reader.reset(new JsonTraceTokenizer(&context_));
-        context_.sorter.reset(
-            new TraceSorter(&context_, std::numeric_limits<int64_t>::max()));
+        // JSON traces have no guarantees about the order of events in them.
+        window_size_ns = std::numeric_limits<int64_t>::max();
+        context_.sorter.reset(new TraceSorter(&context_, window_size_ns));
         context_.parser.reset(new JsonTraceParser(&context_));
 #else
         PERFETTO_FATAL("JSON traces only supported in standalone mode.");
 #endif
         break;
+      case kProtoWithTrackEventsTraceType:
       case kProtoTraceType:
+        if (trace_type == kProtoWithTrackEventsTraceType) {
+          // TrackEvents can be ordered arbitrarily due to out-of-order absolute
+          // timestamps and cross-packet-sequence events (e.g. async events).
+          window_size_ns = std::numeric_limits<int64_t>::max();
+        }
         context_.chunk_reader.reset(new ProtoTraceTokenizer(&context_));
-        context_.sorter.reset(new TraceSorter(
-            &context_, static_cast<int64_t>(cfg_.window_size_ns)));
+        context_.sorter.reset(new TraceSorter(&context_, window_size_ns));
         context_.parser.reset(new ProtoTraceParser(&context_));
         break;
       case kFuchsiaTraceType:
         context_.chunk_reader.reset(new FuchsiaTraceTokenizer(&context_));
-        context_.sorter.reset(new TraceSorter(
-            &context_, static_cast<int64_t>(cfg_.window_size_ns)));
+        context_.sorter.reset(new TraceSorter(&context_, window_size_ns));
         context_.parser.reset(new FuchsiaTraceParser(&context_));
         break;
       case kUnknownTraceType:
@@ -292,6 +305,8 @@ bool TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data, size_t size) {
     }
   }
 
+  auto scoped_trace = context_.storage->TraceExecutionTimeIntoStats(
+      stats::parse_trace_duration_ns);
   bool res = context_.chunk_reader->Parse(std::move(data), size);
   unrecoverable_parse_error_ |= !res;
   return res;
