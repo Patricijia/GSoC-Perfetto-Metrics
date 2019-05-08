@@ -131,24 +131,23 @@ SystraceParseResult ParseSystraceTracePoint(base::StringView str,
     }
     case 'C': {
       size_t name_index = 2 + tgid_length + 1;
-      size_t name_length = 0;
+      base::Optional<size_t> name_length;
       for (size_t i = name_index; i < len; i++) {
-        if (s[i] == '|' || s[i] == '\n') {
+        if (s[i] == '|') {
           name_length = i - name_index;
           break;
         }
       }
-      out->name = base::StringView(s + name_index, name_length);
-
-      size_t value_index = name_index + name_length + 1;
-      size_t value_len = len - value_index;
-      char value_str[32];
-      if (value_len >= sizeof(value_str)) {
+      if (!name_length.has_value())
         return SystraceParseResult::kFailure;
-      }
-      memcpy(value_str, s + value_index, value_len);
-      value_str[value_len] = 0;
-      out->value = std::stod(value_str);
+      out->name = base::StringView(s + name_index, name_length.value());
+
+      size_t value_index = name_index + name_length.value() + 1;
+      size_t value_len = len - value_index;
+      if (value_len == 0)
+        return SystraceParseResult::kFailure;
+      std::string value_str(s + value_index, value_len);
+      out->value = std::stod(value_str.c_str());
       return SystraceParseResult::kSuccess;
     }
     default:
@@ -670,8 +669,10 @@ void ProtoTraceParser::ParseIonHeapGrowOrShrink(int64_t ts,
                                                 ConstBytes blob,
                                                 bool grow) {
   protos::pbzero::IonHeapGrowFtraceEvent::Decoder ion(blob.data, blob.size);
-  int64_t total_bytes = ion.total_allocated();
   int64_t change_bytes = static_cast<int64_t>(ion.len()) * (grow ? 1 : -1);
+  // The total_allocated ftrace event reports the value before the
+  // atomic_long_add / sub takes place.
+  int64_t total_bytes = ion.total_allocated() + change_bytes;
   StringId global_name_id = ion_total_unknown_id_;
   StringId change_name_id = ion_change_unknown_id_;
 
