@@ -247,7 +247,7 @@ void UnwindingWorker::OnDisconnect(base::UnixSocket* self) {
   // TODO(fmayer): Maybe try to drain shmem one last time.
   auto it = client_data_.find(self->peer_pid());
   if (it == client_data_.end()) {
-    PERFETTO_DFATAL("Disconnected unexpecter socket.");
+    PERFETTO_DFATAL_OR_ELOG("Disconnected unexpected socket.");
     return;
   }
   ClientData& client_data = it->second;
@@ -303,8 +303,6 @@ void UnwindingWorker::HandleUnwindBatch(pid_t peer_pid) {
   bool repost_task = false;
   for (i = 0; i < kUnwindBatchSize; ++i) {
     uint64_t reparses_before = client_data.metadata.reparses;
-    // TODO(fmayer): Allow spinlock acquisition to fail and repost Task if it
-    // did.
     buf = shmem.BeginRead();
     if (!buf)
       break;
@@ -343,7 +341,7 @@ void UnwindingWorker::HandleBuffer(const SharedRingBuffer::Buffer& buf,
   // char* has stronger guarantees regarding aliasing.
   // see https://timsong-cpp.github.io/cppwp/n3337/basic.lval#10.8
   if (!ReceiveWireMessage(reinterpret_cast<char*>(buf.data), buf.size, &msg)) {
-    PERFETTO_DFATAL("Failed to receive wire message.");
+    PERFETTO_DFATAL_OR_ELOG("Failed to receive wire message.");
     return;
   }
 
@@ -365,7 +363,7 @@ void UnwindingWorker::HandleBuffer(const SharedRingBuffer::Buffer& buf,
     memcpy(&rec.free_batch, msg.free_header, sizeof(*msg.free_header));
     delegate->PostFreeRecord(std::move(rec));
   } else {
-    PERFETTO_DFATAL("Invalid record type.");
+    PERFETTO_DFATAL_OR_ELOG("Invalid record type.");
   }
 }
 

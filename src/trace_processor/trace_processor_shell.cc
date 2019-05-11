@@ -176,14 +176,18 @@ bool PrintStats() {
         case SqlValue::Type::kString:
           fprintf(stderr, "%-40.40s", value.string_value);
           break;
+        case SqlValue::Type::kBytes:
+          printf("%-40.40s", "<raw bytes>");
+          break;
       }
       fprintf(stderr, " ");
     }
     fprintf(stderr, "\n");
   }
 
-  if (base::Optional<std::string> opt_error = it.GetLastError()) {
-    PERFETTO_ELOG("Error while iterating stats %s", opt_error->c_str());
+  util::Status status = it.Status();
+  if (!status.ok()) {
+    PERFETTO_ELOG("Error while iterating stats %s", status.c_message());
     return false;
   }
   return true;
@@ -206,8 +210,10 @@ int ExportTraceToDatabase(const std::string& output_name) {
   auto attach_it = g_tp->ExecuteQuery(attach_sql);
   bool attach_has_more = attach_it.Next();
   PERFETTO_DCHECK(!attach_has_more);
-  if (base::Optional<std::string> opt_error = attach_it.GetLastError()) {
-    PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+
+  util::Status status = attach_it.Status();
+  if (!status.ok()) {
+    PERFETTO_ELOG("SQLite error: %s", status.c_message());
     return 1;
   }
 
@@ -223,21 +229,25 @@ int ExportTraceToDatabase(const std::string& output_name) {
     auto export_it = g_tp->ExecuteQuery(export_sql);
     bool export_has_more = export_it.Next();
     PERFETTO_DCHECK(!export_has_more);
-    if (base::Optional<std::string> opt_error = export_it.GetLastError()) {
-      PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+
+    status = export_it.Status();
+    if (!status.ok()) {
+      PERFETTO_ELOG("SQLite error: %s", status.c_message());
       return 1;
     }
   }
-  if (base::Optional<std::string> opt_error = tables_it.GetLastError()) {
-    PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+  status = tables_it.Status();
+  if (!status.ok()) {
+    PERFETTO_ELOG("SQLite error: %s", status.c_message());
     return 1;
   }
 
   auto detach_it = g_tp->ExecuteQuery("DETACH DATABASE perfetto_export");
   bool detach_has_more = attach_it.Next();
   PERFETTO_DCHECK(!detach_has_more);
-  if (base::Optional<std::string> opt_error = detach_it.GetLastError()) {
-    PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+  status = detach_it.Status();
+  if (!status.ok()) {
+    PERFETTO_ELOG("SQLite error: %s", status.c_message());
     return 1;
   }
   return 0;
@@ -245,9 +255,9 @@ int ExportTraceToDatabase(const std::string& output_name) {
 
 int RunMetrics(const std::vector<std::string>& metric_names) {
   std::vector<uint8_t> metric_result;
-  int res = g_tp->ComputeMetric(metric_names, &metric_result);
-  if (res) {
-    PERFETTO_ELOG("Error when computing metrics");
+  util::Status status = g_tp->ComputeMetric(metric_names, &metric_result);
+  if (!status.ok()) {
+    PERFETTO_ELOG("Error when computing metrics: %s", status.c_message());
     return 1;
   }
   fwrite(metric_result.data(), sizeof(uint8_t), metric_result.size(), stdout);
@@ -294,14 +304,18 @@ void PrintQueryResultInteractively(TraceProcessor::Iterator* it,
         case SqlValue::Type::kString:
           printf("%-20.20s", value.string_value);
           break;
+        case SqlValue::Type::kBytes:
+          printf("%-20.20s", "<raw bytes>");
+          break;
       }
       printf(" ");
     }
     printf("\n");
   }
 
-  if (base::Optional<std::string> opt_error = it->GetLastError()) {
-    PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+  util::Status status = it->Status();
+  if (!status.ok()) {
+    PERFETTO_ELOG("SQLite error: %s", status.c_message());
   }
   printf("\nQuery executed in %.3f ms\n\n", (t_end - t_start).count() / 1E6);
 }
@@ -376,6 +390,9 @@ void PrintQueryResultAsCsv(TraceProcessor::Iterator* it, FILE* output) {
         case SqlValue::Type::kString:
           fprintf(output, "\"%s\"", value.string_value);
           break;
+        case SqlValue::Type::kBytes:
+          fprintf(output, "\"%s\"", "<raw bytes>");
+          break;
       }
     }
     fprintf(output, "\n");
@@ -423,8 +440,9 @@ bool RunQueryAndPrintResult(const std::vector<std::string> queries,
     PERFETTO_ILOG("Executing query: %s", sql_query.c_str());
 
     auto it = g_tp->ExecuteQuery(sql_query);
-    if (base::Optional<std::string> opt_error = it.GetLastError()) {
-      PERFETTO_ELOG("SQLite error: %s", opt_error->c_str());
+    util::Status status = it.Status();
+    if (!status.ok()) {
+      PERFETTO_ELOG("SQLite error: %s", status.c_message());
       is_query_error = true;
       break;
     }
@@ -617,7 +635,11 @@ int TraceProcessorMain(int argc, char** argv) {
     PERFETTO_CHECK(aio_read(&cb) == 0);
 
     // Parse the completed buffer while the async read is in-flight.
-    tp->Parse(std::move(buf), static_cast<size_t>(rsize));
+    util::Status status = tp->Parse(std::move(buf), static_cast<size_t>(rsize));
+    if (PERFETTO_UNLIKELY(!status.ok())) {
+      PERFETTO_ELOG("Fatal error while parsing trace: %s", status.c_message());
+      return 1;
+    }
   }
   tp->NotifyEndOfFile();
 

@@ -22,6 +22,22 @@
 
 namespace perfetto {
 namespace trace_processor {
+namespace {
+
+std::string ToHex(const char* build_id, size_t size) {
+  std::string hex_build_id(2 * size + 1, 'x');
+  for (size_t i = 0; i < size; ++i) {
+    // snprintf prints 3 characters, the two hex digits and a null byte. As we
+    // write left to write, we keep overwriting the nullbytes, except for the
+    // last call to snprintf.
+    snprintf(&(hex_build_id[2 * i]), 3, "%02hhx", build_id[i]);
+  }
+  // Remove the trailing nullbyte produced by the last snprintf.
+  hex_build_id.resize(2 * size);
+  return hex_build_id;
+}
+
+}  // namespace
 
 HeapProfileTracker::HeapProfileTracker(TraceProcessorContext* context)
     : context_(context), empty_(context_->storage->InternString({"", 0})) {}
@@ -45,7 +61,15 @@ void HeapProfileTracker::AddMapping(ProfileIndex pidx,
   auto opt_build_id = FindString(pidx, mapping.build_id);
   if (!opt_build_id)
     return;
-  const StringId build_id = opt_build_id.value();
+  const StringId raw_build_id = opt_build_id.value();
+  NullTermStringView raw_build_id_str =
+      context_->storage->GetString(raw_build_id);
+  StringId build_id = empty_;
+  if (raw_build_id_str.size() > 0) {
+    std::string hex_build_id =
+        ToHex(raw_build_id_str.c_str(), raw_build_id_str.size());
+    build_id = context_->storage->InternString(base::StringView(hex_build_id));
+  }
 
   TraceStorage::HeapProfileMappings::Row row{
       build_id,
@@ -99,7 +123,8 @@ void HeapProfileTracker::AddFrame(ProfileIndex pidx,
 void HeapProfileTracker::AddCallstack(ProfileIndex pidx,
                                       SourceCallstackId id,
                                       const SourceCallstack& frame_ids) {
-  int64_t parent_id = 0;
+  // TODO(fmayer): This should be NULL.
+  int64_t parent_id = -1;
   for (size_t depth = 0; depth < frame_ids.size(); ++depth) {
     std::vector<uint64_t> frame_subset = frame_ids;
     frame_subset.resize(depth + 1);

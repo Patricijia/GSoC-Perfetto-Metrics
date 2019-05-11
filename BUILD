@@ -200,7 +200,10 @@ cc_library(
         "src/trace_processor/json_trace_tokenizer.h",
         "src/trace_processor/json_trace_utils.cc",
         "src/trace_processor/json_trace_utils.h",
+        "src/trace_processor/metrics/descriptors.cc",
+        "src/trace_processor/metrics/descriptors.h",
         "src/trace_processor/metrics/metrics.cc",
+        "src/trace_processor/metrics/metrics.descriptor.h",
         "src/trace_processor/metrics/metrics.h",
         "src/trace_processor/metrics/sql_metrics.h",
         "src/trace_processor/null_term_string_view.h",
@@ -461,7 +464,10 @@ cc_binary(
         "src/trace_processor/json_trace_tokenizer.h",
         "src/trace_processor/json_trace_utils.cc",
         "src/trace_processor/json_trace_utils.h",
+        "src/trace_processor/metrics/descriptors.cc",
+        "src/trace_processor/metrics/descriptors.h",
         "src/trace_processor/metrics/metrics.cc",
+        "src/trace_processor/metrics/metrics.descriptor.h",
         "src/trace_processor/metrics/metrics.h",
         "src/trace_processor/metrics/sql_metrics.h",
         "src/trace_processor/null_term_string_view.h",
@@ -678,7 +684,10 @@ cc_binary(
         "src/trace_processor/json_trace_tokenizer.h",
         "src/trace_processor/json_trace_utils.cc",
         "src/trace_processor/json_trace_utils.h",
+        "src/trace_processor/metrics/descriptors.cc",
+        "src/trace_processor/metrics/descriptors.h",
         "src/trace_processor/metrics/metrics.cc",
+        "src/trace_processor/metrics/metrics.descriptor.h",
         "src/trace_processor/metrics/metrics.h",
         "src/trace_processor/metrics/sql_metrics.h",
         "src/trace_processor/null_term_string_view.h",
@@ -820,4 +829,25 @@ py_binary(
         "tools/gen_merged_sql_metrics.py",
     ],
     main = "tools/gen_merged_sql_metrics.py",
+)
+
+load("//security/fuzzing/blaze:cc_fuzz_target.bzl", "cc_fuzz_target")
+
+cc_fuzz_target(
+    name = "trace_parsing_fuzzer",
+    srcs = ["src/trace_processor/trace_parsing_fuzzer.cc"],
+    componentid = 323270,
+    deps = [
+        ":trace_processor",
+        "//third_party/perfetto/protos:trace_processor_cc_proto",
+    ],
+)
+
+cc_fuzz_target(
+    name = "proto_decoder_fuzzer",
+    srcs = ["src/protozero/proto_decoder_fuzzer.cc"],
+    componentid = 323270,
+    deps = [
+        ":trace_processor",
+    ],
 )

@@ -22,9 +22,50 @@ SELECT RUN_METRIC('android_mem_proc_counters.sql',
                   'table_name',
                   'file_rss',
                   'counter_names',
-                  '("mem.rss.anon")');
+                  'mem.rss.file');
 SELECT RUN_METRIC('android_mem_proc_counters.sql',
                   'table_name',
                   'anon_rss',
                   'counter_names',
-                  '("mem.rss.anon")');
+                  'mem.rss.anon');
+
+CREATE VIEW process_metrics_view AS
+SELECT
+  AndroidMemoryMetric_ProcessMetrics(
+    'process_name',
+    anon_rss.name,
+    'overall_counters',
+    AndroidMemoryMetric_ProcessMemoryCounters(
+      'anon_rss',
+      AndroidMemoryMetric_Counter(
+        'min',
+        anon_rss.min,
+        'max',
+        anon_rss.max,
+        'avg',
+        anon_rss.avg
+      )
+    )
+  )
+FROM
+  anon_rss;
+
+CREATE VIEW AndroidMemOutput AS
+SELECT
+  TraceMetrics(
+    'android_mem',
+    AndroidMemoryMetric(
+      'system_metrics',
+      AndroidMemoryMetric_SystemMetrics(
+        'lmks',
+        AndroidMemoryMetric_LowMemoryKills(
+          'total_count',
+          lmks.count
+        )
+      ),
+      'process_metrics',
+      'process_metrics_view'
+    )
+  )
+FROM
+  (SELECT COUNT(*) as count from lmk_by_score) as lmks;

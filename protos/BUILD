@@ -29,6 +29,7 @@ proto_library(
     srcs = [
         "perfetto/common/android_log_constants.proto",
         "perfetto/common/commit_data_request.proto",
+        "perfetto/common/descriptor.proto",
         "perfetto/common/observable_events.proto",
         "perfetto/common/sys_stats_counters.proto",
         "perfetto/common/trace_stats.proto",
@@ -58,6 +59,7 @@ proto_library(
     srcs = [
         "perfetto/common/android_log_constants.proto",
         "perfetto/common/commit_data_request.proto",
+        "perfetto/common/descriptor.proto",
         "perfetto/common/observable_events.proto",
         "perfetto/common/sys_stats_counters.proto",
         "perfetto/common/trace_stats.proto",
@@ -669,6 +671,33 @@ pbzero_cc_proto_library(
     deps = [
         "//third_party/perfetto:libprotozero",
         "//third_party/perfetto/google:gtest_prod",
+    ],
+)
+
+# GN target: //protos/perfetto/trace_processor:lite_gen
+proto_library(
+    name = "trace_processor",
+    srcs = [
+        "perfetto/trace_processor/raw_query.proto",
+        "perfetto/trace_processor/sched.proto",
+        "perfetto/trace_processor/trace_processor.proto",
+    ],
+    has_services = 1,
+    cc_api_version = 2,
+    cc_generic_services = 1,
+    visibility = [
+        "//visibility:public",
+    ],
+)
+
+# GN target: //protos/perfetto/trace_processor:lite_gen
+cc_proto_library(
+    name = "trace_processor_cc_proto",
+    visibility = [
+        "//visibility:public",
+    ],
+    deps = [
+        "//third_party/perfetto/protos:trace_processor",
     ],
 )
 

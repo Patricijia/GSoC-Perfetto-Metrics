@@ -40,6 +40,8 @@
 #include "src/trace_processor/heap_profile_mapping_table.h"
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/instants_table.h"
+#include "src/trace_processor/metrics/descriptors.h"
+#include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/process_table.h"
 #include "src/trace_processor/process_tracker.h"
@@ -303,11 +305,13 @@ TraceProcessorImpl::~TraceProcessorImpl() {
     it->Reset();
 }
 
-bool TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data, size_t size) {
+util::Status TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data,
+                                       size_t size) {
   if (size == 0)
-    return true;
+    return util::OkStatus();
   if (unrecoverable_parse_error_)
-    return false;
+    return util::ErrStatus(
+        "Failed unrecoverably while parsing in a previous Parse call");
 
   // If this is the first Parse() call, guess the trace type and create the
   // appropriate parser.
@@ -349,15 +353,15 @@ bool TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data, size_t size) {
         context_.parser.reset(new FuchsiaTraceParser(&context_));
         break;
       case kUnknownTraceType:
-        return false;
+        return util::ErrStatus("Unknown trace type provided");
     }
   }
 
   auto scoped_trace = context_.storage->TraceExecutionTimeIntoStats(
       stats::parse_trace_duration_ns);
-  bool res = context_.chunk_reader->Parse(std::move(data), size);
-  unrecoverable_parse_error_ |= !res;
-  return res;
+  util::Status status = context_.chunk_reader->Parse(std::move(data), size);
+  unrecoverable_parse_error_ |= !status.ok();
+  return status;
 }
 
 void TraceProcessorImpl::NotifyEndOfFile() {
@@ -375,10 +379,10 @@ TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
   sqlite3_stmt* raw_stmt;
   int err = sqlite3_prepare_v2(*db_, sql.c_str(), static_cast<int>(sql.size()),
                                &raw_stmt, nullptr);
-  base::Optional<std::string> error;
+  util::Status status;
   uint32_t col_count = 0;
   if (err != SQLITE_OK) {
-    error = sqlite3_errmsg(*db_);
+    status = util::ErrStatus("%s", sqlite3_errmsg(*db_));
   } else {
     col_count = static_cast<uint32_t>(sqlite3_column_count(raw_stmt));
   }
@@ -389,7 +393,7 @@ TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
                                                               t_start.count());
 
   std::unique_ptr<IteratorImpl> impl(new IteratorImpl(
-      this, *db_, ScopedStmt(raw_stmt), col_count, error, sql_stats_row));
+      this, *db_, ScopedStmt(raw_stmt), col_count, status, sql_stats_row));
   iterators_.emplace_back(impl.get());
   return TraceProcessor::Iterator(std::move(impl));
 }
@@ -401,9 +405,32 @@ void TraceProcessorImpl::InterruptQuery() {
   sqlite3_interrupt(db_.get());
 }
 
-int TraceProcessorImpl::ComputeMetric(
+util::Status TraceProcessorImpl::ComputeMetric(
     const std::vector<std::string>& metric_names,
     std::vector<uint8_t>* metrics_proto) {
+  metrics::DescriptorPool pool;
+  pool.AddFromFileDescriptorSet(kMetricsDescriptor.data(),
+                                kMetricsDescriptor.size());
+  for (const auto& desc : pool.descriptors()) {
+    // Convert the full name (e.g. .perfetto.protos.TraceMetrics.SubMetric)
+    // into a function name of the form (TraceMetrics_SubMetric).
+    auto fn_name = desc.full_name().substr(desc.package_name().size() + 1);
+    std::replace(fn_name.begin(), fn_name.end(), '.', '_');
+
+    std::unique_ptr<metrics::BuildProtoContext> ctx(
+        new metrics::BuildProtoContext());
+    ctx->tp = this;
+    ctx->pool = &pool;
+    ctx->desc = &desc;
+
+    auto ret = sqlite3_create_function_v2(
+        *db_, fn_name.c_str(), -1, SQLITE_UTF8, ctx.release(),
+        metrics::BuildProto, nullptr, nullptr, [](void* ptr) {
+          delete static_cast<metrics::BuildProtoContext*>(ptr);
+        });
+    if (ret != SQLITE_OK)
+      return util::ErrStatus("%s", sqlite3_errmsg(*db_));
+  }
   return metrics::ComputeMetrics(this, metric_names, metrics_proto);
 }
 
@@ -411,13 +438,13 @@ TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
                                            sqlite3* db,
                                            ScopedStmt stmt,
                                            uint32_t column_count,
-                                           base::Optional<std::string> error,
+                                           util::Status status,
                                            uint32_t sql_stats_row)
     : trace_processor_(trace_processor),
       db_(db),
       stmt_(std::move(stmt)),
       column_count_(column_count),
-      error_(error),
+      status_(status),
       sql_stats_row_(sql_stats_row) {}
 
 TraceProcessor::IteratorImpl::~IteratorImpl() {
@@ -434,7 +461,8 @@ TraceProcessor::IteratorImpl::~IteratorImpl() {
 }
 
 void TraceProcessor::IteratorImpl::Reset() {
-  *this = IteratorImpl(nullptr, nullptr, ScopedStmt(), 0, base::nullopt, 0);
+  *this = IteratorImpl(nullptr, nullptr, ScopedStmt(), 0,
+                       util::ErrStatus("Trace processor was deleted"), 0);
 }
 
 void TraceProcessor::IteratorImpl::RecordFirstNextInSqlStats() {
