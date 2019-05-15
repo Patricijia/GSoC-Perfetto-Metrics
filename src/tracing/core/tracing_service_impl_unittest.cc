@@ -1632,8 +1632,8 @@ TEST_F(TracingServiceImplTest, PeriodicClearIncrementalState) {
   producer->RegisterDataSource("ds_incremental2", false, false,
                                /*handles_incremental_state_clear=*/true);
 
-  // Data source that does *not* advertise itself as support incremental state
-  // clears.
+  // Data source that does *not* advertise itself as supporting incremental
+  // state clears.
   producer->RegisterDataSource("ds_selfcontained", false, false,
                                /*handles_incremental_state_clear=*/false);
 
@@ -1668,7 +1668,7 @@ TEST_F(TracingServiceImplTest, PeriodicClearIncrementalState) {
   DataSourceInstanceID ds_incremental2 =
       producer->GetDataSourceInstanceId("ds_incremental2");
 
-  const int kNumClears = 3;
+  const size_t kNumClears = 3;
   std::function<void()> checkpoint =
       task_runner.CreateCheckpoint("clears_received");
   std::vector<std::vector<DataSourceInstanceID>> clears_seen;
