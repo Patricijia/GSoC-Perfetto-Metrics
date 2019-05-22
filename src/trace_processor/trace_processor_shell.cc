@@ -400,12 +400,28 @@ void PrintQueryResultAsCsv(TraceProcessor::Iterator* it, FILE* output) {
   }
 }
 
+bool IsBlankLine(char* buffer) {
+  size_t buf_size = strlen(buffer);
+  for (size_t i = 0; i < buf_size; ++i) {
+    // We can index into buffer[i+1], because strlen does not include the
+    // trailing \0, so even if \r is the last character, this is not out
+    // of bound.
+    if (buffer[i] == '\r') {
+      if (buffer[i + 1] != '\n')
+        return false;
+    } else if (buffer[i] != ' ' && buffer[i] != '\t' && buffer[i] != '\n') {
+      return false;
+    }
+  }
+  return true;
+}
+
 bool LoadQueries(FILE* input, std::vector<std::string>* output) {
   char buffer[4096];
   while (!feof(input) && !ferror(input)) {
     std::string sql_query;
     while (fgets(buffer, sizeof(buffer), input)) {
-      if (strncmp(buffer, "\n", sizeof(buffer)) == 0)
+      if (IsBlankLine(buffer))
         break;
       sql_query.append(buffer);
     }
