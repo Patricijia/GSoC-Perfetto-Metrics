@@ -138,6 +138,9 @@ source_set("lib") {
     "syscalls_aarch64.h",
     "syscalls_armeabi.h",
     "syscalls_x86_64.h",
+    "systrace_trace_parser.cc",
+    "systrace_trace_parser.h",
+    "systrace_utils.h",
     "table.cc",
     "table.h",
     "thread_table.cc",
@@ -160,8 +163,8 @@ source_set("lib") {
   ]
 
   deps = [
+    ":sqlite",
     "../../gn:default_deps",
-    "../../gn:sqlite",
     "../../include/perfetto/traced:sys_stats_counters",
     "../../protos/perfetto/common:zero",
     "../../protos/perfetto/config:zero",
@@ -214,12 +217,6 @@ if (current_toolchain == host_toolchain) {
         "../../buildtools:linenoise",
         "../../gn/standalone:gen_git_revision",
       ]
-
-      # Build the descriptors as the diff testing framework depends on this.
-      deps += [
-        "../../protos/perfetto/metrics:descriptor",
-        "../../protos/perfetto/trace:descriptor",
-      ]
     }
 
     sources = [
@@ -264,15 +261,16 @@ source_set("unittests") {
     "sqlite3_str_split_unittest.cc",
     "string_pool_unittest.cc",
     "syscall_tracker_unittest.cc",
+    "systrace_utils_unittest.cc",
     "thread_table_unittest.cc",
     "trace_processor_impl_unittest.cc",
     "trace_sorter_unittest.cc",
   ]
   deps = [
     ":lib",
+    ":sqlite",
     "../../gn:default_deps",
     "../../gn:gtest_deps",
-    "../../gn:sqlite",
     "../../protos/perfetto/common:zero",
     "../../protos/perfetto/trace:zero",
     "../../protos/perfetto/trace/chrome:zero",
@@ -294,6 +292,16 @@ source_set("unittests") {
   }
 }
 
+# Indirection target to allow modifying the path to the SQLite header.
+source_set("sqlite") {
+  sources = [
+    "sqlite.h",
+  ]
+  public_deps = [
+    "../../gn:sqlite",
+  ]
+}
+
 source_set("integrationtests") {
   testonly = true
   sources = [
@@ -301,9 +309,9 @@ source_set("integrationtests") {
   ]
   deps = [
     ":lib",
+    ":sqlite",
     "../../gn:default_deps",
     "../../gn:gtest_deps",
-    "../../gn:sqlite",
     "../../protos/perfetto/trace:lite",
     "../../protos/perfetto/trace_processor:lite",
     "../base",

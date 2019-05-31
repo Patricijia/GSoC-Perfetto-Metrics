@@ -22,6 +22,7 @@ sql_files = [
   "android/android_startup_launches.sql",
   "android/android_task_state.sql",
   "android/android_startup.sql",
+  "android/android_startup_cpu.sql",
   "android/heap_profile.sql",
 ]
 
@@ -52,8 +53,8 @@ source_set("lib") {
     "metrics.h",
   ]
   deps = [
+    "../:sqlite",
     "../../../gn:default_deps",
-    "../../../gn:sqlite",
     "../../../include/perfetto/trace_processor",
     "../../../protos/perfetto/common:zero",
     "../../../protos/perfetto/metrics:zero",
