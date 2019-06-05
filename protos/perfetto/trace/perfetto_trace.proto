@@ -2542,6 +2542,32 @@ message InternedData {
 
 // End of protos/perfetto/trace/interned_data/interned_data.proto
 
+// Begin of protos/perfetto/trace/perfetto/perfetto_metatrace.proto
+
+// Used to trace the execution of perfetto itself.
+message PerfettoMetatrace {
+  // See base/metatrace_events.h for definitions.
+  oneof record_type {
+    uint32 event_id = 1;
+    uint32 counter_id = 2;
+  }
+
+  // Only when using |event_id|.
+  optional uint32 event_duration_ns = 3;
+
+  // Only when using |counter_id|.
+  optional int32 counter_value = 4;
+
+  // ID of the thread that emitted the event.
+  optional uint32 thread_id = 5;
+
+  // If true the meta-tracing ring buffer had overruns and hence some data is
+  // missing from this point.
+  optional bool has_overruns = 6;
+}
+
+// End of protos/perfetto/trace/perfetto/perfetto_metatrace.proto
+
 // Begin of protos/perfetto/trace/power/battery_counters.proto
 
 message BatteryCounters {
@@ -2938,6 +2964,7 @@ message TracePacket {
     Trigger trigger = 46;
     PackagesList packages_list = 47;
     ChromeBenchmarkMetadata chrome_benchmark_metadata = 48;
+    PerfettoMetatrace perfetto_metatrace = 49;
 
     // Only used by TrackEvent.
     ProcessDescriptor process_descriptor = 43;
@@ -3663,7 +3690,7 @@ message TestConfig {
 // It contains the general config for the logging buffer(s) and the configs for
 // all the data source being enabled.
 //
-// Next id: 23.
+// Next id: 24.
 message TraceConfig {
   message BufferConfig {
     optional uint32 size_kb = 1;
@@ -3812,6 +3839,10 @@ message TraceConfig {
   // Wait for this long for producers to acknowledge flush requests.
   // Default 5s.
   optional uint32 flush_timeout_ms = 14;
+
+  // Wait for this long for producers to acknowledge stop requests.
+  // Default 5s.
+  optional uint32 data_source_stop_timeout_ms = 23;
 
   reserved 15;  // |disable_clock_snapshotting| moved.
 
