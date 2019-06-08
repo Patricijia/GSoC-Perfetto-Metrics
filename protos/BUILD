@@ -227,6 +227,7 @@ proto_library(
 proto_library(
     name = "metrics_android",
     srcs = [
+        "perfetto/metrics/android/batt_metric.proto",
         "perfetto/metrics/android/heap_profile.proto",
         "perfetto/metrics/android/mem_metric.proto",
         "perfetto/metrics/android/startup_metric.proto",
@@ -265,6 +266,7 @@ java_proto_library(
 proto_library(
     name = "metrics_android_zero",
     srcs = [
+        "perfetto/metrics/android/batt_metric.proto",
         "perfetto/metrics/android/heap_profile.proto",
         "perfetto/metrics/android/mem_metric.proto",
         "perfetto/metrics/android/startup_metric.proto",
@@ -467,6 +469,7 @@ proto_library(
     name = "trace_chrome",
     srcs = [
         "perfetto/trace/chrome/chrome_benchmark_metadata.proto",
+        "perfetto/trace/chrome/chrome_metadata.proto",
         "perfetto/trace/chrome/chrome_trace_event.proto",
     ],
     has_services = 1,
@@ -504,10 +507,12 @@ proto_library(
     name = "trace_chrome_zero",
     srcs = [
         "perfetto/trace/chrome/chrome_benchmark_metadata.proto",
+        "perfetto/trace/chrome/chrome_metadata.proto",
         "perfetto/trace/chrome/chrome_trace_event.proto",
     ],
     deps = [
         "//third_party/perfetto/protos:trace_interned_data_zero",
+        "//third_party/perfetto/protos:trace_profiling_zero",
         "//third_party/perfetto/protos:trace_track_event_zero",
     ],
 )
@@ -606,6 +611,7 @@ proto_library(
         "perfetto/trace/ftrace/sched.proto",
         "perfetto/trace/ftrace/signal.proto",
         "perfetto/trace/ftrace/sync.proto",
+        "perfetto/trace/ftrace/systrace.proto",
         "perfetto/trace/ftrace/task.proto",
         "perfetto/trace/ftrace/test_bundle_wrapper.proto",
         "perfetto/trace/ftrace/vmscan.proto",
@@ -673,6 +679,7 @@ proto_library(
         "perfetto/trace/ftrace/sched.proto",
         "perfetto/trace/ftrace/signal.proto",
         "perfetto/trace/ftrace/sync.proto",
+        "perfetto/trace/ftrace/systrace.proto",
         "perfetto/trace/ftrace/task.proto",
         "perfetto/trace/ftrace/test_bundle_wrapper.proto",
         "perfetto/trace/ftrace/vmscan.proto",
@@ -702,6 +709,7 @@ proto_library(
         "//visibility:public",
     ],
     deps = [
+        "//third_party/perfetto/protos:trace_profiling",
         "//third_party/perfetto/protos:trace_track_event",
     ],
 )
@@ -735,6 +743,7 @@ proto_library(
         "perfetto/trace/interned_data/interned_data.proto",
     ],
     deps = [
+        "//third_party/perfetto/protos:trace_profiling_zero",
         "//third_party/perfetto/protos:trace_track_event_zero",
     ],
 )
@@ -1004,6 +1013,7 @@ pbzero_cc_proto_library(
 proto_library(
     name = "trace_profiling",
     srcs = [
+        "perfetto/trace/profiling/profile_common.proto",
         "perfetto/trace/profiling/profile_packet.proto",
     ],
     has_services = 1,
@@ -1040,6 +1050,7 @@ java_proto_library(
 proto_library(
     name = "trace_profiling_zero",
     srcs = [
+        "perfetto/trace/profiling/profile_common.proto",
         "perfetto/trace/profiling/profile_packet.proto",
     ],
 )

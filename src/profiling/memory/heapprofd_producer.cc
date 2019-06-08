@@ -25,10 +25,10 @@
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/thread_task_runner.h"
-#include "perfetto/ext/tracing/core/data_source_config.h"
-#include "perfetto/ext/tracing/core/data_source_descriptor.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
+#include "perfetto/tracing/core/data_source_config.h"
+#include "perfetto/tracing/core/data_source_descriptor.h"
 
 #include "src/profiling/memory/bookkeeping_dump.h"
 
@@ -137,35 +137,9 @@ HeapprofdProducer::HeapprofdProducer(HeapprofdMode mode,
       mode_(mode),
       unwinding_workers_(MakeUnwindingWorkers(this, kUnwinderThreads)),
       socket_delegate_(this),
-      weak_factory_(this) {
-  if (mode == HeapprofdMode::kCentral) {
-    listening_socket_ = MakeListeningSocket();
-  }
-}
+      weak_factory_(this) {}
 
-HeapprofdProducer::~HeapprofdProducer() {
-  // We only borrowed this from the environment variable.
-  // UnixSocket always owns the socket, so we need to manually release it
-  // here.
-  if (mode_ == HeapprofdMode::kCentral && bool(listening_socket_))
-    listening_socket_->ReleaseSocket().ReleaseFd().release();
-}
-
-std::unique_ptr<base::UnixSocket> HeapprofdProducer::MakeListeningSocket() {
-  const char* sock_fd = getenv(kHeapprofdSocketEnvVar);
-  if (sock_fd == nullptr) {
-    unlink(kHeapprofdSocketFile);
-    return base::UnixSocket::Listen(kHeapprofdSocketFile, &socket_delegate_,
-                                    task_runner_);
-  }
-  char* end;
-  int raw_fd = static_cast<int>(strtol(sock_fd, &end, 10));
-  if (*end != '\0')
-    PERFETTO_FATAL("Invalid %s. Expected decimal integer.",
-                   kHeapprofdSocketEnvVar);
-  return base::UnixSocket::Listen(base::ScopedFile(raw_fd), &socket_delegate_,
-                                  task_runner_);
-}
+HeapprofdProducer::~HeapprofdProducer() = default;
 
 void HeapprofdProducer::SetTargetProcess(pid_t target_pid,
                                          std::string target_cmdline,

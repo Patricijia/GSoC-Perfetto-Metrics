@@ -78,6 +78,7 @@ enum RefType {
   kRefIrq = 3,
   kRefSoftIrq = 4,
   kRefUpid = 5,
+  kRefGpuId = 6,
   kRefMax
 };
 
@@ -105,6 +106,7 @@ class TraceStorage {
   struct Thread {
     explicit Thread(uint32_t t) : tid(t) {}
     int64_t start_ns = 0;
+    int64_t end_ns = 0;
     StringId name_id = 0;
     base::Optional<UniquePid> upid;
     uint32_t tid = 0;
@@ -321,6 +323,8 @@ class TraceStorage {
     std::deque<int64_t> durations_;
     std::deque<int64_t> refs_;
     std::deque<RefType> types_;
+    // TODO(eseckler): Remove this column and store the category in the args
+    // table instead, similar to what we do for instant events.
     std::deque<StringId> cats_;
     std::deque<StringId> names_;
     std::deque<uint8_t> depths_;
@@ -988,7 +992,7 @@ class TraceStorage {
   // Slices coming from userspace events (e.g. Chromium TRACE_EVENT macros).
   NestableSlices nestable_slices_;
 
-  // The type of counters in the trace. Can be thought of the the "metadata".
+  // The type of counters in the trace. Can be thought of as the "metadata".
   CounterDefinitions counter_definitions_;
 
   // The values from the Counter events from the trace. This includes CPU

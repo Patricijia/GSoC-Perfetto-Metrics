@@ -24,12 +24,12 @@
 #include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/tracing/core/consumer.h"
-#include "perfetto/ext/tracing/core/data_source_config.h"
-#include "perfetto/ext/tracing/core/data_source_descriptor.h"
 #include "perfetto/ext/tracing/core/producer.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/tracing/core/data_source_config.h"
+#include "perfetto/tracing/core/data_source_descriptor.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/tracing/core/shared_memory_arbiter_impl.h"
 #include "src/tracing/core/trace_writer_impl.h"
@@ -2776,13 +2776,13 @@ TEST_F(TracingServiceImplTest, QueryServiceState) {
 
   TracingServiceState svc_state = consumer->QueryServiceState();
 
-  EXPECT_EQ(svc_state.producers_size(), 2u);
+  EXPECT_EQ(svc_state.producers_size(), 2);
   EXPECT_EQ(svc_state.producers().at(0).id(), 1);
   EXPECT_EQ(svc_state.producers().at(0).name(), "producer1");
   EXPECT_EQ(svc_state.producers().at(1).id(), 2);
   EXPECT_EQ(svc_state.producers().at(1).name(), "producer2");
 
-  EXPECT_EQ(svc_state.data_sources_size(), 4u);
+  EXPECT_EQ(svc_state.data_sources_size(), 4);
 
   EXPECT_EQ(svc_state.data_sources().at(0).producer_id(), 1);
   EXPECT_EQ(svc_state.data_sources().at(0).descriptor().name(), "common_ds");
@@ -2800,8 +2800,8 @@ TEST_F(TracingServiceImplTest, QueryServiceState) {
   producer1.reset();
   svc_state = consumer->QueryServiceState();
 
-  EXPECT_EQ(svc_state.producers_size(), 1u);
-  EXPECT_EQ(svc_state.data_sources_size(), 2u);
+  EXPECT_EQ(svc_state.producers_size(), 1);
+  EXPECT_EQ(svc_state.data_sources_size(), 2);
 
   EXPECT_EQ(svc_state.data_sources().at(0).producer_id(), 2);
   EXPECT_EQ(svc_state.data_sources().at(0).descriptor().name(), "common_ds");

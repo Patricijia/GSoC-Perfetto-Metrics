@@ -35,6 +35,7 @@
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/fuchsia_trace_parser.h"
 #include "src/trace_processor/fuchsia_trace_tokenizer.h"
+#include "src/trace_processor/gzip_trace_parser.h"
 #include "src/trace_processor/heap_profile_allocation_table.h"
 #include "src/trace_processor/heap_profile_callsite_table.h"
 #include "src/trace_processor/heap_profile_frame_table.h"
@@ -60,6 +61,7 @@
 #include "src/trace_processor/stats_table.h"
 #include "src/trace_processor/string_table.h"
 #include "src/trace_processor/syscall_tracker.h"
+#include "src/trace_processor/systrace_parser.h"
 #include "src/trace_processor/systrace_trace_parser.h"
 #include "src/trace_processor/table.h"
 #include "src/trace_processor/thread_table.h"
@@ -70,16 +72,18 @@
 #include "perfetto/metrics/android/mem_metric.pbzero.h"
 #include "perfetto/metrics/metrics.pbzero.h"
 
-// JSON parsing and exporting is only supported in the standalone build.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+// JSON parsing and exporting is only supported in the standalone and
+// Chromium builds.
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
+    PERFETTO_BUILD_WITH_CHROMIUM
 #include "src/trace_processor/export_json.h"
 #include "src/trace_processor/json_trace_parser.h"
 #include "src/trace_processor/json_trace_tokenizer.h"
 #endif
 
-// In Android tree builds, we don't have the percentile module.
+// In Android and Chromium tree builds, we don't have the percentile module.
 // Just don't include it.
-#if !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
 // defined in sqlite_src/ext/misc/percentile.c
 extern "C" int sqlite3_percentile_init(sqlite3* db,
                                        char** error,
@@ -105,7 +109,7 @@ void InitializeSqlite(sqlite3* db) {
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
-#if !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
   sqlite3_percentile_init(db, &error, nullptr);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
@@ -195,8 +199,9 @@ void CreateBuiltinViews(sqlite3* db) {
 }
 
 // Exporting traces in legacy JSON format is only supported
-// in the standalone build so far.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+// in the standalone and Chromium builds so far.
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
+    PERFETTO_BUILD_WITH_CHROMIUM
 void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
   TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   const char* filename =
@@ -294,6 +299,10 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
   if (base::StartsWith(start, " "))
     return kSystraceTraceType;
 
+  // Ctrace is GZIPed systrace with no headers.
+  if (base::StartsWith(start, "TRACE:"))
+    return kCtraceTraceType;
+
   return kProtoTraceType;
 }
 
@@ -315,8 +324,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   context_.syscall_tracker.reset(new SyscallTracker(&context_));
   context_.clock_tracker.reset(new ClockTracker(&context_));
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
+  context_.systrace_parser.reset(new SystraceParser(&context_));
 
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
+    PERFETTO_BUILD_WITH_CHROMIUM
   CreateJsonExportFunction(this->context_.storage.get(), db);
 #endif
 
@@ -369,14 +380,15 @@ util::Status TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data,
     switch (trace_type) {
       case kJsonTraceType: {
         PERFETTO_DLOG("Legacy JSON trace detected");
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
+    PERFETTO_BUILD_WITH_CHROMIUM
         context_.chunk_reader.reset(new JsonTraceTokenizer(&context_));
         // JSON traces have no guarantees about the order of events in them.
         int64_t window_size_ns = std::numeric_limits<int64_t>::max();
         context_.sorter.reset(new TraceSorter(&context_, window_size_ns));
         context_.parser.reset(new JsonTraceParser(&context_));
 #else
-        PERFETTO_FATAL("JSON traces only supported in standalone mode.");
+        PERFETTO_FATAL("JSON traces not supported.");
 #endif
         break;
       }
@@ -399,6 +411,9 @@ util::Status TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data,
       }
       case kSystraceTraceType:
         context_.chunk_reader.reset(new SystraceTraceParser(&context_));
+        break;
+      case kCtraceTraceType:
+        context_.chunk_reader.reset(new GzipTraceParser(&context_));
         break;
       case kUnknownTraceType:
         return util::ErrStatus("Unknown trace type provided");

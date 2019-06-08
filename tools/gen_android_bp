@@ -48,7 +48,6 @@ default_targets = [
     '//:heapprofd_client',
     '//:heapprofd',
     '//:trigger_perfetto',
-    '//:idle_alloc',
 ]
 
 # Defines a custom init_rc argument to be applied to the corresponding output
@@ -83,6 +82,7 @@ library_whitelist = [
     'hidlbase',
     'hidltransport',
     'hwbinder',
+    'incident',
     'log',
     'services',
     'utils',
@@ -99,7 +99,7 @@ tree_path = 'external/perfetto'
 cflag_whitelist = r'^-DPERFETTO.*$'
 
 # Compiler defines which are passed through to the blueprint.
-define_whitelist = r'^(GOOGLE_PROTO.*)|(PERFETTO_BUILD_WITH_ANDROID)$'
+define_whitelist = r'^(GOOGLE_PROTO.*)|(PERFETTO_BUILD_WITH_ANDROID)|(ZLIB_.*)|(USE_MMAP)|(HAVE_HIDDEN)$'
 
 # Shared libraries which are not in PDK.
 library_not_in_pdk = {

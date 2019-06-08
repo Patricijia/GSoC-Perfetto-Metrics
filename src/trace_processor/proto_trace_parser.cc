@@ -37,7 +37,7 @@
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/syscall_tracker.h"
-#include "src/trace_processor/systrace_utils.h"
+#include "src/trace_processor/systrace_parser.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/variadic.h"
 
@@ -58,11 +58,13 @@
 #include "perfetto/trace/ftrace/raw_syscalls.pbzero.h"
 #include "perfetto/trace/ftrace/sched.pbzero.h"
 #include "perfetto/trace/ftrace/signal.pbzero.h"
+#include "perfetto/trace/ftrace/systrace.pbzero.h"
 #include "perfetto/trace/ftrace/task.pbzero.h"
 #include "perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
 #include "perfetto/trace/power/battery_counters.pbzero.h"
 #include "perfetto/trace/power/power_rails.pbzero.h"
+#include "perfetto/trace/profiling/profile_common.pbzero.h"
 #include "perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "perfetto/trace/ps/process_stats.pbzero.h"
 #include "perfetto/trace/ps/process_tree.pbzero.h"
@@ -89,6 +91,7 @@ ProtoTraceParser::ProtoTraceParser(TraceProcessorContext* context)
       sched_wakeup_name_id_(context->storage->InternString("sched_wakeup")),
       cpu_freq_name_id_(context->storage->InternString("cpufreq")),
       cpu_idle_name_id_(context->storage->InternString("cpuidle")),
+      gpu_freq_name_id_(context->storage->InternString("gpufreq")),
       comm_name_id_(context->storage->InternString("comm")),
       num_forks_name_id_(context->storage->InternString("num_forks")),
       num_irq_total_name_id_(context->storage->InternString("num_irq_total")),
@@ -476,8 +479,16 @@ void ProtoTraceParser::ParseFtracePacket(
         ParseSchedWakeup(ts, data);
         break;
       }
+      case protos::pbzero::FtraceEvent::kSchedProcessExitFieldNumber: {
+        ParseSchedProcessExit(ts, data);
+        break;
+      }
       case protos::pbzero::FtraceEvent::kCpuFrequencyFieldNumber: {
         ParseCpuFreq(ts, data);
+        break;
+      }
+      case protos::pbzero::FtraceEvent::kGpuFrequencyFieldNumber: {
+        ParseGpuFreq(ts, data);
         break;
       }
       case protos::pbzero::FtraceEvent::kCpuIdleFieldNumber: {
@@ -486,6 +497,10 @@ void ProtoTraceParser::ParseFtracePacket(
       }
       case protos::pbzero::FtraceEvent::kPrintFieldNumber: {
         ParsePrint(cpu, ts, pid, data);
+        break;
+      }
+      case protos::pbzero::FtraceEvent::kZeroFieldNumber: {
+        ParseZero(cpu, ts, pid, data);
         break;
       }
       case protos::pbzero::FtraceEvent::kRssStatFieldNumber: {
@@ -676,6 +691,14 @@ void ProtoTraceParser::ParseCpuIdle(int64_t ts, ConstBytes blob) {
                                        RefType::kRefCpuId);
 }
 
+void ProtoTraceParser::ParseGpuFreq(int64_t ts, ConstBytes blob) {
+  protos::pbzero::GpuFrequencyFtraceEvent::Decoder freq(blob.data, blob.size);
+  uint32_t gpu = freq.gpu_id();
+  uint32_t new_freq = freq.state();
+  context_->event_tracker->PushCounter(ts, new_freq, gpu_freq_name_id_, gpu,
+                                       RefType::kRefGpuId);
+}
+
 PERFETTO_ALWAYS_INLINE
 void ProtoTraceParser::ParseSchedSwitch(uint32_t cpu,
                                         int64_t ts,
@@ -695,6 +718,13 @@ void ProtoTraceParser::ParseSchedWakeup(int64_t ts, ConstBytes blob) {
   auto utid = context_->process_tracker->UpdateThreadName(wakee_pid, name_id);
   context_->event_tracker->PushInstant(ts, sched_wakeup_name_id_, 0 /* value */,
                                        utid, RefType::kRefUtid);
+}
+
+void ProtoTraceParser::ParseSchedProcessExit(int64_t ts, ConstBytes blob) {
+  protos::pbzero::SchedProcessExitFtraceEvent::Decoder ex(blob.data, blob.size);
+  uint32_t pid = static_cast<uint32_t>(ex.pid());
+  uint32_t tgid = static_cast<uint32_t>(ex.tgid());
+  context_->process_tracker->EndThread(ts, pid, tgid);
 }
 
 void ProtoTraceParser::ParseTaskNewTask(int64_t ts,
@@ -734,54 +764,17 @@ void ProtoTraceParser::ParsePrint(uint32_t,
                                   uint32_t pid,
                                   ConstBytes blob) {
   protos::pbzero::PrintFtraceEvent::Decoder evt(blob.data, blob.size);
-  systrace_utils::SystraceTracePoint point{};
-  auto r = ParseSystraceTracePoint(evt.buf(), &point);
-  if (r != systrace_utils::SystraceParseResult::kSuccess) {
-    if (r == systrace_utils::SystraceParseResult::kFailure) {
-      context_->storage->IncrementStats(stats::systrace_parse_failure);
-    }
-    return;
-  }
+  context_->systrace_parser->ParsePrintEvent(ts, pid, evt.buf());
+}
 
-  switch (point.phase) {
-    case 'B': {
-      StringId name_id = context_->storage->InternString(point.name);
-      context_->slice_tracker->BeginAndroid(ts, pid, point.tgid, 0 /*cat_id*/,
-                                            name_id);
-      break;
-    }
-
-    case 'E': {
-      context_->slice_tracker->EndAndroid(ts, pid, point.tgid);
-      break;
-    }
-
-    case 'C': {
-      // LMK events from userspace are hacked as counter events with the "value"
-      // of the counter representing the pid of the killed process which is
-      // reset to 0 once the kill is complete.
-      // Homogenise this with kernel LMK events as an instant event, ignoring
-      // the resets to 0.
-      if (point.name == "kill_one_process") {
-        auto killed_pid = static_cast<uint32_t>(point.value);
-        if (killed_pid != 0) {
-          UniquePid killed_upid =
-              context_->process_tracker->GetOrCreateProcess(killed_pid);
-          context_->event_tracker->PushInstant(ts, lmk_id_, 0, killed_upid,
-                                               RefType::kRefUpid);
-        }
-        // TODO(lalitm): we should not add LMK events to the counters table
-        // once the UI has support for displaying instants.
-      }
-      // This is per upid on purpose. Some counters are pushed from arbitrary
-      // threads but are really per process.
-      UniquePid upid =
-          context_->process_tracker->GetOrCreateProcess(point.tgid);
-      StringId name_id = context_->storage->InternString(point.name);
-      context_->event_tracker->PushCounter(ts, point.value, name_id, upid,
-                                           RefType::kRefUpid);
-    }
-  }
+void ProtoTraceParser::ParseZero(uint32_t,
+                                 int64_t ts,
+                                 uint32_t pid,
+                                 ConstBytes blob) {
+  protos::pbzero::ZeroFtraceEvent::Decoder evt(blob.data, blob.size);
+  uint32_t tgid = static_cast<uint32_t>(evt.pid());
+  context_->systrace_parser->ParseZeroEvent(ts, pid, evt.flag(), evt.name(),
+                                            tgid, evt.value());
 }
 
 void ProtoTraceParser::ParseBatteryCounters(int64_t ts, ConstBytes blob) {
@@ -1236,18 +1229,16 @@ void ProtoTraceParser::ParseProfilePacket(int64_t ts, ConstBytes blob) {
   protos::pbzero::ProfilePacket::Decoder packet(blob.data, blob.size);
 
   for (auto it = packet.strings(); it; ++it) {
-    protos::pbzero::ProfilePacket::InternedString::Decoder entry(it->data(),
-                                                                 it->size());
+    protos::pbzero::InternedString::Decoder entry(it->data(), it->size());
 
     const char* str = reinterpret_cast<const char*>(entry.str().data);
     auto str_id = context_->storage->InternString(
         base::StringView(str, entry.str().size));
-    context_->heap_profile_tracker->AddString(index, entry.id(), str_id);
+    context_->heap_profile_tracker->AddString(index, entry.iid(), str_id);
   }
 
   for (auto it = packet.mappings(); it; ++it) {
-    protos::pbzero::ProfilePacket::Mapping::Decoder entry(it->data(),
-                                                          it->size());
+    protos::pbzero::Mapping::Decoder entry(it->data(), it->size());
     HeapProfileTracker::SourceMapping src_mapping;
     src_mapping.build_id = entry.build_id();
     src_mapping.offset = entry.offset();
@@ -1258,27 +1249,26 @@ void ProtoTraceParser::ParseProfilePacket(int64_t ts, ConstBytes blob) {
     for (auto path_string_id_it = entry.path_string_ids(); path_string_id_it;
          ++path_string_id_it)
       src_mapping.name_id = path_string_id_it->as_uint64();
-    context_->heap_profile_tracker->AddMapping(index, entry.id(), src_mapping);
+    context_->heap_profile_tracker->AddMapping(index, entry.iid(), src_mapping);
   }
 
   for (auto it = packet.frames(); it; ++it) {
-    protos::pbzero::ProfilePacket::Frame::Decoder entry(it->data(), it->size());
+    protos::pbzero::Frame::Decoder entry(it->data(), it->size());
     HeapProfileTracker::SourceFrame src_frame;
     src_frame.name_id = entry.function_name_id();
     src_frame.mapping_id = entry.mapping_id();
     src_frame.rel_pc = entry.rel_pc();
 
-    context_->heap_profile_tracker->AddFrame(index, entry.id(), src_frame);
+    context_->heap_profile_tracker->AddFrame(index, entry.iid(), src_frame);
   }
 
   for (auto it = packet.callstacks(); it; ++it) {
-    protos::pbzero::ProfilePacket::Callstack::Decoder entry(it->data(),
-                                                            it->size());
+    protos::pbzero::Callstack::Decoder entry(it->data(), it->size());
     HeapProfileTracker::SourceCallstack src_callstack;
     for (auto frame_it = entry.frame_ids(); frame_it; ++frame_it)
       src_callstack.emplace_back(frame_it->as_uint64());
 
-    context_->heap_profile_tracker->AddCallstack(index, entry.id(),
+    context_->heap_profile_tracker->AddCallstack(index, entry.iid(),
                                                  src_callstack);
   }
 
@@ -1374,7 +1364,8 @@ void ProtoTraceParser::ParseTrackEvent(
 
   StringId category_id = 0;
 
-  // If there's a single category, we can avoid building a concatenated string.
+  // If there's a single category, we can avoid building a concatenated
+  // string.
   if (PERFETTO_LIKELY(category_iids.size() == 1)) {
     auto* map =
         sequence_state->GetInternedDataMap<protos::pbzero::EventCategory>();
@@ -1444,8 +1435,8 @@ void ProtoTraceParser::ParseTrackEvent(
     }
   }
 
-  // TODO(eseckler): Handle thread timestamp/duration, debug annotations, task
-  // souce locations, legacy event attributes, ...
+  // TODO(eseckler): Handle thread timestamp/duration, legacy event
+  // attributes, async events, ...
 
   auto args_callback = [this, &event, &sequence_state](
                            ArgsTracker* args_tracker, RowId row) {
@@ -1474,6 +1465,14 @@ void ProtoTraceParser::ParseTrackEvent(
       auto duration_ns = legacy_event.duration_us() * 1000;
       if (duration_ns < 0)
         return;
+      slice_tracker->Scoped(ts, utid, category_id, name_id, duration_ns,
+                            args_callback);
+      break;
+    }
+    case 'I': {  // TRACE_EVENT_PHASE_INSTANT.
+      // Handle instant events as slices with zero duration, so that they end
+      // up nested underneath their parent slices.
+      int64_t duration_ns = 0;
       slice_tracker->Scoped(ts, utid, category_id, name_id, duration_ns,
                             args_callback);
       break;

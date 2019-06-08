@@ -106,7 +106,6 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
       if (category == "gfx") {
         AddEventGroup(table, "mdss", &events);
         AddEventGroup(table, "sde", &events);
-        AddEventGroup(table, "mali_systrace", &events);
         continue;
       }
 
@@ -123,10 +122,13 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("sched", "sched_cpu_hotplug"));
         events.insert(GroupAndName("sched", "sched_pi_setprio"));
         events.insert(GroupAndName("sched", "sched_process_exit"));
+        events.insert(GroupAndName("systrace", "0"));
         AddEventGroup(table, "cgroup", &events);
         events.insert(GroupAndName("oom", "oom_score_adj_update"));
         events.insert(GroupAndName("task", "task_rename"));
         events.insert(GroupAndName("task", "task_newtask"));
+        AddEventGroup(table, "systrace", &events);
+        AddEventGroup(table, "scm", &events);
         continue;
       }
 
@@ -163,6 +165,7 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
 
       if (category == "freq") {
         events.insert(GroupAndName("power", "cpu_frequency"));
+        events.insert(GroupAndName("power", "gpu_frequency"));
         events.insert(GroupAndName("power", "clock_set_rate"));
         events.insert(GroupAndName("power", "clock_disable"));
         events.insert(GroupAndName("power", "clock_enable"));
@@ -170,6 +173,7 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("clk", "clk_disable"));
         events.insert(GroupAndName("clk", "clk_enable"));
         events.insert(GroupAndName("power", "cpu_frequency_limits"));
+        AddEventGroup(table, "msm_bus", &events);
         continue;
       }
 

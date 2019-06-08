@@ -2,8 +2,7 @@
 
 Googlers, for design doc see: http://go/heapprofd-design
 
-> [!NOTE]
-> **heapprofd requires Android Q.**
+**heapprofd requires Android Q.**
 
 heapprofd is a tool that tracks native heap allocations & deallocations of an
 Android process within a given time period. The resulting profile can be used
@@ -161,17 +160,15 @@ always produced. You can create multiple of these dumps, and they will be
 enumerated in the output directory.
 
 ## Idle page tracking
-> [!NOTE]
-> This is only available in Android versions newer than Q.
+This is only available in Android versions newer than Q.
 
 Idle page tracking allows you to analyze which allocations made by your
 program are being used by a workload. This can be useful for finding leaks
 as well as unused cached values.
 
-> [!DANGER|style:flat]
-> **Do not follow these instructions on devices containing valuable data.**
-> They require you turn off SELinux on your device, significantly lowering
-> your device's security level.
+**Do not follow these instructions on devices containing valuable data.**
+They require you turn off SELinux on your device, significantly lowering
+your device's security level.
 
 Use the following command to profile the next startup of your program with idle
 tracking enabled.
@@ -223,6 +220,11 @@ sure no [DEDUPED frames](#deduped-frames) are involved.
 ## Known Issues
 
 * Does not work on x86 platforms (including the Android cuttlefish emulator).
+* If heapprofd is run standalone (by running `heapprofd` in a root shell, rather
+  than through init), `/dev/socket/heapprofd` get assigned an incorrect SELinux
+  domain. You will not be able to profile any processes unless you disable
+  SELinux enforcement.
+  Run `restorecon /dev/socket/heapprofd` in a root shell to resolve.
 
 ## Ways to count memory
 

@@ -28,10 +28,10 @@
 #include "perfetto/ext/base/unix_task_runner.h"
 
 #include "perfetto/ext/tracing/core/basic_types.h"
-#include "perfetto/ext/tracing/core/data_source_config.h"
 #include "perfetto/ext/tracing/core/producer.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/core/tracing_service.h"
+#include "perfetto/tracing/core/data_source_config.h"
 
 #include "src/profiling/memory/bookkeeping.h"
 #include "src/profiling/memory/heapprofd_config.h"
@@ -153,6 +153,10 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   void SetProducerEndpoint(
       std::unique_ptr<TracingService::ProducerEndpoint> endpoint);
 
+  base::UnixSocket::EventListener& socket_delegate() {
+    return socket_delegate_;
+  }
+
  private:
   // State of the connection to tracing service (traced).
   enum State {
@@ -220,9 +224,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   void SetStartupProperties(DataSource* data_source);
   void SignalRunningProcesses(DataSource* data_source);
 
-  // Specific to mode_ == kCentral
-  std::unique_ptr<base::UnixSocket> MakeListeningSocket();
-
   // Specific to mode_ == kChild
   void TerminateProcess(int exit_status);
   // Specific to mode_ == kChild
@@ -262,9 +263,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   std::map<FlushRequestID, size_t> flushes_in_progress_;
   std::map<DataSourceInstanceID, DataSource> data_sources_;
   std::vector<UnwindingWorker> unwinding_workers_;
-
-  // Specific to mode_ == kCentral
-  std::unique_ptr<base::UnixSocket> listening_socket_;
 
   // Specific to mode_ == kChild
   Process target_process_{base::kInvalidPid, ""};

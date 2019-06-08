@@ -31,6 +31,7 @@
 #include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/base/utils.h"
 
+#include "perfetto/trace/profiling/profile_common.pb.h"
 #include "perfetto/trace/profiling/profile_packet.pb.h"
 #include "perfetto/trace/trace.pb.h"
 #include "perfetto/trace/trace_packet.pb.h"
@@ -60,6 +61,10 @@ std::string GetTemp() {
   return tmp;
 }
 
+using ::perfetto::protos::Callstack;
+using ::perfetto::protos::Frame;
+using ::perfetto::protos::InternedString;
+using ::perfetto::protos::Mapping;
 using ::perfetto::protos::ProfilePacket;
 
 using GLine = ::perftools::profiles::Line;
@@ -96,19 +101,18 @@ void DumpProfilePacket(std::vector<ProfilePacket>& packet_fragments,
   // A profile packet can be split into multiple fragments. We need to iterate
   // over all of them to reconstruct the original packet.
   for (const ProfilePacket& packet : packet_fragments) {
-    for (const ProfilePacket::InternedString& interned_string :
-         packet.strings())
-      string_lookup.emplace(interned_string.id(), interned_string.str());
+    for (const InternedString& interned_string : packet.strings())
+      string_lookup.emplace(interned_string.iid(), interned_string.str());
   }
 
   std::map<uint64_t, const std::vector<uint64_t>> callstack_lookup;
   for (const ProfilePacket& packet : packet_fragments) {
-    for (const ProfilePacket::Callstack& callstack : packet.callstacks()) {
+    for (const Callstack& callstack : packet.callstacks()) {
       std::vector<uint64_t> frame_ids(
           static_cast<size_t>(callstack.frame_ids().size()));
       std::reverse_copy(callstack.frame_ids().cbegin(),
                         callstack.frame_ids().cend(), frame_ids.begin());
-      callstack_lookup.emplace(callstack.id(), std::move(frame_ids));
+      callstack_lookup.emplace(callstack.iid(), std::move(frame_ids));
     }
   }
 
@@ -145,9 +149,9 @@ void DumpProfilePacket(std::vector<ProfilePacket>& packet_fragments,
   value_type->set_unit(kBytes);
 
   for (const ProfilePacket& packet : packet_fragments) {
-    for (const ProfilePacket::Mapping& mapping : packet.mappings()) {
+    for (const Mapping& mapping : packet.mappings()) {
       GMapping* gmapping = profile.add_mapping();
-      gmapping->set_id(mapping.id());
+      gmapping->set_id(mapping.iid());
       gmapping->set_memory_start(mapping.start());
       gmapping->set_memory_limit(mapping.end());
       gmapping->set_file_offset(mapping.offset());
@@ -157,7 +161,7 @@ void DumpProfilePacket(std::vector<ProfilePacket>& packet_fragments,
         if (it == string_lookup.end()) {
           PERFETTO_ELOG("Mapping %" PRIu64
                         " referring to invalid string_id %" PRIu64 ".",
-                        static_cast<uint64_t>(mapping.id()), str_id);
+                        static_cast<uint64_t>(mapping.iid()), str_id);
           continue;
         }
 
@@ -181,9 +185,9 @@ void DumpProfilePacket(std::vector<ProfilePacket>& packet_fragments,
 
   std::set<uint64_t> functions_to_dump;
   for (const ProfilePacket& packet : packet_fragments) {
-    for (const ProfilePacket::Frame& frame : packet.frames()) {
+    for (const Frame& frame : packet.frames()) {
       GLocation* glocation = profile.add_location();
-      glocation->set_id(frame.id());
+      glocation->set_id(frame.iid());
       glocation->set_mapping_id(frame.mapping_id());
       // TODO(fmayer): This is probably incorrect. Probably should be abs pc.
       glocation->set_address(frame.rel_pc());

@@ -176,6 +176,9 @@ enum VmstatCounters {
   VMSTAT_UNEVICTABLE_PGS_MUNLOCKED = 90;
   VMSTAT_UNEVICTABLE_PGS_CLEARED = 91;
   VMSTAT_UNEVICTABLE_PGS_STRANDED = 92;
+  VMSTAT_NR_ZSPAGES = 93;
+  VMSTAT_NR_ION_HEAP = 94;
+  VMSTAT_NR_GPU_HEAP = 95;
 }
 // End of protos/perfetto/common/sys_stats_counters.proto
 
@@ -430,6 +433,64 @@ message ChromeBenchmarkMetadata {
 }
 
 // End of protos/perfetto/trace/chrome/chrome_benchmark_metadata.proto
+
+// Begin of protos/perfetto/trace/chrome/chrome_metadata.proto
+
+// Metadata for chrome traces.
+message ChromeMetadataPacket {
+  optional BackgroundTracingMetadata background_tracing_metadata = 1;
+}
+
+// Metadata related to background tracing scenarios, states and triggers.
+message BackgroundTracingMetadata {
+  // Information about a trigger rule defined in the experiment config.
+  message TriggerRule {
+    enum TriggerType {
+      TRIGGER_UNSPECIFIED = 0;
+
+      // Traces are triggered by specific range of values of an UMA histogram.
+      MONITOR_AND_DUMP_WHEN_SPECIFIC_HISTOGRAM_AND_VALUE = 1;
+
+      // Traces are triggered by specific named events in chromium codebase,
+      // like "second-update-failure".
+      MONITOR_AND_DUMP_WHEN_TRIGGER_NAMED = 2;
+    }
+    optional TriggerType trigger_type = 1;
+
+    // Configuration of histogram trigger.
+    message HistogramRule {
+      // UMA histogram name hash, same as HistogramEventProto.name_hash.
+      optional fixed64 histogram_name_hash = 1;
+
+      // Range of values of the histogram that activates trigger.
+      optional int64 histogram_min_trigger = 2;
+      optional int64 histogram_max_trigger = 3;
+    }
+    optional HistogramRule histogram_rule = 2;
+
+    // Configuration of named trigger.
+    message NamedRule {
+      enum EventType {
+        UNSPECIFIED = 0;
+        SESSION_RESTORE = 1;
+        NAVIGATION = 2;
+        STARTUP = 3;
+
+        TEST_RULE = 1000;
+      }
+      optional EventType event_type = 1;
+    }
+    optional NamedRule named_rule = 3;
+  }
+
+  // Specifies the rule that caused the trace to be uploaded.
+  optional TriggerRule triggered_rule = 1;
+
+  // List of all active triggers in current session, when trace was triggered.
+  repeated TriggerRule active_rules = 2;
+}
+
+// End of protos/perfetto/trace/chrome/chrome_metadata.proto
 
 // Begin of protos/perfetto/trace/clock_snapshot.proto
 
@@ -1967,6 +2028,8 @@ message FtraceEvent {
     MmEventRecordFtraceEvent mm_event_record = 328;
     SysEnterFtraceEvent sys_enter = 329;
     SysExitFtraceEvent sys_exit = 330;
+    ZeroFtraceEvent zero = 331;
+    GpuFrequencyFtraceEvent gpu_frequency = 332;
   }
 }
 
@@ -2350,6 +2413,10 @@ message SuspendResumeFtraceEvent {
   optional int32 val = 2;
   optional uint32 start = 3;
 }
+message GpuFrequencyFtraceEvent {
+  optional uint32 gpu_id = 1;
+  optional uint32 state = 2;
+}
 
 // End of protos/perfetto/trace/ftrace/power.proto
 
@@ -2459,6 +2526,17 @@ message SignalGenerateFtraceEvent {
 
 // End of protos/perfetto/trace/ftrace/signal.proto
 
+// Begin of protos/perfetto/trace/ftrace/systrace.proto
+
+message ZeroFtraceEvent {
+  optional int32 flag = 1;
+  optional string name = 2;
+  optional int32 pid = 3;
+  optional int64 value = 4;
+}
+
+// End of protos/perfetto/trace/ftrace/systrace.proto
+
 // Begin of protos/perfetto/trace/ftrace/task.proto
 
 message TaskNewtaskFtraceEvent {
@@ -2524,7 +2602,7 @@ message MmVmscanKswapdSleepFtraceEvent {
 // refers to them (since the last reset of interning state). They may also be
 // emitted proactively in advance of referring to them in later packets.
 //
-// Next id: 5.
+// Next id: 8.
 message InternedData {
   // Each field's message type needs to specify an |iid| field, which is the ID
   // of the entry in the field's interning index. Each field constructs its own
@@ -2537,7 +2615,22 @@ message InternedData {
   repeated LegacyEventName legacy_event_names = 2;
   repeated DebugAnnotationName debug_annotation_names = 3;
   repeated SourceLocation source_locations = 4;
+
   // Note: field IDs up to 15 should be used for frequent data only.
+
+  // Build IDs of exectuable files.
+  repeated InternedString build_ids = 16;
+  // Paths to executable files.
+  repeated InternedString mapping_paths = 17;
+  // Names of functions used in frames below.
+  repeated InternedString function_names = 5;
+
+  // Executable files mapped into processes.
+  repeated Mapping mappings = 19;
+  // Frames of callstacks of a program.
+  repeated Frame frames = 6;
+  // A callstack of a program.
+  repeated Callstack callstacks = 7;
 }
 
 // End of protos/perfetto/trace/interned_data/interned_data.proto
@@ -2620,42 +2713,48 @@ message PowerRails {
 
 // End of protos/perfetto/trace/power/power_rails.proto
 
+// Begin of protos/perfetto/trace/profiling/profile_common.proto
+
+// TODO(fmayer): Move to a common location.
+message InternedString {
+  optional uint64 iid = 1;
+  optional bytes str = 2;
+}
+
+message Mapping {
+  optional uint64 iid = 1;       // Interning key.
+  optional uint64 build_id = 2;  // Interning key.
+  optional uint64 offset = 3;
+  optional uint64 start = 4;
+  optional uint64 end = 5;
+  optional uint64 load_bias = 6;
+  // E.g. ["system", "lib64", "libc.so"]
+  repeated uint64 path_string_ids = 7;  // id of string.
+}
+
+message Frame {
+  optional uint64 iid = 1;  // Interning key
+  // E.g. "fopen"
+  optional uint64 function_name_id = 2;  // id of string.
+  optional uint64 mapping_id = 3;
+  optional uint64 rel_pc = 4;
+}
+
+message Callstack {
+  optional uint64 iid = 1;
+  // Frames of this callstack. Bottom frame first.
+  repeated uint64 frame_ids = 2;
+}
+
+// End of protos/perfetto/trace/profiling/profile_common.proto
+
 // Begin of protos/perfetto/trace/profiling/profile_packet.proto
 
 message ProfilePacket {
   repeated InternedString strings = 1;
-  message InternedString {
-    optional uint64 id = 1;
-    optional bytes str = 2;
-  }
-
   repeated Mapping mappings = 4;
-  message Mapping {
-    optional uint64 id = 1;        // Interning key.
-    optional uint64 build_id = 2;  // Interning key.
-    optional uint64 offset = 3;
-    optional uint64 start = 4;
-    optional uint64 end = 5;
-    optional uint64 load_bias = 6;
-    // E.g. ["system", "lib64", "libc.so"]
-    repeated uint64 path_string_ids = 7;  // id of string.
-  }
-
   repeated Frame frames = 2;
-  message Frame {
-    optional uint64 id = 1;  // Interning key
-    // E.g. "fopen"
-    optional uint64 function_name_id = 2;  // id of string.
-    optional uint64 mapping_id = 3;
-    optional uint64 rel_pc = 4;
-  }
-
   repeated Callstack callstacks = 3;
-  message Callstack {
-    optional uint64 id = 1;
-    // Frames of this callstack. Bottom frame first.
-    repeated uint64 frame_ids = 2;
-  }
 
   message HeapSample {
     optional uint64 callstack_id = 1;
@@ -2934,7 +3033,7 @@ message Trace {
 // TracePacket(s).
 //
 // Next reserved id: 13 (up to 15).
-// Next id: 49.
+// Next id: 52.
 message TracePacket {
   // TODO(primiano): in future we should add a timestamp_clock_domain field to
   // allow mixing timestamps from different clock domains.
@@ -2965,6 +3064,7 @@ message TracePacket {
     PackagesList packages_list = 47;
     ChromeBenchmarkMetadata chrome_benchmark_metadata = 48;
     PerfettoMetatrace perfetto_metatrace = 49;
+    ChromeMetadataPacket chrome_metadata = 51;
 
     // Only used by TrackEvent.
     ProcessDescriptor process_descriptor = 43;
@@ -2975,6 +3075,11 @@ message TracePacket {
     // {82477a76-b28d-42ba-81dc-33326d57a079}. This is used to be able to
     // efficiently partition long traces without having to fully parse them.
     bytes synchronization_marker = 36;
+
+    // Zero or more proto encoded trace packets compressed using deflate.
+    // Each compressed_packets TracePacket (including the two field ids and
+    // sizes) should be less than 512KB.
+    bytes compressed_packets = 50;
 
     // This field is only used for testing.
     // In previous versions of this proto this field had the id 268435455
@@ -3449,7 +3554,10 @@ message DataSourceConfig {
   optional AndroidPowerConfig android_power_config = 106 [lazy = true];
   optional AndroidLogConfig android_log_config = 107 [lazy = true];
 
-  // TODO(primiano): Figure out how to deal with this, needs a multi-side patch.
+  // Chrome is special as it doesn't use the perfetto IPC layer. We want to
+  // avoid proto serialization and de-serialization there because that would
+  // just add extra hops on top of the Mojo ser/des. Instead we auto-generate a
+  // C++ class for it so it can pass around plain C++ objets.
   optional ChromeConfig chrome_config = 101;
 
   // This is a fallback mechanism to send a free-form text config to the
@@ -3462,8 +3570,9 @@ message DataSourceConfig {
   optional string legacy_config = 1000;
 
   // This field is only used for testing.
-  optional TestConfig for_testing =
-      268435455;  // 2^28 - 1, max field id for protos supported by Java.
+  optional TestConfig for_testing = 1001;
+
+  reserved 268435455;  // Was |for_testing|. Caused more problems then found.
 }
 
 // End of protos/perfetto/config/data_source_config.proto
@@ -3604,7 +3713,8 @@ message SysStatsConfig {
   // Cost: 0.3 ms [read] + 0.07 ms [parse + trace injection]
   optional uint32 meminfo_period_ms = 1;
 
-  // Only the counters specified below are reported.
+  // If empty all known counters are reported. Otherwise, only the counters
+  // specified below are reported.
   repeated MeminfoCounters meminfo_counters = 2;
 
   // Polls /proc/vmstat every X ms, if non-zero.
@@ -3690,7 +3800,7 @@ message TestConfig {
 // It contains the general config for the logging buffer(s) and the configs for
 // all the data source being enabled.
 //
-// Next id: 24.
+// Next id: 26.
 message TraceConfig {
   message BufferConfig {
     optional uint32 size_kb = 1;
@@ -3943,6 +4053,28 @@ message TraceConfig {
   // If set the tracing service will ensure there is at most one tracing session
   // with this key.
   optional string unique_session_name = 22;
+
+  // Compress trace with the given method. Best effort.
+  enum CompressionType {
+    COMPRESSION_TYPE_UNSPECIFIED = 0;
+    COMPRESSION_TYPE_DEFLATE = 1;
+  };
+  optional CompressionType compression_type = 24;
+
+  // Android-only. Debug builds only. Not for general use. If set, saves a
+  // Dropbox trace into an incident. This field is read by perfetto_cmd, rather
+  // than the tracing service. All fields are mandatory.
+  message IncidentReportConfig {
+    optional string destination_package = 1;
+    optional string destination_class = 2;
+    // Level of filtering in the requested incident. See |Destination| in
+    // frameworks/base/core/proto/android/privacy.proto.
+    optional int32 privacy_level = 3;
+    // If true, do not write the trace into dropbox (i.e. incident only).
+    // Otherwise, write to both dropbox and incident.
+    optional bool skip_dropbox = 4;
+  }
+  optional IncidentReportConfig incident_report_config = 25;
 }
 
 // End of protos/perfetto/config/trace_config.proto
