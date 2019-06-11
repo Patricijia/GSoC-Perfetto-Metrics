@@ -42,38 +42,71 @@ class SliceTracker {
 
   // virtual for testing
   virtual void Begin(int64_t timestamp,
-                     UniqueTid utid,
+                     int64_t ref,
+                     RefType ref_type,
                      StringId cat,
                      StringId name,
+                     StringId opt_ref_scope = {},
                      SetArgsCallback args_callback = SetArgsCallback());
 
   // virtual for testing
   virtual void Scoped(int64_t timestamp,
-                      UniqueTid utid,
+                      int64_t ref,
+                      RefType ref_type,
                       StringId cat,
                       StringId name,
                       int64_t duration,
+                      StringId opt_ref_scope = {},
                       SetArgsCallback args_callback = SetArgsCallback());
 
   void EndAndroid(int64_t timestamp, uint32_t ftrace_tid, uint32_t atrace_tgid);
 
   // virtual for testing
   virtual void End(int64_t timestamp,
-                   UniqueTid utid,
+                   int64_t ref,
+                   RefType ref_type,
                    StringId opt_cat = {},
                    StringId opt_name = {},
+                   StringId opt_ref_scope = {},
                    SetArgsCallback args_callback = SetArgsCallback());
+
+  void FlushPendingSlices();
 
  private:
   using SlicesStack = std::vector<std::pair<uint32_t /* row */, ArgsTracker>>;
 
+  struct StackMapKey {
+    int64_t ref;
+    RefType type;
+    StringId scope;
+
+    bool operator==(const StackMapKey& rhs) const {
+      return std::tie(ref, type, scope) ==
+             std::tie(rhs.ref, rhs.type, rhs.scope);
+    }
+  };
+
+  struct StackMapHash {
+    size_t operator()(const StackMapKey& p) const {
+      base::Hash hash;
+      hash.Update(p.ref);
+      hash.Update(p.type);
+      hash.Update(p.scope);
+      return static_cast<size_t>(hash.digest());
+    }
+  };
+
+  using StackMap = std::unordered_map<StackMapKey, SlicesStack, StackMapHash>;
+
   void StartSlice(int64_t timestamp,
                   int64_t duration,
-                  UniqueTid utid,
+                  int64_t ref,
+                  RefType ref_type,
                   StringId cat,
                   StringId name,
+                  StringId ref_scope,
                   SetArgsCallback args_callback);
-  void CompleteSlice(UniqueTid tid);
+  void CompleteSlice(StackMapKey stack_key);
 
   void MaybeCloseStack(int64_t end_ts, SlicesStack*);
   int64_t GetStackHash(const SlicesStack&);
@@ -83,7 +116,8 @@ class SliceTracker {
   int64_t prev_timestamp_ = 0;
 
   TraceProcessorContext* const context_;
-  std::unordered_map<UniqueTid, SlicesStack> threads_;
+  const StringId ref_scope_id_;
+  StackMap stacks_;
   std::unordered_map<uint32_t, uint32_t> ftrace_to_atrace_tgid_;
 };
 
