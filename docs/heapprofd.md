@@ -212,8 +212,10 @@ accuracy in the resulting profile) by passing `--interval` to heap\_profile.
 Check whether your target process is eligible to be profiled by consulting
 [Target processes](#target-processes) above.
 
+Also check the [Known Issues](#known-issues).
 
-## Impossible callstacks
+
+### Impossible callstacks
 If you see a callstack that seems to impossible from looking at the code, make
 sure no [DEDUPED frames](#deduped-frames) are involved.
 
