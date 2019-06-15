@@ -96,6 +96,7 @@ proto_library(
     name = "config",
     srcs = [
         "perfetto/config/android/android_log_config.proto",
+        "perfetto/config/android/packages_list_config.proto",
         "perfetto/config/chrome/chrome_config.proto",
         "perfetto/config/data_source_config.proto",
         "perfetto/config/ftrace/ftrace_config.proto",
@@ -182,6 +183,7 @@ proto_library(
     name = "config_zero",
     srcs = [
         "perfetto/config/android/android_log_config.proto",
+        "perfetto/config/android/packages_list_config.proto",
         "perfetto/config/chrome/chrome_config.proto",
         "perfetto/config/data_source_config.proto",
         "perfetto/config/ftrace/ftrace_config.proto",
@@ -230,6 +232,7 @@ proto_library(
     name = "metrics_android",
     srcs = [
         "perfetto/metrics/android/batt_metric.proto",
+        "perfetto/metrics/android/cpu_metric.proto",
         "perfetto/metrics/android/heap_profile.proto",
         "perfetto/metrics/android/mem_metric.proto",
         "perfetto/metrics/android/startup_metric.proto",
@@ -269,6 +272,7 @@ proto_library(
     name = "metrics_android_zero",
     srcs = [
         "perfetto/metrics/android/batt_metric.proto",
+        "perfetto/metrics/android/cpu_metric.proto",
         "perfetto/metrics/android/heap_profile.proto",
         "perfetto/metrics/android/mem_metric.proto",
         "perfetto/metrics/android/startup_metric.proto",
