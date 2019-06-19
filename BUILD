@@ -352,7 +352,7 @@ cc_library(
         "//third_party/perfetto/protos:trace_zero_cc_proto",
         "//third_party/sqlite",
         "//third_party/sqlite:sqlite_ext_percentile",
-        "//third_party/zlib",
+        "//third_party/zlib:zlibsystem",
     ],
 )
 
@@ -591,7 +591,7 @@ cc_binary(
         "//third_party/protobuf:libprotoc",
         "//third_party/sqlite",
         "//third_party/sqlite:sqlite_ext_percentile",
-        "//third_party/zlib",
+        "//third_party/zlib:zlibsystem",
     ],
 )
 
@@ -856,7 +856,7 @@ cc_binary(
         "//third_party/protobuf:libprotoc",
         "//third_party/sqlite",
         "//third_party/sqlite:sqlite_ext_percentile",
-        "//third_party/zlib",
+        "//third_party/zlib:zlibsystem",
     ],
 )
 
