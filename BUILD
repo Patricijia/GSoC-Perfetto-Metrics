@@ -61,6 +61,7 @@ cc_library(
     hdrs = [
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
+        "include/perfetto/base/copyable_ptr.h",
         "include/perfetto/base/export.h",
         "include/perfetto/base/logging.h",
         "include/perfetto/base/task_runner.h",
@@ -106,12 +107,10 @@ cc_library(
     ],
 )
 
-# GN target: //src/protozero/protoc_plugin:protoc_plugin
+# GN target: //src/protozero/protoc_plugin:protozero_plugin
 cc_binary(
-    name = "src_protozero_protoc_plugin_protoc_plugin",
+    name = "src_protozero_protoc_plugin_protozero_plugin",
     srcs = [
-        "src/protozero/protoc_plugin/protozero_generator.cc",
-        "src/protozero/protoc_plugin/protozero_generator.h",
         "src/protozero/protoc_plugin/protozero_plugin.cc",
     ],
     deps = [
@@ -138,6 +137,7 @@ cc_library(
     hdrs = [
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
+        "include/perfetto/base/copyable_ptr.h",
         "include/perfetto/base/export.h",
         "include/perfetto/base/logging.h",
         "include/perfetto/base/task_runner.h",
@@ -366,6 +366,7 @@ cc_library(
     hdrs = [
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
+        "include/perfetto/base/copyable_ptr.h",
         "include/perfetto/base/export.h",
         "include/perfetto/base/logging.h",
         "include/perfetto/base/task_runner.h",
@@ -446,6 +447,7 @@ cc_binary(
     srcs = [
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
+        "include/perfetto/base/copyable_ptr.h",
         "include/perfetto/base/export.h",
         "include/perfetto/base/logging.h",
         "include/perfetto/base/task_runner.h",
@@ -685,6 +687,7 @@ cc_binary(
     srcs = [
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
+        "include/perfetto/base/copyable_ptr.h",
         "include/perfetto/base/export.h",
         "include/perfetto/base/logging.h",
         "include/perfetto/base/task_runner.h",

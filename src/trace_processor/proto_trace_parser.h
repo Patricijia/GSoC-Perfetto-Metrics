@@ -53,6 +53,7 @@ class ProtoTraceParser : public TraceParser {
   void ParseProcessStats(int64_t timestamp, ConstBytes);
   void ParseSchedSwitch(uint32_t cpu, int64_t timestamp, ConstBytes);
   void ParseSchedWakeup(int64_t timestamp, ConstBytes);
+  void ParseSchedWaking(int64_t timestamp, ConstBytes);
   void ParseSchedProcessExit(int64_t timestamp, ConstBytes);
   void ParseTaskNewTask(int64_t timestamp, uint32_t source_tid, ConstBytes);
   void ParseTaskRename(ConstBytes);
@@ -90,7 +91,9 @@ class ProtoTraceParser : public TraceParser {
                              ConstBytes view);
   void ParseTraceStats(ConstBytes);
   void ParseFtraceStats(ConstBytes);
-  void ParseProfilePacket(int64_t ts, ConstBytes);
+  void ParseProfilePacket(int64_t ts,
+                          ProtoIncrementalState::PacketSequenceState*,
+                          ConstBytes);
   void ParseSystemInfo(ConstBytes);
   void ParseTrackEvent(int64_t ts,
                        int64_t tts,
@@ -118,6 +121,7 @@ class ProtoTraceParser : public TraceParser {
   TraceProcessorContext* context_;
   const StringId utid_name_id_;
   const StringId sched_wakeup_name_id_;
+  const StringId sched_waking_name_id_;
   const StringId cpu_freq_name_id_;
   const StringId cpu_idle_name_id_;
   const StringId gpu_freq_name_id_;
