@@ -43,6 +43,7 @@
 
 #include "perfetto/common/android_log_constants.pbzero.h"
 #include "perfetto/common/trace_stats.pbzero.h"
+#include "perfetto/ext/base/string_writer.h"
 #include "perfetto/trace/android/android_log.pbzero.h"
 #include "perfetto/trace/chrome/chrome_benchmark_metadata.pbzero.h"
 #include "perfetto/trace/clock_snapshot.pbzero.h"
@@ -60,6 +61,7 @@
 #include "perfetto/trace/ftrace/signal.pbzero.h"
 #include "perfetto/trace/ftrace/systrace.pbzero.h"
 #include "perfetto/trace/ftrace/task.pbzero.h"
+#include "perfetto/trace/gpu/gpu_counter_event.pbzero.h"
 #include "perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
 #include "perfetto/trace/power/battery_counters.pbzero.h"
@@ -379,6 +381,10 @@ void ProtoTraceParser::ParseTracePacket(
     ParseMetatraceEvent(ts, packet.perfetto_metatrace());
   }
 
+  if (packet.has_gpu_counter_event()) {
+    ParseGpuCounterEvent(ts, packet.gpu_counter_event());
+  }
+
   // TODO(lalitm): maybe move this to the flush method in the trace processor
   // once we have it. This may reduce performance in the ArgsTracker though so
   // needs to be handled carefully.
@@ -485,8 +491,8 @@ void ProtoTraceParser::ParseProcessTree(ConstBytes blob) {
     auto pid = static_cast<uint32_t>(proc.pid());
     auto ppid = static_cast<uint32_t>(proc.ppid());
 
-    context_->process_tracker->UpdateProcess(pid, ppid,
-                                             proc.cmdline()->as_string());
+    context_->process_tracker->SetProcessMetadata(pid, ppid,
+                                                  proc.cmdline()->as_string());
   }
 
   for (auto it = ps.threads(); it; ++it) {
@@ -867,7 +873,7 @@ void ProtoTraceParser::ParseTaskNewTask(int64_t ts,
   static const uint32_t kCloneThread = 0x00010000;  // From kernel's sched.h.
   if ((clone_flags & kCloneThread) == 0) {
     // This is a plain-old fork() or equivalent.
-    proc_tracker->StartNewProcess(ts, new_tid);
+    proc_tracker->StartNewProcess(ts, new_tid, new_comm);
     return;
   }
 
@@ -883,6 +889,7 @@ void ProtoTraceParser::ParseTaskRename(ConstBytes blob) {
   uint32_t tid = static_cast<uint32_t>(evt.pid());
   StringId comm = context_->storage->InternString(evt.newcomm());
   context_->process_tracker->UpdateThreadName(tid, comm);
+  context_->process_tracker->UpdateProcessNameFromThreadName(tid, comm);
 }
 
 void ProtoTraceParser::ParsePrint(uint32_t,
@@ -1680,7 +1687,7 @@ void ProtoTraceParser::ParseTrackEvent(
         auto process_name = annotation.string_value();
         if (!process_name.size)
           break;
-        procs->UpdateProcess(pid, base::nullopt, process_name);
+        procs->SetProcessMetadata(pid, base::nullopt, process_name);
       }
       break;
     }
@@ -1936,6 +1943,60 @@ void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
 
   if (event.has_overruns())
     context_->storage->IncrementStats(stats::metatrace_overruns);
+}
+
+void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
+  protos::pbzero::GpuCounterEvent::Decoder event(blob.data, blob.size);
+
+  // Add counter spec to ID map.
+  for (auto it = event.counter_specs(); it; ++it) {
+    protos::pbzero::GpuCounterEvent_GpuCounterSpec::Decoder spec(it->data(), it->size());
+    if (!spec.has_counter_id()) {
+      PERFETTO_ELOG("Counter spec missing counter id");
+      context_->storage->IncrementStats(stats::gpu_counters_invalid_spec);
+      continue;
+    }
+    if (!spec.has_name()) {
+      context_->storage->IncrementStats(stats::gpu_counters_invalid_spec);
+      continue;
+    }
+
+    auto counter_id = spec.counter_id();
+    auto name = spec.name();
+    if (gpu_counter_ids_.find(counter_id) == gpu_counter_ids_.end()) {
+      gpu_counter_ids_.emplace(
+          counter_id,
+          context_->storage->InternString(name));
+    } else {
+      // Either counter spec was repeated or it came after counter data.
+      PERFETTO_ELOG("Duplicated counter spec found. (counter_id=%d, name=%s)",
+          counter_id,
+          name.ToStdString().c_str());
+      context_->storage->IncrementStats(stats::gpu_counters_invalid_spec);
+    }
+  }
+
+  for (auto it = event.counters(); it; ++it) {
+    protos::pbzero::GpuCounterEvent_GpuCounter::Decoder counter(it->data(), it->size());
+    if (counter.has_counter_id() && counter.has_value()) {
+      auto counter_id = counter.counter_id();
+      auto value = counter.value();
+      // Check missing counter_id
+      if (gpu_counter_ids_.find(counter_id) == gpu_counter_ids_.end()) {
+        char buffer[64];
+        base::StringWriter writer(buffer, sizeof(buffer));
+        writer.AppendString("gpu_counter(");
+        writer.AppendUnsignedInt(counter_id);
+        writer.AppendString(")");
+        gpu_counter_ids_.emplace(
+            counter_id,
+            context_->storage->InternString(writer.GetStringView()));
+        context_->storage->IncrementStats(stats::gpu_counters_missing_spec);
+      }
+      context_->event_tracker->PushCounter(
+          ts, value, gpu_counter_ids_[counter_id], 0, RefType::kRefGpuId);
+    }
+  }
 }
 
 }  // namespace trace_processor
