@@ -19,6 +19,8 @@
  */
 export interface ObjectById<Class extends{id: string}> { [id: string]: Class; }
 
+export const MAX_TIME = 180;
+
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
 export interface TrackState {
@@ -153,6 +155,11 @@ export interface State {
    * key is most up to date.
    */
   frontendLocalState: FrontendLocalState;
+
+  video: string | null;
+  videoEnabled: boolean;
+  onPauseTime: number;
+  flagPauseEnabled: boolean;
 }
 
 export const defaultTraceTime = {
@@ -180,6 +187,8 @@ export interface RecordConfig {
   cpuCoarse: boolean;
   cpuCoarsePollMs: number;
   cpuSyscall: boolean;
+
+  screenRecord: boolean;
 
   gpuFreq: boolean;
 
@@ -225,6 +234,8 @@ export function createEmptyRecordConfig(): RecordConfig {
     cpuLatency: false,
     cpuFreq: false,
     cpuSyscall: false,
+
+    screenRecord: false,
 
     gpuFreq: false,
 
@@ -291,5 +302,10 @@ export function createEmptyState(): State {
 
     status: {msg: '', timestamp: 0},
     currentSelection: null,
+
+    video: null,
+    videoEnabled: false,
+    onPauseTime: 0,
+    flagPauseEnabled: false,
   };
 }

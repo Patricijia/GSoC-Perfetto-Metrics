@@ -25,6 +25,9 @@
 #include <string>
 #include <vector>
 
+#include "perfetto/base/export.h"
+#include "perfetto/base/logging.h"
+
 namespace perfetto {
 
 class TracingBackend;
@@ -58,10 +61,14 @@ struct TracingInitArgs {
   // of platform-specific bits like thread creation and TLS slot handling. If
   // not set it will use Platform::GetDefaultPlatform().
   Platform* platform = nullptr;
+
+ protected:
+  friend class Tracing;
+  bool dcheck_is_on_ = PERFETTO_DCHECK_IS_ON();
 };
 
 // The entry-point for using perfetto.
-class Tracing {
+class PERFETTO_EXPORT Tracing {
  public:
   // Initializes Perfetto with the given backends in the calling process and/or
   // with a user-provided backend. Can only be called once.
@@ -75,7 +82,7 @@ class Tracing {
   Tracing() = delete;
 };
 
-class TracingSession {
+class PERFETTO_EXPORT TracingSession {
  public:
   virtual ~TracingSession();
 
