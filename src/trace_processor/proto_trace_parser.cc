@@ -46,6 +46,7 @@
 #include "perfetto/common/trace_stats.pbzero.h"
 #include "perfetto/ext/base/string_writer.h"
 #include "perfetto/trace/android/android_log.pbzero.h"
+#include "perfetto/trace/android/packages_list.pbzero.h"
 #include "perfetto/trace/chrome/chrome_benchmark_metadata.pbzero.h"
 #include "perfetto/trace/clock_snapshot.pbzero.h"
 #include "perfetto/trace/ftrace/ftrace.pbzero.h"
@@ -83,6 +84,10 @@ namespace perfetto {
 namespace trace_processor {
 
 namespace {
+
+// kthreadd is the parent process for all kernel threads and always has
+// pid == 2 on Linux and Android.
+const uint32_t kKthreaddPid = 2;
 
 using protozero::ProtoDecoder;
 
@@ -387,6 +392,10 @@ void ProtoTraceParser::ParseTracePacket(
     ParseGpuCounterEvent(ts, packet.gpu_counter_event());
   }
 
+  if (packet.has_packages_list()) {
+    ParseAndroidPackagesList(packet.packages_list());
+  }
+
   // TODO(lalitm): maybe move this to the flush method in the trace processor
   // once we have it. This may reduce performance in the ArgsTracker though so
   // needs to be handled carefully.
@@ -493,8 +502,14 @@ void ProtoTraceParser::ParseProcessTree(ConstBytes blob) {
     auto pid = static_cast<uint32_t>(proc.pid());
     auto ppid = static_cast<uint32_t>(proc.ppid());
 
-    context_->process_tracker->SetProcessMetadata(pid, ppid,
-                                                  proc.cmdline()->as_string());
+    // If the parent pid is kthreadd's pid, even though this pid is of a
+    // "process", we want to treat it as being a child thread of kthreadd.
+    if (ppid == kKthreaddPid) {
+      context_->process_tracker->UpdateThread(pid, kKthreaddPid);
+    } else {
+      context_->process_tracker->SetProcessMetadata(
+          pid, ppid, proc.cmdline()->as_string());
+    }
   }
 
   for (auto it = ps.threads(); it; ++it) {
@@ -872,7 +887,10 @@ void ProtoTraceParser::ParseTaskNewTask(int64_t ts,
   // task_newtask is raised both in the case of a new process creation (fork()
   // family) and thread creation (clone(CLONE_THREAD, ...)).
   static const uint32_t kCloneThread = 0x00010000;  // From kernel's sched.h.
-  if ((clone_flags & kCloneThread) == 0) {
+
+  // If the process is a fork, start a new process except if the source tid is
+  // kthreadd in which case just make it a new thread associated with kthreadd.
+  if ((clone_flags & kCloneThread) == 0 && source_tid != kKthreaddPid) {
     // This is a plain-old fork() or equivalent.
     proc_tracker->StartNewProcess(ts, new_tid, new_comm);
     return;
@@ -2002,6 +2020,40 @@ void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
             ts, counter.double_value(), gpu_counter_ids_[counter_id], 0, RefType::kRefGpuId);
       }
     }
+  }
+}
+
+void ProtoTraceParser::ParseAndroidPackagesList(ConstBytes blob) {
+  protos::pbzero::PackagesList::Decoder pkg_list(blob.data, blob.size);
+  context_->storage->SetStats(stats::packages_list_has_read_errors,
+                              pkg_list.read_error());
+  context_->storage->SetStats(stats::packages_list_has_parse_errors,
+                              pkg_list.parse_error());
+
+  // Insert the package info into arg sets (one set per package), with the arg
+  // set ids collected in the Metadata table, under
+  // metadata::android_packages_list key type.
+  for (auto it = pkg_list.packages(); it; ++it) {
+    // Insert a placeholder metadata entry, which will be overwritten by the
+    // arg_set_id when the arg tracker is flushed.
+    RowId row_id = context_->storage->AppendMetadata(
+        metadata::android_packages_list, Variadic::Integer(0));
+
+    // TODO(rsavitski): using only Integer and String variadic types. Change
+    // once the args table type casts are made fully correct.
+    auto add_arg = [this, row_id](base::StringView name, Variadic value) {
+      StringId key_id = context_->storage->InternString(name);
+      context_->args_tracker->AddArg(row_id, key_id, key_id, value);
+    };
+    protos::pbzero::PackagesList_PackageInfo::Decoder pkg(it->data(),
+                                                          it->size());
+    add_arg("name",
+            Variadic::String(context_->storage->InternString(pkg.name())));
+    add_arg("uid", Variadic::Integer(static_cast<int64_t>(pkg.uid())));
+    add_arg("debuggable", Variadic::Integer(pkg.debuggable()));
+    add_arg("profileable_from_shell",
+            Variadic::Integer(pkg.profileable_from_shell()));
+    add_arg("version_code", Variadic::Integer(pkg.version_code()));
   }
 }
 
