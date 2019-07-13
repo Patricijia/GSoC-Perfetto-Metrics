@@ -89,6 +89,7 @@ namespace {
 // kthreadd is the parent process for all kernel threads and always has
 // pid == 2 on Linux and Android.
 const uint32_t kKthreaddPid = 2;
+const char kKthreaddName[] = "kthreadd";
 
 using protozero::ProtoDecoder;
 
@@ -512,6 +513,8 @@ void ProtoTraceParser::ParseProcessTree(ConstBytes blob) {
     // If the parent pid is kthreadd's pid, even though this pid is of a
     // "process", we want to treat it as being a child thread of kthreadd.
     if (ppid == kKthreaddPid) {
+      context_->process_tracker->SetProcessMetadata(kKthreaddPid, base::nullopt,
+                                                    kKthreaddName);
       context_->process_tracker->UpdateThread(pid, kKthreaddPid);
     } else {
       context_->process_tracker->SetProcessMetadata(
@@ -899,8 +902,13 @@ void ProtoTraceParser::ParseTaskNewTask(int64_t ts,
   // kthreadd in which case just make it a new thread associated with kthreadd.
   if ((clone_flags & kCloneThread) == 0 && source_tid != kKthreaddPid) {
     // This is a plain-old fork() or equivalent.
-    proc_tracker->StartNewProcess(ts, new_tid, new_comm);
+    proc_tracker->StartNewProcess(ts, source_tid, new_tid, new_comm);
     return;
+  }
+
+  if (source_tid == kKthreaddPid) {
+    context_->process_tracker->SetProcessMetadata(kKthreaddPid, base::nullopt,
+                                                  kKthreaddName);
   }
 
   // This is a pthread_create or similar. Bind the two threads together, so
@@ -1588,8 +1596,8 @@ void ProtoTraceParser::ParseTrackEvent(
   // object events, metadata events, memory dumps, mark events, clock sync
   // events, context events, counter events), ...
 
-  auto common_args_callback = [this, &event, &sequence_state](
-                                  ArgsTracker* args_tracker, RowId row_id) {
+  auto args_callback = [this, &event, &sequence_state](
+                           ArgsTracker* args_tracker, RowId row_id) {
     for (auto it = event.debug_annotations(); it; ++it) {
       ParseDebugAnnotationArgs(it->as_bytes(), sequence_state, args_tracker,
                                row_id);
@@ -1624,54 +1632,48 @@ void ProtoTraceParser::ParseTrackEvent(
   int32_t phase = legacy_event.phase();
   switch (static_cast<char>(phase)) {
     case 'B': {  // TRACE_EVENT_PHASE_BEGIN.
-      auto args_callback = [common_args_callback, storage, tts](
-                               ArgsTracker* args_tracker, RowId row_id) {
-        uint32_t slice_id = TraceStorage::ParseRowId(row_id).second;
+      auto opt_slice_id = slice_tracker->Begin(
+          ts, utid, RefType::kRefUtid, category_id, name_id, args_callback);
+      if (opt_slice_id.has_value()) {
         auto* thread_slices = storage->mutable_thread_slices();
         PERFETTO_DCHECK(!thread_slices->slice_count() ||
-                        thread_slices->slice_ids().back() < slice_id);
-        thread_slices->AddThreadSlice(slice_id, tts, kPendingThreadDuration,
+                        thread_slices->slice_ids().back() <
+                            opt_slice_id.value());
+        thread_slices->AddThreadSlice(opt_slice_id.value(), tts,
+                                      kPendingThreadDuration,
                                       /*thread_instruction_count=*/0,
                                       /*thread_instruction_delta=*/0);
-
-        common_args_callback(args_tracker, row_id);
-      };
-      slice_tracker->Begin(ts, utid, RefType::kRefUtid, category_id, name_id,
-                           args_callback);
+      }
       break;
     }
     case 'E': {  // TRACE_EVENT_PHASE_END.
-      auto args_callback = [common_args_callback, storage, tts](
-                               ArgsTracker* args_tracker, RowId row_id) {
-        uint32_t slice_id = TraceStorage::ParseRowId(row_id).second;
+      auto opt_slice_id = slice_tracker->End(
+          ts, utid, RefType::kRefUtid, category_id, name_id, args_callback);
+      if (opt_slice_id.has_value()) {
         auto* thread_slices = storage->mutable_thread_slices();
-        thread_slices->UpdateThreadDurationForSliceId(slice_id, tts);
-
-        common_args_callback(args_tracker, row_id);
-      };
-      slice_tracker->End(ts, utid, RefType::kRefUtid, category_id, name_id,
-                         args_callback);
+        thread_slices->UpdateThreadDurationForSliceId(opt_slice_id.value(),
+                                                      tts);
+      }
       break;
     }
     case 'X': {  // TRACE_EVENT_PHASE_COMPLETE.
       auto duration_ns = legacy_event.duration_us() * 1000;
       if (duration_ns < 0)
         return;
-      auto args_callback = [common_args_callback, storage, tts, &legacy_event](
-                               ArgsTracker* args_tracker, RowId row_id) {
-        uint32_t slice_id = TraceStorage::ParseRowId(row_id).second;
+      auto opt_slice_id =
+          slice_tracker->Scoped(ts, utid, RefType::kRefUtid, category_id,
+                                name_id, duration_ns, args_callback);
+      if (opt_slice_id.has_value()) {
         auto* thread_slices = storage->mutable_thread_slices();
         PERFETTO_DCHECK(!thread_slices->slice_count() ||
-                        thread_slices->slice_ids().back() < slice_id);
+                        thread_slices->slice_ids().back() <
+                            opt_slice_id.value());
         auto thread_duration_ns = legacy_event.thread_duration_us() * 1000;
-        thread_slices->AddThreadSlice(slice_id, tts, thread_duration_ns,
+        thread_slices->AddThreadSlice(opt_slice_id.value(), tts,
+                                      thread_duration_ns,
                                       /*thread_instruction_count=*/0,
                                       /*thread_instruction_delta=*/0);
-
-        common_args_callback(args_tracker, row_id);
-      };
-      slice_tracker->Scoped(ts, utid, RefType::kRefUtid, category_id, name_id,
-                            duration_ns, args_callback);
+      }
       break;
     }
     case 'i':
@@ -1683,36 +1685,37 @@ void ProtoTraceParser::ParseTrackEvent(
       switch (legacy_event.instant_event_scope()) {
         case LegacyEvent::SCOPE_UNSPECIFIED:
         case LegacyEvent::SCOPE_THREAD: {
-          auto args_callback = [common_args_callback, storage, tts,
-                                duration_ns](ArgsTracker* args_tracker,
-                                             RowId row_id) {
-            auto slice_id = TraceStorage::ParseRowId(row_id).second;
+          auto opt_slice_id =
+              slice_tracker->Scoped(ts, utid, RefType::kRefUtid, category_id,
+                                    name_id, duration_ns, args_callback);
+          if (opt_slice_id.has_value()) {
             auto* thread_slices = storage->mutable_thread_slices();
             PERFETTO_DCHECK(!thread_slices->slice_count() ||
-                            thread_slices->slice_ids().back() < slice_id);
-            thread_slices->AddThreadSlice(slice_id, tts, duration_ns,
+                            thread_slices->slice_ids().back() <
+                                opt_slice_id.value());
+            thread_slices->AddThreadSlice(opt_slice_id.value(), tts,
+                                          duration_ns,
                                           /*thread_instruction_count=*/0,
                                           /*thread_instruction_delta=*/0);
-
-            common_args_callback(args_tracker, row_id);
-          };
-          slice_tracker->Scoped(ts, utid, RefType::kRefUtid, category_id,
+          }
+          break;
+        }
+        case LegacyEvent::SCOPE_GLOBAL: {
+          slice_tracker->Scoped(ts, /*ref=*/0, RefType::kRefNoRef, category_id,
                                 name_id, duration_ns, args_callback);
           break;
         }
-        case LegacyEvent::SCOPE_GLOBAL:
-          slice_tracker->Scoped(ts, /*ref=*/0, RefType::kRefNoRef, category_id,
-                                name_id, duration_ns, common_args_callback);
-          break;
-        case LegacyEvent::SCOPE_PROCESS:
+        case LegacyEvent::SCOPE_PROCESS: {
           slice_tracker->Scoped(ts, procs->GetOrCreateProcess(pid),
                                 RefType::kRefUpid, category_id, name_id,
-                                duration_ns, common_args_callback);
+                                duration_ns, args_callback);
           break;
-        default:
+        }
+        default: {
           PERFETTO_FATAL("Unknown instant event scope: %u",
                          legacy_event.instant_event_scope());
           break;
+        }
       }
       break;
     }
@@ -1720,14 +1723,14 @@ void ProtoTraceParser::ParseTrackEvent(
       TrackId track_id = context_->virtual_track_tracker->GetOrCreateTrack(
           {vtrack_scope, vtrack_upid, id, id_scope}, name_id);
       slice_tracker->Begin(ts, track_id, RefType::kRefTrack, category_id,
-                           name_id, common_args_callback);
+                           name_id, args_callback);
       break;
     }
     case 'e': {  // TRACE_EVENT_PHASE_NESTABLE_ASYNC_END
       TrackId track_id = context_->virtual_track_tracker->GetOrCreateTrack(
           {vtrack_scope, vtrack_upid, id, id_scope}, name_id);
       slice_tracker->End(ts, track_id, RefType::kRefTrack, category_id, name_id,
-                         common_args_callback);
+                         args_callback);
       break;
     }
     case 'n': {  // TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT
@@ -1737,7 +1740,7 @@ void ProtoTraceParser::ParseTrackEvent(
       TrackId track_id = context_->virtual_track_tracker->GetOrCreateTrack(
           {vtrack_scope, vtrack_upid, id, id_scope}, name_id);
       slice_tracker->Scoped(ts, track_id, RefType::kRefTrack, category_id,
-                            name_id, duration_ns, common_args_callback);
+                            name_id, duration_ns, args_callback);
       break;
     }
     case 'M': {  // TRACE_EVENT_PHASE_METADATA (process and thread names).
@@ -2103,8 +2106,6 @@ void ProtoTraceParser::ParseAndroidPackagesList(ConstBytes blob) {
     RowId row_id = context_->storage->AppendMetadata(
         metadata::android_packages_list, Variadic::Integer(0));
 
-    // TODO(rsavitski): using only Integer and String variadic types. Change
-    // once the args table type casts are made fully correct.
     auto add_arg = [this, row_id](base::StringView name, Variadic value) {
       StringId key_id = context_->storage->InternString(name);
       context_->args_tracker->AddArg(row_id, key_id, key_id, value);
@@ -2113,10 +2114,10 @@ void ProtoTraceParser::ParseAndroidPackagesList(ConstBytes blob) {
                                                           it->size());
     add_arg("name",
             Variadic::String(context_->storage->InternString(pkg.name())));
-    add_arg("uid", Variadic::Integer(static_cast<int64_t>(pkg.uid())));
-    add_arg("debuggable", Variadic::Integer(pkg.debuggable()));
+    add_arg("uid", Variadic::UnsignedInteger(pkg.uid()));
+    add_arg("debuggable", Variadic::Boolean(pkg.debuggable()));
     add_arg("profileable_from_shell",
-            Variadic::Integer(pkg.profileable_from_shell()));
+            Variadic::Boolean(pkg.profileable_from_shell()));
     add_arg("version_code", Variadic::Integer(pkg.version_code()));
   }
 }

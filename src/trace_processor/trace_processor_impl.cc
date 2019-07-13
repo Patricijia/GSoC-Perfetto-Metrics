@@ -59,7 +59,6 @@
 #include "src/trace_processor/sql_stats_table.h"
 #include "src/trace_processor/sqlite3_str_split.h"
 #include "src/trace_processor/stats_table.h"
-#include "src/trace_processor/string_table.h"
 #include "src/trace_processor/syscall_tracker.h"
 #include "src/trace_processor/systrace_parser.h"
 #include "src/trace_processor/systrace_trace_parser.h"
@@ -176,6 +175,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "CREATE VIEW slice AS "
                "SELECT "
                "  *, "
+               "  category as cat, "
                "  CASE ref_type "
                "    WHEN 'utid' THEN ref "
                "    ELSE NULL "
@@ -340,7 +340,6 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   SchedSliceTable::RegisterTable(*db_, context_.storage.get());
   SliceTable::RegisterTable(*db_, context_.storage.get());
   SqlStatsTable::RegisterTable(*db_, context_.storage.get());
-  StringTable::RegisterTable(*db_, context_.storage.get());
   ThreadTable::RegisterTable(*db_, context_.storage.get());
   CounterDefinitionsTable::RegisterTable(*db_, context_.storage.get());
   CounterValuesTable::RegisterTable(*db_, context_.storage.get());

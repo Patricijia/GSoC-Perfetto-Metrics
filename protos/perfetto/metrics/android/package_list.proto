@@ -18,17 +18,12 @@ option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
-message AndroidProcessGrowth {
-  // Next id: 6
-  message InstanceMetrics {
-    optional uint32 pid = 1;
-    optional string process_name = 2;
-
-    optional int64 anon_and_swap_start_value = 5;
-    optional int64 anon_and_swap_change_bytes = 3;
-    optional int64 malloc_memory_change_bytes = 4;
+message AndroidPackageList {
+  message Package {
+    optional string package_name = 1;
+    optional int64 uid = 2;
+    optional int64 version_code = 3;
   }
 
-  // Process memory per process instance.
-  repeated InstanceMetrics instance_metrics = 1;
+  repeated Package packages = 1;
 }
