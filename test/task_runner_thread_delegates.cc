@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,12 @@
  * limitations under the License.
  */
 
-#ifndef TOOLS_TRACE_TO_TEXT_TRACE_TO_SYSTRACE_H_
-#define TOOLS_TRACE_TO_TEXT_TRACE_TO_SYSTRACE_H_
-
-#include <iostream>
+#include "test/task_runner_thread_delegates.h"
 
 namespace perfetto {
-namespace trace_to_text {
 
-int TraceToSystrace(std::istream* input,
-                    std::ostream* output,
-                    uint64_t file_size_limit,
-                    bool wrap_in_json);
+ServiceDelegate::~ServiceDelegate() = default;
+ProbesProducerDelegate::~ProbesProducerDelegate() = default;
+FakeProducerDelegate::~FakeProducerDelegate() = default;
 
-}  // namespace trace_to_text
 }  // namespace perfetto
-
-#endif  // TOOLS_TRACE_TO_TEXT_TRACE_TO_SYSTRACE_H_
