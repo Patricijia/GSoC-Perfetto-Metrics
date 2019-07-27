@@ -19,6 +19,7 @@ import {LogExists, LogExistsKey} from '../common/logs';
 import {QueryResponse} from '../common/queries';
 import {TimeSpan} from '../common/time';
 
+import {ChromeSliceDetailsPanel} from './chrome_slice_panel';
 import {copyToClipboard} from './clipboard';
 import {DragGestureHandler} from './drag_gesture_handler';
 import {globals} from './globals';
@@ -296,6 +297,9 @@ class TraceViewer implements m.ClassComponent {
             utid: curSelection.utid,
           }));
           break;
+        case 'CHROME_SLICE':
+          detailsPanels.push(m(ChromeSliceDetailsPanel));
+          break;
         case 'THREAD_STATE':
           detailsPanels.push(m(ThreadStatePanel, {
             key: 'thread_state',
@@ -317,35 +321,38 @@ class TraceViewer implements m.ClassComponent {
     return m(
         '.page',
         m('.split-panel',
-        m('.pan-and-zoom-content',
-          {
-            onclick: () => {
-              // We don't want to deselect when panning/drag selecting.
-              if (this.keepCurrentSelection) {
-                this.keepCurrentSelection = false;
-                return;
+          m('.pan-and-zoom-content',
+            {
+              onclick: () => {
+                // We don't want to deselect when panning/drag selecting.
+                if (this.keepCurrentSelection) {
+                  this.keepCurrentSelection = false;
+                  return;
+                }
+                globals.dispatch(Actions.deselect({}));
               }
-              globals.dispatch(Actions.deselect({}));
-            }
-          },
-          m('.pinned-panel-container', m(PanelContainer, {
-              doesScroll: false,
-              panels: [
-                m(OverviewTimelinePanel, {key: 'overview'}),
-                m(TimeAxisPanel, {key: 'timeaxis'}),
-                m(TimeSelectionPanel, {key: 'timeselection'}),
-                m(NotesPanel, {key: 'notes'}),
-                ...globals.state.pinnedTracks.map(
-                    id => m(TrackPanel, {key: id, id})),
-              ],
-            })),
-          m('.scrolling-panel-container', m(PanelContainer, {
-              doesScroll: true,
-              panels: scrollingPanels,
-            }))),
-          m('.video-panel', (globals.state.videoEnabled &&
-                             globals.state.video != null) ?
-                             m(VideoPanel) : null)),
+            },
+            m('.pinned-panel-container', m(PanelContainer, {
+                doesScroll: false,
+                panels: [
+                  m(OverviewTimelinePanel, {key: 'overview'}),
+                  m(TimeAxisPanel, {key: 'timeaxis'}),
+                  m(TimeSelectionPanel, {key: 'timeselection'}),
+                  m(NotesPanel, {key: 'notes'}),
+                  ...globals.state.pinnedTracks.map(
+                      id => m(TrackPanel, {key: id, id})),
+                ],
+                kind: 'OVERVIEW',
+              })),
+            m('.scrolling-panel-container', m(PanelContainer, {
+                doesScroll: true,
+                panels: scrollingPanels,
+                kind: 'TRACKS',
+              }))),
+          m('.video-panel',
+            (globals.state.videoEnabled && globals.state.video != null) ?
+                m(VideoPanel) :
+                null)),
         m('.details-content',
           {
             style: {
@@ -360,7 +367,8 @@ class TraceViewer implements m.ClassComponent {
             height: this.detailsHeight,
           }),
           m('.details-panel-container',
-            m(PanelContainer, {doesScroll: true, panels: detailsPanels}))));
+            m(PanelContainer,
+              {doesScroll: true, panels: detailsPanels, kind: 'DETAILS'}))));
   }
 }
 
