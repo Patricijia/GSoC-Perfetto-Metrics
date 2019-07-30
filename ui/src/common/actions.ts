@@ -147,20 +147,8 @@ export const StateActions = {
     };
   },
 
-  reqTrackData(state: StateDraft, args: {
-    trackId: string; start: number; end: number; resolution: number;
-  }): void {
-    const id = args.trackId;
-    state.tracks[id].dataReq = {
-      start: args.start,
-      end: args.end,
-      resolution: args.resolution
-    };
-  },
-
-  clearTrackDataReq(state: StateDraft, args: {trackId: string}): void {
-    const id = args.trackId;
-    state.tracks[id].dataReq = undefined;
+  setVisibleTracks(state: StateDraft, args: {tracks: string[]}) {
+    state.visibleTracks = args.tracks;
   },
 
   executeQuery(
@@ -261,8 +249,10 @@ export const StateActions = {
   },
 
   setVisibleTraceTime(
-      state: StateDraft, args: {time: TraceTime; lastUpdate: number;}): void {
+      state: StateDraft,
+      args: {time: TraceTime; res: number, lastUpdate: number;}): void {
     state.frontendLocalState.visibleTraceTime = args.time;
+    state.frontendLocalState.curResolution = args.res;
     state.frontendLocalState.lastUpdate = args.lastUpdate;
   },
 
@@ -317,6 +307,7 @@ export const StateActions = {
     if (!state.videoEnabled) {
       state.video = null;
       state.flagPauseEnabled = false;
+      state.scrubbingEnabled = false;
       state.videoNoteIds.forEach(id => {
         this.removeNote(state, {id});
       });
@@ -324,10 +315,14 @@ export const StateActions = {
   },
 
   toggleFlagPause(state: StateDraft): void {
-    if (state.video === null) {
-      state.flagPauseEnabled = false;
-    } else {
+    if (state.video != null) {
       state.flagPauseEnabled = !state.flagPauseEnabled;
+    }
+  },
+
+  toggleScrubbing(state: StateDraft): void {
+    if (state.video != null) {
+      state.scrubbingEnabled = !state.scrubbingEnabled;
     }
   },
 

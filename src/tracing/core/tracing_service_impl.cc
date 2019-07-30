@@ -386,7 +386,7 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     for (auto& kv : tracing_sessions_) {
       if (kv.second.config.unique_session_name() == name) {
         PERFETTO_ELOG(
-            "A trace wtih this unique session name (%s) already exists",
+            "A trace with this unique session name (%s) already exists",
             name.c_str());
         return false;
       }
@@ -1499,6 +1499,7 @@ void TracingServiceImpl::ReadBuffers(TracingSessionID tsid,
       PERFETTO_DCHECK(sequence_properties.producer_uid_trusted != kInvalidUid);
       PERFETTO_DCHECK(packet.size() > 0);
       if (!PacketStreamValidator::Validate(packet.slices())) {
+        tracing_session->invalid_packets++;
         PERFETTO_DLOG("Dropping invalid packet");
         continue;
       }
@@ -1841,6 +1842,7 @@ TracingServiceImpl::DataSourceInstance* TracingServiceImpl::SetupDataSource(
 
   DataSourceConfig& ds_config = ds_instance->config;
   ds_config.set_trace_duration_ms(tracing_session->config.duration_ms());
+  ds_config.set_stop_timeout_ms(tracing_session->data_source_stop_timeout_ms());
   ds_config.set_enable_extra_guardrails(
       tracing_session->config.enable_extra_guardrails());
   ds_config.set_tracing_session_id(tracing_session->id);
@@ -2220,6 +2222,7 @@ TraceStats TracingServiceImpl::GetTraceStats(TracingSession* tracing_session) {
   trace_stats.set_total_buffers(static_cast<uint32_t>(buffers_.size()));
   trace_stats.set_chunks_discarded(chunks_discarded_);
   trace_stats.set_patches_discarded(patches_discarded_);
+  trace_stats.set_invalid_packets(tracing_session->invalid_packets);
 
   for (BufferID buf_id : tracing_session->buffers_index) {
     TraceBuffer* buf = GetBufferByID(buf_id);
