@@ -493,8 +493,12 @@ void TracingMuxerImpl::SetupDataSource(TracingBackendId backend_id,
       DataSourceBase::SetupArgs setup_args;
       setup_args.config = &cfg;
       internal_state->data_source->OnSetup(setup_args);
-      break;
+      return;
     }
+    PERFETTO_ELOG(
+        "Maximum number of data source instances exhausted. "
+        "Dropping data source %" PRIu64,
+        instance_id);
   }
 }
 
