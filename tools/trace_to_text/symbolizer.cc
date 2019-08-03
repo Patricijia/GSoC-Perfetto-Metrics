@@ -14,29 +14,12 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/base/uuid.h"
-
-#include <random>
-
-#include "perfetto/ext/base/time.h"
+#include "tools/trace_to_text/symbolizer.h"
 
 namespace perfetto {
-namespace base {
+namespace trace_to_text {
 
-// See https://www.ietf.org/rfc/rfc4122.txt
-std::array<uint8_t, 16> Uuidv4() {
-  static std::minstd_rand rng(static_cast<uint32_t>(GetBootTimeNs().count()));
-  std::array<uint8_t, 16> uuid;
-  for (size_t i = 0; i < 16; ++i)
-    uuid[i] = static_cast<uint8_t>(rng());
+Symbolizer::~Symbolizer() = default;
 
-  // version:
-  uuid[6] = (uuid[6] & 0x0f) | 0x40;
-  // clock_seq_hi_and_reserved:
-  uuid[8] = (uuid[8] & 0x3f) | 0x80;
-
-  return uuid;
-}
-
-}  // namespace base
+}  // namespace trace_to_text
 }  // namespace perfetto

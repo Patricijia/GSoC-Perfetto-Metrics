@@ -368,6 +368,24 @@ TEST_F(PerfettoApiTest, WriteEventsAfterDeferredStop) {
   EXPECT_EQ(test_packet_found, 1);
 }
 
+TEST_F(PerfettoApiTest, RepeatedStartAndStop) {
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("my_data_source");
+
+  for (int i = 0; i < 5; i++) {
+    auto* tracing_session = NewTrace(cfg);
+    tracing_session->get()->Start();
+    std::atomic<bool> stop_called{false};
+    tracing_session->get()->SetOnStopCallback(
+        [&stop_called] { stop_called = true; });
+    tracing_session->get()->StopBlocking();
+    EXPECT_TRUE(stop_called);
+  }
+}
+
 TEST_F(PerfettoApiTest, SetupWithFile) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   char temp_file[] = "/data/local/tmp/perfetto-XXXXXXXX";
@@ -393,6 +411,34 @@ TEST_F(PerfettoApiTest, SetupWithFile) {
   EXPECT_EQ(0, close(fd));
   // Clean up.
   EXPECT_EQ(0, unlink(temp_file));
+}
+
+TEST_F(PerfettoApiTest, MultipleRegistrations) {
+  // Attempt to register the same data source again.
+  perfetto::DataSourceDescriptor dsd;
+  dsd.set_name("my_data_source");
+  EXPECT_TRUE(MockDataSource::Register(dsd));
+
+  // Setup the trace config.
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("my_data_source");
+
+  // Create a new trace session.
+  auto* tracing_session = NewTrace(cfg);
+  tracing_session->get()->StartBlocking();
+
+  // Emit one trace event.
+  std::atomic<int> trace_lambda_calls{0};
+  MockDataSource::Trace([&trace_lambda_calls](MockDataSource::TraceContext) {
+    trace_lambda_calls++;
+  });
+
+  // Make sure the data source got called only once.
+  tracing_session->get()->StopBlocking();
+  EXPECT_EQ(trace_lambda_calls, 1);
 }
 
 }  // namespace

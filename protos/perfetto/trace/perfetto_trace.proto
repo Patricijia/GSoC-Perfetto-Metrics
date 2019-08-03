@@ -190,7 +190,7 @@ enum VmstatCounters {
 message TraceStats {
   // From TraceBuffer::Stats.
   //
-  // Next id: 19.
+  // Next id: 20.
   message BufferStats {
     // Size of the circular buffer in bytes.
     optional uint64 buffer_size = 12;
@@ -275,6 +275,15 @@ message TraceStats {
     // the buffer. This is an indication of either a bug in the producer(s) or
     // malicious producer(s).
     optional uint64 abi_violations = 9;
+
+    // The fields below have been introduced in Android R.
+
+    // Num. of times the service detected packet loss on a trace writer
+    // sequence. This is usually caused by exhaustion of available chunks in the
+    // writer process's SMB. Note that this relies on the client's TraceWriter
+    // indicating this loss to the service -- packets lost for other reasons are
+    // not reflected in this stat.
+    optional uint64 trace_writer_packet_loss = 19;
   }
 
   // Stats for the TraceBuffer(s) of the current trace session.
@@ -2626,6 +2635,8 @@ message InternedData {
   repeated InternedString build_ids = 16;
   // Paths to executable files.
   repeated InternedString mapping_paths = 17;
+  // Paths to source files.
+  repeated InternedString source_paths = 18;
   // Names of functions used in frames below.
   repeated InternedString function_names = 5;
 
@@ -2775,9 +2786,14 @@ message ProfiledFrameSymbols {
   // Use the frame id as the interning key for the symbols.
   optional int64 frame_iid = 1;
 
-  optional int64 function_name_id = 2;  // key to InternedString
-  optional int64 file_name_id = 3;      // key to InternedString
-  optional int32 line_number = 4;
+  // These are repeated because when inlining happens, multiple functions'
+  // frames can be at a single address. Imagine function Foo calling the
+  // std::vector<int> constructor, which gets inlined at 0xf00. We then get
+  // both Foo and the std::vector<int> constructor when we symbolize the
+  // address.
+  repeated int64 function_name_id = 2;  // key to InternedString
+  repeated int64 file_name_id = 3;      // key to InternedString
+  repeated int32 line_number = 4;
 }
 
 message Mapping {
