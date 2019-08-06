@@ -235,7 +235,7 @@ proto_library(
     srcs = [
         "perfetto/metrics/android/batt_metric.proto",
         "perfetto/metrics/android/cpu_metric.proto",
-        "perfetto/metrics/android/heap_profile.proto",
+        "perfetto/metrics/android/heap_profile_callsite_stats.proto",
         "perfetto/metrics/android/ion_metric.proto",
         "perfetto/metrics/android/lmk_metric.proto",
         "perfetto/metrics/android/mem_metric.proto",
@@ -281,7 +281,7 @@ proto_library(
     srcs = [
         "perfetto/metrics/android/batt_metric.proto",
         "perfetto/metrics/android/cpu_metric.proto",
-        "perfetto/metrics/android/heap_profile.proto",
+        "perfetto/metrics/android/heap_profile_callsite_stats.proto",
         "perfetto/metrics/android/ion_metric.proto",
         "perfetto/metrics/android/lmk_metric.proto",
         "perfetto/metrics/android/mem_metric.proto",
