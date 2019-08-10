@@ -26,6 +26,7 @@
 #include "perfetto/base/task_runner.h"
 #include "perfetto/ext/base/thread_checker.h"
 #include "perfetto/ext/base/waitable_event.h"
+#include "perfetto/ext/tracing/core/buffer_exhausted_policy.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/core/tracing_service.h"
@@ -488,7 +489,7 @@ void TracingMuxerImpl::SetupDataSource(TracingBackendId backend_id,
 
       auto* internal_state =
           reinterpret_cast<DataSourceState*>(&static_state.instances[i]);
-      std::lock_guard<std::mutex> guard(internal_state->lock);
+      std::lock_guard<std::recursive_mutex> guard(internal_state->lock);
       static_assert(
           std::is_same<decltype(internal_state->data_source_instance_id),
                        DataSourceInstanceID>::value,
@@ -527,7 +528,7 @@ void TracingMuxerImpl::StartDataSource(TracingBackendId backend_id,
     return;
   }
 
-  std::lock_guard<std::mutex> guard(ds.internal_state->lock);
+  std::lock_guard<std::recursive_mutex> guard(ds.internal_state->lock);
   ds.internal_state->trace_lambda_enabled = true;
   ds.internal_state->data_source->OnStart(DataSourceBase::StartArgs{});
 }
@@ -558,7 +559,7 @@ void TracingMuxerImpl::StopDataSource_AsyncBegin(
   };
 
   {
-    std::lock_guard<std::mutex> guard(ds.internal_state->lock);
+    std::lock_guard<std::recursive_mutex> guard(ds.internal_state->lock);
     ds.internal_state->data_source->OnStop(stop_args);
   }
 
@@ -592,7 +593,7 @@ void TracingMuxerImpl::StopDataSource_AsyncEnd(
   // a Trace() execution where it called GetDataSourceLocked() while we
   // destroy it.
   {
-    std::lock_guard<std::mutex> guard(ds.internal_state->lock);
+    std::lock_guard<std::recursive_mutex> guard(ds.internal_state->lock);
     ds.internal_state->trace_lambda_enabled = false;
     ds.internal_state->data_source.reset();
   }
@@ -804,7 +805,13 @@ TracingMuxerImpl::FindDataSourceRes TracingMuxerImpl::FindDataSource(
 std::unique_ptr<TraceWriterBase> TracingMuxerImpl::CreateTraceWriter(
     DataSourceState* data_source) {
   ProducerImpl* producer = backends_[data_source->backend_id].producer.get();
-  return producer->service_->CreateTraceWriter(data_source->buffer_id);
+  // We choose BufferExhaustedPolicy::kDrop to avoid stalls when all SMB chunks
+  // are allocated, ensuring that the app keeps working even when tracing hits
+  // its SMB limit. Note that this means we will lose data in such a case
+  // (tracked in BufferStats::trace_writer_packet_loss). To reduce this data
+  // loss, apps should choose a large enough SMB size.
+  return producer->service_->CreateTraceWriter(data_source->buffer_id,
+                                               BufferExhaustedPolicy::kDrop);
 }
 
 // This is called via the public API Tracing::NewTrace().

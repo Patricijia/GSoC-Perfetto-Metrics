@@ -520,19 +520,18 @@ function AdvancedSettings(cssClass: string) {
               img: null,
               descr: `Records the screen along with running a trace. Max
                   time of recording is 3 minutes (180 seconds).`,
-              setEnabled: (cfg, val) => cfg.screenRecord = val,
-              isEnabled: (cfg) => cfg.screenRecord,
-            } as ProbeAttrs,
-            m(Slider, {
-              title: 'Max duration',
-              icon: 'timer',
-              values: [S(10), S(15), S(30), S(60), M(2), M(3)],
-              isTime: true,
-              unit: 'm:s',
-              set: (cfg, val) => cfg.durationMs = val,
-              get: (cfg) => cfg.durationMs,
-            } as SliderAttrs)) :
-          null);
+          setEnabled: (cfg, val) => cfg.screenRecord = val,
+          isEnabled: (cfg) => cfg.screenRecord,
+        } as ProbeAttrs,
+        m(Slider, {
+          title: 'Max duration',
+          icon: 'timer',
+          values: [S(10), S(15), S(30), S(60), M(2), M(3)],
+          isTime: true,
+          unit: 'm:s',
+          set: (cfg, val) => cfg.durationMs = val,
+          get: (cfg) => cfg.durationMs,
+        } as SliderAttrs),) : null);
 }
 
 function Instructions(cssClass: string) {
@@ -550,8 +549,10 @@ function Instructions(cssClass: string) {
   const pbtx = data ? data.pbtxt : '';
   let cmd = '';
   if (cfg.screenRecord) {
-    cmd += `adb shell screenrecord --time-limit ${time}`;
-    cmd += ' "/sdcard/tracescr.mp4" &\\\n';
+    // Half-second delay to ensure Perfetto starts tracing before screenrecord
+    // starts recording
+    cmd += `(sleep 0.5 && adb shell screenrecord --time-limit ${time}`;
+    cmd += ' "/sdcard/tracescr.mp4") &\\\n';
   }
   cmd += 'adb shell perfetto \\\n';
   cmd += '  -c - --txt \\\n';
@@ -607,6 +608,9 @@ function Instructions(cssClass: string) {
     globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
   };
 
+  const bufferUsagePercentage =
+      ((globals.bufferUsage ? globals.bufferUsage : 0.0) * 100).toFixed(1);
+
   return m(
       `.record-section.instructions${cssClass}`,
       m('header', 'Instructions'),
@@ -623,11 +627,21 @@ function Instructions(cssClass: string) {
       globals.state.extensionInstalled ?
           [
             m('button',
-              {onclick: () => globals.dispatch(Actions.startRecording({}))},
+              {
+                onclick: () => globals.dispatch(Actions.startRecording({})),
+                disabled: globals.state.recordingInProgress
+              },
               'Start Recording'),
             m('button',
-              {onclick: () => globals.dispatch(Actions.stopRecording({}))},
-              'Stop Recording')
+              {
+                onclick: () => globals.dispatch(Actions.stopRecording({})),
+                disabled: !globals.state.recordingInProgress
+              },
+              'Stop Recording'),
+            m('label',
+              globals.state.recordingInProgress ?
+                  'Buffer usage: ' + bufferUsagePercentage + '%' :
+                  '')
           ] :
           []);
 }

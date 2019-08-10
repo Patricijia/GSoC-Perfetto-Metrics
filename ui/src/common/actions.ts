@@ -83,10 +83,10 @@ export const StateActions = {
     state.videoEnabled = true;
   },
 
-  convertTraceToJson(_: StateDraft, args: {file: File, truncate: boolean}):
-      void {
-        ConvertTrace(args.file, args.truncate);
-      },
+  convertTraceToJson(
+      _: StateDraft, args: {file: File, truncate?: 'start'|'end'}): void {
+    ConvertTrace(args.file, args.truncate);
+  },
 
   openTraceFromUrl(state: StateDraft, args: {url: string}): void {
     clearTraceState(state);
@@ -325,6 +325,10 @@ export const StateActions = {
     }
   },
 
+  setVideoOffset(state: StateDraft, args: {offset: number}): void {
+    state.videoOffset = args.offset;
+  },
+
   changeNoteColor(state: StateDraft, args: {id: string, newColor: string}):
       void {
         const note = state.notes[args.id];
@@ -403,7 +407,11 @@ export const StateActions = {
 
   setExtensionAvailable(state: StateDraft, args: {available: boolean}): void {
     state.extensionInstalled = args.available;
-  }
+  },
+
+  updateBufferUsage(state: StateDraft, args: {percentage: number}): void {
+    state.bufferUsage = args.percentage;
+  },
 
 };
 

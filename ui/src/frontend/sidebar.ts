@@ -15,6 +15,7 @@
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
+import {QueryResponse} from '../common/queries';
 
 import {globals} from './globals';
 import {
@@ -91,7 +92,7 @@ function createCannedQuery(query: string): (_: Event) => void {
 }
 
 const EXAMPLE_ANDROID_TRACE_URL =
-    'https://storage.googleapis.com/perfetto-misc/example_android_trace_30s_1';
+    'https://storage.googleapis.com/perfetto-misc/example_android_trace_15s';
 
 const EXAMPLE_CHROME_TRACE_URL =
     'https://storage.googleapis.com/perfetto-misc/example_chrome_trace_4s_1.json';
@@ -258,7 +259,7 @@ function onInputElementFileSelectionChanged(e: Event) {
 
     // Perfetto traces smaller than 50mb can be safely opened in the legacy UI.
     if (file.size < 1024 * 1024 * 50) {
-      globals.dispatch(Actions.convertTraceToJson({file, truncate: false}));
+      globals.dispatch(Actions.convertTraceToJson({file}));
       return;
     }
 
@@ -286,29 +287,56 @@ function onInputElementFileSelectionChanged(e: Event) {
           primary: false,
           id: 'open',
           action: () => {
-            globals.dispatch(
-                Actions.convertTraceToJson({file, truncate: false}));
+            globals.dispatch(Actions.convertTraceToJson({file}));
           }
         },
         {
           text: 'Open beginning of trace',
           primary: true,
-          id: 'truncate',
+          id: 'truncate-start',
           action: () => {
             globals.dispatch(
-                Actions.convertTraceToJson({file, truncate: true}));
+                Actions.convertTraceToJson({file, truncate: 'start'}));
+          }
+        },
+        {
+          text: 'Open end of trace',
+          primary: true,
+          id: 'truncate-end',
+          action: () => {
+            globals.dispatch(
+                Actions.convertTraceToJson({file, truncate: 'end'}));
           }
         }
+
       ]
     });
     return;
   }
 
   if (e.target.dataset['video'] === '1') {
+    // TODO(hjd): Update this to use a controller and publish.
+    globals.dispatch(Actions.executeQuery({
+      engineId: '0', queryId: 'command',
+      query: `select ts from slices where name = 'first_frame' union ` +
+             `select start_ts from trace_bounds`}));
+    setTimeout(() => {
+      const resp = globals.queryResults.get('command') as QueryResponse;
+      // First value is screenrecord trace event timestamp
+      // and second value is trace boundary's start timestamp
+      const offset = (parseInt(resp.rows[1]['ts'].toString()) -
+                      parseInt(resp.rows[0]['ts'].toString())) / 1e9;
+      globals.queryResults.delete('command');
+      globals.rafScheduler.scheduleFullRedraw();
+      globals.dispatch(Actions.deleteQuery({queryId: 'command'}));
+      globals.dispatch(Actions.setVideoOffset({offset}));
+    }, 1000);
     globals.dispatch(Actions.openVideoFromFile({file}));
-  } else {
-    globals.dispatch(Actions.openTraceFromFile({file}));
+    return;
   }
+
+  globals.dispatch(Actions.openTraceFromFile({file}));
+
 }
 
 function navigateRecord(e: Event) {
@@ -431,22 +459,23 @@ export class Sidebar implements m.ClassComponent {
           class: globals.frontendLocalState.sidebarVisible ? 'show-sidebar' :
                                                              'hide-sidebar'
         },
-        m('header',
-          'Perfetto',
-          m(
-              '.sidebar-button',
-              m('button',
-                m('i.material-icons',
-                  {
-                    title: globals.frontendLocalState.sidebarVisible ?
-                        'Hide menu' :
-                        'Show menu',
-                    onclick: () => {
-                      globals.frontendLocalState.toggleSidebar();
-                    },
-                  },
-                  'menu')),
-              )),
+        m(
+            'header',
+            'Perfetto',
+            m('button.sidebar-button',
+              {
+                onclick: () => {
+                  globals.frontendLocalState.toggleSidebar();
+                },
+              },
+              m('i.material-icons',
+                {
+                  title: globals.frontendLocalState.sidebarVisible ?
+                      'Hide menu' :
+                      'Show menu',
+                },
+                'menu')),
+            ),
         m('input[type=file]', {onchange: onInputElementFileSelectionChanged}),
         m('.sidebar-content', ...vdomSections));
   }
