@@ -30,7 +30,6 @@ namespace stats {
   F(android_log_num_skipped,                  kSingle,  kError,    kTrace),    \
   F(android_log_num_total,                    kSingle,  kInfo,     kTrace),    \
   F(atrace_tgid_mismatch,                     kSingle,  kError,    kTrace),    \
-  F(clock_snapshot_not_monotonic,             kSingle,  kError,    kTrace),    \
   F(counter_events_out_of_order,              kSingle,  kError,    kAnalysis), \
   F(ftrace_bundle_tokenizer_errors,           kSingle,  kError,    kAnalysis), \
   F(ftrace_cpu_bytes_read_begin,              kIndexed, kInfo,     kTrace),    \
@@ -95,6 +94,7 @@ namespace stats {
   F(traced_producers_seen,                    kSingle,  kInfo,     kTrace),    \
   F(traced_total_buffers,                     kSingle,  kInfo,     kTrace),    \
   F(traced_tracing_sessions,                  kSingle,  kInfo,     kTrace),    \
+  F(track_event_parser_errors,                kSingle,  kInfo,     kAnalysis), \
   F(track_event_tokenizer_errors,             kSingle,  kInfo,     kAnalysis), \
   F(track_event_tokenizer_skipped_packets,    kSingle,  kInfo,     kAnalysis), \
   F(vmstat_unknown_keys,                      kSingle,  kError,    kAnalysis), \

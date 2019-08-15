@@ -424,6 +424,10 @@ void ProtoTraceParser::ParseTracePacket(
   if (packet.has_profile_packet())
     ParseProfilePacket(ts, ttp.packet_sequence_state, packet.profile_packet());
 
+  if (packet.has_profiled_frame_symbols())
+    ParseProfiledFrameSymbols(ttp.packet_sequence_state,
+                              packet.profiled_frame_symbols());
+
   if (packet.has_system_info())
     ParseSystemInfo(packet.system_info());
 
@@ -1219,44 +1223,13 @@ void ProtoTraceParser::ParseTypedFtraceToRaw(uint32_t ftrace_id,
 }
 
 void ProtoTraceParser::ParseClockSnapshot(ConstBytes blob) {
+  std::map<ClockTracker::ClockId, int64_t> clock_map;
   protos::pbzero::ClockSnapshot::Decoder evt(blob.data, blob.size);
-  int64_t clock_boottime = 0;
-  int64_t clock_monotonic = 0;
-  int64_t clock_realtime = 0;
   for (auto it = evt.clocks(); it; ++it) {
     protos::pbzero::ClockSnapshot::Clock::Decoder clk(it->data(), it->size());
-    if (clk.clock_id() == protos::pbzero::ClockSnapshot::Clock::BOOTTIME) {
-      clock_boottime = static_cast<int64_t>(clk.timestamp());
-    } else if (clk.clock_id() ==
-               protos::pbzero::ClockSnapshot::Clock::REALTIME) {
-      clock_realtime = static_cast<int64_t>(clk.timestamp());
-    } else if (clk.clock_id() ==
-               protos::pbzero::ClockSnapshot::Clock::MONOTONIC) {
-      clock_monotonic = static_cast<int64_t>(clk.timestamp());
-    }
+    clock_map[clk.clock_id()] = static_cast<int64_t>(clk.timestamp());
   }
-
-  // Usually these snapshots come all together.
-  PERFETTO_DCHECK(clock_boottime > 0 && clock_monotonic > 0 &&
-                  clock_realtime > 0);
-
-  if (clock_boottime <= 0) {
-    PERFETTO_ELOG("ClockSnapshot has an invalid BOOTTIME (%" PRId64 ")",
-                  clock_boottime);
-    context_->storage->IncrementStats(stats::invalid_clock_snapshots);
-    return;
-  }
-
-  auto* ct = context_->clock_tracker.get();
-
-  // |clock_boottime| is used as the reference trace time.
-  ct->SyncClocks(ClockDomain::kBootTime, clock_boottime, clock_boottime);
-
-  if (clock_monotonic > 0)
-    ct->SyncClocks(ClockDomain::kMonotonic, clock_monotonic, clock_boottime);
-
-  if (clock_realtime > 0)
-    ct->SyncClocks(ClockDomain::kRealTime, clock_realtime, clock_boottime);
+  context_->clock_tracker->AddSnapshot(clock_map);
 }
 
 void ProtoTraceParser::ParseAndroidLogPacket(ConstBytes blob) {
@@ -1315,8 +1288,8 @@ void ProtoTraceParser::ParseAndroidLogEvent(ConstBytes blob) {
     msg_id = context_->storage->InternString(&arg_msg[1]);
   }
   UniquePid utid = tid ? context_->process_tracker->UpdateThread(tid, pid) : 0;
-  base::Optional<int64_t> opt_trace_time =
-      context_->clock_tracker->ToTraceTime(ClockDomain::kRealTime, ts);
+  base::Optional<int64_t> opt_trace_time = context_->clock_tracker->ToTraceTime(
+      protos::pbzero::ClockSnapshot::Clock::REALTIME, ts);
   if (!opt_trace_time)
     return;
 
@@ -1530,6 +1503,19 @@ void ProtoTraceParser::ParseProfilePacket(
   }
 }
 
+void ProtoTraceParser::ParseProfiledFrameSymbols(
+    ProtoIncrementalState::PacketSequenceState* sequence_state,
+    ConstBytes blob) {
+  protos::pbzero::ProfiledFrameSymbols::Decoder packet(blob.data, blob.size);
+  ProfilePacketInternLookup intern_lookup(sequence_state,
+                                          context_->storage.get());
+  // We currently only keep the first function_name_id (given currently frames
+  // only map to a single name).
+  context_->heap_profile_tracker->SetFrameName(
+      packet.frame_iid(), packet.function_name_id()->as_uint64(),
+      &intern_lookup);
+}
+
 void ProtoTraceParser::ParseSystemInfo(ConstBytes blob) {
   protos::pbzero::SystemInfo::Decoder packet(blob.data, blob.size);
   if (packet.has_utsname()) {
@@ -1562,6 +1548,7 @@ void ProtoTraceParser::ParseTrackEvent(
   // TODO(eseckler): This legacy event field will eventually be replaced by
   // fields in TrackEvent itself.
   if (PERFETTO_UNLIKELY(!event.type() && !legacy_event.has_phase())) {
+    context_->storage->IncrementStats(stats::track_event_parser_errors);
     PERFETTO_ELOG("TrackEvent without type or phase");
     return;
   }
@@ -1582,12 +1569,16 @@ void ProtoTraceParser::ParseTrackEvent(
   for (auto it = event.category_iids(); it; ++it) {
     category_iids.push_back(it->as_uint64());
   }
+  std::vector<protozero::ConstChars> category_strings;
+  for (auto it = event.categories(); it; ++it) {
+    category_strings.push_back(it->as_string());
+  }
 
   StringId category_id = 0;
 
   // If there's a single category, we can avoid building a concatenated
   // string.
-  if (PERFETTO_LIKELY(category_iids.size() == 1)) {
+  if (PERFETTO_LIKELY(category_iids.size() == 1 && category_strings.empty())) {
     auto* map =
         sequence_state->GetInternedDataMap<protos::pbzero::EventCategory>();
     auto cat_view_it = map->find(category_iids[0]);
@@ -1608,7 +1599,9 @@ void ProtoTraceParser::ParseTrackEvent(
                 protos::pbzero::EventCategory>{category_id};
       }
     }
-  } else if (category_iids.size() > 1) {
+  } else if (category_iids.empty() && category_strings.size() == 1) {
+    category_id = storage->InternString(category_strings[0]);
+  } else if (category_iids.size() + category_strings.size() > 1) {
     auto* map =
         sequence_state->GetInternedDataMap<protos::pbzero::EventCategory>();
     // We concatenate the category strings together since we currently only
@@ -1629,22 +1622,31 @@ void ProtoTraceParser::ParseTrackEvent(
         categories.append(",");
       categories.append(name.data(), name.size());
     }
+    for (const protozero::ConstChars& cat : category_strings) {
+      if (!categories.empty())
+        categories.append(",");
+      categories.append(cat.data, cat.size);
+    }
     if (!categories.empty())
       category_id = storage->InternString(base::StringView(categories));
   } else {
+    context_->storage->IncrementStats(stats::track_event_parser_errors);
     PERFETTO_ELOG("TrackEvent without category");
   }
 
   StringId name_id = 0;
 
-  if (PERFETTO_LIKELY(legacy_event.name_iid())) {
-    auto* map =
-        sequence_state->GetInternedDataMap<protos::pbzero::LegacyEventName>();
-    auto name_view_it = map->find(legacy_event.name_iid());
+  uint64_t name_iid = event.name_iid();
+  if (!name_iid)
+    name_iid = legacy_event.name_iid();
+
+  if (PERFETTO_LIKELY(name_iid)) {
+    auto* map = sequence_state->GetInternedDataMap<protos::pbzero::EventName>();
+    auto name_view_it = map->find(name_iid);
     if (name_view_it == map->end()) {
       context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
       PERFETTO_ELOG("Could not find event name interning entry for ID %" PRIu64,
-                    legacy_event.name_iid());
+                    name_iid);
     } else {
       // If the name is already in the pool, no need to decode it again.
       if (name_view_it->second.storage_refs) {
@@ -1654,10 +1656,12 @@ void ProtoTraceParser::ParseTrackEvent(
         name_id = storage->InternString(event_name.name());
         // Avoid having to decode & look up the name again in the future.
         name_view_it->second.storage_refs =
-            ProtoIncrementalState::StorageReferences<
-                protos::pbzero::LegacyEventName>{name_id};
+            ProtoIncrementalState::StorageReferences<protos::pbzero::EventName>{
+                name_id};
       }
     }
+  } else if (event.has_name()) {
+    name_id = storage->InternString(event.name());
   }
 
   auto args_callback = [this, &event, &sequence_state, ts, utid](
@@ -2027,42 +2031,49 @@ void ProtoTraceParser::ParseDebugAnnotationArgs(
     ProtoIncrementalState::PacketSequenceState* sequence_state,
     ArgsTracker* args_tracker,
     RowId row_id) {
+  TraceStorage* storage = context_->storage.get();
+
   protos::pbzero::DebugAnnotation::Decoder annotation(debug_annotation.data,
                                                       debug_annotation.size);
-  uint64_t iid = annotation.name_iid();
-  if (!iid)
-    return;
 
-  auto* map =
-      sequence_state->GetInternedDataMap<protos::pbzero::DebugAnnotationName>();
-  auto name_view_it = map->find(iid);
-  if (name_view_it == map->end()) {
-    context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
-    PERFETTO_ELOG(
-        "Could not find debug annotation name interning entry for ID %" PRIu64,
-        iid);
-    return;
-  }
-
-  TraceStorage* storage = context_->storage.get();
 
   StringId name_id = 0;
 
-  // If the name is already in the pool, no need to decode it again.
-  if (name_view_it->second.storage_refs) {
-    name_id = name_view_it->second.storage_refs->name_id;
+  uint64_t name_iid = annotation.name_iid();
+  if (PERFETTO_LIKELY(name_iid)) {
+    auto* map = sequence_state
+                    ->GetInternedDataMap<protos::pbzero::DebugAnnotationName>();
+    auto name_view_it = map->find(name_iid);
+    if (name_view_it == map->end()) {
+      context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
+      PERFETTO_ELOG(
+          "Could not find debug annotation name interning entry for ID "
+          "%" PRIu64,
+          name_iid);
+      return;
+    }
+
+    // If the name is already in the pool, no need to decode it again.
+    if (name_view_it->second.storage_refs) {
+      name_id = name_view_it->second.storage_refs->name_id;
+    } else {
+      // TODO(khokhlov): If there are dots or brackets in argument names, they
+      // will confuse the JSON exporter. Either introduce escape sequences (both
+      // here and in export_json.cc), or find another way to encode such names.
+      auto name = name_view_it->second.CreateDecoder();
+      std::string name_prefixed = "debug." + name.name().ToStdString();
+      name_id = storage->InternString(base::StringView(name_prefixed));
+      // Avoid having to decode & look up the name again in the future.
+      name_view_it->second.storage_refs =
+          ProtoIncrementalState::StorageReferences<
+              protos::pbzero::DebugAnnotationName>{name_id};
+    }
+  } else if (annotation.has_name()) {
+    name_id = storage->InternString(annotation.name());
   } else {
-    // TODO(khokhlov): If there are dots or brackets in argument names,
-    // they will confuse the JSON exporter. Either introduce escape
-    // sequences (both here and in export_json.cc), or find another way
-    // to encode such names.
-    auto name = name_view_it->second.CreateDecoder();
-    std::string name_prefixed = "debug." + name.name().ToStdString();
-    name_id = storage->InternString(base::StringView(name_prefixed));
-    // Avoid having to decode & look up the name again in the future.
-    name_view_it->second.storage_refs =
-        ProtoIncrementalState::StorageReferences<
-            protos::pbzero::DebugAnnotationName>{name_id};
+    context_->storage->IncrementStats(stats::track_event_parser_errors);
+    PERFETTO_ELOG("Debug annotation without name");
+    return;
   }
 
   if (annotation.has_bool_value()) {
@@ -2367,10 +2378,12 @@ void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
 void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
   protos::pbzero::GpuCounterEvent::Decoder event(blob.data, blob.size);
 
-  protos::pbzero::GpuCounterDescriptor::Decoder desc(event.counter_descriptor());
+  protos::pbzero::GpuCounterDescriptor::Decoder desc(
+      event.counter_descriptor());
   // Add counter spec to ID map.
   for (auto it = desc.specs(); it; ++it) {
-    protos::pbzero::GpuCounterDescriptor_GpuCounterSpec::Decoder spec(it->data(), it->size());
+    protos::pbzero::GpuCounterDescriptor_GpuCounterSpec::Decoder spec(
+        it->data(), it->size());
     if (!spec.has_counter_id()) {
       PERFETTO_ELOG("Counter spec missing counter id");
       context_->storage->IncrementStats(stats::gpu_counters_invalid_spec);
@@ -2384,21 +2397,21 @@ void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
     auto counter_id = spec.counter_id();
     auto name = spec.name();
     if (gpu_counter_ids_.find(counter_id) == gpu_counter_ids_.end()) {
-      gpu_counter_ids_.emplace(
-          counter_id,
-          context_->storage->InternString(name));
+      gpu_counter_ids_.emplace(counter_id,
+                               context_->storage->InternString(name));
     } else {
       // Either counter spec was repeated or it came after counter data.
       PERFETTO_ELOG("Duplicated counter spec found. (counter_id=%d, name=%s)",
-          counter_id,
-          name.ToStdString().c_str());
+                    counter_id, name.ToStdString().c_str());
       context_->storage->IncrementStats(stats::gpu_counters_invalid_spec);
     }
   }
 
   for (auto it = event.counters(); it; ++it) {
-    protos::pbzero::GpuCounterEvent_GpuCounter::Decoder counter(it->data(), it->size());
-    if (counter.has_counter_id() && (counter.has_int_value() || counter.has_double_value())) {
+    protos::pbzero::GpuCounterEvent_GpuCounter::Decoder counter(it->data(),
+                                                                it->size());
+    if (counter.has_counter_id() &&
+        (counter.has_int_value() || counter.has_double_value())) {
       auto counter_id = counter.counter_id();
       // Check missing counter_id
       if (gpu_counter_ids_.find(counter_id) == gpu_counter_ids_.end()) {
@@ -2407,17 +2420,18 @@ void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
         writer.AppendString("gpu_counter(");
         writer.AppendUnsignedInt(counter_id);
         writer.AppendString(")");
-        gpu_counter_ids_.emplace(
-            counter_id,
-            context_->storage->InternString(writer.GetStringView()));
+        gpu_counter_ids_.emplace(counter_id, context_->storage->InternString(
+                                                 writer.GetStringView()));
         context_->storage->IncrementStats(stats::gpu_counters_missing_spec);
       }
       if (counter.has_int_value()) {
-        context_->event_tracker->PushCounter(
-            ts, counter.int_value(), gpu_counter_ids_[counter_id], 0, RefType::kRefGpuId);
+        context_->event_tracker->PushCounter(ts, counter.int_value(),
+                                             gpu_counter_ids_[counter_id], 0,
+                                             RefType::kRefGpuId);
       } else {
-        context_->event_tracker->PushCounter(
-            ts, counter.double_value(), gpu_counter_ids_[counter_id], 0, RefType::kRefGpuId);
+        context_->event_tracker->PushCounter(ts, counter.double_value(),
+                                             gpu_counter_ids_[counter_id], 0,
+                                             RefType::kRefGpuId);
       }
     }
   }
