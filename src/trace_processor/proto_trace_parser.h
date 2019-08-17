@@ -79,7 +79,6 @@ class ProtoTraceParser : public TraceParser {
   void ParseOOMScoreAdjUpdate(int64_t ts, ConstBytes);
   void ParseMmEventRecord(int64_t ts, uint32_t pid, ConstBytes);
   void ParseSysEvent(int64_t ts, uint32_t pid, bool is_enter, ConstBytes);
-  void ParseClockSnapshot(ConstBytes);
   void ParseAndroidLogPacket(ConstBytes);
   void ParseAndroidLogEvent(ConstBytes);
   void ParseAndroidLogStats(ConstBytes);
@@ -177,7 +176,10 @@ class ProtoTraceParser : public TraceParser {
   const StringId task_file_name_args_key_id_;
   const StringId task_function_name_args_key_id_;
   const StringId log_message_body_key_id_;
+  const StringId data_name_id_;
   const StringId raw_chrome_metadata_event_id_;
+  const StringId raw_chrome_legacy_system_trace_event_id_;
+  const StringId raw_chrome_legacy_user_trace_event_id_;
   const StringId raw_legacy_event_id_;
   const StringId legacy_event_category_key_id_;
   const StringId legacy_event_name_key_id_;

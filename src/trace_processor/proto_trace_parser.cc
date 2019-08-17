@@ -258,8 +258,13 @@ ProtoTraceParser::ProtoTraceParser(TraceProcessorContext* context)
           context->storage->InternString("task.posted_from.function_name")),
       log_message_body_key_id_(
           context->storage->InternString("track_event.log_message")),
+      data_name_id_(context->storage->InternString("data")),
       raw_chrome_metadata_event_id_(
           context->storage->InternString("chrome_event.metadata")),
+      raw_chrome_legacy_system_trace_event_id_(
+          context->storage->InternString("chrome_event.legacy_system_trace")),
+      raw_chrome_legacy_user_trace_event_id_(
+          context->storage->InternString("chrome_event.legacy_user_trace")),
       raw_legacy_event_id_(
           context->storage->InternString("track_event.legacy_event")),
       legacy_event_category_key_id_(
@@ -414,9 +419,6 @@ void ProtoTraceParser::ParseTracePacket(
 
   if (packet.has_ftrace_stats())
     ParseFtraceStats(packet.ftrace_stats());
-
-  if (packet.has_clock_snapshot())
-    ParseClockSnapshot(packet.clock_snapshot());
 
   if (packet.has_android_log())
     ParseAndroidLogPacket(packet.android_log());
@@ -1220,16 +1222,6 @@ void ProtoTraceParser::ParseTypedFtraceToRaw(uint32_t ftrace_id,
         break;
     }
   }
-}
-
-void ProtoTraceParser::ParseClockSnapshot(ConstBytes blob) {
-  std::map<ClockTracker::ClockId, int64_t> clock_map;
-  protos::pbzero::ClockSnapshot::Decoder evt(blob.data, blob.size);
-  for (auto it = evt.clocks(); it; ++it) {
-    protos::pbzero::ClockSnapshot::Clock::Decoder clk(it->data(), it->size());
-    clock_map[clk.clock_id()] = static_cast<int64_t>(clk.timestamp());
-  }
-  context_->clock_tracker->AddSnapshot(clock_map);
 }
 
 void ProtoTraceParser::ParseAndroidLogPacket(ConstBytes blob) {
@@ -2311,8 +2303,8 @@ void ProtoTraceParser::ParseChromeBenchmarkMetadata(ConstBytes blob) {
 void ProtoTraceParser::ParseChromeEvents(ConstBytes blob) {
   TraceStorage* storage = context_->storage.get();
   protos::pbzero::ChromeEventBundle::Decoder bundle(blob.data, blob.size);
+  ArgsTracker args(context_);
   if (bundle.has_metadata()) {
-    ArgsTracker args(context_);
     RowId row_id = storage->mutable_raw_events()->AddRawEvent(
         0, raw_chrome_metadata_event_id_, 0, 0);
 
@@ -2338,7 +2330,34 @@ void ProtoTraceParser::ParseChromeEvents(ConstBytes blob) {
     }
   }
 
-  // TODO(khokhlov): parse legacy_ftrace_output and legacy_json_trace.
+  if (bundle.has_legacy_ftrace_output()) {
+    RowId row_id = storage->mutable_raw_events()->AddRawEvent(
+        0, raw_chrome_legacy_system_trace_event_id_, 0, 0);
+
+    std::string data;
+    for (auto it = bundle.legacy_ftrace_output(); it; ++it) {
+      data += it->as_string().ToStdString();
+    }
+    Variadic value =
+        Variadic::String(storage->InternString(base::StringView(data)));
+    args.AddArg(row_id, data_name_id_, data_name_id_, value);
+  }
+
+  if (bundle.has_legacy_json_trace()) {
+    for (auto it = bundle.legacy_json_trace(); it; ++it) {
+      protos::pbzero::ChromeLegacyJsonTrace::Decoder legacy_trace(
+          it->as_bytes().data, it->as_bytes().size);
+      if (legacy_trace.type() !=
+          protos::pbzero::ChromeLegacyJsonTrace::USER_TRACE) {
+        continue;
+      }
+      RowId row_id = storage->mutable_raw_events()->AddRawEvent(
+          0, raw_chrome_legacy_user_trace_event_id_, 0, 0);
+      Variadic value =
+          Variadic::Json(storage->InternString(legacy_trace.data()));
+      args.AddArg(row_id, data_name_id_, data_name_id_, value);
+    }
+  }
 }
 
 void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
