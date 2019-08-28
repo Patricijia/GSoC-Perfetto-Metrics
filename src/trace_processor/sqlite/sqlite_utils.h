@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_SQLITE_UTILS_H_
-#define SRC_TRACE_PROCESSOR_SQLITE_UTILS_H_
+#ifndef SRC_TRACE_PROCESSOR_SQLITE_SQLITE_UTILS_H_
+#define SRC_TRACE_PROCESSOR_SQLITE_SQLITE_UTILS_H_
 
 #include <math.h>
 
@@ -25,9 +25,9 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
-#include "src/trace_processor/scoped_db.h"
-#include "src/trace_processor/sqlite.h"
-#include "src/trace_processor/sqlite_table.h"
+#include "src/trace_processor/sqlite/scoped_db.h"
+#include "src/trace_processor/sqlite/sqlite.h"
+#include "src/trace_processor/sqlite/sqlite_table.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -471,4 +471,4 @@ int CompareValuesDesc(const T& f, const T& s) {
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_SQLITE_UTILS_H_
+#endif  // SRC_TRACE_PROCESSOR_SQLITE_SQLITE_UTILS_H_

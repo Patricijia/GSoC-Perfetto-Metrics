@@ -14,13 +14,13 @@
  * limitations under the License.
  */
 
-#include "src/trace_processor/sqlite3_str_split.h"
+#include "src/trace_processor/sqlite/sqlite3_str_split.h"
 
 #include <string>
 
 #include "perfetto/base/logging.h"
-#include "src/trace_processor/scoped_db.h"
-#include "src/trace_processor/sqlite.h"
+#include "src/trace_processor/sqlite/scoped_db.h"
+#include "src/trace_processor/sqlite/sqlite.h"
 #include "test/gtest_and_gmock.h"
 
 namespace perfetto {

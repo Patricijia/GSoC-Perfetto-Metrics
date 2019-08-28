@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_SQLITE_H_
-#define SRC_TRACE_PROCESSOR_SQLITE_H_
+#ifndef SRC_TRACE_PROCESSOR_SQLITE_SQLITE3_STR_SPLIT_H_
+#define SRC_TRACE_PROCESSOR_SQLITE_SQLITE3_STR_SPLIT_H_
 
-#include "perfetto/base/build_config.h"
+struct sqlite3;
 
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-#include <sqlite3.h>
-#else
-#include "third_party/sqlite/sqlite3.h"
-#endif
+namespace perfetto {
+namespace trace_processor {
 
-#endif  // SRC_TRACE_PROCESSOR_SQLITE_H_
+void sqlite3_str_split_init(sqlite3* db);
+
+}  // namespace trace_processor
+}  // namespace perfetto
+
+#endif  // SRC_TRACE_PROCESSOR_SQLITE_SQLITE3_STR_SPLIT_H_

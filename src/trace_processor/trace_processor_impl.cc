@@ -51,8 +51,8 @@
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/span_join_operator_table.h"
 #include "src/trace_processor/sql_stats_table.h"
-#include "src/trace_processor/sqlite3_str_split.h"
-#include "src/trace_processor/sqlite_table.h"
+#include "src/trace_processor/sqlite/sqlite3_str_split.h"
+#include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/stack_profile_callsite_table.h"
 #include "src/trace_processor/stack_profile_frame_table.h"
 #include "src/trace_processor/stack_profile_mapping_table.h"
@@ -64,6 +64,7 @@
 #include "src/trace_processor/thread_table.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
+#include "src/trace_processor/track_table.h"
 #include "src/trace_processor/virtual_track_tracker.h"
 #include "src/trace_processor/window_operator_table.h"
 
@@ -73,7 +74,7 @@
 // JSON parsing and exporting is only supported in the standalone and
 // Chromium builds.
 #if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILD_WITH_CHROMIUM
+    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
 #include "src/trace_processor/export_json.h"
 #endif
 
@@ -192,7 +193,7 @@ void CreateBuiltinViews(sqlite3* db) {
 // Exporting traces in legacy JSON format is only supported
 // in the standalone and Chromium builds so far.
 #if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILD_WITH_CHROMIUM
+    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
 void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
   TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   const char* filename =
@@ -280,7 +281,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   context_.systrace_parser.reset(new SystraceParser(&context_));
 
 #if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILD_WITH_CHROMIUM
+    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
   CreateJsonExportFunction(this->context_.storage.get(), db);
 #endif
 
@@ -305,6 +306,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   StackProfileFrameTable::RegisterTable(*db_, context_.storage.get());
   StackProfileMappingTable::RegisterTable(*db_, context_.storage.get());
   MetadataTable::RegisterTable(*db_, context_.storage.get());
+  TrackTable::RegisterTable(*db_, context_.storage.get());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() {

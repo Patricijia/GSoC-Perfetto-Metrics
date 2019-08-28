@@ -14,17 +14,30 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_SQLITE3_STR_SPLIT_H_
-#define SRC_TRACE_PROCESSOR_SQLITE3_STR_SPLIT_H_
+#ifndef SRC_TRACE_PROCESSOR_TRACK_TABLE_H_
+#define SRC_TRACE_PROCESSOR_TRACK_TABLE_H_
 
-struct sqlite3;
+#include "src/trace_processor/storage_table.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-void sqlite3_str_split_init(sqlite3* db);
+class TrackTable : public StorageTable {
+ public:
+  static void RegisterTable(sqlite3* db, const TraceStorage* storage);
+
+  TrackTable(sqlite3*, const TraceStorage*);
+
+  // StorageTable implementation.
+  StorageSchema CreateStorageSchema() override;
+  uint32_t RowCount() override;
+  int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+
+ private:
+  const TraceStorage* const storage_;
+};
 
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_SQLITE3_STR_SPLIT_H_
+#endif  // SRC_TRACE_PROCESSOR_TRACK_TABLE_H_
