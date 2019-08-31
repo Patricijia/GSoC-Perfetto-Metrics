@@ -51,6 +51,7 @@ using UniqueTid = uint32_t;
 
 // StringId is an offset into |string_pool_|.
 using StringId = StringPool::Id;
+static const StringId kNullStringId = StringId(0);
 
 // Identifiers for all the tables in the database.
 enum TableId : uint8_t {
@@ -643,7 +644,9 @@ class TraceStorage {
 
     inline Id AddCounterDefinition(StringId name_id,
                                    int64_t ref,
-                                   RefType type) {
+                                   RefType type,
+                                   StringId desc_id = 0,
+                                   StringId unit_id = 0) {
       base::Hash hash;
       hash.Update(name_id);
       hash.Update(ref);
@@ -659,6 +662,8 @@ class TraceStorage {
       name_ids_.emplace_back(name_id);
       refs_.emplace_back(ref);
       types_.emplace_back(type);
+      desc_ids_.emplace_back(desc_id);
+      unit_ids_.emplace_back(unit_id);
       hash_to_row_idx_.emplace(digest, size() - 1);
       return size() - 1;
     }
@@ -666,6 +671,10 @@ class TraceStorage {
     uint32_t size() const { return static_cast<uint32_t>(name_ids_.size()); }
 
     const std::deque<StringId>& name_ids() const { return name_ids_; }
+
+    const std::deque<StringId>& desc_ids() const { return desc_ids_; }
+
+    const std::deque<StringId>& unit_ids() const { return unit_ids_; }
 
     const std::deque<int64_t>& refs() const { return refs_; }
 
@@ -675,6 +684,8 @@ class TraceStorage {
     std::deque<StringId> name_ids_;
     std::deque<int64_t> refs_;
     std::deque<RefType> types_;
+    std::deque<StringId> desc_ids_;
+    std::deque<StringId> unit_ids_;
 
     std::unordered_map<uint64_t, uint32_t> hash_to_row_idx_;
   };
@@ -1090,6 +1101,32 @@ class TraceStorage {
     std::deque<int64_t> sizes_;
   };
 
+  class CpuProfileStackSamples {
+   public:
+    struct Row {
+      int64_t timestamp;
+      int64_t callsite_id;
+      UniqueTid utid;
+    };
+
+    uint32_t size() const { return static_cast<uint32_t>(timestamps_.size()); }
+
+    void Insert(const Row& row) {
+      timestamps_.emplace_back(row.timestamp);
+      callsite_ids_.emplace_back(row.callsite_id);
+      utids_.emplace_back(row.utid);
+    }
+
+    const std::deque<int64_t>& timestamps() const { return timestamps_; }
+    const std::deque<int64_t>& callsite_ids() const { return callsite_ids_; }
+    const std::deque<UniqueTid>& utids() const { return utids_; }
+
+   private:
+    std::deque<int64_t> timestamps_;
+    std::deque<int64_t> callsite_ids_;
+    std::deque<UniqueTid> utids_;
+  };
+
   void ResetStorage();
 
   UniqueTid AddEmptyThread(uint32_t tid) {
@@ -1314,6 +1351,12 @@ class TraceStorage {
   HeapProfileAllocations* mutable_heap_profile_allocations() {
     return &heap_profile_allocations_;
   }
+  const CpuProfileStackSamples& cpu_profile_stack_samples() const {
+    return cpu_profile_stack_samples_;
+  }
+  CpuProfileStackSamples* mutable_cpu_profile_stack_samples() {
+    return &cpu_profile_stack_samples_;
+  }
 
   const GpuTracks& gpu_tracks() const { return gpu_tracks_; }
   GpuTracks* mutable_gpu_tracks() { return &gpu_tracks_; }
@@ -1420,6 +1463,7 @@ class TraceStorage {
   StackProfileFrames stack_profile_frames_;
   StackProfileCallsites stack_profile_callsites_;
   HeapProfileAllocations heap_profile_allocations_;
+  CpuProfileStackSamples cpu_profile_stack_samples_;
 };
 
 }  // namespace trace_processor

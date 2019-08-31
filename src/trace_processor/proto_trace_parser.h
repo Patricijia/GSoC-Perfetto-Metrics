@@ -32,7 +32,7 @@
 #include "src/trace_processor/trace_parser.h"
 #include "src/trace_processor/trace_storage.h"
 
-#include "perfetto/trace/track_event/track_event.pbzero.h"
+#include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -97,6 +97,8 @@ class ProtoTraceParser : public TraceParser {
   void ParseProfilePacket(int64_t ts,
                           ProtoIncrementalState::PacketSequenceState*,
                           ConstBytes);
+  void ParseStreamingProfilePacket(ProtoIncrementalState::PacketSequenceState*,
+                                   ConstBytes);
   void ParseProfiledFrameSymbols(ProtoIncrementalState::PacketSequenceState*,
                                  ConstBytes);
   void ParseSystemInfo(ConstBytes);
@@ -178,6 +180,7 @@ class ProtoTraceParser : public TraceParser {
   const StringId metatrace_id_;
   const StringId task_file_name_args_key_id_;
   const StringId task_function_name_args_key_id_;
+  const StringId task_line_number_args_key_id_;
   const StringId log_message_body_key_id_;
   const StringId data_name_id_;
   const StringId raw_chrome_metadata_event_id_;
@@ -206,7 +209,7 @@ class ProtoTraceParser : public TraceParser {
   std::vector<StringId> vmstat_strs_id_;
   std::vector<StringId> rss_members_;
   std::vector<StringId> power_rails_strs_id_;
-  std::unordered_map<uint32_t, const StringId> gpu_counter_ids_;
+  std::unordered_map<uint32_t, const TraceStorage::CounterDefinitions::Id> gpu_counter_ids_;
   std::vector<StringId> gpu_hw_queue_ids_;
   std::vector<StringId> gpu_render_stage_ids_;
 

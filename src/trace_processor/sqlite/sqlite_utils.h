@@ -18,6 +18,7 @@
 #define SRC_TRACE_PROCESSOR_SQLITE_SQLITE_UTILS_H_
 
 #include <math.h>
+#include <sqlite3.h>
 
 #include <functional>
 #include <limits>
@@ -26,7 +27,6 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
-#include "src/trace_processor/sqlite/sqlite.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 
 namespace perfetto {
@@ -431,23 +431,20 @@ inline std::vector<SqliteTable::Column> GetColumnsForTable(
                      raw_table_name.c_str());
     }
 
-    SqliteTable::ColumnType type;
-    if (strcmp(raw_type, "UNSIGNED INT") == 0) {
-      type = SqliteTable::ColumnType::kUint;
-    } else if (strcmp(raw_type, "BIG INT") == 0) {
-      type = SqliteTable::ColumnType::kLong;
-    } else if (strcmp(raw_type, "INT") == 0) {
-      type = SqliteTable::ColumnType::kInt;
-    } else if (strcmp(raw_type, "STRING") == 0) {
-      type = SqliteTable::ColumnType::kString;
+    SqlValue::Type type;
+    if (strcmp(raw_type, "STRING") == 0) {
+      type = SqlValue::Type::kString;
     } else if (strcmp(raw_type, "DOUBLE") == 0) {
-      type = SqliteTable::ColumnType::kDouble;
-    } else if (strcmp(raw_type, "BOOLEAN") == 0) {
-      type = SqliteTable::ColumnType::kBool;
+      type = SqlValue::Type::kDouble;
+    } else if (strcmp(raw_type, "BIG INT") == 0 ||
+               strcmp(raw_type, "UNSIGNED INT") == 0 ||
+               strcmp(raw_type, "INT") == 0 ||
+               strcmp(raw_type, "BOOLEAN") == 0) {
+      type = SqlValue::Type::kLong;
     } else if (!*raw_type) {
       PERFETTO_DLOG("Unknown column type for %s %s", raw_table_name.c_str(),
                     name);
-      type = SqliteTable::ColumnType::kUnknown;
+      type = SqlValue::Type::kNull;
     } else {
       PERFETTO_FATAL("Unknown column type '%s' on table %s", raw_type,
                      raw_table_name.c_str());

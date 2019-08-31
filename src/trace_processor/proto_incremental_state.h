@@ -27,12 +27,12 @@
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_storage.h"
 
-#include "perfetto/trace/profiling/profile_common.pbzero.h"
-#include "perfetto/trace/track_event/debug_annotation.pbzero.h"
-#include "perfetto/trace/track_event/log_message.pbzero.h"
-#include "perfetto/trace/track_event/source_location.pbzero.h"
-#include "perfetto/trace/track_event/task_execution.pbzero.h"
-#include "perfetto/trace/track_event/track_event.pbzero.h"
+#include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
+#include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
+#include "protos/perfetto/trace/track_event/log_message.pbzero.h"
+#include "protos/perfetto/trace/track_event/source_location.pbzero.h"
+#include "protos/perfetto/trace/track_event/task_execution.pbzero.h"
+#include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -72,6 +72,7 @@ template <>
 struct StorageReferences<protos::pbzero::SourceLocation> {
   StringId file_name_id;
   StringId function_name_id;
+  uint32_t line_number;
 };
 
 template <>

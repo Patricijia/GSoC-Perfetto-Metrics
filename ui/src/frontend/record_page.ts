@@ -20,6 +20,7 @@ import {Actions} from '../common/actions';
 import {MeminfoCounters, VmstatCounters} from '../common/protos';
 import {isAndroidTarget, isChromeTarget, TargetOs} from '../common/state';
 import {MAX_TIME, RecordMode} from '../common/state';
+import {AdbOverWebUsb} from '../controller/adb';
 
 import {globals} from './globals';
 import {createPage} from './pages';
@@ -473,7 +474,25 @@ function ChromeSettings(cssClass: string) {
         descr: `Records network events for navigations and resources.`,
         setEnabled: (cfg, val) => cfg.navigationAndLoading = val,
         isEnabled: (cfg) => cfg.navigationAndLoading
-      } as ProbeAttrs));
+      } as ProbeAttrs),
+      ChromeCategoriesSelection());
+}
+
+function ChromeCategoriesSelection() {
+  // The categories are displayed only if the extension is installed, because
+  // they come from the chrome.debugging API, not available from normal web
+  // pages.
+  const categories = globals.state.chromeCategories;
+  if (!categories) return [];
+  const categoriesMap = new Map<string, string>();
+  categories.forEach(cat => categoriesMap.set(cat, cat));
+  return m(Dropdown, {
+    title: 'Additional Chrome categories',
+    cssClass: '.multicolumn.two-columns.chrome-categories',
+    options: categoriesMap,
+    set: (cfg, val) => cfg.chromeCategoriesSelected = val,
+    get: (cfg) => cfg.chromeCategoriesSelected
+  } as DropdownAttrs);
 }
 
 function AdvancedSettings(cssClass: string) {
@@ -711,8 +730,13 @@ function recordingLog() {
 // The connection must be done in the frontend. After it, the serial ID will be
 // inserted in the state, and the worker will be able to connect to the phone.
 async function connectAndroidDevice() {
-  console.log('This will be implemented soon!');
-  // TODO(nicomazz): This will be implemented in another CL.
+  const device = await new AdbOverWebUsb().findDevice();
+
+  if (!device.serialNumber) {
+    console.error('serial number undefined');
+    return;
+  }
+  globals.dispatch(Actions.setAndroidDevice({serial: device.serialNumber}));
 }
 
 export const RecordPage = createPage({

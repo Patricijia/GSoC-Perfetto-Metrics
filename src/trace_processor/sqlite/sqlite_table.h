@@ -17,6 +17,8 @@
 #ifndef SRC_TRACE_PROCESSOR_SQLITE_SQLITE_TABLE_H_
 #define SRC_TRACE_PROCESSOR_SQLITE_SQLITE_TABLE_H_
 
+#include <sqlite3.h>
+
 #include <functional>
 #include <memory>
 #include <string>
@@ -27,7 +29,6 @@
 #include "perfetto/trace_processor/basic_types.h"
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/sqlite/query_constraints.h"
-#include "src/trace_processor/sqlite/sqlite.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -43,31 +44,23 @@ class SqliteTable : public sqlite3_vtab {
       std::function<std::unique_ptr<SqliteTable>(sqlite3*,
                                                  const TraceStorage*)>;
 
-  // Allowed types for columns in a table.
-  enum ColumnType {
-    kString = 1,
-    kUint = 2,
-    kLong = 3,
-    kInt = 4,
-    kDouble = 5,
-    kBool = 6,
-    kUnknown = 7,
-  };
-
   // Describes a column of this table.
   class Column {
    public:
-    Column(size_t idx, std::string name, ColumnType type, bool hidden = false);
+    Column(size_t idx,
+           std::string name,
+           SqlValue::Type type,
+           bool hidden = false);
 
     size_t index() const { return index_; }
     const std::string& name() const { return name_; }
-    ColumnType type() const { return type_; }
+    SqlValue::Type type() const { return type_; }
     bool hidden() const { return hidden_; }
 
    private:
     size_t index_ = 0;
     std::string name_;
-    ColumnType type_ = ColumnType::kString;
+    SqlValue::Type type_ = SqlValue::Type::kNull;
     bool hidden_ = false;
   };
 

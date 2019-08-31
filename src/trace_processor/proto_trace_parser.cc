@@ -41,47 +41,47 @@
 #include "src/trace_processor/variadic.h"
 #include "src/trace_processor/virtual_track_tracker.h"
 
-#include "perfetto/common/android_log_constants.pbzero.h"
-#include "perfetto/common/gpu_counter_descriptor.pbzero.h"
-#include "perfetto/common/trace_stats.pbzero.h"
 #include "perfetto/ext/base/string_writer.h"
-#include "perfetto/trace/android/android_log.pbzero.h"
-#include "perfetto/trace/android/packages_list.pbzero.h"
-#include "perfetto/trace/chrome/chrome_benchmark_metadata.pbzero.h"
-#include "perfetto/trace/chrome/chrome_trace_event.pbzero.h"
-#include "perfetto/trace/clock_snapshot.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace_event.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace_stats.pbzero.h"
-#include "perfetto/trace/ftrace/generic.pbzero.h"
-#include "perfetto/trace/ftrace/kmem.pbzero.h"
-#include "perfetto/trace/ftrace/lowmemorykiller.pbzero.h"
-#include "perfetto/trace/ftrace/mm_event.pbzero.h"
-#include "perfetto/trace/ftrace/oom.pbzero.h"
-#include "perfetto/trace/ftrace/power.pbzero.h"
-#include "perfetto/trace/ftrace/raw_syscalls.pbzero.h"
-#include "perfetto/trace/ftrace/sched.pbzero.h"
-#include "perfetto/trace/ftrace/signal.pbzero.h"
-#include "perfetto/trace/ftrace/systrace.pbzero.h"
-#include "perfetto/trace/ftrace/task.pbzero.h"
-#include "perfetto/trace/gpu/gpu_counter_event.pbzero.h"
-#include "perfetto/trace/gpu/gpu_render_stage_event.pbzero.h"
-#include "perfetto/trace/interned_data/interned_data.pbzero.h"
-#include "perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
-#include "perfetto/trace/power/battery_counters.pbzero.h"
-#include "perfetto/trace/power/power_rails.pbzero.h"
-#include "perfetto/trace/profiling/profile_common.pbzero.h"
-#include "perfetto/trace/profiling/profile_packet.pbzero.h"
-#include "perfetto/trace/ps/process_stats.pbzero.h"
-#include "perfetto/trace/ps/process_tree.pbzero.h"
-#include "perfetto/trace/sys_stats/sys_stats.pbzero.h"
-#include "perfetto/trace/system_info.pbzero.h"
-#include "perfetto/trace/trace.pbzero.h"
-#include "perfetto/trace/trace_packet.pbzero.h"
-#include "perfetto/trace/track_event/debug_annotation.pbzero.h"
-#include "perfetto/trace/track_event/log_message.pbzero.h"
-#include "perfetto/trace/track_event/source_location.pbzero.h"
-#include "perfetto/trace/track_event/task_execution.pbzero.h"
+#include "protos/perfetto/common/android_log_constants.pbzero.h"
+#include "protos/perfetto/common/gpu_counter_descriptor.pbzero.h"
+#include "protos/perfetto/common/trace_stats.pbzero.h"
+#include "protos/perfetto/trace/android/android_log.pbzero.h"
+#include "protos/perfetto/trace/android/packages_list.pbzero.h"
+#include "protos/perfetto/trace/chrome/chrome_benchmark_metadata.pbzero.h"
+#include "protos/perfetto/trace/chrome/chrome_trace_event.pbzero.h"
+#include "protos/perfetto/trace/clock_snapshot.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_stats.pbzero.h"
+#include "protos/perfetto/trace/ftrace/generic.pbzero.h"
+#include "protos/perfetto/trace/ftrace/kmem.pbzero.h"
+#include "protos/perfetto/trace/ftrace/lowmemorykiller.pbzero.h"
+#include "protos/perfetto/trace/ftrace/mm_event.pbzero.h"
+#include "protos/perfetto/trace/ftrace/oom.pbzero.h"
+#include "protos/perfetto/trace/ftrace/power.pbzero.h"
+#include "protos/perfetto/trace/ftrace/raw_syscalls.pbzero.h"
+#include "protos/perfetto/trace/ftrace/sched.pbzero.h"
+#include "protos/perfetto/trace/ftrace/signal.pbzero.h"
+#include "protos/perfetto/trace/ftrace/systrace.pbzero.h"
+#include "protos/perfetto/trace/ftrace/task.pbzero.h"
+#include "protos/perfetto/trace/gpu/gpu_counter_event.pbzero.h"
+#include "protos/perfetto/trace/gpu/gpu_render_stage_event.pbzero.h"
+#include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
+#include "protos/perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
+#include "protos/perfetto/trace/power/battery_counters.pbzero.h"
+#include "protos/perfetto/trace/power/power_rails.pbzero.h"
+#include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
+#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
+#include "protos/perfetto/trace/ps/process_stats.pbzero.h"
+#include "protos/perfetto/trace/ps/process_tree.pbzero.h"
+#include "protos/perfetto/trace/sys_stats/sys_stats.pbzero.h"
+#include "protos/perfetto/trace/system_info.pbzero.h"
+#include "protos/perfetto/trace/trace.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
+#include "protos/perfetto/trace/track_event/log_message.pbzero.h"
+#include "protos/perfetto/trace/track_event/source_location.pbzero.h"
+#include "protos/perfetto/trace/track_event/task_execution.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -257,6 +257,8 @@ ProtoTraceParser::ProtoTraceParser(TraceProcessorContext* context)
           context->storage->InternString("task.posted_from.file_name")),
       task_function_name_args_key_id_(
           context->storage->InternString("task.posted_from.function_name")),
+      task_line_number_args_key_id_(
+          context->storage->InternString("task.posted_from.line_number")),
       log_message_body_key_id_(
           context->storage->InternString("track_event.log_message")),
       data_name_id_(context->storage->InternString("data")),
@@ -426,6 +428,11 @@ void ProtoTraceParser::ParseTracePacket(
 
   if (packet.has_profile_packet())
     ParseProfilePacket(ts, ttp.packet_sequence_state, packet.profile_packet());
+
+  if (packet.has_streaming_profile_packet()) {
+    ParseStreamingProfilePacket(ttp.packet_sequence_state,
+                                packet.streaming_profile_packet());
+  }
 
   if (packet.has_profiled_frame_symbols())
     ParseProfiledFrameSymbols(ttp.packet_sequence_state,
@@ -1280,7 +1287,7 @@ void ProtoTraceParser::ParseAndroidLogEvent(ConstBytes blob) {
     prio = protos::pbzero::AndroidLogPriority::PRIO_INFO;
 
   if (arg_str != &arg_msg[0]) {
-    PERFETTO_DCHECK(!msg_id);
+    PERFETTO_DCHECK(msg_id.is_null());
     // Skip the first space char (" foo=1 bar=2" -> "foo=1 bar=2").
     msg_id = context_->storage->InternString(&arg_msg[1]);
   }
@@ -1497,6 +1504,49 @@ void ProtoTraceParser::ParseProfilePacket(
     ProfilePacketInternLookup intern_lookup(sequence_state,
                                             context_->storage.get());
     context_->heap_profile_tracker->FinalizeProfile(&intern_lookup);
+  }
+}
+
+void ProtoTraceParser::ParseStreamingProfilePacket(
+    ProtoIncrementalState::PacketSequenceState* sequence_state,
+    ConstBytes blob) {
+  protos::pbzero::StreamingProfilePacket::Decoder packet(blob.data, blob.size);
+
+  ProcessTracker* procs = context_->process_tracker.get();
+  TraceStorage* storage = context_->storage.get();
+  StackProfileTracker* stack_profile_tracker =
+      context_->stack_profile_tracker.get();
+  ProfilePacketInternLookup intern_lookup(sequence_state, storage);
+
+  uint32_t pid = static_cast<uint32_t>(sequence_state->pid());
+  uint32_t tid = static_cast<uint32_t>(sequence_state->tid());
+  UniqueTid utid = procs->UpdateThread(tid, pid);
+
+  auto timestamp_it = packet.timestamp_delta_us();
+  for (auto callstack_it = packet.callstack_iid(); callstack_it;
+       ++callstack_it, ++timestamp_it) {
+    if (!timestamp_it) {
+      context_->storage->IncrementStats(stats::stackprofile_parser_error);
+      PERFETTO_ELOG(
+          "StreamingProfilePacket has less callstack IDs than timestamps!");
+      break;
+    }
+
+    auto maybe_callstack_id = stack_profile_tracker->FindCallstack(
+        callstack_it->as_uint64(), &intern_lookup);
+    if (!maybe_callstack_id) {
+      context_->storage->IncrementStats(stats::stackprofile_parser_error);
+      PERFETTO_ELOG("StreamingProfilePacket referencing invalid callstack!");
+      continue;
+    }
+
+    int64_t callstack_id = *maybe_callstack_id;
+
+    TraceStorage::CpuProfileStackSamples::Row sample_row{
+        sequence_state->IncrementAndGetTrackEventTimeNs(
+            timestamp_it->as_int64()),
+        callstack_id, utid};
+    storage->mutable_cpu_profile_stack_samples()->Insert(sample_row);
   }
 }
 
@@ -2183,20 +2233,24 @@ void ProtoTraceParser::ParseTaskExecutionArgs(
 
   StringId file_name_id = 0;
   StringId function_name_id = 0;
+  uint32_t line_number = 0;
 
   // If the names are already in the pool, no need to decode them again.
   if (location_view_it->second.storage_refs) {
     file_name_id = location_view_it->second.storage_refs->file_name_id;
     function_name_id = location_view_it->second.storage_refs->function_name_id;
+    line_number = location_view_it->second.storage_refs->line_number;
   } else {
     TraceStorage* storage = context_->storage.get();
     auto location = location_view_it->second.CreateDecoder();
     file_name_id = storage->InternString(location.file_name());
     function_name_id = storage->InternString(location.function_name());
+    line_number = location.line_number();
     // Avoid having to decode & look up the names again in the future.
     location_view_it->second.storage_refs =
         ProtoIncrementalState::StorageReferences<
-            protos::pbzero::SourceLocation>{file_name_id, function_name_id};
+            protos::pbzero::SourceLocation>{file_name_id, function_name_id,
+                                            line_number};
   }
 
   args_tracker->AddArg(row, task_file_name_args_key_id_,
@@ -2206,8 +2260,9 @@ void ProtoTraceParser::ParseTaskExecutionArgs(
                        task_function_name_args_key_id_,
                        Variadic::String(function_name_id));
 
-  // TODO(nicomazz): SourceLocation also contains line number now, so it should
-  // be added as an argument here.
+  args_tracker->AddArg(row, task_line_number_args_key_id_,
+                       task_line_number_args_key_id_,
+                       Variadic::UnsignedInteger(line_number));
 }
 
 void ProtoTraceParser::ParseLogMessage(
@@ -2402,10 +2457,10 @@ void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
 void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
   protos::pbzero::GpuCounterEvent::Decoder event(blob.data, blob.size);
 
-  protos::pbzero::GpuCounterDescriptor::Decoder desc(
+  protos::pbzero::GpuCounterDescriptor::Decoder descriptor(
       event.counter_descriptor());
   // Add counter spec to ID map.
-  for (auto it = desc.specs(); it; ++it) {
+  for (auto it = descriptor.specs(); it; ++it) {
     protos::pbzero::GpuCounterDescriptor_GpuCounterSpec::Decoder spec(
         it->data(), it->size());
     if (!spec.has_counter_id()) {
@@ -2421,8 +2476,36 @@ void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
     auto counter_id = spec.counter_id();
     auto name = spec.name();
     if (gpu_counter_ids_.find(counter_id) == gpu_counter_ids_.end()) {
-      gpu_counter_ids_.emplace(counter_id,
-                               context_->storage->InternString(name));
+      auto desc = spec.description();
+
+      StringId unit_id = 0;
+      if (spec.has_numerator_units() || spec.has_denominator_units()) {
+        char buffer[1024];
+        base::StringWriter unit(buffer, sizeof(buffer));
+        for (auto numer = spec.numerator_units(); numer; ++numer) {
+          if (unit.pos()) {
+            unit.AppendChar(':');
+          }
+          unit.AppendInt(numer->as_int64());
+        }
+        char sep = '/';
+        for (auto denom = spec.denominator_units(); denom; ++denom) {
+          unit.AppendChar(sep);
+          unit.AppendInt(denom->as_int64());
+          sep = ':';
+        }
+        unit_id = context_->storage->InternString(unit.GetStringView());
+      }
+
+      auto name_id = context_->storage->InternString(name);
+      auto desc_id = context_->storage->InternString(desc);
+      auto* definitions = context_->storage->mutable_counter_definitions();
+      auto defn_id = definitions->AddCounterDefinition(name_id,
+                                                       0,
+                                                       RefType::kRefGpuId,
+                                                       desc_id,
+                                                       unit_id);
+      gpu_counter_ids_.emplace(counter_id, defn_id);
     } else {
       // Either counter spec was repeated or it came after counter data.
       PERFETTO_ELOG("Duplicated counter spec found. (counter_id=%d, name=%s)",
@@ -2444,18 +2527,20 @@ void ProtoTraceParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
         writer.AppendString("gpu_counter(");
         writer.AppendUnsignedInt(counter_id);
         writer.AppendString(")");
-        gpu_counter_ids_.emplace(counter_id, context_->storage->InternString(
-                                                 writer.GetStringView()));
+        auto name_id = context_->storage->InternString(writer.GetStringView());
+        auto* definitions = context_->storage->mutable_counter_definitions();
+        auto defn_id = definitions->AddCounterDefinition(name_id,
+                                                         0,
+                                                         RefType::kRefGpuId);
+        gpu_counter_ids_.emplace(counter_id, defn_id);
         context_->storage->IncrementStats(stats::gpu_counters_missing_spec);
       }
       if (counter.has_int_value()) {
         context_->event_tracker->PushCounter(ts, counter.int_value(),
-                                             gpu_counter_ids_[counter_id], 0,
-                                             RefType::kRefGpuId);
+                                             gpu_counter_ids_[counter_id]);
       } else {
         context_->event_tracker->PushCounter(ts, counter.double_value(),
-                                             gpu_counter_ids_[counter_id], 0,
-                                             RefType::kRefGpuId);
+                                             gpu_counter_ids_[counter_id]);
       }
     }
   }

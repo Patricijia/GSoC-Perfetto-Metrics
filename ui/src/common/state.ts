@@ -178,6 +178,7 @@ export interface State {
   recordingInProgress: boolean;
   extensionInstalled: boolean;
   serialAndroidDeviceConnected: string|undefined;
+  chromeCategories: string[]|undefined;
 }
 
 export const defaultTraceTime = {
@@ -249,6 +250,8 @@ export interface RecordConfig {
 
   procStats: boolean;
   procStatsPeriodMs: number;
+
+  chromeCategoriesSelected: string[];
 }
 
 export function createEmptyRecordConfig(): RecordConfig {
@@ -301,6 +304,8 @@ export function createEmptyRecordConfig(): RecordConfig {
     memLmk: false,
     procStats: false,
     procStatsPeriodMs: 1000,
+
+    chromeCategoriesSelected: [],
   };
 }
 
@@ -352,5 +357,6 @@ export function createEmptyState(): State {
     recordingInProgress: false,
     extensionInstalled: false,
     serialAndroidDeviceConnected: undefined,
+    chromeCategories: undefined,
   };
 }

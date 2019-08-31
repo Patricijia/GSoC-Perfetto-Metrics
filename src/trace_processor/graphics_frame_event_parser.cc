@@ -17,11 +17,12 @@
 #include "src/trace_processor/graphics_frame_event_parser.h"
 
 #include "perfetto/protozero/field.h"
-#include "perfetto/trace/android/graphics_frame_event.pbzero.h"
 #include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/virtual_track_tracker.h"
+
+#include "protos/perfetto/trace/android/graphics_frame_event.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -121,7 +122,7 @@ void GraphicsFrameEventParser::ParseEvent(int64_t timestamp, ConstBytes blob) {
       event.has_frame_number() ? event.frame_number() : 0;
 
   const TrackId track_id = context_->virtual_track_tracker->GetOrCreateTrack(
-      {VirtualTrackScope::kGlobal, 0 /* upid */, track_name_id,
+      {VirtualTrackScope::kGlobal, 0 /* upid */, track_name_id.id,
        graphics_event_scope_id_},
       track_name_id);
 

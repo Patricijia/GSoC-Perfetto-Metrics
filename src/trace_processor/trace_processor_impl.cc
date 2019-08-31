@@ -32,6 +32,7 @@
 #include "src/trace_processor/clock_tracker.h"
 #include "src/trace_processor/counter_definitions_table.h"
 #include "src/trace_processor/counter_values_table.h"
+#include "src/trace_processor/cpu_profile_stack_sample_table.h"
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/forwarding_trace_parser.h"
 #include "src/trace_processor/heap_profile_allocation_table.h"
@@ -68,19 +69,16 @@
 #include "src/trace_processor/virtual_track_tracker.h"
 #include "src/trace_processor/window_operator_table.h"
 
-#include "perfetto/metrics/android/mem_metric.pbzero.h"
-#include "perfetto/metrics/metrics.pbzero.h"
+#include "protos/perfetto/metrics/android/mem_metric.pbzero.h"
+#include "protos/perfetto/metrics/metrics.pbzero.h"
 
-// JSON parsing and exporting is only supported in the standalone and
-// Chromium builds.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 #include "src/trace_processor/export_json.h"
 #endif
 
 // In Android and Chromium tree builds, we don't have the percentile module.
 // Just don't include it.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_PERCENTILE)
 // defined in sqlite_src/ext/misc/percentile.c
 extern "C" int sqlite3_percentile_init(sqlite3* db,
                                        char** error,
@@ -100,7 +98,7 @@ void InitializeSqlite(sqlite3* db) {
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_PERCENTILE)
   sqlite3_percentile_init(db, &error, nullptr);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
@@ -190,10 +188,7 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 }
 
-// Exporting traces in legacy JSON format is only supported
-// in the standalone and Chromium builds so far.
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
   TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   const char* filename =
@@ -280,8 +275,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
   context_.systrace_parser.reset(new SystraceParser(&context_));
 
-#if PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD) || \
-    PERFETTO_BUILDFLAG(PERFETTO_CHROMIUM_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
   CreateJsonExportFunction(this->context_.storage.get(), db);
 #endif
 
@@ -302,6 +296,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   AndroidLogsTable::RegisterTable(*db_, context_.storage.get());
   RawTable::RegisterTable(*db_, context_.storage.get());
   HeapProfileAllocationTable::RegisterTable(*db_, context_.storage.get());
+  CpuProfileStackSampleTable::RegisterTable(*db_, context_.storage.get());
   StackProfileCallsiteTable::RegisterTable(*db_, context_.storage.get());
   StackProfileFrameTable::RegisterTable(*db_, context_.storage.get());
   StackProfileMappingTable::RegisterTable(*db_, context_.storage.get());

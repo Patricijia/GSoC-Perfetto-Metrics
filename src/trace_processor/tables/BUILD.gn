@@ -1,4 +1,4 @@
-# Copyright (C) 2017 The Android Open Source Project
+# Copyright (C) 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,20 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import webapp2
+source_set("tables") {
+  sources = [
+    "macros.h",
+    "macros_internal.h",
+  ]
+  deps = [
+    "../../../gn:default_deps",
+    "../db:lib",
+  ]
+}
 
-from google.appengine.api import urlfetch
-
-
-class ChangesHandler(webapp2.RequestHandler):
-  def get(self):
-    url = ('https://android-review.googlesource.com/changes/?' +
-        self.request.query_string)
-    result = urlfetch.fetch(url)
-    self.response.status_int = result.status_code
-    self.response.write(result.content)
-
-
-app = webapp2.WSGIApplication([
-    ('/changes/', ChangesHandler),
-], debug=True)
+source_set("unittests") {
+  testonly = true
+  sources = [
+    "macros_unittest.cc",
+  ]
+  deps = [
+    ":tables",
+    "../../../gn:default_deps",
+    "../../../gn:gtest_and_gmock",
+  ]
+}
