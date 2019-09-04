@@ -373,15 +373,18 @@ export const StateActions = {
 
   selectThreadState(
       state: StateDraft,
-      args: {utid: number, ts: number, dur: number, state: string}): void {
-    state.currentSelection = {
-      kind: 'THREAD_STATE',
-      utid: args.utid,
-      ts: args.ts,
-      dur: args.dur,
-      state: args.state
-    };
-  },
+      args:
+          {utid: number, ts: number, dur: number, state: string, cpu: number}):
+      void {
+        state.currentSelection = {
+          kind: 'THREAD_STATE',
+          utid: args.utid,
+          ts: args.ts,
+          dur: args.dur,
+          state: args.state,
+          cpu: args.cpu
+        };
+      },
 
   deselect(state: StateDraft, _: {}): void {
     state.currentSelection = null;
@@ -407,7 +410,7 @@ export const StateActions = {
     state.bufferUsage = args.percentage;
   },
 
-  setAndroidDevice(state: StateDraft, args: {serial: string}): void {
+  setAndroidDevice(state: StateDraft, args: {serial: string|undefined}): void {
     state.serialAndroidDeviceConnected = args.serial;
   },
 
@@ -422,7 +425,6 @@ export const StateActions = {
   setChromeCategories(state: StateDraft, args: {categories: string[]}): void {
     state.chromeCategories = args.categories;
   },
-
 };
 
 // When we are on the frontend side, we don't really want to execute the

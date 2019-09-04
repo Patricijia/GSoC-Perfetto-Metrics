@@ -118,6 +118,7 @@ export interface ThreadStateSelection {
   ts: number;
   dur: number;
   state: string;
+  cpu: number;
 }
 
 type Selection = NoteSelection|SliceSelection|ChromeSliceSelection|
@@ -172,6 +173,7 @@ export interface State {
   videoNoteIds: string[];
   scrubbingEnabled: boolean;
   flagPauseEnabled: boolean;
+
   /**
    * Trace recording
    */

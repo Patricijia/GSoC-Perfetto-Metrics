@@ -37,6 +37,7 @@ proto_library(
         "perfetto/common/sys_stats_counters.proto",
         "perfetto/common/trace_stats.proto",
         "perfetto/common/tracing_service_state.proto",
+        "perfetto/common/track_event_descriptor.proto",
     ],
     has_services = 1,
     cc_api_version = 2,
@@ -81,6 +82,7 @@ proto_library(
         "perfetto/common/sys_stats_counters.proto",
         "perfetto/common/trace_stats.proto",
         "perfetto/common/tracing_service_state.proto",
+        "perfetto/common/track_event_descriptor.proto",
     ],
 )
 
@@ -1379,6 +1381,7 @@ proto_library(
         "//third_party/perfetto/protos:trace_ftrace",
         "//third_party/perfetto/protos:trace_gpu",
         "//third_party/perfetto/protos:trace_interned_data",
+        "//third_party/perfetto/protos:trace_minimal",
         "//third_party/perfetto/protos:trace_perfetto",
         "//third_party/perfetto/protos:trace_power",
         "//third_party/perfetto/protos:trace_profiling",
@@ -1436,6 +1439,7 @@ proto_library(
         "//third_party/perfetto/protos:trace_ftrace_zero",
         "//third_party/perfetto/protos:trace_gpu_zero",
         "//third_party/perfetto/protos:trace_interned_data_zero",
+        "//third_party/perfetto/protos:trace_minimal_zero",
         "//third_party/perfetto/protos:trace_perfetto_zero",
         "//third_party/perfetto/protos:trace_power_zero",
         "//third_party/perfetto/protos:trace_profiling_zero",
