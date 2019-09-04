@@ -21,6 +21,8 @@
 #include <random>
 #include <thread>
 
+#include <sys/system_properties.h>
+
 #include "gtest/gtest.h"
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
@@ -47,6 +49,14 @@ namespace perfetto {
 #define TEST_PRODUCER_SOCK_NAME ::perfetto::GetProducerSocket()
 #endif
 
+bool IsX86() {
+  char buf[PROP_VALUE_MAX + 1] = {};
+  int ret = __system_property_get("ro.product.cpu.abi", buf);
+  PERFETTO_CHECK(ret >= 0);
+  std::string abi(buf);
+  return abi.find("x86") != std::string::npos;
+}
+
 // TODO(b/73453011): reenable this on more platforms (including standalone
 // Android).
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
@@ -55,6 +65,9 @@ namespace perfetto {
 #define MAYBE_TestFtraceProducer DISABLED_TestFtraceProducer
 #endif
 TEST(PerfettoTest, MAYBE_TestFtraceProducer) {
+  if (IsX86())
+    return;
+
   base::TestTaskRunner task_runner;
 
   TestHelper helper(&task_runner);
