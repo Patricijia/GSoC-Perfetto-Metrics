@@ -52,6 +52,7 @@
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/span_join_operator_table.h"
 #include "src/trace_processor/sql_stats_table.h"
+#include "src/trace_processor/sqlite/db_sqlite_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/stack_profile_callsite_table.h"
@@ -302,6 +303,13 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   StackProfileMappingTable::RegisterTable(*db_, context_.storage.get());
   MetadataTable::RegisterTable(*db_, context_.storage.get());
   TrackTable::RegisterTable(*db_, context_.storage.get());
+
+  // New style db-backed tables.
+  const TraceStorage* storage = context_.storage.get();
+  DbSqliteTable::RegisterTable(*db_, &storage->gpu_slice_table(),
+                               storage->gpu_slice_table().name());
+  DbSqliteTable::RegisterTable(*db_, &storage->gpu_track_table(),
+                               storage->gpu_track_table().name());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() {
