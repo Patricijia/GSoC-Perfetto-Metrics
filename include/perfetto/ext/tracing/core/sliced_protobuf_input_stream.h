@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
-#define SRC_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
+#ifndef INCLUDE_PERFETTO_EXT_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
+#define INCLUDE_PERFETTO_EXT_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
 
 #include "perfetto/ext/tracing/core/slice.h"
 
@@ -24,13 +24,15 @@
 
 #include <google/protobuf/io/zero_copy_stream.h>
 
+#include "perfetto/base/export.h"
+
 namespace perfetto {
 
 using ZeroCopyInputStream = google::protobuf::io::ZeroCopyInputStream;
 
 // Wraps a sequence of Slice(s) in a protobuf ZeroCopyInputStream that can be
 // passed to protobuf::Message::ParseFromZeroCopyStream().
-class SlicedProtobufInputStream : public ZeroCopyInputStream {
+class PERFETTO_EXPORT SlicedProtobufInputStream : public ZeroCopyInputStream {
  public:
   // This indirection deals with the fact that the public protobuf library and
   // the internal one diverged on this type. The internal doesn's use a custom
@@ -60,4 +62,4 @@ class SlicedProtobufInputStream : public ZeroCopyInputStream {
 
 }  // namespace perfetto
 
-#endif  // SRC_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
+#endif  // INCLUDE_PERFETTO_EXT_TRACING_CORE_SLICED_PROTOBUF_INPUT_STREAM_H_
