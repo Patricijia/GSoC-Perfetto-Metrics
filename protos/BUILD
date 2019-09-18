@@ -512,6 +512,7 @@ proto_library(
     name = "config_profiling",
     srcs = [
         "perfetto/config/profiling/heapprofd_config.proto",
+        "perfetto/config/profiling/java_hprof_config.proto",
     ],
     has_services = 1,
     cc_api_version = 2,
@@ -548,6 +549,7 @@ proto_library(
     name = "config_profiling_zero",
     srcs = [
         "perfetto/config/profiling/heapprofd_config.proto",
+        "perfetto/config/profiling/java_hprof_config.proto",
     ],
 )
 
@@ -1068,7 +1070,6 @@ proto_library(
         "perfetto/trace/ftrace/ftrace_event_bundle.proto",
         "perfetto/trace/ftrace/ftrace_stats.proto",
         "perfetto/trace/ftrace/generic.proto",
-        "perfetto/trace/ftrace/gpu.proto",
         "perfetto/trace/ftrace/i2c.proto",
         "perfetto/trace/ftrace/ipi.proto",
         "perfetto/trace/ftrace/irq.proto",
@@ -1137,7 +1138,6 @@ proto_library(
         "perfetto/trace/ftrace/ftrace_event_bundle.proto",
         "perfetto/trace/ftrace/ftrace_stats.proto",
         "perfetto/trace/ftrace/generic.proto",
-        "perfetto/trace/ftrace/gpu.proto",
         "perfetto/trace/ftrace/i2c.proto",
         "perfetto/trace/ftrace/ipi.proto",
         "perfetto/trace/ftrace/irq.proto",

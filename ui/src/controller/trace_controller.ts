@@ -218,8 +218,9 @@ export class TraceController extends Controller<States> {
 
     // We don't know the resolution at this point. However this will be
     // replaced in 50ms so a guess is fine.
+    const resolution = (traceTime.end - traceTime.start) / 1000;
     actions.push(Actions.setVisibleTraceTime(
-        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution: 0.008}));
+        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution}));
 
     globals.dispatchMultiple(actions);
 
@@ -306,16 +307,13 @@ export class TraceController extends Controller<States> {
       }
     }
 
-    const heapProfileExists = await engine.query(`
-      SELECT * FROM heap_profile_allocation LIMIT 1`);
-    if (heapProfileExists.numRecords > 0) {
-      tracksToAdd.push({
-        engineId: this.engineId,
-        kind: HEAP_PROFILE_TRACK_KIND,
-        name: `Heap Profile`,
-        trackGroup: SCROLLING_TRACK_GROUP,
-        config: {}
-      });
+    const heapProfiles = await engine.query(`
+      select distinct(upid) from heap_profile_allocation`);
+
+    const heapUpids: Set<number> = new Set();
+    for (let i = 0; i < heapProfiles.numRecords; i++) {
+      const upid = heapProfiles.columns[0].longValues![i];
+      heapUpids.add(+upid);
     }
 
     const maxGpuFreq = await engine.query(`
@@ -503,6 +501,16 @@ export class TraceController extends Controller<States> {
                   ref: upid,
                 }
               });
+            });
+          }
+
+          if (heapUpids.has(upid)) {
+            tracksToAdd.push({
+              engineId: this.engineId,
+              kind: HEAP_PROFILE_TRACK_KIND,
+              name: `Heap Profile`,
+              trackGroup: pUuid,
+              config: {upid}
             });
           }
         }

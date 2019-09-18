@@ -109,6 +109,13 @@ export interface CounterSelection {
   id: number;
 }
 
+export interface HeapDumpSelection {
+  kind: 'HEAP_DUMP';
+  id: number;
+  upid: number;
+  ts: number;
+}
+
 export interface ChromeSliceSelection {
   kind: 'CHROME_SLICE';
   id: number;
@@ -129,7 +136,8 @@ export interface ThreadStateSelection {
   cpu: number;
 }
 
-type Selection = NoteSelection|SliceSelection|CounterSelection|
+type Selection =
+    NoteSelection|SliceSelection|CounterSelection|HeapDumpSelection|
     ChromeSliceSelection|TimeSpanSelection|ThreadStateSelection;
 
 export interface LogsPagination {
@@ -246,7 +254,6 @@ export interface RecordConfig {
   screenRecord: boolean;
 
   gpuFreq: boolean;
-  gpuSched: boolean;
 
   ftrace: boolean;
   atrace: boolean;
@@ -296,7 +303,6 @@ export function createEmptyRecordConfig(): RecordConfig {
     screenRecord: false,
 
     gpuFreq: false,
-    gpuSched: false,
 
     ftrace: false,
     atrace: false,
