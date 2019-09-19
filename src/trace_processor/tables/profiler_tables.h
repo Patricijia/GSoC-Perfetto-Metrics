@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_TABLES_SLICE_TABLES_H_
-#define SRC_TRACE_PROCESSOR_TABLES_SLICE_TABLES_H_
+#ifndef SRC_TRACE_PROCESSOR_TABLES_PROFILER_TABLES_H_
+#define SRC_TRACE_PROCESSOR_TABLES_PROFILER_TABLES_H_
 
 #include "src/trace_processor/tables/macros.h"
 
@@ -23,20 +23,16 @@ namespace perfetto {
 namespace trace_processor {
 namespace tables {
 
-#define PERFETTO_TP_GPU_SLICES_DEF(NAME, PARENT, C) \
-  NAME(GpuSliceTable, "gpu_slice")                  \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                 \
-  C(uint32_t, slice_id)                             \
-  C(base::Optional<int64_t>, context_id)            \
-  C(base::Optional<int64_t>, render_target)         \
-  C(base::Optional<uint32_t>, frame_id)             \
-  C(base::Optional<uint32_t>, submission_id)        \
-  C(base::Optional<uint32_t>, hw_queue_id)
+#define PERFETTO_TP_SYMBOL_DEF(NAME, PARENT, C) \
+  NAME(SymbolTable, "stack_profile_symbol")     \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)             \
+  C(uint32_t, symbol_set_id)                    \
+  C(StringPool::Id, name)
 
-PERFETTO_TP_TABLE(PERFETTO_TP_GPU_SLICES_DEF);
+PERFETTO_TP_TABLE(PERFETTO_TP_SYMBOL_DEF);
 
 }  // namespace tables
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_TABLES_SLICE_TABLES_H_
+#endif  // SRC_TRACE_PROCESSOR_TABLES_PROFILER_TABLES_H_

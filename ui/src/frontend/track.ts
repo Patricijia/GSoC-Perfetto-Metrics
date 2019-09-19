@@ -15,6 +15,7 @@
 import * as m from 'mithril';
 import {TrackState} from '../common/state';
 import {TrackData} from '../common/track_data';
+import {checkerboard} from './checkerboard';
 
 import {globals} from './globals';
 import {TrackButtonAttrs} from './track_panel';
@@ -22,7 +23,7 @@ import {TrackButtonAttrs} from './track_panel';
 /**
  * This interface forces track implementations to have some static properties.
  * Typescript does not have abstract static members, which is why this needs to
- * be in a seperate interface.
+ * be in a separate interface.
  */
 export interface TrackCreator {
   // Store the kind explicitly as a string as opposed to using class.kind in
@@ -71,6 +72,13 @@ export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
 
   render(ctx: CanvasRenderingContext2D) {
     globals.frontendLocalState.addVisibleTrack(this.trackState.id);
-    this.renderCanvas(ctx);
+    if (this.data() === undefined) {
+      const {visibleWindowTime, timeScale} = globals.frontendLocalState;
+      const startPx = Math.floor(timeScale.timeToPx(visibleWindowTime.start));
+      const endPx = Math.ceil(timeScale.timeToPx(visibleWindowTime.end));
+      checkerboard(ctx, this.getHeight(), startPx, endPx);
+    } else {
+      this.renderCanvas(ctx);
+    }
   }
 }
