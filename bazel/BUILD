@@ -12,13 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../../gn/proto_library.gni")
-
-perfetto_proto_library("@TYPE@") {
-  sources = [
-    "appended_data.proto",
-  ]
-  deps = [
-    "../profiling:@TYPE@",
-  ]
-}
+config_setting(
+    name = "os_osx",
+    values = {"cpu": "darwin"},
+    visibility = ["//visibility:public"],
+)

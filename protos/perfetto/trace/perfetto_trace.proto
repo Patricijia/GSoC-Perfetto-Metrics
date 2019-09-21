@@ -625,24 +625,6 @@ message PackagesList {
 
 // End of protos/perfetto/trace/android/packages_list.proto
 
-// Begin of protos/perfetto/trace/appended_data/appended_data.proto
-
-// Contains data appended to the trace after the fact. Elements referring to
-// past interned data must have a matching trusted_packet_sequence_id.
-//
-// The writer will usually parse the trace, resolve and concatenate
-// AppendedData (and corresponding InternedData) to the end of the trace.
-// Any InternedData must precede or be on the same packet as the AppendedData
-// that uses them.
-//
-// Next id: 2.
-message AppendedData {
-  // Maps between interned frames and their resolved symbols.
-  repeated ProfiledFrameSymbols profiled_frame_symbols = 1;
-}
-
-// End of protos/perfetto/trace/appended_data/appended_data.proto
-
 // Begin of protos/perfetto/trace/chrome/chrome_benchmark_metadata.proto
 
 // This message is not intended to be written by the chrome on the device.
@@ -2312,12 +2294,38 @@ message FtraceEvent {
 
 // Begin of protos/perfetto/trace/ftrace/ftrace_event_bundle.proto
 
-// One parsed page from per-cpu ftrace buffer.
+// The result of tracing one or more ftrace data pages from a single per-cpu
+// kernel ring buffer. If collating multiple pages' worth of events, all of
+// them come from contiguous pages, with no kernel data loss in between.
 message FtraceEventBundle {
   optional uint32 cpu = 1;
   repeated FtraceEvent event = 2;
-  // True if this cpu's ftrace kernel buffer lost events since the last read.
+  // Set to true if there was data loss between the last time we've read from
+  // the corresponding per-cpu kernel buffer, and the earliest event recorded
+  // in this bundle.
   optional bool lost_events = 3;
+
+  // Optionally-enabled compact encoding of a batch of scheduling events. Only
+  // a subset of events & their fields is recorded.
+  // All fields (except comms) are stored in a structure-of-arrays form, one
+  // entry in each repeated field per event.
+  // TODO(rsavitski): unstable, do not use.
+  message CompactSched {
+    // Delta-encoded timestamps across all sched_switch events within this
+    // bundle. The first is absolute, each next one is relative to its
+    // predecessor.
+    repeated uint64 switch_timestamp = 1 [packed = true];
+    repeated int32 switch_prev_state = 2 [packed = true];
+    repeated int32 switch_next_pid = 3 [packed = true];
+    repeated int32 switch_next_prio = 4 [packed = true];
+
+    // Interned table of unique comm strings for this bundle.
+    repeated string switch_next_comm_table = 5;
+    // One per event, index into |switch_next_comm_table| corresponding to the
+    // next_comm field of the event.
+    repeated uint32 switch_next_comm_index = 6 [packed = true];
+  }
+  optional CompactSched compact_sched = 4;
 }
 
 // End of protos/perfetto/trace/ftrace/ftrace_event_bundle.proto
@@ -3031,6 +3039,9 @@ message HeapGraph {
 
 // Begin of protos/perfetto/trace/profiling/profile_common.proto
 
+// TODO(fmayer): Figure out naming thoroughout this file to get a
+// nomenclature that works between Windows and Linux.
+
 // The interning fields in this file can refer to 2 different intern tables,
 // depending on the message they are used in. If the interned fields are present
 // in ProfilePacket proto, then the intern tables included in the ProfilePacket
@@ -3058,6 +3069,39 @@ message ProfiledFrameSymbols {
   repeated uint64 function_name_id = 2;  // key to InternedString
   repeated uint64 file_name_id = 3;      // key to InternedString
   repeated uint32 line_number = 4;
+}
+
+message Line {
+  optional string function_name = 1;
+  optional string source_file_name = 2;
+  optional uint32 line_number = 3;
+}
+
+// Symbols for a given address in a module.
+message AddressSymbols {
+  optional uint64 address = 1;
+
+  // Source lines that correspond to this address.
+  //
+  // These are repeated because when inlining happens, multiple functions'
+  // frames can be at a single address. Imagine function Foo calling the
+  // std::vector<int> constructor, which gets inlined at 0xf00. We then get
+  // both Foo and the std::vector<int> constructor when we symbolize the
+  // address.
+  repeated Line lines = 2;
+}
+
+// Symbols for addresses seen in a module.
+message ModuleSymbols {
+  // Fully qualified path to the mapping.
+  // E.g. /system/lib64/libc.so.
+  optional string path = 1;
+
+  // .note.gnu.build-id on Linux (not hex encoded).
+  // uuid on MacOS.
+  // Module GUID on Windows.
+  optional string build_id = 2;
+  repeated AddressSymbols address_symbols = 3;
 }
 
 message Mapping {
@@ -3454,6 +3498,7 @@ message TracePacket {
 
     // Only used in profile packets.
     ProfiledFrameSymbols profiled_frame_symbols = 55;
+    ModuleSymbols module_symbols = 61;
 
     // Only used by TrackEvent.
     TrackDescriptor track_descriptor = 60;
@@ -3506,10 +3551,6 @@ message TracePacket {
   // proactively in advance of referring to them in later packets.
   optional InternedData interned_data = 12;
 
-  // Data appended to the trace post-processing (e.g. symbol information). When
-  // the AppendedData contents refer to interned data, they must share the same
-  // |trusted_packet_sequence_id|.
-  optional AppendedData appended_data = 61;
 
   enum SequenceFlags {
     SEQ_UNSPECIFIED = 0;
@@ -4260,6 +4301,20 @@ message FtraceConfig {
   // *Per-CPU* buffer size.
   optional uint32 buffer_size_kb = 10;
   optional uint32 drain_period_ms = 11;
+
+  // Configuration for compact encoding of scheduler events. If enabled, this
+  // records a small subset of fields of selected scheduling events, and
+  // encodes them in a denser proto format than normal. This is useful due to
+  // scheduling events being abundant in a typical trace, and dominating its
+  // size via a combination of unnecessary data being retained, and proto
+  // format overheads.
+  // TODO(rsavitski): unstable, do not use.
+  message CompactSchedConfig {
+    // If true, and sched_switch ftrace event is enabled, record those events
+    // in the compact format.
+    optional bool enabled = 1;
+  }
+  optional CompactSchedConfig compact_sched = 12;
 }
 
 // End of protos/perfetto/config/ftrace/ftrace_config.proto

@@ -610,7 +610,7 @@ function RecordingPlatformSelection() {
 
   const selectedIndex = selected ? baseTargets.length +
           availableAndroidDevices.findIndex(d => d.serial === selected.serial) :
-                                   undefined;
+                                   0;
 
   return m(
       '.target',
@@ -638,6 +638,7 @@ function onTargetChange(target: string) {
     draft.targetOS = adbDevice ? adbDevice.os as TargetOs : target as TargetOs;
   });
   globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
+  globals.rafScheduler.scheduleFullRedraw();
 }
 
 function Instructions(cssClass: string) {
@@ -794,8 +795,10 @@ function recordingButtons() {
 
   const targetOs = state.recordConfig.targetOS;
   if (isAndroidTarget(targetOs)) {
-    buttons.push(showCmd);
-    if (realDeviceTarget) buttons.push(start);
+    if (!recInProgress) {
+      buttons.push(showCmd);
+      if (realDeviceTarget) buttons.push(start);
+    }
   } else if (isChromeTarget(targetOs) && state.extensionInstalled) {
     buttons.push(start);
   } else if (isLinuxTarget(targetOs)) {
@@ -882,7 +885,29 @@ export async function updateAvailableAdbDevices() {
   });
 
   globals.dispatch(Actions.setAvailableDevices({devices: availableAdbDevices}));
+  selectAndroidDeviceIfAvailable(availableAdbDevices);
+  globals.rafScheduler.scheduleFullRedraw();
   return availableAdbDevices;
+}
+
+function selectAndroidDeviceIfAvailable(
+    availableAdbDevices: AdbRecordingTarget[]) {
+  // If there is an android device attached, but not selected, select it by
+  // default.
+  if (!globals.state.androidDeviceConnected && availableAdbDevices.length) {
+    globals.dispatch(
+        Actions.setAndroidDevice({target: availableAdbDevices[0]}));
+    return;
+  }
+
+  // If a device was selected, but it's not available anymore, reset the
+  // androidConnectedDevice to null.
+  const deviceConnected = globals.state.androidDeviceConnected;
+  if (deviceConnected &&
+      availableAdbDevices.find(e => e.serial === deviceConnected.serial) ===
+          undefined) {
+    globals.dispatch(Actions.setAndroidDevice({target: undefined}));
+  }
 }
 
 function recordMenu(routePage: string) {
@@ -893,10 +918,11 @@ function recordMenu(routePage: string) {
           m('i.material-icons', 'laptop_chromebook'),
           m('.title', 'Chrome'),
           m('.sub', 'Chrome traces')));
+  const recInProgress = globals.state.recordingInProgress;
 
   return m(
       '.record-menu',
-      {onclick: () => globals.rafScheduler.scheduleFullRedraw()},
+      {class: recInProgress ? 'disabled' : ''},
       m('header', 'Trace config'),
       m('ul',
         m('a[href="#!/record?p=buffers"]',
@@ -972,6 +998,7 @@ export const RecordPage = createPage({
 
     return m(
         '.record-page',
+        globals.state.recordingInProgress ? m('.hider') : [],
         m('.record-container', RecordHeader(), recordMenu(routePage), pages));
   }
 });
