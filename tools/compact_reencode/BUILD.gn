@@ -12,21 +12,26 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../../gn/proto_library.gni")
+import("../../gn/perfetto_host_executable.gni")
 
-perfetto_proto_library("@TYPE@") {
+perfetto_host_executable("compact_reencode") {
+  testonly = true
+  deps = [
+    ":common",
+    "../../gn:default_deps",
+  ]
+}
+
+source_set("common") {
+  testonly = true
+  public_deps = [
+    "../../gn:default_deps",
+    "../../include/perfetto/protozero",
+    "../../protos/perfetto/trace:zero",
+    "../../protos/perfetto/trace/ftrace:zero",
+    "../../src/base",
+  ]
   sources = [
-    "batt_metric.proto",
-    "cpu_metric.proto",
-    "heap_profile_callsite_stats.proto",
-    "ion_metric.proto",
-    "lmk_metric.proto",
-    "mem_metric.proto",
-    "mem_unagg_metric.proto",
-    "package_list.proto",
-    "powrails_metric.proto",
-    "process_growth.proto",
-    "startup_metric.proto",
-    "unsymbolized_frames.proto",
+    "main.cc",
   ]
 }

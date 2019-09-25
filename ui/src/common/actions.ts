@@ -96,7 +96,7 @@ export const StateActions = {
   },
 
   convertTraceToJson(
-      _: StateDraft, args: {file: File, truncate?: 'start'|'end'}): void {
+      _: StateDraft, args: {file: Blob, truncate?: 'start'|'end'}): void {
     ConvertTrace(args.file, args.truncate);
   },
 
@@ -394,13 +394,16 @@ export const StateActions = {
     state.currentSelection = {kind: 'CHROME_SLICE', id: args.id};
   },
 
-  selectTimeSpan(
-      state: StateDraft, args: {startTs: number, endTs: number}): void {
-    state.currentSelection = {
-      kind: 'TIMESPAN',
-      startTs: args.startTs,
-      endTs: args.endTs,
-    };
+  selectTimeSpan(state: StateDraft, args: {startTs: number, endTs: number}):
+      void {
+        state.timeSpan = {
+          startTs: args.startTs,
+          endTs: args.endTs,
+        };
+      },
+
+  removeTimeSpan(state: StateDraft, _: {}): void {
+    state.timeSpan = null;
   },
 
   selectThreadState(

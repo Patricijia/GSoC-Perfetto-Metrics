@@ -14,22 +14,17 @@
  * limitations under the License.
  */
 
-#ifndef TOOLS_TRACE_TO_TEXT_SYMBOLIZE_PROFILE_H_
-#define TOOLS_TRACE_TO_TEXT_SYMBOLIZE_PROFILE_H_
+syntax = "proto2";
+option optimize_for = LITE_RUNTIME;
 
-#include "perfetto/profiling/symbolizer.h"
-#include "perfetto/trace_processor/trace_processor.h"
-#include "protos/perfetto/trace/trace_packet.pb.h"
+package perfetto.protos;
 
-#include <functional>
-#include <iostream>
+message UnsymbolizedFrames {
+  message Frame {
+    optional string module = 1;
+    optional string build_id = 2;
+    optional int64 address = 3;
+  }
 
-namespace perfetto {
-namespace trace_to_text {
-
-int SymbolizeProfile(std::istream* input, std::ostream* output);
-
-}  // namespace trace_to_text
-}  // namespace perfetto
-
-#endif  // TOOLS_TRACE_TO_TEXT_SYMBOLIZE_PROFILE_H_
+  repeated Frame frames = 1;
+}

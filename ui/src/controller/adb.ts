@@ -71,7 +71,11 @@ export class AdbOverWebUsb implements Adb {
   }
 
   async getPairedDevices() {
-    return navigator.usb.getDevices();
+    try {
+      return navigator.usb.getDevices();
+    } catch (e) {  // WebUSB not available.
+      return Promise.resolve([]);
+    }
   }
 
   async connect(device: USBDevice): Promise<void> {
@@ -259,8 +263,12 @@ export class AdbOverWebUsb implements Adb {
 
     //  The stream will resolve this promise once it receives the
     //  acknowledgement message from the device.
-    return new Promise<AdbStream>((resolve, _) => {
-      stream.onConnect = () => resolve(stream);
+    return new Promise<AdbStream>((resolve, reject) => {
+      stream.onConnect = () => {
+        stream.onClose = () => {};
+        resolve(stream);
+      };
+      stream.onClose = () => reject();
     });
   }
 

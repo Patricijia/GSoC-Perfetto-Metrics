@@ -30,9 +30,10 @@ load(
 
 package(default_visibility = ["//visibility:private"])
 
-licenses(["notice"])  # Apache 2.0
+licenses(["notice"])
 
 exports_files(["NOTICE"])
+
 # ##############################################################################
 # Internal targets
 # ##############################################################################
@@ -503,26 +504,27 @@ filegroup(
 genrule(
     name = "src_trace_processor_metrics_gen_merged_sql_metrics",
     srcs = [
-        "src/trace_processor/metrics/android/android_mem.sql",
-        "src/trace_processor/metrics/android/android_powrails.sql",
-        "src/trace_processor/metrics/android/android_startup_launches.sql",
         "src/trace_processor/metrics/android/android_cpu_agg.sql",
-        "src/trace_processor/metrics/android/upid_span_view.sql",
-        "src/trace_processor/metrics/android/android_mem_unagg.sql",
+        "src/trace_processor/metrics/android/android_task_state.sql",
+        "src/trace_processor/metrics/android/android_ion.sql",
+        "src/trace_processor/metrics/android/android_startup_cpu.sql",
+        "src/trace_processor/metrics/android/span_view_stats.sql",
+        "src/trace_processor/metrics/android/unsymbolized_frames.sql",
+        "src/trace_processor/metrics/android/process_mem.sql",
+        "src/trace_processor/metrics/android/android_powrails.sql",
         "src/trace_processor/metrics/android/android_process_growth.sql",
         "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
         "src/trace_processor/metrics/android/android_batt.sql",
         "src/trace_processor/metrics/android/android_startup.sql",
+        "src/trace_processor/metrics/android/android_mem.sql",
+        "src/trace_processor/metrics/android/android_startup_launches.sql",
         "src/trace_processor/metrics/trace_metadata.sql",
-        "src/trace_processor/metrics/android/android_ion.sql",
-        "src/trace_processor/metrics/android/android_startup_cpu.sql",
         "src/trace_processor/metrics/android/android_package_list.sql",
         "src/trace_processor/metrics/android/android_cpu.sql",
-        "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
-        "src/trace_processor/metrics/android/span_view_stats.sql",
         "src/trace_processor/metrics/android/heap_profile_callsite_stats.sql",
-        "src/trace_processor/metrics/android/android_task_state.sql",
-        "src/trace_processor/metrics/android/process_mem.sql",
+        "src/trace_processor/metrics/android/upid_span_view.sql",
+        "src/trace_processor/metrics/android/android_mem_unagg.sql",
+        "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
         "src/trace_processor/metrics/android/android_lmk.sql",
     ],
     outs = [
@@ -994,8 +996,6 @@ filegroup(
     name = "tools_trace_to_text_symbolizer",
     srcs = [
         "tools/trace_to_text/symbolizer.cc",
-        "tools/trace_to_text/trace_symbol_table.cc",
-        "tools/trace_to_text/trace_symbol_table.h",
     ],
 )
 
@@ -1003,8 +1003,6 @@ filegroup(
 filegroup(
     name = "tools_trace_to_text_utils",
     srcs = [
-        "tools/trace_to_text/profile_visitor.cc",
-        "tools/trace_to_text/profile_visitor.h",
         "tools/trace_to_text/utils.cc",
         "tools/trace_to_text/utils.h",
     ],
@@ -1156,6 +1154,7 @@ perfetto_proto_library(
         "protos/perfetto/metrics/android/powrails_metric.proto",
         "protos/perfetto/metrics/android/process_growth.proto",
         "protos/perfetto/metrics/android/startup_metric.proto",
+        "protos/perfetto/metrics/android/unsymbolized_frames.proto",
     ],
 )
 
