@@ -36,6 +36,8 @@
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/process_tracker.h"
+#include "src/trace_processor/proto_incremental_state.h"
+#include "src/trace_processor/stack_profile_tracker.h"
 #include "src/trace_processor/syscall_tracker.h"
 #include "src/trace_processor/systrace_parser.h"
 #include "src/trace_processor/trace_processor_context.h"
@@ -132,9 +134,24 @@ class ProfilePacketInternLookup : public StackProfileTracker::InternLookup {
       : seq_state_(seq_state) {}
 
   base::Optional<base::StringView> GetString(
-      StackProfileTracker::SourceStringId iid) const override {
-    auto* map =
-        seq_state_->GetInternedDataMap<protos::pbzero::InternedString>();
+      StackProfileTracker::SourceStringId iid,
+      StackProfileTracker::InternedStringType type) const override {
+    ProtoIncrementalState::InternedDataMap<protos::pbzero::InternedString>*
+        map = nullptr;
+    switch (type) {
+      case StackProfileTracker::InternedStringType::kBuildId:
+        map = seq_state_->GetInternedDataMap<protos::pbzero::InternedString,
+                                             BuildIdFieldName>();
+        break;
+      case StackProfileTracker::InternedStringType::kFunctionName:
+        map = seq_state_->GetInternedDataMap<protos::pbzero::InternedString,
+                                             FunctionNamesFieldName>();
+        break;
+      case StackProfileTracker::InternedStringType::kMappingPath:
+        map = seq_state_->GetInternedDataMap<protos::pbzero::InternedString,
+                                             MappingPathsFieldName>();
+        break;
+    }
     auto it = map->find(iid);
     if (it == map->end()) {
       PERFETTO_DLOG("Did not find string %" PRIu64 " in %zu elems", iid,
@@ -1733,14 +1750,15 @@ void ProtoTraceParser::ParseTrackEvent(
 
   using LegacyEvent = protos::pbzero::TrackEvent::LegacyEvent;
 
-  tables::ChromeAsyncTrackTable::Row track(name_id);
+  base::Optional<UniquePid> upid;
+  int64_t source_id = 0;
   if (legacy_event.has_unscoped_id()) {
-    track.async_id = static_cast<int64_t>(legacy_event.unscoped_id());
+    source_id = static_cast<int64_t>(legacy_event.unscoped_id());
   } else if (legacy_event.has_global_id()) {
-    track.async_id = static_cast<int64_t>(legacy_event.global_id());
+    source_id = static_cast<int64_t>(legacy_event.global_id());
   } else if (legacy_event.has_local_id()) {
-    track.upid = procs->GetOrCreateProcess(pid);
-    track.async_id = static_cast<int64_t>(legacy_event.local_id());
+    upid = procs->GetOrCreateProcess(pid);
+    source_id = static_cast<int64_t>(legacy_event.local_id());
   }
 
   StringId id_scope = 0;
@@ -1855,8 +1873,8 @@ void ProtoTraceParser::ParseTrackEvent(
       break;
     }
     case 'b': {  // TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN
-      TrackId track_id =
-          context_->track_tracker->InternChromeAsyncTrack(track, id_scope);
+      TrackId track_id = context_->track_tracker->InternChromeTrack(
+          name_id, upid, source_id, id_scope);
       auto opt_slice_id =
           slice_tracker->Begin(ts, track_id, RefType::kRefTrack, category_id,
                                name_id, args_callback);
@@ -1874,8 +1892,8 @@ void ProtoTraceParser::ParseTrackEvent(
       break;
     }
     case 'e': {  // TRACE_EVENT_PHASE_NESTABLE_ASYNC_END
-      TrackId track_id =
-          context_->track_tracker->InternChromeAsyncTrack(track, id_scope);
+      TrackId track_id = context_->track_tracker->InternChromeTrack(
+          name_id, upid, source_id, id_scope);
       auto opt_slice_id =
           slice_tracker->End(ts, track_id, RefType::kRefTrack, category_id,
                              name_id, args_callback);
@@ -1891,8 +1909,8 @@ void ProtoTraceParser::ParseTrackEvent(
       // nested underneath their parent slices.
       int64_t duration_ns = 0;
       int64_t tidelta = 0;
-      TrackId track_id =
-          context_->track_tracker->InternChromeAsyncTrack(track, id_scope);
+      TrackId track_id = context_->track_tracker->InternChromeTrack(
+          name_id, upid, source_id, id_scope);
       auto opt_slice_id =
           slice_tracker->Scoped(ts, track_id, RefType::kRefTrack, category_id,
                                 name_id, duration_ns, args_callback);
