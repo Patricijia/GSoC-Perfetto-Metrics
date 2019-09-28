@@ -85,29 +85,13 @@ const View kViews[] = {kAllocObjectsView, kObjectsView, kAllocSpaceView,
 using Iterator = trace_processor::TraceProcessor::Iterator;
 
 constexpr const char* kQueryProfiles =
-    "select distinct hpa.upid, hpa.ts from heap_profile_allocation hpa;";
+    "select distinct hpa.upid, hpa.ts, p.pid from heap_profile_allocation hpa, "
+    "process p where p.upid = hpa.upid;";
 
 struct Callsite {
   int64_t id;
   int64_t frame_id;
 };
-
-// Walk tree bottom up and assign the inverse of the frame_ids of the path
-// that was used to reach each node into result.
-void Walk(const std::vector<std::vector<Callsite>> children_map,
-          std::vector<std::vector<int64_t>>* result,
-          std::vector<int64_t> parents,
-          const Callsite& root) {
-  PERFETTO_DCHECK((*result)[static_cast<size_t>(root.id)].empty());
-  parents.push_back(root.frame_id);
-  // pprof stores the frames the other way round that we do, reverse here.
-  (*result)[static_cast<size_t>(root.id)].assign(parents.rbegin(),
-                                                 parents.rend());
-  const std::vector<Callsite>& children =
-      children_map[static_cast<size_t>(root.id)];
-  for (const Callsite& child : children)
-    Walk(children_map, result, parents, child);
-}
 
 // Return map from callsite_id to list of frame_ids that make up the callstack.
 std::vector<std::vector<int64_t>> GetCallsiteToFrames(
@@ -120,20 +104,22 @@ std::vector<std::vector<int64_t>> GetCallsiteToFrames(
     return {};
   }
   int64_t count = count_it.Get(0).long_value;
-  std::vector<std::vector<Callsite>> children(static_cast<size_t>(count));
 
   Iterator it = tp->ExecuteQuery(
-      "select id, parent_id, frame_id from stack_profile_callsite;");
-  std::vector<Callsite> roots;
+      "select id, parent_id, frame_id from stack_profile_callsite order by "
+      "depth;");
+  std::vector<std::vector<int64_t>> result(static_cast<size_t>(count));
   while (it.Next()) {
     int64_t id = it.Get(0).long_value;
     int64_t parent_id = it.Get(1).long_value;
     int64_t frame_id = it.Get(2).long_value;
-    Callsite callsite{id, frame_id};
-    if (parent_id == -1)
-      roots.emplace_back(callsite);
-    else
-      children[static_cast<size_t>(parent_id)].emplace_back(callsite);
+    std::vector<int64_t>& path = result[static_cast<size_t>(id)];
+    path.push_back(frame_id);
+    if (parent_id != -1) {
+      const std::vector<int64_t>& parent_path =
+          result[static_cast<size_t>(parent_id)];
+      path.insert(path.end(), parent_path.begin(), parent_path.end());
+    }
   }
 
   if (!it.Status().ok()) {
@@ -141,13 +127,6 @@ std::vector<std::vector<int64_t>> GetCallsiteToFrames(
                             it.Status().message().c_str());
     return {};
   }
-
-  std::vector<std::vector<int64_t>> result(static_cast<size_t>(count));
-  auto start = base::GetWallTimeMs();
-  for (const Callsite& root : roots)
-    Walk(children, &result, {}, root);
-  PERFETTO_DLOG("Walked %zu in %llu", children.size(),
-                (base::GetWallTimeMs() - start).count());
   return result;
 }
 
@@ -339,7 +318,10 @@ class GProfileBuilder {
       GLocation* glocation = result_.add_location();
       glocation->set_id(ToPprofId(frame_id));
       glocation->set_mapping_id(ToPprofId(mapping_id));
-      glocation->set_address(ToPprofId(rel_pc));
+      // TODO(fmayer): Convert to abspc.
+      // relpc + (mapping.start - (mapping.exact_offset -
+      //                           mapping.start_offset)).
+      glocation->set_address(static_cast<uint64_t>(rel_pc));
       if (symbol_set_id) {
         for (const Line& line : LineForSymbolSetId(symbol_set_id)) {
           seen_symbol_ids->emplace(line.symbol_id);
@@ -443,18 +425,28 @@ class GProfileBuilder {
 
 bool TraceToPprof(std::istream* input,
                   std::vector<SerializedProfile>* output,
-                  Symbolizer* symbolizer) {
+                  Symbolizer* symbolizer,
+                  uint64_t pid,
+                  const std::vector<uint64_t>& timestamps) {
   trace_processor::Config config;
   std::unique_ptr<trace_processor::TraceProcessor> tp =
       trace_processor::TraceProcessor::CreateInstance(config);
 
   if (!ReadTrace(tp.get(), input))
-    return 1;
+    return false;
 
   tp->NotifyEndOfFile();
+  return TraceToPprof(tp.get(), output, symbolizer, pid, timestamps);
+}
+
+bool TraceToPprof(trace_processor::TraceProcessor* tp,
+                  std::vector<SerializedProfile>* output,
+                  Symbolizer* symbolizer,
+                  uint64_t pid,
+                  const std::vector<uint64_t>& timestamps) {
   if (symbolizer) {
     SymbolizeDatabase(
-        tp.get(), symbolizer, [&tp](perfetto::protos::TracePacket packet) {
+        tp, symbolizer, [&tp](perfetto::protos::TracePacket packet) {
           size_t size = static_cast<size_t>(packet.ByteSize());
           std::unique_ptr<uint8_t[]> buf(new uint8_t[size]);
           packet.SerializeToArray(buf.get(), packet.ByteSize());
@@ -489,8 +481,8 @@ bool TraceToPprof(std::istream* input,
   }
 
   int64_t max_symbol_id = max_symbol_id_it.Get(0).long_value;
-  auto callsite_to_frames = GetCallsiteToFrames(tp.get());
-  auto symbol_set_id_to_lines = GetSymbolSetIdToLines(tp.get());
+  auto callsite_to_frames = GetCallsiteToFrames(tp);
+  auto symbol_set_id_to_lines = GetSymbolSetIdToLines(tp);
 
   Iterator it = tp->ExecuteQuery(kQueryProfiles);
   while (it.Next()) {
@@ -498,12 +490,19 @@ bool TraceToPprof(std::istream* input,
                             max_symbol_id);
     uint64_t upid = static_cast<uint64_t>(it.Get(0).long_value);
     uint64_t ts = static_cast<uint64_t>(it.Get(1).long_value);
+    uint64_t profile_pid = static_cast<uint64_t>(it.Get(2).long_value);
+    if ((pid > 0 && profile_pid != pid) ||
+        (!timestamps.empty() && std::find(timestamps.begin(), timestamps.end(),
+                                          ts) == timestamps.end())) {
+      continue;
+    }
+
     std::string pid_query = "select pid from process where upid = ";
     pid_query += std::to_string(upid) + ";";
     Iterator pid_it = tp->ExecuteQuery(pid_query);
     PERFETTO_CHECK(pid_it.Next());
 
-    GProfile profile = builder.GenerateGProfile(tp.get(), upid, ts);
+    GProfile profile = builder.GenerateGProfile(tp, upid, ts);
     output->emplace_back(
         SerializedProfile{static_cast<uint64_t>(pid_it.Get(0).long_value),
                           profile.SerializeAsString()});
@@ -516,8 +515,11 @@ bool TraceToPprof(std::istream* input,
   return true;
 }
 
-bool TraceToPprof(std::istream* input, std::vector<SerializedProfile>* output) {
-  return TraceToPprof(input, output, nullptr);
+bool TraceToPprof(std::istream* input,
+                  std::vector<SerializedProfile>* output,
+                  uint64_t pid,
+                  const std::vector<uint64_t>& timestamps) {
+  return TraceToPprof(input, output, nullptr, pid, timestamps);
 }
 
 }  // namespace trace_to_text

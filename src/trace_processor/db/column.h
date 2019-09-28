@@ -30,8 +30,9 @@ namespace perfetto {
 namespace trace_processor {
 
 // Represents the possible filter operations on a column.
-enum FilterOp {
+enum class FilterOp {
   kEq,
+  kNeq,
   kGt,
   kLt,
 };
@@ -161,6 +162,9 @@ class Column {
   // given filter constraint.
   void FilterInto(FilterOp, SqlValue value, RowMap*) const;
 
+  // Returns true if this column is considered an id column.
+  bool IsId() const { return (flags_ & Flag::kId) != 0; }
+
   const RowMap& row_map() const;
   const char* name() const { return name_; }
   SqlValue::Type type() const {
@@ -185,6 +189,9 @@ class Column {
   }
   Constraint lt(SqlValue value) const {
     return Constraint{col_idx_, FilterOp::kLt, value};
+  }
+  Constraint neq(SqlValue value) const {
+    return Constraint{col_idx_, FilterOp::kNeq, value};
   }
 
   // Returns an Order for each Order type for this Column.

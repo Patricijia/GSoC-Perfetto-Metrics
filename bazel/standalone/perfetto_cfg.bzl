@@ -34,7 +34,6 @@ PERFETTO_CONFIG = struct(
         # "perfetto_build_flags.h" file that can be included via:
         # #include "perfetto_build_flags.h".
         build_config = ["//:build_config_hdr"],
-
         zlib = ["@perfetto_dep_zlib//:zlib"],
         jsoncpp = ["@perfetto_dep_jsoncpp//:jsoncpp"],
         linenoise = ["@perfetto_dep_linenoise//:linenoise"],
@@ -44,6 +43,16 @@ PERFETTO_CONFIG = struct(
         protoc_lib = ["@com_google_protobuf//:protoc_lib"],
         protobuf_lite = ["@com_google_protobuf//:protobuf_lite"],
         protobuf_full = ["@com_google_protobuf//:protobuf"],
+    ),
+
+    # This struct allows embedders to customize the cc_opts for Perfetto
+    # 3rd party dependencies. They only have an effect if the dependencies are
+    # initialized with the Perfetto build files (i.e. via perfetto_deps()).
+    deps_copts = struct(
+        zlib = [],
+        jsoncpp = [],
+        linenoise = [],
+        sqlite = [],
     ),
 
     # This struct allows the embedder to customize copts and other args passed
