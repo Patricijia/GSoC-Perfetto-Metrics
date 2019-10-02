@@ -49,8 +49,9 @@ enum Pan {
   Right = 1
 }
 function keyToPan(e: KeyboardEvent): Pan {
-  if (['a'].includes(e.key)) return Pan.Left;
-  if (['d', 'e'].includes(e.key)) return Pan.Right;
+  const key = e.key.toLowerCase();
+  if (['a'].includes(key)) return Pan.Left;
+  if (['d', 'e'].includes(key)) return Pan.Right;
   return Pan.None;
 }
 
@@ -60,8 +61,9 @@ enum Zoom {
   Out = -1
 }
 function keyToZoom(e: KeyboardEvent): Zoom {
-  if (['w', ','].includes(e.key)) return Zoom.In;
-  if (['s', 'o'].includes(e.key)) return Zoom.Out;
+  const key = e.key.toLowerCase();
+  if (['w', ','].includes(key)) return Zoom.In;
+  if (['s', 'o'].includes(key)) return Zoom.Out;
   return Zoom.None;
 }
 
@@ -217,7 +219,7 @@ export class PanAndZoomHandler {
     }
 
     // Handle key events that are not pan or zoom.
-    handleKey(e.key, true, this.shiftDown);
+    handleKey(e, true);
   }
 
   private onKeyUp(e: KeyboardEvent) {
@@ -230,7 +232,7 @@ export class PanAndZoomHandler {
     }
 
     // Handle key events that are not pan or zoom.
-    handleKey(e.key, false, this.shiftDown);
+    handleKey(e, false);
   }
 
   private updateShift(down: boolean) {
