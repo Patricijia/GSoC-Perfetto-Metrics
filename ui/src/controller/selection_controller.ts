@@ -15,6 +15,7 @@
 import {Engine} from '../common/engine';
 import {fromNs, toNs} from '../common/time';
 import {
+  CallsiteInfo,
   CounterDetails,
   HeapDumpDetails,
   SliceDetails
@@ -30,7 +31,7 @@ export interface SelectionControllerArgs {
 // This class queries the TP for the details on a specific slice that has
 // been clicked.
 export class SelectionController extends Controller<'main'> {
-  private lastSelectedId?: number;
+  private lastSelectedId?: number|string;
   private lastSelectedKind?: string;
   constructor(private args: SelectionControllerArgs) {
     super('main');
@@ -38,12 +39,24 @@ export class SelectionController extends Controller<'main'> {
 
   run() {
     const selection = globals.state.currentSelection;
-    if (selection === null ||
-        (selection.kind !== 'SLICE' && selection.kind !== 'CHROME_SLICE' &&
-         selection.kind !== 'COUNTER' && selection.kind !== 'HEAP_DUMP') ||
-        (selection.id === this.lastSelectedId &&
-         selection.kind === this.lastSelectedKind &&
-         selection.kind !== 'COUNTER')) {
+    if (!selection) return;
+    // TODO(taylori): Ideally thread_state should not be special cased, it
+    // should have some form of id like everything else.
+    if (selection.kind === 'THREAD_STATE') {
+      const sqlQuery = `SELECT row_id FROM sched WHERE utid = ${selection.utid}
+                        and ts = ${toNs(selection.ts)}`;
+      this.args.engine.query(sqlQuery).then(result => {
+        const id = result.columns[0].longValues![0] as number;
+        this.sliceDetails(id);
+      });
+      return;
+    }
+
+    const selectWithId = ['SLICE', 'COUNTER', 'CHROME_SLICE', 'HEAP_DUMP'];
+    if (!selectWithId.includes(selection.kind) ||
+        (selectWithId.includes(selection.kind) &&
+         selection.id === this.lastSelectedId &&
+         selection.kind === this.lastSelectedKind)) {
       return;
     }
     const selectedId = selection.id;
@@ -76,27 +89,7 @@ export class SelectionController extends Controller<'main'> {
             }
           });
     } else if (selectedKind === 'SLICE') {
-      const sqlQuery = `SELECT ts, dur, priority, end_state, utid FROM sched
-                        WHERE row_id = ${selectedId}`;
-      this.args.engine.query(sqlQuery).then(result => {
-        // Check selection is still the same on completion of query.
-        const selection = globals.state.currentSelection;
-        if (result.numRecords === 1 && selection &&
-            selection.kind === selectedKind && selection.id === selectedId) {
-          const ts = result.columns[0].longValues![0] as number;
-          const timeFromStart = fromNs(ts) - globals.state.traceTime.startSec;
-          const dur = fromNs(result.columns[1].longValues![0] as number);
-          const priority = result.columns[2].longValues![0] as number;
-          const endState = result.columns[3].stringValues![0];
-          const selected:
-              SliceDetails = {ts: timeFromStart, dur, priority, endState};
-          const utid = result.columns[4].longValues![0];
-          this.schedulingDetails(ts, utid).then(wakeResult => {
-            Object.assign(selected, wakeResult);
-            globals.publish('SliceDetails', selected);
-          });
-        }
-      });
+      this.sliceDetails(selectedId as number);
     } else if (selectedKind === 'CHROME_SLICE') {
       if (selectedId === -1) {
         globals.publish('SliceDetails', {ts: 0, name: 'Summarized slice'});
@@ -115,15 +108,40 @@ export class SelectionController extends Controller<'main'> {
           const dur = fromNs(result.columns[1].longValues![0] as number);
           const category = result.columns[3].stringValues![0];
           // TODO(nicomazz): Add arguments and thread timestamps
-          const selected:
-              SliceDetails = {ts: timeFromStart, dur, category, name};
+          const selected: SliceDetails =
+              {ts: timeFromStart, dur, category, name, id: selectedId};
           globals.publish('SliceDetails', selected);
         }
       });
     }
   }
 
+  async sliceDetails(id: number) {
+    const sqlQuery = `SELECT ts, dur, priority, end_state, utid FROM sched
+    WHERE row_id = ${id}`;
+    this.args.engine.query(sqlQuery).then(result => {
+      // Check selection is still the same on completion of query.
+      const selection = globals.state.currentSelection;
+      if (result.numRecords === 1 && selection) {
+        const ts = result.columns[0].longValues![0] as number;
+        const timeFromStart = fromNs(ts) - globals.state.traceTime.startSec;
+        const dur = fromNs(result.columns[1].longValues![0] as number);
+        const priority = result.columns[2].longValues![0] as number;
+        const endState = result.columns[3].stringValues![0];
+        const utid = result.columns[4].longValues![0] as number;
+        const selected: SliceDetails =
+            {ts: timeFromStart, dur, priority, endState, id, utid};
+        this.schedulingDetails(ts, utid).then(wakeResult => {
+          Object.assign(selected, wakeResult);
+          globals.publish('SliceDetails', selected);
+        });
+      }
+    });
+  }
+
   async heapDumpDetails(ts: number, upid: number) {
+    // Collecting data for more information about heap profile, such as:
+    // total memory allocated, memory that is allocated and not freed.
     const pidValue = await this.args.engine.query(
         `select pid from process where upid = ${upid}`);
     const pid = pidValue.columns[0].longValues![0];
@@ -136,7 +154,95 @@ export class SelectionController extends Controller<'main'> {
             ts} and upid = ${upid}`);
     const allocatedNotFreed = allocatedNotFreedMemory.columns[0].longValues![0];
     const startTime = fromNs(ts) - globals.state.traceTime.startSec;
-    return {ts: startTime, allocated, allocatedNotFreed, tsNs: ts, pid};
+
+    // Collecting data for drawing flagraph for selected heap profile.
+    // Data needs to be in following format:
+    // id, name, parent_id, depth, total_size
+
+    // Joining the callsite table with frame table then with alloc table to get
+    // the size and name for each callsite.
+    await this.args.engine.query(
+        // TODO(tneda|lalitm): get names from symbols to exactly replicate
+        // pprof.
+        `create view callsite_with_name_and_size as
+      select cs.id, parent_id, depth, name, SUM(IFNULL(size, 0)) as size
+      from stack_profile_callsite cs
+      join stack_profile_frame on cs.frame_id = stack_profile_frame.id
+      left join heap_profile_allocation alloc on alloc.callsite_id = cs.id and
+      alloc.ts <= ${ts} and alloc.upid = ${upid} group by cs.id
+    `);
+
+    // Recursive query to compute the hash for each callsite based on names
+    // rather than ids.
+    // We get all the children of the row in question and emit a row with hash
+    // equal hash(name, parent.hash). Roots without the parent will have -1 as
+    // hash.  Slices will be merged into a big slice.
+    await this.args.engine.query(`create view callsite_hash_name_size as
+      with recursive callsite_table_names(
+        id, hash, name, size, parent_hash, depth) AS (
+      select id, hash(name) as hash, name, size, -1, depth
+      from callsite_with_name_and_size
+      where depth = 0
+      UNION ALL
+      SELECT cs.id, hash(cs.name, ctn.hash) as hash, cs.name, cs.size, ctn.hash,
+       cs.depth
+      FROM callsite_table_names ctn
+      INNER JOIN callsite_with_name_and_size cs ON ctn.id = cs.parent_id
+      )
+      SELECT hash, name, parent_hash, depth, SUM(size) as size
+      FROM callsite_table_names
+      group by hash`);
+
+    // Recursive query to compute the cumulative size of each callsite.
+    // Base case: We get all the callsites where the size is non-zero.
+    // Recursive case: We get the callsite which is the parent of the current
+    //  callsite(in terms of hashes) and emit a row with the size of the current
+    //  callsite plus all the info of the parent.
+    // Grouping: For each callsite, our recursive table has n rows where n is
+    //  the number of descendents with a non-zero self size. We need to group on
+    //  the hash and sum all the sizes to get the cumulative size for each
+    //  callsite hash.
+    const callsites = await this.args.engine.query(
+        `with recursive callsite_children(hash, name, parent_hash, depth, size)
+         AS (
+        select *
+        from callsite_hash_name_size
+        where size > 0
+        union all
+        select chns.hash, chns.name, chns.parent_hash, chns.depth, cc.size
+        from callsite_hash_name_size chns
+        inner join callsite_children cc on chns.hash = cc.parent_hash
+        )
+        SELECT hash, name, parent_hash, depth, SUM(size) as size
+        from callsite_children
+        group by hash
+        order by depth, parent_hash, size desc, name
+        `);
+
+    const flamegraphData: CallsiteInfo[] = new Array();
+    for (let i = 0; i < callsites.numRecords; i++) {
+      const hash = callsites.columns[0].longValues![i];
+      const name = callsites.columns[1].stringValues![i];
+      const parentHash = callsites.columns[2].longValues![i];
+      const depth = callsites.columns[3].longValues![i];
+      const totalSize = callsites.columns[4].longValues![i];
+      flamegraphData.push({
+        hash: +hash,
+        totalSize: +totalSize,
+        depth: +depth,
+        parentHash: +parentHash,
+        name
+      });
+    }
+
+    return {
+      ts: startTime,
+      allocated,
+      allocatedNotFreed,
+      tsNs: ts,
+      pid,
+      flamegraphData
+    };
   }
 
   async counterDetails(ts: number, rightTs: number, id: number) {

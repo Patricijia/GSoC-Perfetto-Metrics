@@ -28,6 +28,8 @@ export interface SliceDetails {
   dur?: number;
   priority?: number;
   endState?: string;
+  id?: number;
+  utid?: number;
   wakeupTs?: number;
   wakerUtid?: number;
   wakerCpu?: number;
@@ -42,12 +44,21 @@ export interface CounterDetails {
   duration?: number;
 }
 
+export interface CallsiteInfo {
+  hash: number;
+  parentHash: number;
+  depth: number;
+  name?: string;
+  totalSize: number;
+}
+
 export interface HeapDumpDetails {
   ts?: number;
   tsNs?: number;
   allocated?: number;
   allocatedNotFreed?: number;
   pid?: number;
+  flamegraphData?: CallsiteInfo[];
 }
 
 export interface QuantizedLoad {
