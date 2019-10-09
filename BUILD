@@ -988,6 +988,8 @@ filegroup(
         "tools/trace_to_text/main.cc",
         "tools/trace_to_text/symbolize_profile.cc",
         "tools/trace_to_text/symbolize_profile.h",
+        "tools/trace_to_text/trace_to_json.cc",
+        "tools/trace_to_text/trace_to_json.h",
         "tools/trace_to_text/trace_to_profile.cc",
         "tools/trace_to_text/trace_to_profile.h",
         "tools/trace_to_text/trace_to_systrace.cc",
@@ -1590,6 +1592,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_gpu_protos",
     srcs = [
         "protos/perfetto/trace/gpu/gpu_counter_event.proto",
+        "protos/perfetto/trace/gpu/gpu_log.proto",
         "protos/perfetto/trace/gpu/gpu_render_stage_event.proto",
         "protos/perfetto/trace/gpu/vulkan_memory_event.proto",
     ],
