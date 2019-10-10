@@ -14,24 +14,25 @@
  * limitations under the License.
  */
 
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
+#ifndef INCLUDE_PERFETTO_TRACE_PROCESSOR_READ_TRACE_H_
+#define INCLUDE_PERFETTO_TRACE_PROCESSOR_READ_TRACE_H_
 
-package perfetto.protos;
+#include <functional>
 
-// Message for logging events GPU data producer.
-message GpuLog {
-  enum Severity {
-    LOG_SEVERITY_UNSPECIFIED = 0;
-    LOG_SEVERITY_VERBOSE = 1;
-    LOG_SEVERITY_DEBUG = 2;
-    LOG_SEVERITY_INFO = 3;
-    LOG_SEVERITY_WARNING = 4;
-    LOG_SEVERITY_ERROR = 5;
-  };
-  optional Severity severity = 1;
+#include "perfetto/base/export.h"
+#include "perfetto/trace_processor/status.h"
 
-  optional string tag = 2;
+namespace perfetto {
+namespace trace_processor {
 
-  optional string log_message = 3;
-}
+class TraceProcessor;
+
+util::Status PERFETTO_EXPORT ReadTrace(
+    TraceProcessor* tp,
+    const char* filename,
+    const std::function<void(uint64_t parsed_size)>& progress_callback = {});
+
+}  // namespace trace_processor
+}  // namespace perfetto
+
+#endif  // INCLUDE_PERFETTO_TRACE_PROCESSOR_READ_TRACE_H_

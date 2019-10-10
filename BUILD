@@ -339,6 +339,7 @@ filegroup(
     name = "include_perfetto_trace_processor_trace_processor",
     srcs = [
         "include/perfetto/trace_processor/basic_types.h",
+        "include/perfetto/trace_processor/read_trace.h",
         "include/perfetto/trace_processor/status.h",
         "include/perfetto/trace_processor/trace_processor.h",
     ],
@@ -520,7 +521,7 @@ genrule(
         "src/trace_processor/metrics/android/android_startup_cpu.sql",
         "src/trace_processor/metrics/android/android_startup_launches.sql",
         "src/trace_processor/metrics/android/android_task_state.sql",
-        "src/trace_processor/metrics/android/heap_profile_callsite_stats.sql",
+        "src/trace_processor/metrics/android/heap_profile_callsites.sql",
         "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
         "src/trace_processor/metrics/android/process_mem.sql",
         "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
@@ -660,6 +661,7 @@ filegroup(
         "src/trace_processor/proto_trace_tokenizer.h",
         "src/trace_processor/raw_table.cc",
         "src/trace_processor/raw_table.h",
+        "src/trace_processor/read_trace.cc",
         "src/trace_processor/row_iterators.cc",
         "src/trace_processor/row_iterators.h",
         "src/trace_processor/sched_slice_table.cc",
@@ -1396,7 +1398,7 @@ perfetto_proto_library(
     srcs = [
         "protos/perfetto/metrics/android/batt_metric.proto",
         "protos/perfetto/metrics/android/cpu_metric.proto",
-        "protos/perfetto/metrics/android/heap_profile_callsite_stats.proto",
+        "protos/perfetto/metrics/android/heap_profile_callsites.proto",
         "protos/perfetto/metrics/android/ion_metric.proto",
         "protos/perfetto/metrics/android/lmk_metric.proto",
         "protos/perfetto/metrics/android/mem_metric.proto",
