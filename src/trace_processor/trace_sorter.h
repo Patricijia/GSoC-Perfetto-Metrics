@@ -21,7 +21,7 @@
 
 #include "perfetto/ext/base/circular_queue.h"
 #include "perfetto/trace_processor/basic_types.h"
-#include "src/trace_processor/fuchsia_provider_view.h"
+#include "src/trace_processor/importers/fuchsia/fuchsia_provider_view.h"
 #include "src/trace_processor/proto_incremental_state.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_blob_view.h"
@@ -163,6 +163,8 @@ class TraceSorter {
       return;
     SortAndExtractEventsBeyondWindow(window_size_ns_);
   }
+
+  int64_t max_timestamp() const { return global_max_ts_; }
 
  private:
   static constexpr uint32_t kNoBatch = std::numeric_limits<uint32_t>::max();
