@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "src/trace_processor/importers/proto/ftrace_parser.h"
+#include "src/trace_processor/importers/ftrace/ftrace_parser.h"
 
 #include "perfetto/base/logging.h"
 #include "perfetto/protozero/proto_decoder.h"
@@ -415,7 +415,7 @@ void FtraceParser::ParseSchedSwitch(uint32_t cpu, int64_t ts, ConstBytes blob) {
   protos::pbzero::SchedSwitchFtraceEvent::Decoder ss(blob.data, blob.size);
   uint32_t prev_pid = static_cast<uint32_t>(ss.prev_pid());
   uint32_t next_pid = static_cast<uint32_t>(ss.next_pid());
-  context_->event_tracker->PushSchedSwitch(
+  context_->sched_tracker->PushSchedSwitch(
       cpu, ts, prev_pid, ss.prev_comm(), ss.prev_prio(), ss.prev_state(),
       next_pid, ss.next_comm(), ss.next_prio());
 }

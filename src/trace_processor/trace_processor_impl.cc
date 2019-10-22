@@ -38,17 +38,14 @@
 #include "src/trace_processor/heap_graph_tracker.h"
 #include "src/trace_processor/heap_profile_allocation_table.h"
 #include "src/trace_processor/heap_profile_tracker.h"
-#include "src/trace_processor/importers/proto/ftrace_module.h"
+#include "src/trace_processor/importers/ftrace/ftrace_module.h"
+#include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/instants_table.h"
 #include "src/trace_processor/metadata_table.h"
-#include "src/trace_processor/metrics/descriptors.h"
-#include "src/trace_processor/metrics/metrics.descriptor.h"
-#include "src/trace_processor/metrics/metrics.h"
-#include "src/trace_processor/metrics/sql_metrics.h"
 #include "src/trace_processor/process_table.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/proto_trace_tokenizer.h"
@@ -74,8 +71,15 @@
 #include "src/trace_processor/vulkan_memory_tracker.h"
 #include "src/trace_processor/window_operator_table.h"
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
+#include "src/trace_processor/metrics/descriptors.h"
+#include "src/trace_processor/metrics/metrics.descriptor.h"
+#include "src/trace_processor/metrics/metrics.h"
+#include "src/trace_processor/metrics/sql_metrics.h"
+
 #include "protos/perfetto/metrics/android/mem_metric.pbzero.h"
 #include "protos/perfetto/metrics/metrics.pbzero.h"
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 #include "src/trace_processor/export_json.h"
@@ -277,6 +281,7 @@ void CreateHashFunction(sqlite3* db) {
   }
 }
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
                   std::vector<metrics::SqlMetricFile>* sql_metrics) {
@@ -307,6 +312,7 @@ void SetupMetrics(TraceProcessor* tp,
       PERFETTO_ELOG("Error initializing RepeatedField");
   }
 }
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 }  // namespace
 
@@ -330,7 +336,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
   context_.clock_tracker.reset(new ClockTracker(&context_));
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
   context_.heap_graph_tracker.reset(new HeapGraphTracker(&context_));
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
+  context_.sched_tracker.reset(new SchedEventTracker(&context_));
   context_.systrace_parser.reset(new SystraceParser(&context_));
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   context_.vulkan_memory_tracker.reset(new VulkanMemoryTracker(&context_));
   context_.ftrace_module.reset(
       new ProtoImporterModule<FtraceModule>(&context_));
@@ -342,11 +351,15 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
 #endif
   CreateHashFunction(db);
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
   SetupMetrics(this, *db_, &sql_metrics_);
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
   ArgsTable::RegisterTable(*db_, context_.storage.get());
   ProcessTable::RegisterTable(*db_, context_.storage.get());
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   SchedSliceTable::RegisterTable(*db_, context_.storage.get());
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   SliceTable::RegisterTable(*db_, context_.storage.get());
   SqlStatsTable::RegisterTable(*db_, context_.storage.get());
   ThreadTable::RegisterTable(*db_, context_.storage.get());
@@ -417,6 +430,9 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 
   if (context_.sorter)
     context_.sorter->ExtractEventsForced();
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
+  context_.sched_tracker->FlushPendingEvents();
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   context_.event_tracker->FlushPendingEvents();
   context_.slice_tracker->FlushPendingSlices();
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
@@ -454,6 +470,7 @@ void TraceProcessorImpl::InterruptQuery() {
   sqlite3_interrupt(db_.get());
 }
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
                                                 const std::string& sql) {
   std::string stripped_sql;
@@ -533,6 +550,7 @@ util::Status TraceProcessorImpl::ComputeMetric(
   return metrics::ComputeMetrics(this, metric_names, sql_metrics_,
                                  root_descriptor, metrics_proto);
 }
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
                                            sqlite3* db,

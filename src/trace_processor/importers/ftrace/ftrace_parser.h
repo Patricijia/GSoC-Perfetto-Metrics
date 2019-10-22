@@ -14,12 +14,13 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_FTRACE_PARSER_H_
-#define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_FTRACE_PARSER_H_
+#ifndef SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
+#define SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
 
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/event_tracker.h"
-#include "src/trace_processor/ftrace_descriptors.h"
+#include "src/trace_processor/importers/ftrace/ftrace_descriptors.h"
+#include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_processor_context.h"
@@ -36,7 +37,7 @@ class FtraceParser {
   void ParseInlineSchedSwitch(uint32_t cpu,
                               int64_t ts,
                               const InlineSchedSwitch& event) {
-    context_->event_tracker->PushSchedSwitchCompact(
+    context_->sched_tracker->PushSchedSwitchCompact(
         cpu, ts, event.prev_state, static_cast<uint32_t>(event.next_pid),
         event.next_prio, event.next_comm);
   }
@@ -131,4 +132,4 @@ class FtraceParser {
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_FTRACE_PARSER_H_
+#endif  // SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
