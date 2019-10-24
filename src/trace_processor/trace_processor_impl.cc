@@ -40,6 +40,7 @@
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/importers/proto/graphics_event_module.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
@@ -229,14 +230,10 @@ void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
     }
   }
 
-  json::ResultCode result = json::ExportJson(storage, output);
-  switch (result) {
-    case json::kResultOk:
-      return;
-    case json::kResultWrongRefType:
-      sqlite3_result_error(ctx, "Encountered a slice with unsupported ref type",
-                           -1);
-      return;
+  util::Status result = json::ExportJson(storage, output);
+  if (!result.ok()) {
+    sqlite3_result_error(ctx, result.message().c_str(), -1);
+    return;
   }
 }
 
@@ -345,6 +342,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg) {
       new ProtoImporterModule<FtraceModule>(&context_));
   context_.track_event_module.reset(
       new ProtoImporterModule<TrackEventModule>(&context_));
+  context_.graphics_event_module.reset(
+      new ProtoImporterModule<GraphicsEventModule>(&context_));
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
   CreateJsonExportFunction(this->context_.storage.get(), db);
