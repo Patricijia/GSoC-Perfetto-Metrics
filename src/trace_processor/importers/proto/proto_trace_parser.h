@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_PROTO_TRACE_PARSER_H_
-#define SRC_TRACE_PROCESSOR_PROTO_TRACE_PARSER_H_
+#ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_PROTO_TRACE_PARSER_H_
+#define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_PROTO_TRACE_PARSER_H_
 
 #include <stdint.h>
 
@@ -55,14 +55,6 @@ class ProtoTraceParser : public TraceParser {
                             TimestampedTracePiece,
                             const protos::pbzero::TracePacket::Decoder&);
 
-  void ParseProcessTree(ConstBytes);
-  void ParseProcessStats(int64_t timestamp, ConstBytes);
-  void ParseSysStats(int64_t ts, ConstBytes);
-  void ParseBatteryCounters(int64_t ts, ConstBytes);
-  void ParsePowerRails(int64_t ts, ConstBytes);
-  void ParseAndroidLogPacket(ConstBytes);
-  void ParseAndroidLogEvent(ConstBytes);
-  void ParseAndroidLogStats(ConstBytes);
   void ParseTraceStats(ConstBytes);
   void ParseProfilePacket(int64_t ts,
                           PacketSequenceState*,
@@ -71,54 +63,24 @@ class ProtoTraceParser : public TraceParser {
   void ParseStreamingProfilePacket(PacketSequenceState*,
                                    size_t sequence_state_generation,
                                    ConstBytes);
-  void ParseSystemInfo(ConstBytes);
   void ParseChromeBenchmarkMetadata(ConstBytes);
   void ParseChromeEvents(int64_t ts, ConstBytes);
   void ParseMetatraceEvent(int64_t ts, ConstBytes);
   void ParseTraceConfig(ConstBytes);
-  void ParseStatsdMetadata(ConstBytes);
-  void ParseAndroidPackagesList(ConstBytes);
   void ParseModuleSymbols(ConstBytes);
   void ParseHeapGraph(int64_t ts, ConstBytes);
 
  private:
   TraceProcessorContext* context_;
 
-  const StringId utid_name_id_;
-  const StringId num_forks_name_id_;
-  const StringId num_irq_total_name_id_;
-  const StringId num_softirq_total_name_id_;
-  const StringId num_irq_name_id_;
-  const StringId num_softirq_name_id_;
-  const StringId cpu_times_user_ns_id_;
-  const StringId cpu_times_user_nice_ns_id_;
-  const StringId cpu_times_system_mode_ns_id_;
-  const StringId cpu_times_idle_ns_id_;
-  const StringId cpu_times_io_wait_ns_id_;
-  const StringId cpu_times_irq_ns_id_;
-  const StringId cpu_times_softirq_ns_id_;
-  const StringId batt_charge_id_;
-  const StringId batt_capacity_id_;
-  const StringId batt_current_id_;
-  const StringId batt_current_avg_id_;
-  const StringId oom_score_adj_id_;
   const StringId metatrace_id_;
   const StringId data_name_id_;
   const StringId raw_chrome_metadata_event_id_;
   const StringId raw_chrome_legacy_system_trace_event_id_;
   const StringId raw_chrome_legacy_user_trace_event_id_;
-  std::vector<StringId> meminfo_strs_id_;
-  std::vector<StringId> vmstat_strs_id_;
-  std::vector<StringId> power_rails_strs_id_;
-
-  // Maps a proto field number for memcounters in ProcessStats::Process to
-  // their StringId. Keep kProcStatsProcessSize equal to 1 + max proto field
-  // id of ProcessStats::Process.
-  static constexpr size_t kProcStatsProcessSize = 11;
-  std::array<StringId, kProcStatsProcessSize> proc_stats_process_names_{};
 };
 
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_PROTO_TRACE_PARSER_H_
+#endif  // SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_PROTO_TRACE_PARSER_H_
