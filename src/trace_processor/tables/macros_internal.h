@@ -50,7 +50,7 @@ class MacroTable : public Table {
  public:
   MacroTable(const char* name, StringPool* pool, Table* parent)
       : Table(pool, parent), name_(name), parent_(parent) {
-    row_maps_.emplace_back(BitVector());
+    row_maps_.emplace_back();
     if (!parent) {
       columns_.emplace_back(
           Column::IdColumn(this, static_cast<uint32_t>(columns_.size()),
@@ -71,12 +71,12 @@ class MacroTable : public Table {
       // parent row maps to the corresponding row map in the child.
       for (uint32_t i = 0; i < parent_->row_maps().size(); ++i) {
         const RowMap& parent_rm = parent_->row_maps()[i];
-        row_maps_[i].Add(parent_rm.Get(parent_rm.size() - 1));
+        row_maps_[i].Insert(parent_rm.Get(parent_rm.size() - 1));
       }
     }
     // Also add the index of the new row to the identity row map and increment
     // the size.
-    row_maps_.back().Add(size_++);
+    row_maps_.back().Insert(size_++);
   }
 
   // Stores the most specific "derived" type of this row in the table.
