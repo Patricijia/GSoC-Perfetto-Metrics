@@ -54,39 +54,6 @@ Column Column::IdColumn(Table* table, uint32_t col_idx, uint32_t row_map_idx) {
                 col_idx, row_map_idx, nullptr);
 }
 
-void Column::FilterIntoSlow(FilterOp op, SqlValue value, RowMap* iv) const {
-  switch (op) {
-    case FilterOp::kLt:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) >= value; });
-      break;
-    case FilterOp::kEq:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) != value; });
-      break;
-    case FilterOp::kGt:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) <= value; });
-      break;
-    case FilterOp::kNe:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) == value; });
-      break;
-    case FilterOp::kLe:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) > value; });
-      break;
-    case FilterOp::kGe:
-      iv->RemoveIf([this, value](uint32_t row) { return Get(row) < value; });
-      break;
-    case FilterOp::kIsNull:
-      iv->RemoveIf([this](uint32_t row) {
-        return Get(row).type != SqlValue::Type::kNull;
-      });
-      break;
-    case FilterOp::kIsNotNull:
-      iv->RemoveIf([this](uint32_t row) {
-        return Get(row).type == SqlValue::Type::kNull;
-      });
-      break;
-  }
-}
-
 const RowMap& Column::row_map() const {
   return table_->row_maps_[row_map_idx_];
 }

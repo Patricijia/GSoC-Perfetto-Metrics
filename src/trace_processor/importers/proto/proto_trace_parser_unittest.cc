@@ -24,9 +24,12 @@
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/importers/proto/android_probes_module.h"
 #include "src/trace_processor/importers/proto/graphics_event_module.h"
+#include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
+#include "src/trace_processor/importers/proto/system_probes_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/metadata.h"
@@ -81,6 +84,9 @@ using ::testing::Pointwise;
 using ::testing::Return;
 using ::testing::UnorderedElementsAreArray;
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE) || \
+    PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
+namespace {
 MATCHER_P(DoubleEq, exp, "Double matcher that satisfies -Wfloat-equal") {
   // The IEEE standard says that any comparison operation involving
   // a NAN must return false.
@@ -90,6 +96,9 @@ MATCHER_P(DoubleEq, exp, "Double matcher that satisfies -Wfloat-equal") {
     return false;
   return fabs(d_arg - d_exp) < 1e-128;
 }
+}  // namespace
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE) ||
+        // PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
 class MockSchedEventTracker : public SchedEventTracker {
@@ -156,7 +165,8 @@ class MockProcessTracker : public ProcessTracker {
 
   MOCK_METHOD2(UpdateThreadName,
                UniqueTid(uint32_t tid, StringId thread_name_id));
-  MOCK_METHOD2(SetThreadName, void(UniqueTid utid, StringId thread_name_id));
+  MOCK_METHOD2(SetThreadNameIfUnset,
+               void(UniqueTid utid, StringId thread_name_id));
   MOCK_METHOD2(UpdateThread, UniqueTid(uint32_t tid, uint32_t tgid));
 
   MOCK_METHOD1(GetOrCreateProcess, UniquePid(uint32_t pid));
@@ -252,11 +262,19 @@ class ProtoTraceParserTest : public ::testing::Test {
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
     context_.systrace_parser.reset(new SystraceParser(&context_));
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_GRAPHICS)
     context_.vulkan_memory_tracker.reset(new VulkanMemoryTracker(&context_));
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_GRAPHICS)
     context_.ftrace_module.reset(
         new ProtoImporterModule<FtraceModule>(&context_));
     context_.track_event_module.reset(
         new ProtoImporterModule<TrackEventModule>(&context_));
+    context_.system_probes_module.reset(
+        new ProtoImporterModule<SystemProbesModule>(&context_));
+    context_.android_probes_module.reset(
+        new ProtoImporterModule<AndroidProbesModule>(&context_));
+    context_.heap_graph_module.reset(
+        new ProtoImporterModule<HeapGraphModule>(&context_));
     context_.graphics_event_module.reset(
         new ProtoImporterModule<GraphicsEventModule>(&context_));
   }
@@ -270,15 +288,17 @@ class ProtoTraceParserTest : public ::testing::Test {
 
   void SetUp() override { ResetTraceBuffers(); }
 
-  void Tokenize() {
+  util::Status Tokenize() {
     trace_.Finalize();
     std::vector<uint8_t> trace_bytes = heap_buf_->StitchSlices();
     std::unique_ptr<uint8_t[]> raw_trace(new uint8_t[trace_bytes.size()]);
     memcpy(raw_trace.get(), trace_bytes.data(), trace_bytes.size());
     context_.chunk_reader.reset(new ProtoTraceTokenizer(&context_));
-    context_.chunk_reader->Parse(std::move(raw_trace), trace_bytes.size());
+    auto status =
+        context_.chunk_reader->Parse(std::move(raw_trace), trace_bytes.size());
 
     ResetTraceBuffers();
+    return status;
   }
 
   bool HasArg(ArgSetId set_id, StringId key_id, Variadic value) {
@@ -596,6 +616,8 @@ TEST_F(ProtoTraceParserTest, LoadCpuFreq) {
 
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
+
 TEST_F(ProtoTraceParserTest, LoadMemInfo) {
   auto* packet = trace_.add_packet();
   uint64_t ts = 1000;
@@ -667,6 +689,8 @@ TEST_F(ProtoTraceParserTest, LoadThreadPacket) {
   Tokenize();
 }
 
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
+
 TEST_F(ProtoTraceParserTest, ThreadNameFromThreadDescriptor) {
   context_.sorter.reset(new TraceSorter(
       &context_, std::numeric_limits<int64_t>::max() /*window size*/));
@@ -710,14 +734,14 @@ TEST_F(ProtoTraceParserTest, ThreadNameFromThreadDescriptor) {
 
   EXPECT_CALL(*storage_, InternString(base::StringView("OldThreadName")))
       .WillOnce(Return(1));
-  EXPECT_CALL(*process_, SetThreadName(1u, StringId(1)));
+  EXPECT_CALL(*process_, SetThreadNameIfUnset(1u, StringId(1)));
   // Packet with same thread, but different name should update the name.
   EXPECT_CALL(*storage_, InternString(base::StringView("NewThreadName")))
       .WillOnce(Return(2));
-  EXPECT_CALL(*process_, SetThreadName(1u, StringId(2)));
+  EXPECT_CALL(*process_, SetThreadNameIfUnset(1u, StringId(2)));
   EXPECT_CALL(*storage_, InternString(base::StringView("DifferentThreadName")))
       .WillOnce(Return(3));
-  EXPECT_CALL(*process_, SetThreadName(2u, StringId(3)));
+  EXPECT_CALL(*process_, SetThreadNameIfUnset(2u, StringId(3)));
 
   Tokenize();
   context_.sorter->ExtractEventsForced();
@@ -2288,6 +2312,30 @@ TEST_F(ProtoTraceParserTest, TrackEventLegacyTimestampsWithClockSnapshot) {
   context_.sorter->ExtractEventsForced();
 }
 
+TEST_F(ProtoTraceParserTest, ParseEventWithClockIdButWithoutClockSnapshot) {
+  context_.sorter.reset(new TraceSorter(
+      &context_, std::numeric_limits<int64_t>::max() /*window size*/));
+
+  {
+    auto* packet = trace_.add_packet();
+    packet->set_timestamp(1000);
+    packet->set_timestamp_clock_id(3);
+    packet->set_trusted_packet_sequence_id(1);
+    auto* bundle = packet->set_chrome_events();
+    auto* metadata = bundle->add_metadata();
+    metadata->set_name("test");
+    metadata->set_int_value(23);
+  }
+
+  util::Status status = Tokenize();
+  EXPECT_TRUE(status.ok());
+  context_.sorter->ExtractEventsForced();
+
+  // Metadata should have created a raw event.
+  const auto& raw_events = storage_->raw_events();
+  EXPECT_EQ(raw_events.raw_event_count(), 1u);
+}
+
 TEST_F(ProtoTraceParserTest, ParseChromeMetadataEventIntoRawTable) {
   static const char kStringName[] = "string_name";
   static const char kStringValue[] = "string_value";
@@ -2299,6 +2347,8 @@ TEST_F(ProtoTraceParserTest, ParseChromeMetadataEventIntoRawTable) {
 
   {
     auto* packet = trace_.add_packet();
+    packet->set_timestamp(1000);
+    packet->set_timestamp_clock_id(3);
     packet->set_trusted_packet_sequence_id(1);
     auto* bundle = packet->set_chrome_events();
     auto* metadata = bundle->add_metadata();
@@ -2430,6 +2480,7 @@ TEST_F(ProtoTraceParserTest, LoadChromeBenchmarkMetadata) {
                           Variadic::String(3))}));
 }
 
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_ANDROID_PROBES)
 TEST_F(ProtoTraceParserTest, AndroidPackagesList) {
   auto* packet = trace_.add_packet();
   auto* pkg_list = packet->set_packages_list();
@@ -2510,6 +2561,7 @@ TEST_F(ProtoTraceParserTest, AndroidPackagesList) {
             false);
   EXPECT_EQ(find_arg(second_set_id, "version_code").int_value, 43);
 }
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_ANDROID_PROBES)
 
 TEST_F(ProtoTraceParserTest, ParseCPUProfileSamplesIntoTable) {
   {

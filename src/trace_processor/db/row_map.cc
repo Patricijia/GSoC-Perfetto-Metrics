@@ -64,7 +64,7 @@ RowMap SelectBvWithRange(const BitVector& bv,
 
   BitVector ret = bv.Copy();
   for (auto it = ret.IterateSetBits(); it; it.Next()) {
-    auto set_idx = it.set_bit_index();
+    auto set_idx = it.ordinal();
     if (set_idx < selector_start || set_idx >= selector_end)
       it.Clear();
   }
@@ -102,10 +102,13 @@ RowMap SelectIvWithRange(const std::vector<uint32_t>& iv,
 
 RowMap SelectIvWithBv(const std::vector<uint32_t>& iv,
                       const BitVector& selector) {
-  RowMap rm(iv);
+  std::vector<uint32_t> copy = iv;
   uint32_t idx = 0;
-  rm.RemoveIf([&idx, &selector](uint32_t) { return !selector.IsSet(idx++); });
-  return rm;
+  auto it = std::remove_if(
+      copy.begin(), copy.end(),
+      [&idx, &selector](uint32_t) { return !selector.IsSet(idx++); });
+  copy.erase(it, copy.end());
+  return RowMap(std::move(copy));
 }
 
 RowMap SelectIvWithIv(const std::vector<uint32_t>& iv,
@@ -143,7 +146,7 @@ RowMap RowMap::Copy() const {
   PERFETTO_FATAL("For GCC");
 }
 
-RowMap RowMap::SelectRows(const RowMap& selector) const {
+RowMap RowMap::SelectRowsSlow(const RowMap& selector) const {
   // Pick the strategy based on the selector as there is more common code
   // between selectors of the same mode than between the RowMaps being
   // selected of the same mode.

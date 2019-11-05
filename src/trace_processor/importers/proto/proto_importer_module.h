@@ -21,9 +21,15 @@
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/trace_blob_view.h"
 
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
-
 namespace perfetto {
+
+namespace protos {
+namespace pbzero {
+class TraceConfig_Decoder;
+class TracePacket_Decoder;
+}  // namespace pbzero
+}  // namespace protos
+
 namespace trace_processor {
 
 class PacketSequenceState;
@@ -120,7 +126,7 @@ class ProtoImporterModule {
   // returns a result other than ModuleResult::Ignored(), tokenization of the
   // packet will be aborted after the module.
   ModuleResult TokenizePacket(
-      const protos::pbzero::TracePacket::Decoder& decoder,
+      const protos::pbzero::TracePacket_Decoder& decoder,
       TraceBlobView* packet,
       int64_t packet_timestamp,
       PacketSequenceState* state) {
@@ -135,10 +141,20 @@ class ProtoImporterModule {
   // TracePacket after the sorting stage. If this returns a result other than
   // ModuleResult::Ignored(), parsing of the packet will be aborted after the
   // module.
-  ModuleResult ParsePacket(const protos::pbzero::TracePacket::Decoder& decoder,
+  ModuleResult ParsePacket(const protos::pbzero::TracePacket_Decoder& decoder,
                            const TimestampedTracePiece& ttp) {
     if (ModuleType::kEnabled)
       return impl_->ParsePacket(decoder, ttp);
+    return ModuleResult::Ignored();
+  }
+
+  // Wraps ModuleType::ParseTraceConfig(). If the module is disabled, compiles
+  // into a noop in optimized builds. Called by ProtoTraceParser for trace
+  // config packets after the sorting stage.
+  ModuleResult ParseTraceConfig(
+      const protos::pbzero::TraceConfig_Decoder& decoder) {
+    if (ModuleType::kEnabled)
+      return impl_->ParseTraceConfig(decoder);
     return ModuleResult::Ignored();
   }
 

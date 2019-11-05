@@ -19,6 +19,7 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <vector>
 
 #include "perfetto/base/logging.h"
@@ -58,7 +59,146 @@ namespace trace_processor {
 // more efficient than a BitVector; in this case, we will make a best effort
 // switch to it but the cases where this happens is not precisely defined.
 class RowMap {
+ private:
+  // We need to declare these iterator classes before RowMap::Iterator as it
+  // depends on them. However, we don't want to make these public so keep them
+  // under a special private section.
+
+  // Iterator for ranged mode of RowMap.
+  // This class should act as a drop-in replacement for
+  // BitVector::SetBitsIterator.
+  class RangeIterator {
+   public:
+    RangeIterator(const RowMap* rm) : rm_(rm), index_(rm->start_idx_) {}
+
+    void Next() { ++index_; }
+
+    operator bool() const { return index_ < rm_->end_idx_; }
+
+    uint32_t index() const { return index_; }
+
+    uint32_t ordinal() const { return index_ - rm_->start_idx_; }
+
+   private:
+    const RowMap* rm_ = nullptr;
+    uint32_t index_ = 0;
+  };
+
+  // Iterator for index vector mode of RowMap.
+  // This class should act as a drop-in replacement for
+  // BitVector::SetBitsIterator.
+  class IndexVectorIterator {
+   public:
+    IndexVectorIterator(const RowMap* rm) : rm_(rm) {}
+
+    void Next() { ++ordinal_; }
+
+    operator bool() const { return ordinal_ < rm_->index_vector_.size(); }
+
+    uint32_t index() const { return rm_->index_vector_[ordinal_]; }
+
+    uint32_t ordinal() const { return ordinal_; }
+
+   private:
+    const RowMap* rm_ = nullptr;
+    uint32_t ordinal_ = 0;
+  };
+
  public:
+  // Allows efficient iteration over the rows of a RowMap.
+  //
+  // Note: you should usually prefer to use the methods on RowMap directly (if
+  // they exist for the task being attempted) to avoid the lookup for the mode
+  // of the RowMap on every method call.
+  class Iterator {
+   public:
+    Iterator(const RowMap* rm) : rm_(rm) {
+      switch (rm->mode_) {
+        case Mode::kRange:
+          range_it_.reset(new RangeIterator(rm));
+          break;
+        case Mode::kBitVector:
+          set_bits_it_.reset(
+              new BitVector::SetBitsIterator(rm->bit_vector_.IterateSetBits()));
+          break;
+        case Mode::kIndexVector:
+          iv_it_.reset(new IndexVectorIterator(rm));
+          break;
+      }
+    }
+
+    // Forwards the iterator to the next row of the RowMap.
+    void Next() {
+      switch (rm_->mode_) {
+        case Mode::kRange:
+          range_it_->Next();
+          break;
+        case Mode::kBitVector:
+          set_bits_it_->Next();
+          break;
+        case Mode::kIndexVector:
+          iv_it_->Next();
+          break;
+      }
+    }
+
+    // Returns if the iterator is still valid.
+    operator bool() const {
+      switch (rm_->mode_) {
+        case Mode::kRange:
+          return *range_it_;
+        case Mode::kBitVector:
+          return *set_bits_it_;
+        case Mode::kIndexVector:
+          return *iv_it_;
+      }
+      PERFETTO_FATAL("For GCC");
+    }
+
+    // Returns the row pointed to by this iterator.
+    uint32_t row() const {
+      // RowMap uses the row/index nomenclature for referring to the mapping
+      // from index to a row (as the name suggests). However, the data
+      // structures used by RowMap use the index/ordinal naming (because they
+      // don't have the concept of a "row"). Switch the naming here.
+      switch (rm_->mode_) {
+        case Mode::kRange:
+          return range_it_->index();
+        case Mode::kBitVector:
+          return set_bits_it_->index();
+        case Mode::kIndexVector:
+          return iv_it_->index();
+      }
+      PERFETTO_FATAL("For GCC");
+    }
+
+    // Returns the index of the row the iterator points to.
+    uint32_t index() const {
+      // RowMap uses the row/index nomenclature for referring to the mapping
+      // from index to a row (as the name suggests). However, the data
+      // structures used by RowMap use the index/ordinal naming (because they
+      // don't have the concept of a "row"). Switch the naming here.
+      switch (rm_->mode_) {
+        case Mode::kRange:
+          return range_it_->ordinal();
+        case Mode::kBitVector:
+          return set_bits_it_->ordinal();
+        case Mode::kIndexVector:
+          return iv_it_->ordinal();
+      }
+      PERFETTO_FATAL("For GCC");
+    }
+
+   private:
+    // Only one of the below will be non-null depending on the mode of the
+    // RowMap.
+    std::unique_ptr<RangeIterator> range_it_;
+    std::unique_ptr<BitVector::SetBitsIterator> set_bits_it_;
+    std::unique_ptr<IndexVectorIterator> iv_it_;
+
+    const RowMap* rm_ = nullptr;
+  };
+
   // Creates an empty RowMap.
   // By default this will be implemented using a range.
   RowMap();
@@ -151,31 +291,48 @@ class RowMap {
     PERFETTO_FATAL("For GCC");
   }
 
-  // Adds the given |row| to the RowMap.
-  void Add(uint32_t row) {
+  // Performs an ordered insert the row into the current RowMap (precondition:
+  // this RowMap is ordered based on the rows it contains).
+  //
+  // Example:
+  // this = [1, 5, 10, 11, 20]
+  // Insert(10)  // this = [1, 5, 10, 11, 20]
+  // Insert(12)  // this = [1, 5, 10, 11, 12, 20]
+  // Insert(21)  // this = [1, 5, 10, 11, 12, 20, 21]
+  // Insert(2)   // this = [1, 2, 5, 10, 11, 12, 20, 21]
+  //
+  // Speecifically, this means that it is only valid to call Insert on a RowMap
+  // which is sorted by the rows it contains; this is automatically true when
+  // the RowMap is in range or BitVector mode but is a required condition for
+  // IndexVector mode.
+  void Insert(uint32_t row) {
     switch (mode_) {
       case Mode::kRange:
-        // TODO(lalitm): if row == end_index_, we can keep the RowMap in range
-        // mode and just bump the pointer instead of converting to a BitVector.
+        if (row == end_idx_) {
+          // Fast path: if we're just appending to the end of the range, we can
+          // stay in range mode and just bump the end index.
+          end_idx_++;
+        } else {
+          // Slow path: the insert is somewhere else other than the end. This
+          // means we need to switch to using a BitVector instead.
+          bit_vector_.Resize(start_idx_, false);
+          bit_vector_.Resize(end_idx_, true);
+          *this = RowMap(std::move(bit_vector_));
 
-        // TODO(lalitm): if row < end_index_, we need to switch to IndexVector
-        // mode instead of staying in BitVector mode.
-
-        bit_vector_.Resize(start_idx_, false);
-        bit_vector_.Resize(end_idx_, true);
-
-        start_idx_ = 0;
-        end_idx_ = 0;
-        mode_ = Mode::kBitVector;
-
-        AddToBitVector(row);
+          InsertIntoBitVector(row);
+        }
         break;
       case Mode::kBitVector:
-        AddToBitVector(row);
+        InsertIntoBitVector(row);
         break;
-      case Mode::kIndexVector:
-        index_vector_.emplace_back(row);
+      case Mode::kIndexVector: {
+        PERFETTO_DCHECK(
+            std::is_sorted(index_vector_.begin(), index_vector_.end()));
+        auto it =
+            std::upper_bound(index_vector_.begin(), index_vector_.end(), row);
+        index_vector_.insert(it, row);
         break;
+      }
     }
   }
 
@@ -193,36 +350,20 @@ class RowMap {
   // for (idx : picker)
   //   rm[i++] = this[idx]
   // return rm;
-  RowMap SelectRows(const RowMap& picker) const;
+  RowMap SelectRows(const RowMap& selector) const {
+    uint32_t size = selector.size();
 
-  // Removes any row where |p(row)| returns false from this RowMap.
-  template <typename Predicate>
-  void RemoveIf(Predicate p) {
-    switch (mode_) {
-      case Mode::kRange: {
-        bit_vector_.Resize(start_idx_, false);
-        for (uint32_t i = start_idx_; i < end_idx_; ++i) {
-          if (p(i))
-            bit_vector_.AppendFalse();
-          else
-            bit_vector_.AppendTrue();
-        }
-        *this = RowMap(std::move(bit_vector_));
-        break;
-      }
-      case Mode::kBitVector: {
-        for (auto it = bit_vector_.IterateSetBits(); it; it.Next()) {
-          if (p(it.index()))
-            it.Clear();
-        }
-        break;
-      }
-      case Mode::kIndexVector: {
-        auto it = std::remove_if(index_vector_.begin(), index_vector_.end(), p);
-        index_vector_.erase(it, index_vector_.end());
-        break;
-      }
-    }
+    // If the selector is empty, just return an empty RowMap.
+    if (size == 0u)
+      return RowMap();
+
+    // If the selector is just picking a single row, just return that row
+    // without any additional overhead.
+    if (size == 1u)
+      return RowMap::SingleRow(Get(selector.Get(0)));
+
+    // For all other cases, go into the slow-path.
+    return SelectRowsSlow(selector);
   }
 
   // Intersects |other| with |this| writing the result into |this|.
@@ -254,6 +395,48 @@ class RowMap {
     RemoveIf([&other](uint32_t row) { return !other.Contains(row); });
   }
 
+  // Filters the current RowMap into the RowMap given by |out| based on the
+  // return value of |p(idx)|.
+  //
+  // Precondition: |out| should be sorted by the rows inside it (this is
+  // required to keep this method efficient). This is automatically true if the
+  // mode is out is Range or BitVector but needs to be enforced if the mode is
+  // IndexVector.
+  //
+  // Specifically, the setup for each of the variables is as follows:
+  //  this: contains the RowMap indices which will be looked up and passed to
+  //        p to filter.
+  //  out : contains indicies into |this| and will be filtered down to only
+  //        contain indicies where p returns true.
+  //  p   : takes an index given by |this| and returns whether the index should
+  //        be retained in |out|.
+  //
+  // Concretely, the algorithm being invoked looks like (but more efficient
+  // based on the mode of |this| and |out|):
+  // for (idx : out)
+  //   this_idx = (*this)[idx]
+  //   if (!p(this_idx))
+  //     out->Remove(idx)
+  template <typename Predicate>
+  void FilterInto(RowMap* out, Predicate p) const {
+    PERFETTO_DCHECK(size() >= out->size());
+
+    switch (mode_) {
+      case Mode::kRange:
+        FilterInto(out, RangeIterator(this), p);
+        break;
+      case Mode::kBitVector:
+        FilterInto(out, bit_vector_.IterateSetBits(), p);
+        break;
+      case Mode::kIndexVector:
+        FilterInto(out, IndexVectorIterator(this), p);
+        break;
+    }
+  }
+
+  // Returns the iterator over the rows in this RowMap.
+  Iterator IterateRows() const { return Iterator(this); }
+
  private:
   enum class Mode {
     kRange,
@@ -261,17 +444,95 @@ class RowMap {
     kIndexVector,
   };
 
-  void AddToBitVector(uint32_t row) {
-    PERFETTO_DCHECK(mode_ == Mode::kBitVector);
+  template <typename Iterator, typename Predicate>
+  void FilterInto(RowMap* out, Iterator it, Predicate p) const {
+    switch (out->mode_) {
+      case Mode::kRange: {
+        // TODO(lalitm): investigate whether we can reuse the data inside
+        // out->bit_vector_ at some point.
+        BitVector bv(out->start_idx_, false);
+        for (; it; it.Next()) {
+          uint32_t ordinal = it.ordinal();
+          if (ordinal < out->start_idx_)
+            continue;
+          if (ordinal >= out->end_idx_)
+            break;
 
-    // TODO(lalitm): RowMap should be an ordered container but we do not
-    // currently support this when in BitVector mode. Fix this by turning to
-    // IndexVector mode if we add a row before the end.
-    PERFETTO_CHECK(row >= bit_vector_.size());
+          if (p(it.index())) {
+            bv.AppendTrue();
+          } else {
+            bv.AppendFalse();
+          }
+        }
+        *out = RowMap(std::move(bv));
+        break;
+      }
+      case Mode::kBitVector: {
+        auto out_it = out->bit_vector_.IterateAllBits();
+        for (; it; it.Next(), out_it.Next()) {
+          PERFETTO_DCHECK(out_it);
+          if (out_it.IsSet() && !p(it.index()))
+            out_it.Clear();
+        }
+        break;
+      }
+      case Mode::kIndexVector: {
+        PERFETTO_DCHECK(std::is_sorted(out->index_vector_.begin(),
+                                       out->index_vector_.end()));
+        auto fn = [&p, &it](uint32_t i) {
+          while (it.ordinal() < i) {
+            it.Next();
+            PERFETTO_DCHECK(it);
+          }
+          PERFETTO_DCHECK(it.ordinal() == i);
+          return !p(it.index());
+        };
+        auto iv_it = std::remove_if(out->index_vector_.begin(),
+                                    out->index_vector_.end(), fn);
+        out->index_vector_.erase(iv_it, out->index_vector_.end());
+        break;
+      }
+    }
+  }
+
+  void InsertIntoBitVector(uint32_t row) {
+    PERFETTO_DCHECK(mode_ == Mode::kBitVector);
 
     bit_vector_.Resize(row + 1, false);
     bit_vector_.Set(row);
   }
+
+  // Removes any row where |p(row)| returns false from this RowMap.
+  template <typename Predicate>
+  void RemoveIf(Predicate p) {
+    switch (mode_) {
+      case Mode::kRange: {
+        bit_vector_.Resize(start_idx_, false);
+        for (uint32_t i = start_idx_; i < end_idx_; ++i) {
+          if (p(i))
+            bit_vector_.AppendFalse();
+          else
+            bit_vector_.AppendTrue();
+        }
+        *this = RowMap(std::move(bit_vector_));
+        break;
+      }
+      case Mode::kBitVector: {
+        for (auto it = bit_vector_.IterateSetBits(); it; it.Next()) {
+          if (p(it.index()))
+            it.Clear();
+        }
+        break;
+      }
+      case Mode::kIndexVector: {
+        auto it = std::remove_if(index_vector_.begin(), index_vector_.end(), p);
+        index_vector_.erase(it, index_vector_.end());
+        break;
+      }
+    }
+  }
+
+  RowMap SelectRowsSlow(const RowMap& selector) const;
 
   Mode mode_ = Mode::kRange;
 
