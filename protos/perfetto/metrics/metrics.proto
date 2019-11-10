@@ -31,6 +31,7 @@ import "protos/perfetto/metrics/android/startup_metric.proto";
 import "protos/perfetto/metrics/android/heap_profile_callsites.proto";
 import "protos/perfetto/metrics/android/package_list.proto";
 import "protos/perfetto/metrics/android/unsymbolized_frames.proto";
+import "protos/perfetto/metrics/android/java_heap_stats.proto";
 
 // Trace processor metadata (taken from the stats table schema and contents).
 // TODO: perhaps add the other columns once we have enum support
@@ -43,11 +44,12 @@ message TraceMetadata {
 
   repeated Entry error_stats_entry = 1;
   optional int64 trace_duration_ns = 2;
+  optional string trace_uuid = 3;
 }
 
 // Root message for all Perfetto-based metrics.
 //
-// Next id: 17
+// Next id: 18
 message TraceMetrics {
   reserved 4, 13, 14;
 
@@ -92,6 +94,9 @@ message TraceMetrics {
 
   // Returns stack frames missing symbols.
   optional UnsymbolizedFrames unsymbolized_frames = 15;
+
+  // If the trace contains a heap graph, output allocation statistics.
+  optional JavaHeapStats java_heap_stats = 17;
 
   // Demo extensions.
   extensions 450 to 499;
