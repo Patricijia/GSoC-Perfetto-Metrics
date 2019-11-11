@@ -141,13 +141,28 @@ base::Optional<int64_t> StackProfileTracker::AddFrame(
   TraceStorage::StackProfileFrames::Row row{str_id, mapping_row,
                                             static_cast<int64_t>(frame.rel_pc)};
 
-  int64_t cur_row;
+  TraceStorage::StackProfileFrames* frames =
+      context_->storage->mutable_stack_profile_frames();
+
+  int64_t cur_row = -1;
   auto it = frame_idx_.find(row);
   if (it != frame_idx_.end()) {
     cur_row = it->second;
   } else {
-    cur_row = context_->storage->stack_profile_frames().FindFrameRow(
-        static_cast<size_t>(mapping_row), frame.rel_pc);
+    std::vector<int64_t> db_frames =
+        frames->FindFrameRow(static_cast<size_t>(mapping_row), frame.rel_pc);
+    for (const int64_t preexisting_frame : db_frames) {
+      PERFETTO_DCHECK(preexisting_frame >= 0);
+      size_t preexisting_row_id = static_cast<size_t>(preexisting_frame);
+      TraceStorage::StackProfileFrames::Row preexisting_row{
+          frames->names()[preexisting_row_id],
+          frames->mappings()[preexisting_row_id],
+          frames->rel_pcs()[preexisting_row_id]};
+
+      if (row == preexisting_row) {
+        cur_row = preexisting_frame;
+      }
+    }
     if (cur_row == -1) {
       cur_row = context_->storage->mutable_stack_profile_frames()->Insert(row);
     }

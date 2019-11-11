@@ -33,6 +33,7 @@ genrule {
     "src/trace_processor/metrics/android/android_startup_launches.sql",
     "src/trace_processor/metrics/android/android_task_state.sql",
     "src/trace_processor/metrics/android/heap_profile_callsites.sql",
+    "src/trace_processor/metrics/android/java_heap_stats.sql",
     "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
     "src/trace_processor/metrics/android/process_mem.sql",
     "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
@@ -2397,6 +2398,7 @@ genrule {
     "protos/perfetto/metrics/android/cpu_metric.proto",
     "protos/perfetto/metrics/android/heap_profile_callsites.proto",
     "protos/perfetto/metrics/android/ion_metric.proto",
+    "protos/perfetto/metrics/android/java_heap_stats.proto",
     "protos/perfetto/metrics/android/lmk_metric.proto",
     "protos/perfetto/metrics/android/mem_metric.proto",
     "protos/perfetto/metrics/android/mem_unagg_metric.proto",
@@ -2416,6 +2418,7 @@ genrule {
     "external/perfetto/protos/perfetto/metrics/android/cpu_metric.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/heap_profile_callsites.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/ion_metric.pbzero.cc",
+    "external/perfetto/protos/perfetto/metrics/android/java_heap_stats.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/lmk_metric.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/mem_metric.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/mem_unagg_metric.pbzero.cc",
@@ -2435,6 +2438,7 @@ genrule {
     "protos/perfetto/metrics/android/cpu_metric.proto",
     "protos/perfetto/metrics/android/heap_profile_callsites.proto",
     "protos/perfetto/metrics/android/ion_metric.proto",
+    "protos/perfetto/metrics/android/java_heap_stats.proto",
     "protos/perfetto/metrics/android/lmk_metric.proto",
     "protos/perfetto/metrics/android/mem_metric.proto",
     "protos/perfetto/metrics/android/mem_unagg_metric.proto",
@@ -2454,6 +2458,7 @@ genrule {
     "external/perfetto/protos/perfetto/metrics/android/cpu_metric.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/heap_profile_callsites.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/ion_metric.pbzero.h",
+    "external/perfetto/protos/perfetto/metrics/android/java_heap_stats.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/lmk_metric.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/mem_metric.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/mem_unagg_metric.pbzero.h",
@@ -4093,7 +4098,6 @@ filegroup {
   name: "perfetto_src_base_unittests",
   srcs: [
     "src/base/circular_queue_unittest.cc",
-    "src/base/copyable_ptr_unittest.cc",
     "src/base/metatrace_unittest.cc",
     "src/base/no_destructor_unittest.cc",
     "src/base/optional_unittest.cc",
@@ -4396,6 +4400,7 @@ filegroup {
   srcs: [
     "src/protozero/message.cc",
     "src/protozero/message_handle.cc",
+    "src/protozero/packed_repeated_fields.cc",
     "src/protozero/proto_decoder.cc",
     "src/protozero/scattered_heap_buffer.cc",
     "src/protozero/scattered_stream_null_delegate.cc",
@@ -4501,6 +4506,7 @@ genrule {
 filegroup {
   name: "perfetto_src_protozero_unittests",
   srcs: [
+    "src/protozero/copyable_ptr_unittest.cc",
     "src/protozero/message_handle_unittest.cc",
     "src/protozero/message_unittest.cc",
     "src/protozero/proto_decoder_unittest.cc",
@@ -4547,7 +4553,6 @@ filegroup {
   srcs: [
     "src/trace_processor/android_logs_table.cc",
     "src/trace_processor/args_table.cc",
-    "src/trace_processor/counter_definitions_table.cc",
     "src/trace_processor/counter_values_table.cc",
     "src/trace_processor/cpu_profile_stack_sample_table.cc",
     "src/trace_processor/filtered_row_index.cc",
