@@ -14,33 +14,35 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_COUNTER_DEFINITIONS_TABLE_H_
-#define SRC_TRACE_PROCESSOR_COUNTER_DEFINITIONS_TABLE_H_
+#ifndef SRC_TRACE_PROCESSOR_BINDER_TRACKER_H_
+#define SRC_TRACE_PROCESSOR_BINDER_TRACKER_H_
 
-#include "src/trace_processor/storage_table.h"
+#include <stdint.h>
+
 #include "src/trace_processor/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-class CounterDefinitionsTable : public StorageTable {
+class TraceProcessorContext;
+
+class BinderTracker {
  public:
-  static void RegisterTable(sqlite3* db, const TraceStorage* storage);
+  explicit BinderTracker(TraceProcessorContext*);
+  virtual ~BinderTracker();
 
-  CounterDefinitionsTable(sqlite3*, const TraceStorage*);
-
-  // StorageTable implementation.
-  StorageSchema CreateStorageSchema() override;
-  uint32_t RowCount() override;
-  int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+  void Transaction(int64_t timestamp, uint32_t pid);
+  void Locked(int64_t timestamp, uint32_t pid);
+  void Lock(int64_t timestamp, uint32_t pid);
+  void Unlock(int64_t timestamp, uint32_t pid);
+  void TransactionReceived(int64_t timestamp, uint32_t pid);
+  void TransactionAllocBuf(int64_t timestamp, uint32_t pid);
 
  private:
-  uint32_t EstimateCost(const QueryConstraints&);
-
-  const TraceStorage* const storage_;
+  TraceProcessorContext* const context_;
 };
 
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_COUNTER_DEFINITIONS_TABLE_H_
+#endif  // SRC_TRACE_PROCESSOR_BINDER_TRACKER_H_

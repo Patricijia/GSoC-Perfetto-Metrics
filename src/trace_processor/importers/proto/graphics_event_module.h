@@ -22,6 +22,8 @@
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
+
 namespace perfetto {
 namespace trace_processor {
 
@@ -56,7 +58,9 @@ class GraphicsEventModule
     }
 
     if (decoder.has_vulkan_memory_event()) {
-      parser_.ParseVulkanMemoryEvent(decoder.vulkan_memory_event());
+      parser_.ParseVulkanMemoryEvent(ttp.packet_sequence_state,
+                                     ttp.packet_sequence_state_generation,
+                                     decoder.vulkan_memory_event());
       return ModuleResult::Handled();
     }
 
