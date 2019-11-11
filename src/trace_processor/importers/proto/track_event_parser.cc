@@ -29,6 +29,7 @@
 #include "protos/perfetto/trace/track_event/log_message.pbzero.h"
 #include "protos/perfetto/trace/track_event/source_location.pbzero.h"
 #include "protos/perfetto/trace/track_event/task_execution.pbzero.h"
+#include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -54,6 +55,8 @@ TrackEventParser::TrackEventParser(TraceProcessorContext* context)
           context->storage->InternString("track_event.log_message")),
       raw_legacy_event_id_(
           context->storage->InternString("track_event.legacy_event")),
+      legacy_event_original_tid_id_(
+          context->storage->InternString("legacy_event.original_tid")),
       legacy_event_category_key_id_(
           context->storage->InternString("legacy_event.category")),
       legacy_event_name_key_id_(
@@ -232,6 +235,12 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
     track_id = track_tracker->GetOrCreateDefaultDescriptorTrack();
   }
 
+  // All events in legacy JSON require a thread ID, but for some types of events
+  // (e.g. async events or process/global-scoped instants), we don't store it in
+  // the slice/track model. To pass the original tid through to the json export,
+  // we store it in an arg.
+  uint32_t legacy_tid = 0;
+
   // TODO(eseckler): Replace phase with type and remove handling of
   // legacy_event.phase() once it is no longer used by producers.
   int32_t phase = 0;
@@ -277,6 +286,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
         track_id = context_->track_tracker->InternLegacyChromeAsyncTrack(
             name_id, upid ? *upid : 0, source_id, source_id_is_process_scoped,
             id_scope);
+        if (utid)
+          legacy_tid = storage->GetThread(*utid).tid;
         break;
       }
       case 'i':
@@ -297,6 +308,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
           case LegacyEvent::SCOPE_GLOBAL:
             track_id = context_->track_tracker
                            ->GetOrCreateLegacyChromeGlobalInstantTrack();
+            if (utid)
+              legacy_tid = storage->GetThread(*utid).tid;
             break;
           case LegacyEvent::SCOPE_PROCESS:
             if (!upid) {
@@ -309,6 +322,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
             track_id =
                 context_->track_tracker->InternLegacyChromeProcessInstantTrack(
                     *upid);
+            if (utid)
+              legacy_tid = storage->GetThread(*utid).tid;
             break;
         }
         break;
@@ -334,8 +349,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
   }
 
   auto args_callback = [this, &event, &legacy_event, &sequence_state,
-                        sequence_state_generation, ts,
-                        utid](ArgsTracker* args_tracker, RowId row_id) {
+                        sequence_state_generation, ts, utid,
+                        legacy_tid](ArgsTracker* args_tracker, RowId row_id) {
     for (auto it = event.debug_annotations(); it; ++it) {
       ParseDebugAnnotationArgs(*it, sequence_state, sequence_state_generation,
                                args_tracker, row_id);
@@ -350,6 +365,12 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
       ParseLogMessage(event.log_message(), sequence_state,
                       sequence_state_generation, ts, utid, args_tracker,
                       row_id);
+    }
+
+    if (legacy_tid) {
+      args_tracker->AddArg(row_id, legacy_event_original_tid_id_,
+                           legacy_event_original_tid_id_,
+                           Variadic::Integer(static_cast<int32_t>(legacy_tid)));
     }
 
     // TODO(eseckler): Parse legacy flow events into flow events table once we
@@ -562,7 +583,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
         if (!thread_name.size)
           break;
         auto thread_name_id = storage->InternString(thread_name);
-        procs->SetThreadName(*utid, thread_name_id);
+        // Don't override system-provided names.
+        procs->SetThreadNameIfUnset(*utid, thread_name_id);
         break;
       }
       if (strcmp(event_name.c_str(), "process_name") == 0) {
@@ -580,8 +602,9 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
         auto process_name = annotation.string_value();
         if (!process_name.size)
           break;
-        procs->SetProcessMetadata(storage->GetProcess(*upid).pid, base::nullopt,
-                                  process_name);
+        auto process_name_id = storage->InternString(process_name);
+        // Don't override system-provided names.
+        procs->SetProcessNameIfUnset(*upid, process_name_id);
         break;
       }
       // Other metadata events are proxied via the raw table for JSON export.

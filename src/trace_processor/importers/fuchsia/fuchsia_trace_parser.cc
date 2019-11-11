@@ -270,7 +270,8 @@ void FuchsiaTraceParser::ParseTracePacket(int64_t, TimestampedTracePiece ttp) {
           // one name, so we combine both names into one here.
           for (const Arg& arg : args) {
             std::string counter_name_str = name_str + ":";
-            counter_name_str += context_->storage->GetString(arg.name).c_str();
+            counter_name_str +=
+                context_->storage->GetString(arg.name).ToStdString();
             bool is_valid_value = false;
             double counter_value = -1;
             switch (arg.value.Type()) {
@@ -304,11 +305,11 @@ void FuchsiaTraceParser::ParseTracePacket(int64_t, TimestampedTracePiece ttp) {
                 break;
             }
             if (is_valid_value) {
-              context_->event_tracker->PushCounter(
-                  ts, counter_value,
-                  context_->storage->InternString(
-                      base::StringView(counter_name_str)),
-                  utid, RefType::kRefUtid);
+              StringId counter_name_id = context_->storage->InternString(
+                  base::StringView(counter_name_str));
+              TrackId track = context_->track_tracker->InternThreadCounterTrack(
+                  counter_name_id, utid);
+              context_->event_tracker->PushCounter(ts, counter_value, track);
             }
           }
           break;
