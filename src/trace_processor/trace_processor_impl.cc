@@ -56,6 +56,10 @@
 #include "src/trace_processor/export_json.h"
 #endif
 
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include <cxxabi.h>
+#endif
+
 // In Android and Chromium tree builds, we don't have the percentile module.
 // Just don't include it.
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_PERCENTILE)
@@ -270,12 +274,47 @@ void Hash(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
   sqlite3_result_int64(ctx, static_cast<int64_t>(hash.digest()));
 }
 
+void Demangle(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  if (argc != 1) {
+    sqlite3_result_error(ctx, "Unsupported number of arg passed to DEMANGLE",
+                         -1);
+    return;
+  }
+  sqlite3_value* value = argv[0];
+  if (sqlite3_value_type(value) != SQLITE_TEXT) {
+    sqlite3_result_error(ctx, "Unsupported type of arg passed to DEMANGLE", -1);
+    return;
+  }
+  const char* ptr = reinterpret_cast<const char*>(sqlite3_value_text(value));
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  int ignored = 0;
+  // This memory was allocated by malloc and will be passed to SQLite to free.
+  char* demangled_name = abi::__cxa_demangle(ptr, nullptr, nullptr, &ignored);
+  if (!demangled_name) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+  sqlite3_result_text(ctx, demangled_name, -1, free);
+#else
+  sqlite3_result_text(ctx, ptr, -1, sqlite_utils::kSqliteTransient);
+#endif
+}
+
 void CreateHashFunction(sqlite3* db) {
   auto ret = sqlite3_create_function_v2(
       db, "HASH", -1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr, &Hash,
       nullptr, nullptr, nullptr);
   if (ret) {
     PERFETTO_ELOG("Error initializing HASH");
+  }
+}
+
+void CreateDemangledNameFunction(sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(
+      db, "DEMANGLE", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr, &Demangle,
+      nullptr, nullptr, nullptr);
+  if (ret != SQLITE_OK) {
+    PERFETTO_ELOG("Error initializing DEMANGLE: %s", sqlite3_errmsg(db));
   }
 }
 
@@ -328,6 +367,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   CreateJsonExportFunction(this->context_.storage.get(), db);
 #endif
   CreateHashFunction(db);
+  CreateDemangledNameFunction(db);
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
   SetupMetrics(this, *db_, &sql_metrics_);

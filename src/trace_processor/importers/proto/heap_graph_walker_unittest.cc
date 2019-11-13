@@ -520,7 +520,7 @@ TEST(SquarePowerSetTest, Simple) {
 
 // Generate all graphs with 4 nodes, and assert that deleting one node frees
 // up more memory than that node's unique retained.
-TEST(HeapGraphWalkerTest, AllGraphs) {
+TEST(HeapGraphWalkerTest, DISABLED_AllGraphs) {
   std::vector<int64_t> nodes{1, 2, 3, 4};
   std::vector<uint64_t> sizes{0, 1, 2, 3, 4};
   PowerSet(nodes, [&nodes, &sizes](const std::vector<int64_t>& roots) {
@@ -576,6 +576,8 @@ TEST(HeapGraphWalkerTest, AllGraphs) {
             EXPECT_LE(delegate.UniqueRetained(1), reachable - reachable2)
                 << "roots: " << testing::PrintToString(roots)
                 << ", edges: " << testing::PrintToString(edges);
+          } else {
+            EXPECT_EQ(reachable2, reachable);
           }
         });
   });
