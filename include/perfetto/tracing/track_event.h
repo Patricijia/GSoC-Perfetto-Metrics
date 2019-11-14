@@ -54,8 +54,7 @@
 //
 //       int main() {
 //         perfetto::TrackEvent::Register();
-//         TRACK_EVENT_BEGIN("category", "MyEvent");
-//         TRACK_EVENT_END("category");
+//         TRACK_EVENT("category", "MyEvent");
 //         ...
 //       }
 //
@@ -143,11 +142,26 @@
       category, nullptr,               \
       ::perfetto::protos::pbzero::TrackEvent::TYPE_SLICE_END, ##__VA_ARGS__)
 
+// Begin a thread-scoped slice which gets automatically closed when going out of
+// scope.
+#define TRACE_EVENT(category, name, ...)               \
+  TRACE_EVENT_BEGIN(category, name, ##__VA_ARGS__);    \
+  struct {                                             \
+    struct EventFinalizer {                            \
+      ~EventFinalizer() { TRACE_EVENT_END(category); } \
+    } finalizer;                                       \
+  } PERFETTO_INTERNAL_UID(scoped_event)
+
+// Emit a thread-scoped slice which has zero duration.
+// TODO(skyostil): Add support for process-wide and global instant events.
+#define TRACE_EVENT_INSTANT(category, name, ...)                            \
+  PERFETTO_INTERNAL_TRACK_EVENT(                                            \
+      category, name, ::perfetto::protos::pbzero::TrackEvent::TYPE_INSTANT, \
+      ##__VA_ARGS__)
+
 // TODO(skyostil): Add arguments.
-// TODO(skyostil): Add scoped events.
 // TODO(skyostil): Add async events.
 // TODO(skyostil): Add flow events.
-// TODO(skyostil): Add instant events.
 // TODO(skyostil): Add counters.
 
 #endif  // INCLUDE_PERFETTO_TRACING_TRACK_EVENT_H_
