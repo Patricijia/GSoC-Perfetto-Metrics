@@ -44,6 +44,32 @@ PERFETTO_TP_TABLE(PERFETTO_TP_CHILD_TABLE);
 }  // namespace trace_processor
 }  // namespace perfetto
 
+namespace {
+
+bool IsBenchmarkFunctionalOnly() {
+  return getenv("BENCHMARK_FUNCTIONAL_TEST_ONLY") != nullptr;
+}
+
+void TableFilterArgs(benchmark::internal::Benchmark* b) {
+  if (IsBenchmarkFunctionalOnly()) {
+    b->Arg(1024);
+  } else {
+    b->RangeMultiplier(8);
+    b->Range(1024, 2 * 1024 * 1024);
+  }
+}
+
+void TableSortArgs(benchmark::internal::Benchmark* b) {
+  if (IsBenchmarkFunctionalOnly()) {
+    b->Arg(64);
+  } else {
+    b->RangeMultiplier(8);
+    b->Range(1024, 256 * 1024);
+  }
+}
+
+}  // namespace
+
 using perfetto::trace_processor::ChildTestTable;
 using perfetto::trace_processor::RootTestTable;
 using perfetto::trace_processor::SqlValue;
@@ -80,9 +106,7 @@ static void BM_TableIteratorChild(benchmark::State& state) {
       it = child.IterateRows();
   }
 }
-BENCHMARK(BM_TableIteratorChild)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableIteratorChild)->Apply(TableFilterArgs);
 
 static void BM_TableFilterIdColumn(benchmark::State& state) {
   StringPool pool;
@@ -96,9 +120,7 @@ static void BM_TableFilterIdColumn(benchmark::State& state) {
     benchmark::DoNotOptimize(root.Filter({root.id().eq(SqlValue::Long(30))}));
   }
 }
-BENCHMARK(BM_TableFilterIdColumn)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterIdColumn)->Apply(TableFilterArgs);
 
 static void BM_TableFilterRootNonNullEqMatchMany(benchmark::State& state) {
   StringPool pool;
@@ -107,8 +129,7 @@ static void BM_TableFilterRootNonNullEqMatchMany(benchmark::State& state) {
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 1024;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     RootTestTable::Row row(static_cast<uint32_t>(rnd_engine() % partitions));
     root.Insert(row);
@@ -119,9 +140,7 @@ static void BM_TableFilterRootNonNullEqMatchMany(benchmark::State& state) {
         root.Filter({root.root_non_null().eq(SqlValue::Long(0))}));
   }
 }
-BENCHMARK(BM_TableFilterRootNonNullEqMatchMany)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterRootNonNullEqMatchMany)->Apply(TableFilterArgs);
 
 static void BM_TableFilterRootNullableEqMatchMany(benchmark::State& state) {
   StringPool pool;
@@ -130,8 +149,7 @@ static void BM_TableFilterRootNullableEqMatchMany(benchmark::State& state) {
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 512;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     uint32_t value = rnd_engine() % partitions;
 
@@ -146,9 +164,7 @@ static void BM_TableFilterRootNullableEqMatchMany(benchmark::State& state) {
         root.Filter({root.root_nullable().eq(SqlValue::Long(1))}));
   }
 }
-BENCHMARK(BM_TableFilterRootNullableEqMatchMany)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterRootNullableEqMatchMany)->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildNonNullEqMatchMany(benchmark::State& state) {
   StringPool pool;
@@ -158,8 +174,7 @@ static void BM_TableFilterChildNonNullEqMatchMany(benchmark::State& state) {
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 1024;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     ChildTestTable::Row row;
     row.child_non_null = static_cast<uint32_t>(rnd_engine() % partitions);
@@ -172,9 +187,7 @@ static void BM_TableFilterChildNonNullEqMatchMany(benchmark::State& state) {
         child.Filter({child.child_non_null().eq(SqlValue::Long(0))}));
   }
 }
-BENCHMARK(BM_TableFilterChildNonNullEqMatchMany)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterChildNonNullEqMatchMany)->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildNullableEqMatchMany(benchmark::State& state) {
   StringPool pool;
@@ -184,8 +197,7 @@ static void BM_TableFilterChildNullableEqMatchMany(benchmark::State& state) {
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 512;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     uint32_t value = rnd_engine() % partitions;
 
@@ -201,9 +213,7 @@ static void BM_TableFilterChildNullableEqMatchMany(benchmark::State& state) {
         child.Filter({child.child_nullable().eq(SqlValue::Long(1))}));
   }
 }
-BENCHMARK(BM_TableFilterChildNullableEqMatchMany)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterChildNullableEqMatchMany)->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildNonNullEqMatchManyInParent(
     benchmark::State& state) {
@@ -214,8 +224,7 @@ static void BM_TableFilterChildNonNullEqMatchManyInParent(
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 1024;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     ChildTestTable::Row row;
     row.root_non_null = static_cast<uint32_t>(rnd_engine() % partitions);
@@ -229,8 +238,7 @@ static void BM_TableFilterChildNonNullEqMatchManyInParent(
   }
 }
 BENCHMARK(BM_TableFilterChildNonNullEqMatchManyInParent)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+    ->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildNullableEqMatchManyInParent(
     benchmark::State& state) {
@@ -241,8 +249,7 @@ static void BM_TableFilterChildNullableEqMatchManyInParent(
   uint32_t size = static_cast<uint32_t>(state.range(0));
   uint32_t partitions = size / 512;
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
+  std::minstd_rand0 rnd_engine;
   for (uint32_t i = 0; i < size; ++i) {
     ChildTestTable::Row row;
     row.root_nullable = static_cast<uint32_t>(rnd_engine() % partitions);
@@ -256,8 +263,7 @@ static void BM_TableFilterChildNullableEqMatchManyInParent(
   }
 }
 BENCHMARK(BM_TableFilterChildNullableEqMatchManyInParent)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+    ->Apply(TableFilterArgs);
 
 static void BM_TableFilterParentSortedEq(benchmark::State& state) {
   StringPool pool;
@@ -265,8 +271,6 @@ static void BM_TableFilterParentSortedEq(benchmark::State& state) {
 
   uint32_t size = static_cast<uint32_t>(state.range(0));
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
   for (uint32_t i = 0; i < size; ++i) {
     RootTestTable::Row row;
     row.root_sorted = i * 2;
@@ -278,9 +282,7 @@ static void BM_TableFilterParentSortedEq(benchmark::State& state) {
         root.Filter({root.root_sorted().eq(SqlValue::Long(22))}));
   }
 }
-BENCHMARK(BM_TableFilterParentSortedEq)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterParentSortedEq)->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildSortedEq(benchmark::State& state) {
   StringPool pool;
@@ -289,8 +291,6 @@ static void BM_TableFilterChildSortedEq(benchmark::State& state) {
 
   uint32_t size = static_cast<uint32_t>(state.range(0));
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
   for (uint32_t i = 0; i < size; ++i) {
     ChildTestTable::Row row;
     row.child_sorted = i * 2;
@@ -303,9 +303,7 @@ static void BM_TableFilterChildSortedEq(benchmark::State& state) {
         child.Filter({child.child_sorted().eq(SqlValue::Long(22))}));
   }
 }
-BENCHMARK(BM_TableFilterChildSortedEq)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterChildSortedEq)->Apply(TableFilterArgs);
 
 static void BM_TableFilterChildSortedEqInParent(benchmark::State& state) {
   StringPool pool;
@@ -314,12 +312,10 @@ static void BM_TableFilterChildSortedEqInParent(benchmark::State& state) {
 
   uint32_t size = static_cast<uint32_t>(state.range(0));
 
-  constexpr uint32_t kRandomSeed = 42;
-  std::minstd_rand0 rnd_engine(kRandomSeed);
   for (uint32_t i = 0; i < size; ++i) {
     RootTestTable::Row root_row;
     root_row.root_sorted = i * 4;
-    root.Insert({});
+    root.Insert(root_row);
 
     ChildTestTable::Row row;
     row.root_sorted = i * 4 + 2;
@@ -331,6 +327,108 @@ static void BM_TableFilterChildSortedEqInParent(benchmark::State& state) {
         child.Filter({child.root_sorted().eq(SqlValue::Long(22))}));
   }
 }
-BENCHMARK(BM_TableFilterChildSortedEqInParent)
-    ->RangeMultiplier(8)
-    ->Range(1024, 2 * 1024 * 1024);
+BENCHMARK(BM_TableFilterChildSortedEqInParent)->Apply(TableFilterArgs);
+
+static void BM_TableSortRootNonNull(benchmark::State& state) {
+  StringPool pool;
+  RootTestTable root(&pool, nullptr);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+
+  std::minstd_rand0 rnd_engine;
+  for (uint32_t i = 0; i < size; ++i) {
+    const uint32_t root_value = static_cast<uint32_t>(rnd_engine());
+
+    RootTestTable::Row row;
+    row.root_non_null = root_value;
+    root.Insert(row);
+  }
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(root.Sort({root.root_non_null().ascending()}));
+  }
+}
+BENCHMARK(BM_TableSortRootNonNull)->Apply(TableSortArgs);
+
+static void BM_TableSortRootNullable(benchmark::State& state) {
+  StringPool pool;
+  RootTestTable root(&pool, nullptr);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+
+  std::minstd_rand0 rnd_engine;
+  for (uint32_t i = 0; i < size; ++i) {
+    const uint32_t root_value = static_cast<uint32_t>(rnd_engine());
+
+    RootTestTable::Row row;
+    row.root_nullable = root_value % 2 == 0
+                            ? perfetto::base::nullopt
+                            : perfetto::base::make_optional(root_value);
+    root.Insert(row);
+  }
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(root.Sort({root.root_nullable().ascending()}));
+  }
+}
+BENCHMARK(BM_TableSortRootNullable)->Apply(TableSortArgs);
+
+static void BM_TableSortChildNonNullInParent(benchmark::State& state) {
+  StringPool pool;
+  RootTestTable root(&pool, nullptr);
+  ChildTestTable child(&pool, &root);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+
+  std::minstd_rand0 rnd_engine;
+  for (uint32_t i = 0; i < size; ++i) {
+    const uint32_t root_value = static_cast<uint32_t>(rnd_engine());
+
+    RootTestTable::Row root_row;
+    root_row.root_non_null = root_value;
+    root.Insert(root_row);
+
+    const uint32_t child_value = static_cast<uint32_t>(rnd_engine());
+
+    ChildTestTable::Row child_row;
+    child_row.root_non_null = child_value;
+    child.Insert(child_row);
+  }
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(child.Sort({child.root_non_null().ascending()}));
+  }
+}
+BENCHMARK(BM_TableSortChildNonNullInParent)->Apply(TableSortArgs);
+
+static void BM_TableSortChildNullableInParent(benchmark::State& state) {
+  StringPool pool;
+  RootTestTable root(&pool, nullptr);
+  ChildTestTable child(&pool, &root);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+
+  std::minstd_rand0 rnd_engine;
+  for (uint32_t i = 0; i < size; ++i) {
+    const uint32_t root_value = static_cast<uint32_t>(rnd_engine());
+
+    RootTestTable::Row root_row;
+    root_row.root_nullable = root_value % 2 == 0
+                                 ? perfetto::base::nullopt
+                                 : perfetto::base::make_optional(root_value);
+    root.Insert(root_row);
+
+    const uint32_t child_value = static_cast<uint32_t>(rnd_engine());
+
+    ChildTestTable::Row child_row;
+    child_row.root_nullable = child_value % 2 == 0
+                                  ? perfetto::base::nullopt
+                                  : perfetto::base::make_optional(child_value);
+    child.Insert(child_row);
+  }
+
+  for (auto _ : state) {
+    benchmark::DoNotOptimize(child.Sort({child.root_nullable().ascending()}));
+  }
+}
+BENCHMARK(BM_TableSortChildNullableInParent)->Apply(TableSortArgs);
