@@ -193,8 +193,7 @@ SpanJoinOperatorTable::ComputeSqlConstraintsForDefinition(
       continue;
 
     if (col_name == kTsColumnName || col_name == kDurColumnName) {
-      // We don't support constraints on ts or duration in the child tables.
-      PERFETTO_DFATAL("ts or duration constraints on child tables");
+      // Allow SQLite handle any constraints on ts or duration.
       continue;
     }
     auto op = sqlite_utils::OpToString(cs.op);
@@ -284,7 +283,8 @@ SpanJoinOperatorTable::Cursor::Cursor(SpanJoinOperatorTable* table, sqlite3* db)
       table_(table) {}
 
 int SpanJoinOperatorTable::Cursor::Filter(const QueryConstraints& qc,
-                                          sqlite3_value** argv) {
+                                          sqlite3_value** argv,
+                                          FilterHistory) {
   int err = t1_.Initialize(qc, argv);
   if (err != SQLITE_OK)
     return err;

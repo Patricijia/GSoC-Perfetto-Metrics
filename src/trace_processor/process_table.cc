@@ -47,6 +47,7 @@ util::Status ProcessTable::Init(int, const char* const*, Schema* schema) {
           SqliteTable::Column(Column::kEndTs, "end_ts", SqlValue::Type::kLong),
           SqliteTable::Column(Column::kParentUpid, "parent_upid",
                               SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kUid, "uid", SqlValue::Type::kLong),
       },
       {Column::kUpid});
   return util::OkStatus();
@@ -73,7 +74,8 @@ ProcessTable::Cursor::Cursor(ProcessTable* table)
     : SqliteTable::Cursor(table), storage_(table->storage_) {}
 
 int ProcessTable::Cursor::Filter(const QueryConstraints& qc,
-                                 sqlite3_value** argv) {
+                                 sqlite3_value** argv,
+                                 FilterHistory) {
   min_ = 0;
   max_ = static_cast<uint32_t>(storage_->process_count());
   desc_ = false;
@@ -142,6 +144,14 @@ int ProcessTable::Cursor::Column(sqlite3_context* context, int N) {
     case Column::kParentUpid: {
       if (process.parent_upid.has_value()) {
         sqlite3_result_int64(context, process.parent_upid.value());
+      } else {
+        sqlite3_result_null(context);
+      }
+      break;
+    }
+    case Column::kUid: {
+      if (process.uid.has_value()) {
+        sqlite3_result_int64(context, process.uid.value());
       } else {
         sqlite3_result_null(context);
       }

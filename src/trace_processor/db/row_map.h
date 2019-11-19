@@ -127,6 +127,9 @@ class RowMap {
       }
     }
 
+    Iterator(Iterator&&) noexcept = default;
+    Iterator& operator=(Iterator&&) = default;
+
     // Forwards the iterator to the next row of the RowMap.
     void Next() {
       switch (rm_->mode_) {
@@ -190,6 +193,9 @@ class RowMap {
     }
 
    private:
+    Iterator(const Iterator&) = delete;
+    Iterator& operator=(const Iterator&) = delete;
+
     // Only one of the below will be non-null depending on the mode of the
     // RowMap.
     std::unique_ptr<RangeIterator> range_it_;
@@ -388,6 +394,18 @@ class RowMap {
       // do, then just return that row. Otherwise, make ourselves empty.
       uint32_t row = other.Get(0);
       *this = Contains(row) ? RowMap::SingleRow(row) : RowMap();
+      return;
+    }
+
+    if (mode_ == Mode::kRange && other.mode_ == Mode::kRange) {
+      // If both RowMaps have ranges, we can just take the smallest intersection
+      // of them as the new RowMap.
+      // This case is important to optimize as it comes up with sorted columns.
+      start_idx_ = std::max(start_idx_, other.start_idx_);
+      end_idx_ = std::min(end_idx_, other.end_idx_);
+
+      if (end_idx_ <= start_idx_)
+        *this = RowMap();
       return;
     }
 
