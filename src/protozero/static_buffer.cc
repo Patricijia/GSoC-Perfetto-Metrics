@@ -13,27 +13,23 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
-package perfetto.protos;
+#include "perfetto/protozero/static_buffer.h"
 
-import "protos/perfetto/metrics/android/process_metadata.proto";
+#include "perfetto/base/logging.h"
 
-message JavaHeapStats {
-  message Sample {
-    optional int64 ts = 1;
-    optional int64 heap_size = 2;
-    optional int64 reachable_heap_size = 3;
+namespace protozero {
+
+StaticBufferDelegate::~StaticBufferDelegate() = default;
+
+ContiguousMemoryRange StaticBufferDelegate::GetNewBuffer() {
+  if (get_new_buffer_called_once_) {
+    // This is the 2nd time GetNewBuffer is called. The estimate is wrong. We
+    // shouldn't try to grow the buffer after the initial call.
+    PERFETTO_FATAL("Static buffer too small");
   }
-
-  // Heap stats per process. One sample per dump (can be > 1 if continuous
-  // dump is enabled).
-  message InstanceStats {
-    optional uint32 upid = 1;
-    optional AndroidProcessMetadata process = 2;
-    repeated Sample samples = 3;
-  }
-
-  repeated InstanceStats instance_stats = 1;
+  get_new_buffer_called_once_ = true;
+  return range_;
 }
+
+}  // namespace protozero
