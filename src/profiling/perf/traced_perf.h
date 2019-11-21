@@ -13,16 +13,14 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
-package perfetto.protos;
+#ifndef SRC_PROFILING_PERF_TRACED_PERF_H_
+#define SRC_PROFILING_PERF_TRACED_PERF_H_
 
-message AndroidProcessMetadata {
-  optional string name = 1;
-  optional int64 uid = 2;
-  optional string package_name = 3;
-  optional int64 apk_version_code = 4;
-  optional bool debuggable = 5;
-  optional bool shared_uid = 6;
-}
+namespace perfetto {
+
+int TracedPerfMain(int argc, char** argv);
+
+}  // namespace perfetto
+
+#endif  // SRC_PROFILING_PERF_TRACED_PERF_H_

@@ -832,6 +832,11 @@ filegroup {
   name: "perfetto_include_perfetto_ext_tracing_ipc_ipc",
 }
 
+// GN: //include/perfetto/profiling:deobfuscator
+filegroup {
+  name: "perfetto_include_perfetto_profiling_deobfuscator",
+}
+
 // GN: //include/perfetto/profiling:normalize
 filegroup {
   name: "perfetto_include_perfetto_profiling_normalize",
@@ -2037,6 +2042,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2046,6 +2052,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.gen.cc",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.gen.cc",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.gen.cc",
   ],
 }
 
@@ -2055,6 +2062,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2064,6 +2072,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.gen.h",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.gen.h",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.gen.h",
   ],
   export_include_dirs: [
     ".",
@@ -2077,6 +2086,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2085,6 +2095,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.pb.cc",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.pb.cc",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.pb.cc",
   ],
 }
 
@@ -2094,6 +2105,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2102,6 +2114,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.pb.h",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.pb.h",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.pb.h",
   ],
   export_include_dirs: [
     ".",
@@ -2115,6 +2128,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2124,6 +2138,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.pbzero.cc",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.pbzero.cc",
   ],
 }
 
@@ -2133,6 +2148,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/profiling/heapprofd_config.proto",
     "protos/perfetto/config/profiling/java_hprof_config.proto",
+    "protos/perfetto/config/profiling/perf_event_config.proto",
   ],
   tools: [
     "aprotoc",
@@ -2142,6 +2158,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/profiling/heapprofd_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/profiling/java_hprof_config.pbzero.h",
+    "external/perfetto/protos/perfetto/config/profiling/perf_event_config.pbzero.h",
   ],
   export_include_dirs: [
     ".",
@@ -4272,6 +4289,14 @@ filegroup {
   ],
 }
 
+// GN: //src/profiling:deobfuscator
+filegroup {
+  name: "perfetto_src_profiling_deobfuscator",
+  srcs: [
+    "src/profiling/deobfuscator.cc",
+  ],
+}
+
 // GN: //src/profiling/memory:client
 filegroup {
   name: "perfetto_src_profiling_memory_client",
@@ -4365,6 +4390,14 @@ filegroup {
   name: "perfetto_src_profiling_memory_wire_protocol",
   srcs: [
     "src/profiling/memory/wire_protocol.cc",
+  ],
+}
+
+// GN: //src/profiling:unittests
+filegroup {
+  name: "perfetto_src_profiling_unittests",
+  srcs: [
+    "src/profiling/deobfuscator_unittest.cc",
   ],
 }
 
@@ -4602,6 +4635,7 @@ filegroup {
     "src/trace_processor/counter_values_table.cc",
     "src/trace_processor/cpu_profile_stack_sample_table.cc",
     "src/trace_processor/filtered_row_index.cc",
+    "src/trace_processor/gfp_flags.cc",
     "src/trace_processor/heap_profile_allocation_table.cc",
     "src/trace_processor/instants_table.cc",
     "src/trace_processor/metadata_table.cc",
@@ -5375,6 +5409,7 @@ cc_test {
     ":perfetto_include_perfetto_ext_traced_traced",
     ":perfetto_include_perfetto_ext_tracing_core_core",
     ":perfetto_include_perfetto_ext_tracing_ipc_ipc",
+    ":perfetto_include_perfetto_profiling_deobfuscator",
     ":perfetto_include_perfetto_profiling_normalize",
     ":perfetto_include_perfetto_protozero_protozero",
     ":perfetto_include_perfetto_trace_processor_basic_types",
@@ -5459,6 +5494,7 @@ cc_test {
     ":perfetto_src_perfetto_cmd_protos_gen",
     ":perfetto_src_perfetto_cmd_trigger_producer",
     ":perfetto_src_perfetto_cmd_unittests",
+    ":perfetto_src_profiling_deobfuscator",
     ":perfetto_src_profiling_memory_client",
     ":perfetto_src_profiling_memory_daemon",
     ":perfetto_src_profiling_memory_proc_utils",
@@ -5467,6 +5503,7 @@ cc_test {
     ":perfetto_src_profiling_memory_scoped_spinlock",
     ":perfetto_src_profiling_memory_unittests",
     ":perfetto_src_profiling_memory_wire_protocol",
+    ":perfetto_src_profiling_unittests",
     ":perfetto_src_protozero_protozero",
     ":perfetto_src_protozero_testing_messages_cpp_gen",
     ":perfetto_src_protozero_testing_messages_lite_gen",

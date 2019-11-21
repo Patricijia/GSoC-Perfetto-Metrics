@@ -13,16 +13,21 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
-package perfetto.protos;
+#include "src/profiling/perf/traced_perf.h"
+#include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/ext/tracing/ipc/default_socket.h"
+#include "src/profiling/perf/perf_producer.h"
 
-message AndroidProcessMetadata {
-  optional string name = 1;
-  optional int64 uid = 2;
-  optional string package_name = 3;
-  optional int64 apk_version_code = 4;
-  optional bool debuggable = 5;
-  optional bool shared_uid = 6;
+namespace perfetto {
+
+// TODO(rsavitski): watchdog.
+int TracedPerfMain(int, char**) {
+  base::UnixTaskRunner task_runner;
+  profiling::PerfProducer producer(&task_runner);
+  producer.ConnectWithRetries(GetProducerSocket());
+  task_runner.Run();
+  return 0;
 }
+
+}  // namespace perfetto

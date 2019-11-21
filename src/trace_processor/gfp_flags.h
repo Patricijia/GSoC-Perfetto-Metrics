@@ -13,16 +13,24 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
-package perfetto.protos;
+#ifndef SRC_TRACE_PROCESSOR_GFP_FLAGS_H_
+#define SRC_TRACE_PROCESSOR_GFP_FLAGS_H_
 
-message AndroidProcessMetadata {
-  optional string name = 1;
-  optional int64 uid = 2;
-  optional string package_name = 3;
-  optional int64 apk_version_code = 4;
-  optional bool debuggable = 5;
-  optional bool shared_uid = 6;
-}
+#include <tuple>
+#include "perfetto/ext/base/string_writer.h"
+
+namespace perfetto {
+namespace trace_processor {
+
+// GFP flags in ftrace events should be parsed and read differently depending
+// the kernel version. This function writes a human readable version of the
+// flag.
+void WriteGfpFlag(uint64_t value,
+                  std::tuple<uint32_t, uint32_t> version,
+                  base::StringWriter* writer);
+
+}  // namespace trace_processor
+}  // namespace perfetto
+
+#endif  // SRC_TRACE_PROCESSOR_GFP_FLAGS_H_
