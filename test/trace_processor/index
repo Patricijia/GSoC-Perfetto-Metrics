@@ -18,6 +18,7 @@ process_tracking_short_lived_2.py process_tracking.sql process_tracking_process_
 process_tracking_exec.py process_tracking.sql process_tracking_process_tracking_exec.out
 process_parent_pid_tracking_1.py process_parent_pid.sql process_parent_pid_process_parent_pid_tracking_1.out
 process_parent_pid_tracking_2.py process_parent_pid.sql process_parent_pid_process_parent_pid_tracking_2.out
+reused_thread_print.py process_tracking.sql process_tracking_reused_thread_print.out
 
 # Test for computing CPU time from sched events for threads.
 ../data/example_android_trace_30s.pb thread_cpu_time.sql thread_cpu_time_example_android_trace_30s.out
@@ -105,7 +106,6 @@ synth_1.py filter_counters.sql synth_1_filter_counters.out
 ../data/memory_counters.pb b120278869_neg_ts_end.sql memory_counters_b120278869_neg_ts_end.out
 counters_where_cpu.py counters_where_cpu.sql counters_where_cpu_counters_where_cpu.out
 counters_group_by_freq.py counters_group_by_freq.sql counters_group_by_freq_counters_group_by_freq.out
-counters_order_ref.py counters_order_ref.sql counters_order_ref_counters_order_ref.out
 ../data/example_android_trace_30s.pb filter_row_vector.sql filter_row_vector_example_android_trace_30s.out
 
 # Null printing

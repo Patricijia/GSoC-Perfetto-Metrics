@@ -14,19 +14,17 @@
  * limitations under the License.
  */
 
-syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
+#ifndef TOOLS_TRACE_TO_TEXT_DEOBFUSCATE_PROFILE_H_
+#define TOOLS_TRACE_TO_TEXT_DEOBFUSCATE_PROFILE_H_
 
-package perfetto.protos;
+#include <iostream>
 
-message Utsname {
-  optional string sysname = 1;
-  optional string version = 2;
-  optional string release = 3;
-  optional string machine = 4;
+namespace perfetto {
+namespace trace_to_text {
+
+int DeobfuscateProfile(std::istream* input, std::ostream* output);
+
 }
+}  // namespace perfetto
 
-message SystemInfo {
-  optional Utsname utsname = 1;
-  optional string android_build_fingerprint = 2;
-}
+#endif  // TOOLS_TRACE_TO_TEXT_DEOBFUSCATE_PROFILE_H_
