@@ -58,6 +58,7 @@ default_targets = [
     '//src/perfetto_cmd:trigger_perfetto',
     '//src/profiling/memory:heapprofd_client',
     '//src/profiling/memory:heapprofd',
+    '//src/profiling/perf:traced_perf',
     '//src/traced/probes:traced_probes',
     '//src/traced/service:traced',
 ]
@@ -496,13 +497,13 @@ def create_proto_modules(blueprint, gn, target):
     plugin = create_modules_from_target(blueprint, gn, cppgen_plugin)
     tools.add(plugin.name)
     cmd += ['--plugin=protoc-gen-plugin=$(location %s)' % plugin.name]
-    cmd += ['--plugin_out=:' + cpp_out_dir]
+    cmd += ['--plugin_out=wrapper_namespace=gen:' + cpp_out_dir]
   elif target.proto_plugin == 'ipc':
     suffixes = ['ipc']
     plugin = create_modules_from_target(blueprint, gn, ipc_plugin)
     tools.add(plugin.name)
     cmd += ['--plugin=protoc-gen-plugin=$(location %s)' % plugin.name]
-    cmd += ['--plugin_out=:' + cpp_out_dir]
+    cmd += ['--plugin_out=wrapper_namespace=gen:' + cpp_out_dir]
   else:
     raise Error('Unsupported proto plugin: %s' % target.proto_plugin)
 

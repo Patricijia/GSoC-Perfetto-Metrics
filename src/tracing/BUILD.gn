@@ -59,7 +59,6 @@ source_set("tracing") {
     "core/tracing_service_impl.h",
     "core/virtual_destructors.cc",
   ]
-  assert_no_deps = [ "//gn:protobuf_lite" ]
 }
 
 # TODO(primiano): Remove this target as soon as chromium's
@@ -177,7 +176,7 @@ if (perfetto_build_standalone || perfetto_build_with_android) {
       ":tracing",
       "../../gn:default_deps",
       "../../include/perfetto/public",
-      "../../protos/perfetto/config:lite",
+      "../../protos/perfetto/config:cpp",
       "../base",
     ]
     sources = [
@@ -261,6 +260,7 @@ source_set("client_api") {
   ]
   sources = [
     "data_source.cc",
+    "debug_annotation.cc",
     "event_context.cc",
     "internal/in_process_tracing_backend.cc",
     "internal/in_process_tracing_backend.h",
