@@ -14,21 +14,26 @@
 -- limitations under the License.
 --
 
-CREATE VIEW error_stats_view AS
-SELECT TraceMetadata_Entry(
-  'name', name,
-  'idx', idx,
-  'value', value) as entry
-FROM stats
-WHERE severity IN ('data_loss', 'error')
-AND value > 0;
+SELECT RUN_METRIC('android/android_lmk.sql');
 
-CREATE VIEW trace_metadata_output AS
-SELECT TraceMetadata(
-  'error_stats_entry', (SELECT RepeatedField(entry) FROM error_stats_view),
-  'trace_duration_ns', (SELECT end_ts - start_ts FROM trace_bounds),
-  'trace_uuid', (SELECT str_value FROM metadata WHERE name = 'trace_uuid'),
-  'android_build_fingerprint', (
-    SELECT str_value FROM metadata WHERE name = 'android_build_fingerprint'
+CREATE VIEW android_lmk_reason_output AS
+WITH
+lmk_ooms AS (
+  SELECT
+  lmk_events.ts,
+  oom_score_val
+  FROM lmk_events
+  LEFT JOIN oom_score_span USING (upid)
+  WHERE oom_score_span.ts <= lmk_events.ts
+  AND (oom_score_span.ts + oom_score_span.dur) > lmk_events.ts
+)
+SELECT AndroidLmkReasonMetric(
+  'lmks', (
+    SELECT RepeatedField(AndroidLmkReasonMetric_Lmk(
+      'oom_score_adj', oom_score_val
+    ))
+    FROM lmk_events
+    JOIN lmk_ooms USING (ts)
+    ORDER BY ts
   )
 );
