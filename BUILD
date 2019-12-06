@@ -214,6 +214,7 @@ filegroup(
         "include/perfetto/ext/base/container_annotations.h",
         "include/perfetto/ext/base/event_fd.h",
         "include/perfetto/ext/base/file_utils.h",
+        "include/perfetto/ext/base/flat_set.h",
         "include/perfetto/ext/base/hash.h",
         "include/perfetto/ext/base/lookup_set.h",
         "include/perfetto/ext/base/metatrace.h",
@@ -465,6 +466,7 @@ filegroup(
     srcs = [
         "src/base/event_fd.cc",
         "src/base/file_utils.cc",
+        "src/base/logging.cc",
         "src/base/metatrace.cc",
         "src/base/paged_memory.cc",
         "src/base/pipe.cc",
@@ -936,7 +938,6 @@ filegroup(
         "src/traced/probes/ftrace/ftrace_controller.h",
         "src/traced/probes/ftrace/ftrace_data_source.cc",
         "src/traced/probes/ftrace/ftrace_data_source.h",
-        "src/traced/probes/ftrace/ftrace_metadata.cc",
         "src/traced/probes/ftrace/ftrace_metadata.h",
         "src/traced/probes/ftrace/ftrace_procfs.cc",
         "src/traced/probes/ftrace/ftrace_procfs.h",
@@ -1880,6 +1881,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/raw_syscalls.proto",
         "protos/perfetto/trace/ftrace/regulator.proto",
         "protos/perfetto/trace/ftrace/sched.proto",
+        "protos/perfetto/trace/ftrace/sde.proto",
         "protos/perfetto/trace/ftrace/signal.proto",
         "protos/perfetto/trace/ftrace/sync.proto",
         "protos/perfetto/trace/ftrace/systrace.proto",
@@ -2273,6 +2275,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_track_event_protos",
     srcs = [
         "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto",
+        "protos/perfetto/trace/track_event/chrome_histogram_sample.proto",
         "protos/perfetto/trace/track_event/chrome_keyed_service.proto",
         "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
         "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -2318,7 +2321,7 @@ perfetto_cc_protozero_library(
 )
 
 # GN target: //src/perfetto_cmd:protos
-perfetto_cc_proto_library(
+perfetto_cc_protocpp_library(
     name = "src_perfetto_cmd_protos",
     deps = [
         ":src_perfetto_cmd_protos_protos",
