@@ -119,6 +119,7 @@ perfetto_cc_library(
         ":src_base_base",
         ":src_base_unix_socket",
         ":src_ipc_ipc",
+        ":src_perfetto_cmd_perfetto_atoms",
         ":src_protozero_protozero",
         ":src_traced_probes_android_log_android_log",
         ":src_traced_probes_data_source",
@@ -448,6 +449,7 @@ filegroup(
         "src/android_internal/health_hal.h",
         "src/android_internal/incident_service.h",
         "src/android_internal/power_stats_hal.h",
+        "src/android_internal/statsd_logging.h",
     ],
 )
 
@@ -506,6 +508,14 @@ filegroup(
         "src/ipc/host_impl.h",
         "src/ipc/service_proxy.cc",
         "src/ipc/virtual_destructors.cc",
+    ],
+)
+
+# GN target: //src/perfetto_cmd:perfetto_atoms
+filegroup(
+    name = "src_perfetto_cmd_perfetto_atoms",
+    srcs = [
+        "src/perfetto_cmd/perfetto_atoms.h",
     ],
 )
 
@@ -667,6 +677,7 @@ filegroup(
 filegroup(
     name = "src_trace_processor_tables_tables",
     srcs = [
+        "src/trace_processor/tables/counter_tables.h",
         "src/trace_processor/tables/macros.h",
         "src/trace_processor/tables/macros_internal.h",
         "src/trace_processor/tables/profiler_tables.h",
@@ -711,8 +722,6 @@ filegroup(
         "src/trace_processor/android_logs_table.h",
         "src/trace_processor/args_table.cc",
         "src/trace_processor/args_table.h",
-        "src/trace_processor/counter_values_table.cc",
-        "src/trace_processor/counter_values_table.h",
         "src/trace_processor/cpu_profile_stack_sample_table.cc",
         "src/trace_processor/cpu_profile_stack_sample_table.h",
         "src/trace_processor/filtered_row_index.cc",
@@ -812,6 +821,7 @@ filegroup(
         "src/trace_processor/importers/proto/args_table_utils.cc",
         "src/trace_processor/importers/proto/args_table_utils.h",
         "src/trace_processor/importers/proto/chrome_compositor_scheduler_state.descriptor.h",
+        "src/trace_processor/importers/proto/graphics_event_module.cc",
         "src/trace_processor/importers/proto/graphics_event_module.h",
         "src/trace_processor/importers/proto/graphics_event_parser.cc",
         "src/trace_processor/importers/proto/graphics_event_parser.h",
@@ -822,6 +832,7 @@ filegroup(
         "src/trace_processor/importers/proto/heap_graph_walker.cc",
         "src/trace_processor/importers/proto/heap_graph_walker.h",
         "src/trace_processor/importers/proto/packet_sequence_state.h",
+        "src/trace_processor/importers/proto/proto_importer_module.cc",
         "src/trace_processor/importers/proto/proto_importer_module.h",
         "src/trace_processor/importers/proto/proto_incremental_state.h",
         "src/trace_processor/importers/proto/proto_trace_parser.cc",
@@ -2433,6 +2444,7 @@ perfetto_cc_binary(
         ":src_base_base",
         ":src_base_unix_socket",
         ":src_ipc_ipc",
+        ":src_perfetto_cmd_perfetto_atoms",
         ":src_perfetto_cmd_perfetto_cmd",
         ":src_perfetto_cmd_trigger_producer",
         ":src_protozero_protozero",
