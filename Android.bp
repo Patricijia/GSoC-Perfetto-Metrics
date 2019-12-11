@@ -3081,6 +3081,7 @@ genrule {
     "protos/perfetto/trace/gpu/gpu_counter_event.proto",
     "protos/perfetto/trace/gpu/gpu_log.proto",
     "protos/perfetto/trace/gpu/gpu_render_stage_event.proto",
+    "protos/perfetto/trace/gpu/vulkan_api_event.proto",
     "protos/perfetto/trace/gpu/vulkan_memory_event.proto",
   ],
   tools: [
@@ -3091,6 +3092,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/gpu/gpu_counter_event.pb.cc",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_log.pb.cc",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_render_stage_event.pb.cc",
+    "external/perfetto/protos/perfetto/trace/gpu/vulkan_api_event.pb.cc",
     "external/perfetto/protos/perfetto/trace/gpu/vulkan_memory_event.pb.cc",
   ],
 }
@@ -3102,6 +3104,7 @@ genrule {
     "protos/perfetto/trace/gpu/gpu_counter_event.proto",
     "protos/perfetto/trace/gpu/gpu_log.proto",
     "protos/perfetto/trace/gpu/gpu_render_stage_event.proto",
+    "protos/perfetto/trace/gpu/vulkan_api_event.proto",
     "protos/perfetto/trace/gpu/vulkan_memory_event.proto",
   ],
   tools: [
@@ -3112,6 +3115,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/gpu/gpu_counter_event.pb.h",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_log.pb.h",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_render_stage_event.pb.h",
+    "external/perfetto/protos/perfetto/trace/gpu/vulkan_api_event.pb.h",
     "external/perfetto/protos/perfetto/trace/gpu/vulkan_memory_event.pb.h",
   ],
   export_include_dirs: [
@@ -3127,6 +3131,7 @@ genrule {
     "protos/perfetto/trace/gpu/gpu_counter_event.proto",
     "protos/perfetto/trace/gpu/gpu_log.proto",
     "protos/perfetto/trace/gpu/gpu_render_stage_event.proto",
+    "protos/perfetto/trace/gpu/vulkan_api_event.proto",
     "protos/perfetto/trace/gpu/vulkan_memory_event.proto",
   ],
   tools: [
@@ -3138,6 +3143,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/gpu/gpu_counter_event.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_log.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_render_stage_event.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/gpu/vulkan_api_event.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/gpu/vulkan_memory_event.pbzero.cc",
   ],
 }
@@ -3149,6 +3155,7 @@ genrule {
     "protos/perfetto/trace/gpu/gpu_counter_event.proto",
     "protos/perfetto/trace/gpu/gpu_log.proto",
     "protos/perfetto/trace/gpu/gpu_render_stage_event.proto",
+    "protos/perfetto/trace/gpu/vulkan_api_event.proto",
     "protos/perfetto/trace/gpu/vulkan_memory_event.proto",
   ],
   tools: [
@@ -3160,6 +3167,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/gpu/gpu_counter_event.pbzero.h",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_log.pbzero.h",
     "external/perfetto/protos/perfetto/trace/gpu/gpu_render_stage_event.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/gpu/vulkan_api_event.pbzero.h",
     "external/perfetto/protos/perfetto/trace/gpu/vulkan_memory_event.pbzero.h",
   ],
   export_include_dirs: [
@@ -4717,7 +4725,6 @@ filegroup {
     "src/trace_processor/read_trace.cc",
     "src/trace_processor/row_iterators.cc",
     "src/trace_processor/sched_slice_table.cc",
-    "src/trace_processor/slice_table.cc",
     "src/trace_processor/span_join_operator_table.cc",
     "src/trace_processor/sql_stats_table.cc",
     "src/trace_processor/stack_profile_frame_table.cc",
@@ -4783,6 +4790,8 @@ filegroup {
     "src/trace_processor/gzip_trace_parser.cc",
     "src/trace_processor/heap_profile_tracker.cc",
     "src/trace_processor/importers/ftrace/ftrace_descriptors.cc",
+    "src/trace_processor/importers/ftrace/ftrace_module.cc",
+    "src/trace_processor/importers/ftrace/ftrace_module_impl.cc",
     "src/trace_processor/importers/ftrace/ftrace_parser.cc",
     "src/trace_processor/importers/ftrace/ftrace_tokenizer.cc",
     "src/trace_processor/importers/ftrace/sched_event_tracker.cc",
@@ -4790,6 +4799,7 @@ filegroup {
     "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.cc",
     "src/trace_processor/importers/fuchsia/fuchsia_trace_tokenizer.cc",
     "src/trace_processor/importers/fuchsia/fuchsia_trace_utils.cc",
+    "src/trace_processor/importers/proto/android_probes_module.cc",
     "src/trace_processor/importers/proto/android_probes_parser.cc",
     "src/trace_processor/importers/proto/args_table_utils.cc",
     "src/trace_processor/importers/proto/graphics_event_module.cc",
@@ -4800,7 +4810,9 @@ filegroup {
     "src/trace_processor/importers/proto/proto_importer_module.cc",
     "src/trace_processor/importers/proto/proto_trace_parser.cc",
     "src/trace_processor/importers/proto/proto_trace_tokenizer.cc",
+    "src/trace_processor/importers/proto/system_probes_module.cc",
     "src/trace_processor/importers/proto/system_probes_parser.cc",
+    "src/trace_processor/importers/proto/track_event_module.cc",
     "src/trace_processor/importers/proto/track_event_parser.cc",
     "src/trace_processor/importers/proto/track_event_tokenizer.cc",
     "src/trace_processor/importers/systrace/systrace_parser.cc",

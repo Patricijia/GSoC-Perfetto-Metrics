@@ -51,9 +51,9 @@ void DbTableMaybeUpdateMinMax(const TypedColumn<int64_t>& column,
   *max_value = std::max(*max_value, column[column.row_map().size() - 1]);
 }
 
-std::vector<const char*> CreateRefTypeStringMap() {
-  std::vector<const char*> map(static_cast<size_t>(RefType::kRefMax));
-  map[static_cast<size_t>(RefType::kRefNoRef)] = nullptr;
+std::vector<NullTermStringView> CreateRefTypeStringMap() {
+  std::vector<NullTermStringView> map(static_cast<size_t>(RefType::kRefMax));
+  map[static_cast<size_t>(RefType::kRefNoRef)] = NullTermStringView();
   map[static_cast<size_t>(RefType::kRefUtid)] = "utid";
   map[static_cast<size_t>(RefType::kRefCpuId)] = "cpu";
   map[static_cast<size_t>(RefType::kRefGpuId)] = "gpu";
@@ -66,8 +66,8 @@ std::vector<const char*> CreateRefTypeStringMap() {
 
 }  // namespace
 
-const std::vector<const char*>& GetRefTypeStringMap() {
-  static const base::NoDestructor<std::vector<const char*>> map(
+const std::vector<NullTermStringView>& GetRefTypeStringMap() {
+  static const base::NoDestructor<std::vector<NullTermStringView>> map(
       CreateRefTypeStringMap());
   return map.ref();
 }
@@ -128,8 +128,6 @@ std::pair<int64_t, int64_t> TraceStorage::GetTraceTimestampBoundsNs() const {
                     &start_ns, &end_ns);
   MaybeUpdateMinMax(instants_.timestamps().begin(),
                     instants_.timestamps().end(), &start_ns, &end_ns);
-  MaybeUpdateMinMax(nestable_slices_.start_ns().begin(),
-                    nestable_slices_.start_ns().end(), &start_ns, &end_ns);
   MaybeUpdateMinMax(android_log_.timestamps().begin(),
                     android_log_.timestamps().end(), &start_ns, &end_ns);
   MaybeUpdateMinMax(raw_events_.timestamps().begin(),
@@ -139,6 +137,7 @@ std::pair<int64_t, int64_t> TraceStorage::GetTraceTimestampBoundsNs() const {
                     &end_ns);
 
   DbTableMaybeUpdateMinMax(counter_table_.ts(), &start_ns, &end_ns);
+  DbTableMaybeUpdateMinMax(slice_table_.ts(), &start_ns, &end_ns);
 
   if (start_ns == std::numeric_limits<int64_t>::max()) {
     return std::make_pair(0, 0);
