@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2019 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,17 @@
  * limitations under the License.
  */
 
-#include <sys/sysinfo.h>
+#ifndef SRC_TRACE_PROCESSOR_REGISTER_ADDITIONAL_MODULES_H_
+#define SRC_TRACE_PROCESSOR_REGISTER_ADDITIONAL_MODULES_H_
 
-#include "test/gtest_and_gmock.h"
+#include "src/trace_processor/trace_processor_context.h"
 
 namespace perfetto {
+namespace trace_processor {
 
-TEST(PerfettoDeviceFeatureTest, TestMaxCpusForAtraceChmod) {
-  // Check that there are no more than 16 CPUs so that the assumption in the
-  // atrace.rc for clearing CPU buffers is valid.
-  ASSERT_LE(sysconf(_SC_NPROCESSORS_CONF), 16);
-}
+void RegisterAdditionalModules(TraceProcessorContext*);
 
+}  // namespace trace_processor
 }  // namespace perfetto
+
+#endif  // SRC_TRACE_PROCESSOR_REGISTER_ADDITIONAL_MODULES_H_
