@@ -21,6 +21,7 @@ import * as m from 'mithril';
 import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions} from '../common/actions';
+import {AggregateCpuData} from '../common/aggregation_data';
 import {
   LogBoundsKey,
   LogEntriesKey,
@@ -174,6 +175,11 @@ class FrontendApi {
     this.redraw();
   }
 
+  publishAggregateCpuData(args: AggregateCpuData) {
+    globals.aggregateCpuData = args;
+    this.redraw();
+  }
+
   private redraw(): void {
     if (globals.state.route &&
         globals.state.route !== this.router.getRouteFromHash()) {
@@ -271,8 +277,10 @@ function main() {
 
   updateAvailableAdbDevices();
   try {
-    navigator.usb.addEventListener('connect', updateAvailableAdbDevices);
-    navigator.usb.addEventListener('disconnect', updateAvailableAdbDevices);
+    navigator.usb.addEventListener(
+        'connect', () => updateAvailableAdbDevices());
+    navigator.usb.addEventListener(
+        'disconnect', () => updateAvailableAdbDevices());
   } catch (e) {
     console.error('WebUSB API not supported');
   }

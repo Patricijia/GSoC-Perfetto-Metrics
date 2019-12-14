@@ -5707,6 +5707,14 @@ filegroup {
   ],
 }
 
+// GN: //src/trace_processor:protozero_to_text
+filegroup {
+  name: "perfetto_src_trace_processor_protozero_to_text",
+  srcs: [
+    "src/trace_processor/protozero_to_text.cc",
+  ],
+}
+
 // GN: //src/trace_processor/sqlite:sqlite
 filegroup {
   name: "perfetto_src_trace_processor_sqlite_sqlite",
@@ -5824,6 +5832,7 @@ filegroup {
     "src/trace_processor/null_term_string_view_unittest.cc",
     "src/trace_processor/process_table_unittest.cc",
     "src/trace_processor/process_tracker_unittest.cc",
+    "src/trace_processor/protozero_to_text_unittests.cc",
     "src/trace_processor/sched_slice_table_unittest.cc",
     "src/trace_processor/slice_tracker_unittest.cc",
     "src/trace_processor/span_join_operator_table_unittest.cc",
@@ -6219,14 +6228,6 @@ filegroup {
   ],
 }
 
-// GN: //src/tracing:sliced_protobuf_input_stream
-filegroup {
-  name: "perfetto_src_tracing_sliced_protobuf_input_stream",
-  srcs: [
-    "src/tracing/core/sliced_protobuf_input_stream.cc",
-  ],
-}
-
 // GN: //src/tracing/test:api_test_support
 filegroup {
   name: "perfetto_src_tracing_test_api_test_support",
@@ -6273,7 +6274,6 @@ filegroup {
     "src/tracing/core/patch_list_unittest.cc",
     "src/tracing/core/shared_memory_abi_unittest.cc",
     "src/tracing/core/shared_memory_arbiter_impl_unittest.cc",
-    "src/tracing/core/sliced_protobuf_input_stream_unittest.cc",
     "src/tracing/core/startup_trace_writer_unittest.cc",
     "src/tracing/core/trace_buffer_unittest.cc",
     "src/tracing/core/trace_packet_unittest.cc",
@@ -6595,6 +6595,7 @@ cc_test {
     ":perfetto_src_trace_processor_lib",
     ":perfetto_src_trace_processor_metrics_lib",
     ":perfetto_src_trace_processor_metrics_unittests",
+    ":perfetto_src_trace_processor_protozero_to_text",
     ":perfetto_src_trace_processor_sqlite_sqlite",
     ":perfetto_src_trace_processor_sqlite_unittests",
     ":perfetto_src_trace_processor_storage_full",
@@ -6628,7 +6629,6 @@ cc_test {
     ":perfetto_src_traced_service_unittests",
     ":perfetto_src_tracing_common",
     ":perfetto_src_tracing_ipc",
-    ":perfetto_src_tracing_sliced_protobuf_input_stream",
     ":perfetto_src_tracing_test_support",
     ":perfetto_src_tracing_tracing",
     ":perfetto_src_tracing_unittests",
