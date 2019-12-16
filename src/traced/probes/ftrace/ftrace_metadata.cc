@@ -24,6 +24,8 @@ FtraceMetadata::FtraceMetadata() {
   // A sched_switch is 64 bytes, a page is 4096 bytes and we expect
   // 2 pid's per sched_switch. 4096/64*2=128
   pids.reserve(128);
+  // We expect to see only a small number of task rename events.
+  rename_pids.reserve(16);
 }
 
 void FtraceMetadata::AddDevice(BlockDeviceID device_id) {
@@ -56,11 +58,15 @@ void FtraceMetadata::AddCommonPid(int32_t pid) {
 }
 
 void FtraceMetadata::AddPid(int32_t pid) {
-  // Speculative optimization aginst repated pid's while keeping
+  // Speculative optimization against repated pid's while keeping
   // faster insertion than a set.
   if (!pids.empty() && pids.back() == pid)
     return;
   pids.push_back(pid);
+}
+
+void FtraceMetadata::AddRenamePid(int32_t pid) {
+  rename_pids.push_back(pid);
 }
 
 void FtraceMetadata::FinishEvent() {
@@ -74,7 +80,7 @@ void FtraceMetadata::FinishEvent() {
 void FtraceMetadata::Clear() {
   inode_and_device.clear();
   pids.clear();
-  overwrite_count = 0;
+  rename_pids.clear();
   FinishEvent();
 }
 

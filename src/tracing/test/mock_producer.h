@@ -21,10 +21,10 @@
 #include <memory>
 #include <string>
 
-#include "gmock/gmock.h"
-#include "perfetto/tracing/core/producer.h"
-#include "perfetto/tracing/core/trace_writer.h"
-#include "perfetto/tracing/core/tracing_service.h"
+#include "perfetto/ext/tracing/core/producer.h"
+#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
+#include "test/gtest_and_gmock.h"
 
 namespace perfetto {
 
@@ -46,10 +46,12 @@ class MockProducer : public Producer {
   void Connect(TracingService* svc,
                const std::string& producer_name,
                uid_t uid = 42,
-               size_t shared_memory_size_hint_bytes = 0);
+               size_t shared_memory_size_hint_bytes = 0,
+               size_t shared_memory_page_size_hint_bytes = 0);
   void RegisterDataSource(const std::string& name,
                           bool ack_stop = false,
-                          bool ack_start = false);
+                          bool ack_start = false,
+                          bool handle_incremental_state_clear = false);
   void UnregisterDataSource(const std::string& name);
   void RegisterTraceWriter(uint32_t writer_id, uint32_t target_buffer);
   void UnregisterTraceWriter(uint32_t writer_id);
@@ -84,6 +86,8 @@ class MockProducer : public Producer {
   MOCK_METHOD0(OnTracingSetup, void());
   MOCK_METHOD3(Flush,
                void(FlushRequestID, const DataSourceInstanceID*, size_t));
+  MOCK_METHOD2(ClearIncrementalState,
+               void(const DataSourceInstanceID*, size_t));
 
  private:
   base::TestTaskRunner* const task_runner_;

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 import {ThreadDesc} from './globals';
+import {hsl} from 'color-convert';
 
 export interface Color {
   c: string;
@@ -65,17 +66,14 @@ export function hueForCpu(cpu: number): number {
 export function colorForState(state: string): Color {
   switch (state) {
     case 'Running':
+    case 'Busy':
       return {c: 'dark green', h: 120, s: 44, l: 34};
     case 'Runnable':
     case 'R':
     case 'R+':
       return {c: 'lime green', h: 75, s: 55, l: 47};
-    case 'x':
-    case 'Z':
-    case 'X':
-      return {c: 'light grey', h: 0, s: 0, l: 73};
     default:
-      return {c: 'dark red', h: 0, s: 39, l: 52};
+      return {c: 'light grey', h: 0, s: 0, l: 87};
   }
 }
 
@@ -90,4 +88,10 @@ export function colorForThread(thread: ThreadDesc|undefined): Color {
   }
   const tid = thread.pid ? thread.pid : thread.tid;
   return colorForTid(tid);
+}
+
+// 40 different random hues 9 degrees apart.
+export function randomColor(): string {
+  const hue = Math.floor(Math.random() * 40) * 9;
+  return '#' + hsl.hex([hue, 90, 30]);
 }

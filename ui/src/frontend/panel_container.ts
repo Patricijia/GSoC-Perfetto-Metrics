@@ -25,6 +25,7 @@ import {
   RunningStatistics,
   runningStatStr
 } from './perf';
+import {TRACK_SHELL_WIDTH} from './track_constants';
 
 /**
  * If the panel container scrolls, the backing canvas height is
@@ -39,6 +40,7 @@ export type AnyAttrsVnode = m.Vnode<any, {}>;
 interface Attrs {
   panels: AnyAttrsVnode[];
   doesScroll: boolean;
+  kind: 'TRACKS'|'OVERVIEW'|'DETAILS';
 }
 
 export class PanelContainer implements m.ClassComponent<Attrs> {
@@ -95,7 +97,6 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     this.parentHeight = clientRect.height;
 
     this.readPanelHeightsFromDom(vnodeDom.dom);
-    (vnodeDom.dom as HTMLElement).style.height = `${this.totalPanelHeight}px`;
 
     this.updateCanvasDimensions();
     this.repositionCanvas();
@@ -137,27 +138,31 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     this.attrs = attrs;
     const renderPanel = (panel: m.Vnode) => perfDebug() ?
         m('.panel', panel, m('.debug-panel-border')) :
-        m('.panel', panel);
+        m('.panel', {key: panel.key}, panel);
 
-    return m(
-        '.scroll-limiter',
-        m('canvas.main-canvas'),
-        attrs.panels.map(renderPanel));
+    return [
+      m(
+          '.scroll-limiter',
+          m('canvas.main-canvas'),
+          ),
+      m('.panels', attrs.panels.map(renderPanel))
+    ];
   }
 
   onupdate(vnodeDom: m.CVnodeDOM<Attrs>) {
     const totalPanelHeightChanged = this.readPanelHeightsFromDom(vnodeDom.dom);
     const parentSizeChanged = this.readParentSizeFromDom(vnodeDom.dom);
 
-    if (totalPanelHeightChanged) {
-      (vnodeDom.dom as HTMLElement).style.height = `${this.totalPanelHeight}px`;
-    }
-
     const canvasSizeShouldChange =
-        this.attrs.doesScroll ? parentSizeChanged : totalPanelHeightChanged;
+        parentSizeChanged || !this.attrs.doesScroll && totalPanelHeightChanged;
     if (canvasSizeShouldChange) {
       this.updateCanvasDimensions();
       this.repositionCanvas();
+      if (this.attrs.kind === 'TRACKS') {
+        globals.frontendLocalState.timeScale.setLimitsPx(
+            0, this.parentWidth - TRACK_SHELL_WIDTH);
+      }
+      this.redrawCanvas();
     }
   }
 
@@ -169,7 +174,12 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     const canvas = assertExists(ctx.canvas);
     canvas.style.height = `${this.canvasHeight}px`;
     const dpr = window.devicePixelRatio;
-    ctx.canvas.width = this.parentWidth * dpr;
+    // On non-MacOS if there is a solid scroll bar it can cover important
+    // pixels, reduce the size of the canvas so it doesn't overlap with
+    // the scroll bar.
+    ctx.canvas.width =
+        (this.parentWidth - globals.frontendLocalState.getScrollbarWidth()) *
+        dpr;
     ctx.canvas.height = this.canvasHeight * dpr;
     ctx.scale(dpr, dpr);
   }
@@ -203,7 +213,7 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     this.panelHeights = [];
     this.totalPanelHeight = 0;
 
-    const panels = dom.querySelectorAll('.panel');
+    const panels = dom.parentElement!.querySelectorAll('.panel');
     assertTrue(panels.length === this.attrs.panels.length);
     for (let i = 0; i < panels.length; i++) {
       const height = panels[i].getBoundingClientRect().height;

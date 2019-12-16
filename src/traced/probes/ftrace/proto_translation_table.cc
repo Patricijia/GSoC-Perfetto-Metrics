@@ -21,21 +21,21 @@
 
 #include <algorithm>
 
-#include "perfetto/base/string_utils.h"
+#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/protozero/proto_utils.h"
 #include "src/traced/probes/ftrace/event_info.h"
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
 
-#include "perfetto/trace/ftrace/ftrace_event.pbzero.h"
-#include "perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
-#include "perfetto/trace/ftrace/generic.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
+#include "protos/perfetto/trace/ftrace/generic.pbzero.h"
 
 namespace perfetto {
 
 namespace {
 
-using protozero::proto_utils::ProtoSchemaType;
 using protos::pbzero::GenericFtraceEvent;
+using protozero::proto_utils::ProtoSchemaType;
 
 ProtoTranslationTable::FtracePageHeaderSpec MakeFtracePageHeaderSpec(
     const std::vector<FtraceEvent::Field>& fields) {
@@ -61,6 +61,12 @@ ProtoTranslationTable::FtracePageHeaderSpec MakeFtracePageHeaderSpec(
 // matches the userspace bitness.
 ProtoTranslationTable::FtracePageHeaderSpec GuessFtracePageHeaderSpec() {
   ProtoTranslationTable::FtracePageHeaderSpec spec{};
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && __i386__
+  // local_t is arch-specific and models the largest size of an integer that is
+  // still atomic across bus transactions, exceptions and IRQ. On android x86
+  // this is always size 8
+  uint16_t commit_size = 8;
+#else
   uint16_t commit_size = sizeof(long);
 
   struct utsname sysinfo;
@@ -68,9 +74,11 @@ ProtoTranslationTable::FtracePageHeaderSpec GuessFtracePageHeaderSpec() {
   if (commit_size < 8 && uname(&sysinfo) == 0) {
     // Arm returns armv# for its machine type. The first (and only currently)
     // arm processor that supports 64bit is the armv8 series.
-    commit_size = strstr(sysinfo.machine, "64") ||
-                  strstr(sysinfo.machine, "armv8") ? 8 : 4;
+    commit_size =
+        strstr(sysinfo.machine, "64") || strstr(sysinfo.machine, "armv8") ? 8
+                                                                          : 4;
   }
+#endif
 
   // header_page typically looks as follows on a 64-bit kernel:
   // field: u64 timestamp; offset:0; size:8; signed:0;
@@ -154,7 +162,7 @@ uint16_t MergeFields(const std::vector<FtraceEvent::Field>& ftrace_fields,
                      const char* event_name_for_debug) {
   uint16_t fields_end = 0;
 
-  // Loop over each Field in |fields| modifiying it with information from the
+  // Loop over each Field in |fields| modifying it with information from the
   // matching |ftrace_fields| field or removing it.
   auto field = fields->begin();
   while (field != fields->end()) {
@@ -234,6 +242,8 @@ void SetProtoType(FtraceFieldType ftrace_type,
       *proto_type = ProtoSchemaType::kUint64;
       *proto_field_id = GenericFtraceEvent::Field::kUintValueFieldNumber;
       break;
+    case kInvalidFtraceFieldType:
+      PERFETTO_FATAL("Unexpected ftrace field type");
   }
 }
 
@@ -439,8 +449,13 @@ std::unique_ptr<ProtoTranslationTable> ProtoTranslationTable::Create(
                               }),
                events.end());
 
-  auto table = std::unique_ptr<ProtoTranslationTable>(new ProtoTranslationTable(
-      ftrace_procfs, events, std::move(common_fields), header_spec));
+  // Pre-parse certain scheduler events, and see if the compile-time assumptions
+  // about their format hold for this kernel.
+  CompactSchedEventFormat compact_sched = ValidateFormatForCompactSched(events);
+
+  auto table = std::unique_ptr<ProtoTranslationTable>(
+      new ProtoTranslationTable(ftrace_procfs, events, std::move(common_fields),
+                                header_spec, compact_sched));
   return table;
 }
 
@@ -448,12 +463,14 @@ ProtoTranslationTable::ProtoTranslationTable(
     const FtraceProcfs* ftrace_procfs,
     const std::vector<Event>& events,
     std::vector<Field> common_fields,
-    FtracePageHeaderSpec ftrace_page_header_spec)
+    FtracePageHeaderSpec ftrace_page_header_spec,
+    CompactSchedEventFormat compact_sched_format)
     : ftrace_procfs_(ftrace_procfs),
       events_(BuildEventsVector(events)),
       largest_id_(events_.size() - 1),
       common_fields_(std::move(common_fields)),
-      ftrace_page_header_spec_(ftrace_page_header_spec) {
+      ftrace_page_header_spec_(ftrace_page_header_spec),
+      compact_sched_format_(compact_sched_format) {
   for (const Event& event : events) {
     group_and_name_to_event_[GroupAndName(event.group, event.name)] =
         &events_.at(event.ftrace_event_id);

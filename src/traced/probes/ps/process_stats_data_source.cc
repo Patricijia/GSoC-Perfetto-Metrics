@@ -21,16 +21,18 @@
 #include <algorithm>
 #include <utility>
 
-#include "perfetto/base/file_utils.h"
-#include "perfetto/base/metatrace.h"
-#include "perfetto/base/scoped_file.h"
-#include "perfetto/base/string_splitter.h"
 #include "perfetto/base/task_runner.h"
 #include "perfetto/base/time.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/metatrace.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/string_splitter.h"
+#include "perfetto/tracing/core/data_source_config.h"
 
-#include "perfetto/trace/ps/process_stats.pbzero.h"
-#include "perfetto/trace/ps/process_tree.pbzero.h"
-#include "perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/config/process_stats/process_stats_config.pbzero.h"
+#include "protos/perfetto/trace/ps/process_stats.pbzero.h"
+#include "protos/perfetto/trace/ps/process_tree.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 // TODO(primiano): the code in this file assumes that PIDs are never recycled
 // and that processes/threads never change names. Neither is always true.
@@ -88,20 +90,22 @@ ProcessStatsDataSource::ProcessStatsDataSource(
     base::TaskRunner* task_runner,
     TracingSessionID session_id,
     std::unique_ptr<TraceWriter> writer,
-    const DataSourceConfig& config)
+    const DataSourceConfig& ds_config)
     : ProbesDataSource(session_id, kTypeId),
       task_runner_(task_runner),
       writer_(std::move(writer)),
-      record_thread_names_(config.process_stats_config().record_thread_names()),
-      dump_all_procs_on_start_(
-          config.process_stats_config().scan_all_processes_on_start()),
       weak_factory_(this) {
-  const auto& ps_config = config.process_stats_config();
-  const auto& quirks = ps_config.quirks();
-  enable_on_demand_dumps_ =
-      (std::find(quirks.begin(), quirks.end(),
-                 ProcessStatsConfig::DISABLE_ON_DEMAND) == quirks.end());
-  poll_period_ms_ = ps_config.proc_stats_poll_ms();
+  using protos::pbzero::ProcessStatsConfig;
+  ProcessStatsConfig::Decoder cfg(ds_config.process_stats_config_raw());
+  record_thread_names_ = cfg.record_thread_names();
+  dump_all_procs_on_start_ = cfg.scan_all_processes_on_start();
+  enable_on_demand_dumps_ = true;
+  for (auto quirk = cfg.quirks(); quirk; ++quirk) {
+    if (*quirk == ProcessStatsConfig::DISABLE_ON_DEMAND)
+      enable_on_demand_dumps_ = false;
+  }
+
+  poll_period_ms_ = cfg.proc_stats_poll_ms();
   if (poll_period_ms_ > 0 && poll_period_ms_ < 100) {
     PERFETTO_ILOG("proc_stats_poll_ms %" PRIu32
                   " is less than minimum of 100ms. Increasing to 100ms.",
@@ -110,7 +114,7 @@ ProcessStatsDataSource::ProcessStatsDataSource(
   }
 
   if (poll_period_ms_ > 0) {
-    auto proc_stats_ttl_ms = ps_config.proc_stats_cache_ttl_ms();
+    auto proc_stats_ttl_ms = cfg.proc_stats_cache_ttl_ms();
     process_stats_cache_ttl_ticks_ =
         std::max(proc_stats_ttl_ms / poll_period_ms_, 1u);
   }
@@ -134,8 +138,11 @@ base::WeakPtr<ProcessStatsDataSource> ProcessStatsDataSource::GetWeakPtr()
 }
 
 void ProcessStatsDataSource::WriteAllProcesses() {
-  PERFETTO_METATRACE("WriteAllProcesses", 0);
+  PERFETTO_METATRACE_SCOPED(TAG_PROC_POLLERS, PS_WRITE_ALL_PROCESSES);
   PERFETTO_DCHECK(!cur_ps_tree_);
+
+  CacheProcFsScanStartTimestamp();
+
   base::ScopedDir proc_dir = OpenProcDir();
   if (!proc_dir)
     return;
@@ -164,16 +171,37 @@ void ProcessStatsDataSource::WriteAllProcesses() {
 }
 
 void ProcessStatsDataSource::OnPids(const std::vector<int32_t>& pids) {
-  PERFETTO_METATRACE("OnPids", 0);
   if (!enable_on_demand_dumps_)
     return;
+  WriteProcessTree(pids);
+}
+
+void ProcessStatsDataSource::WriteProcessTree(
+    const std::vector<int32_t>& pids) {
+  PERFETTO_METATRACE_SCOPED(TAG_PROC_POLLERS, PS_ON_PIDS);
   PERFETTO_DCHECK(!cur_ps_tree_);
+  int pids_scanned = 0;
   for (int32_t pid : pids) {
     if (seen_pids_.count(pid) || pid == 0)
       continue;
     WriteProcessOrThread(pid);
+    pids_scanned++;
   }
   FinalizeCurPacket();
+  PERFETTO_METATRACE_COUNTER(TAG_PROC_POLLERS, PS_PIDS_SCANNED, pids_scanned);
+}
+
+void ProcessStatsDataSource::OnRenamePids(const std::vector<int32_t>& pids) {
+  PERFETTO_METATRACE_SCOPED(TAG_PROC_POLLERS, PS_ON_RENAME_PIDS);
+  if (!enable_on_demand_dumps_)
+    return;
+  PERFETTO_DCHECK(!cur_ps_tree_);
+  for (int32_t pid : pids) {
+    auto pid_it = seen_pids_.find(pid);
+    if (pid_it == seen_pids_.end())
+      continue;
+    seen_pids_.erase(pid_it);
+  }
 }
 
 void ProcessStatsDataSource::Flush(FlushRequestID,
@@ -186,6 +214,9 @@ void ProcessStatsDataSource::Flush(FlushRequestID,
 }
 
 void ProcessStatsDataSource::WriteProcessOrThread(int32_t pid) {
+  // In case we're called from outside WriteAllProcesses()
+  CacheProcFsScanStartTimestamp();
+
   std::string proc_status = ReadProcPidFile(pid, "status");
   if (proc_status.empty())
     return;
@@ -209,6 +240,8 @@ void ProcessStatsDataSource::WriteProcess(int32_t pid,
   auto* proc = GetOrCreatePsTree()->add_processes();
   proc->set_pid(pid);
   proc->set_ppid(ToInt(ReadProcStatusEntry(proc_status, "PPid:")));
+  // Uid will have multiple entries, only return first (real uid).
+  proc->set_uid(ToInt(ReadProcStatusEntry(proc_status, "Uid:")));
 
   std::string cmdline = ReadProcPidFile(pid, "cmdline");
   if (!cmdline.empty()) {
@@ -267,8 +300,12 @@ void ProcessStatsDataSource::StartNewPacketIfNeeded() {
   if (cur_packet_)
     return;
   cur_packet_ = writer_->NewTracePacket();
-  uint64_t now = static_cast<uint64_t>(base::GetBootTimeNs().count());
-  cur_packet_->set_timestamp(now);
+  cur_packet_->set_timestamp(CacheProcFsScanStartTimestamp());
+
+  if (did_clear_incremental_state_) {
+    cur_packet_->set_incremental_state_cleared(true);
+    did_clear_incremental_state_ = false;
+  }
 }
 
 protos::pbzero::ProcessTree* ProcessStatsDataSource::GetOrCreatePsTree() {
@@ -301,9 +338,17 @@ ProcessStatsDataSource::GetOrCreateStatsProcess(int32_t pid) {
 void ProcessStatsDataSource::FinalizeCurPacket() {
   PERFETTO_DCHECK(!cur_ps_tree_ || cur_packet_);
   PERFETTO_DCHECK(!cur_ps_stats_ || cur_packet_);
-  cur_ps_tree_ = nullptr;
-  cur_ps_stats_ = nullptr;
+  uint64_t now = static_cast<uint64_t>(base::GetBootTimeNs().count());
+  if (cur_ps_tree_) {
+    cur_ps_tree_->set_collection_end_timestamp(now);
+    cur_ps_tree_ = nullptr;
+  }
+  if (cur_ps_stats_) {
+    cur_ps_stats_->set_collection_end_timestamp(now);
+    cur_ps_stats_ = nullptr;
+  }
   cur_ps_stats_process_ = nullptr;
+  cur_procfs_scan_start_timestamp_ = 0;
   cur_packet_ = TraceWriter::TracePacketHandle{};
 }
 
@@ -320,8 +365,8 @@ void ProcessStatsDataSource::Tick(
   thiz.WriteAllProcessStats();
 
   // We clear the cache every process_stats_cache_ttl_ticks_ ticks.
-  if (++thiz.ticks_ == thiz.process_stats_cache_ttl_ticks_) {
-    thiz.ticks_ = 0;
+  if (++thiz.cache_ticks_ == thiz.process_stats_cache_ttl_ticks_) {
+    thiz.cache_ticks_ = 0;
     thiz.process_stats_cache_.clear();
   }
 }
@@ -331,7 +376,8 @@ void ProcessStatsDataSource::WriteAllProcessStats() {
   // TODO(primiano): Have a pid cache to avoid wasting cycles reading kthreads
   // proc files over and over. Same for non-whitelist processes (see above).
 
-  PERFETTO_METATRACE("WriteAllProcessStats", 0);
+  CacheProcFsScanStartTimestamp();
+  PERFETTO_METATRACE_SCOPED(TAG_PROC_POLLERS, PS_WRITE_ALL_PROCESS_STATS);
   base::ScopedDir proc_dir = OpenProcDir();
   if (!proc_dir)
     return;
@@ -373,7 +419,7 @@ void ProcessStatsDataSource::WriteAllProcessStats() {
 
   // Ensure that we write once long-term process info (e.g., name) for new pids
   // that we haven't seen before.
-  OnPids(pids);
+  WriteProcessTree(pids);
 }
 
 // Returns true if the stats for the given |pid| have been written, false it
@@ -485,6 +531,25 @@ bool ProcessStatsDataSource::WriteMemCounters(int32_t pid,
     }
   }
   return proc_status_has_mem_counters;
+}
+
+uint64_t ProcessStatsDataSource::CacheProcFsScanStartTimestamp() {
+  if (!cur_procfs_scan_start_timestamp_)
+    cur_procfs_scan_start_timestamp_ =
+        static_cast<uint64_t>(base::GetBootTimeNs().count());
+  return cur_procfs_scan_start_timestamp_;
+}
+
+void ProcessStatsDataSource::ClearIncrementalState() {
+  PERFETTO_DLOG("ProcessStatsDataSource clearing incremental state.");
+  seen_pids_.clear();
+  skip_stats_for_pids_.clear();
+
+  cache_ticks_ = 0;
+  process_stats_cache_.clear();
+
+  // Set the relevant flag in the next packet.
+  did_clear_incremental_state_ = true;
 }
 
 }  // namespace perfetto

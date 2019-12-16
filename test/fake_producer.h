@@ -21,11 +21,11 @@
 #include <random>
 #include <string>
 
-#include "perfetto/base/thread_checker.h"
+#include "perfetto/ext/base/thread_checker.h"
+#include "perfetto/ext/tracing/core/producer.h"
+#include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "perfetto/tracing/core/producer.h"
 #include "perfetto/tracing/core/trace_config.h"
-#include "perfetto/tracing/ipc/producer_ipc_client.h"
 #include "src/base/test/test_task_runner.h"
 
 namespace perfetto {
@@ -37,6 +37,7 @@ class FakeProducer : public Producer {
 
   void Connect(const char* socket_name,
                base::TaskRunner* task_runner,
+               std::function<void()> on_setup_data_source_instance,
                std::function<void()> on_create_data_source_instance);
 
   // Produces a batch of events (as configured in the DataSourceConfig) and
@@ -53,6 +54,8 @@ class FakeProducer : public Producer {
   void StopDataSource(DataSourceInstanceID) override;
   void OnTracingSetup() override;
   void Flush(FlushRequestID, const DataSourceInstanceID*, size_t) override;
+  void ClearIncrementalState(const DataSourceInstanceID* /*data_source_ids*/,
+                             size_t /*num_data_sources*/) override {}
 
  private:
   void Shutdown();
@@ -64,6 +67,7 @@ class FakeProducer : public Producer {
   uint32_t message_size_ = 0;
   uint32_t message_count_ = 0;
   uint32_t max_messages_per_second_ = 0;
+  std::function<void()> on_setup_data_source_instance_;
   std::function<void()> on_create_data_source_instance_;
   std::unique_ptr<TracingService::ProducerEndpoint> endpoint_;
   std::unique_ptr<TraceWriter> trace_writer_;

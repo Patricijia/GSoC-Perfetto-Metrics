@@ -17,8 +17,8 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "perfetto/base/utils.h"
-#include "perfetto/tracing/core/basic_types.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/tracing/core/basic_types.h"
 #include "src/profiling/memory/shared_ring_buffer.h"
 #include "src/profiling/memory/unwinding.h"
 #include "src/profiling/memory/unwound_messages.h"
@@ -30,7 +30,9 @@ namespace {
 class NopDelegate : public UnwindingWorker::Delegate {
   void PostAllocRecord(AllocRecord) override {}
   void PostFreeRecord(FreeRecord) override {}
-  void PostSocketDisconnected(DataSourceInstanceID, pid_t) override {}
+  void PostSocketDisconnected(DataSourceInstanceID,
+                              pid_t,
+                              SharedRingBuffer::Stats) override {}
 };
 
 int FuzzUnwinding(const uint8_t* data, size_t size) {

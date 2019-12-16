@@ -16,7 +16,7 @@
 
 #include "src/trace_processor/window_operator_table.h"
 
-#include "src/trace_processor/sqlite_utils.h"
+#include "src/trace_processor/sqlite/sqlite_utils.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -29,46 +29,48 @@ WindowOperatorTable::WindowOperatorTable(sqlite3*, const TraceStorage*) {}
 
 void WindowOperatorTable::RegisterTable(sqlite3* db,
                                         const TraceStorage* storage) {
-  Table::Register<WindowOperatorTable>(db, storage, "window", true);
+  SqliteTable::Register<WindowOperatorTable>(db, storage, "window", true);
 }
 
-base::Optional<Table::Schema> WindowOperatorTable::Init(int,
-                                                        const char* const*) {
+util::Status WindowOperatorTable::Init(int,
+                                       const char* const*,
+                                       Schema* schema) {
   const bool kHidden = true;
-  return Schema(
+  *schema = Schema(
       {
           // These are the operator columns:
-          Table::Column(Column::kRowId, "rowid", ColumnType::kLong, kHidden),
-          Table::Column(Column::kQuantum, "quantum", ColumnType::kLong,
-                        kHidden),
-          Table::Column(Column::kWindowStart, "window_start", ColumnType::kLong,
-                        kHidden),
-          Table::Column(Column::kWindowDur, "window_dur", ColumnType::kLong,
-                        kHidden),
+          SqliteTable::Column(Column::kRowId, "rowid", SqlValue::Type::kLong,
+                              kHidden),
+          SqliteTable::Column(Column::kQuantum, "quantum",
+                              SqlValue::Type::kLong, kHidden),
+          SqliteTable::Column(Column::kWindowStart, "window_start",
+                              SqlValue::Type::kLong, kHidden),
+          SqliteTable::Column(Column::kWindowDur, "window_dur",
+                              SqlValue::Type::kLong, kHidden),
           // These are the ouput columns:
-          Table::Column(Column::kTs, "ts", ColumnType::kLong),
-          Table::Column(Column::kDuration, "dur", ColumnType::kLong),
-          Table::Column(Column::kQuantumTs, "quantum_ts", ColumnType::kLong),
+          SqliteTable::Column(Column::kTs, "ts", SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kDuration, "dur", SqlValue::Type::kLong),
+          SqliteTable::Column(Column::kQuantumTs, "quantum_ts",
+                              SqlValue::Type::kLong),
       },
       {Column::kRowId});
+  return util::OkStatus();
 }
 
-std::unique_ptr<Table::Cursor> WindowOperatorTable::CreateCursor(
-    const QueryConstraints& qc,
-    sqlite3_value** argv) {
-  int64_t window_end = window_start_ + window_dur_;
-  int64_t step_size = quantum_ == 0 ? window_dur_ : quantum_;
-  return std::unique_ptr<Table::Cursor>(
-      new Cursor(this, window_start_, window_end, step_size, qc, argv));
+std::unique_ptr<SqliteTable::Cursor> WindowOperatorTable::CreateCursor() {
+  return std::unique_ptr<SqliteTable::Cursor>(new Cursor(this));
 }
 
-int WindowOperatorTable::BestIndex(const QueryConstraints& qc,
-                                   BestIndexInfo* info) {
+int WindowOperatorTable::BestIndex(const QueryConstraints&, BestIndexInfo*) {
+  return SQLITE_OK;
+}
+
+int WindowOperatorTable::ModifyConstraints(QueryConstraints* qc) {
   // Remove ordering on timestamp if it is the only ordering as we are already
   // sorted on TS. This makes span joining significantly faster.
-  if (qc.order_by().size() == 1 && qc.order_by()[0].iColumn == Column::kTs &&
-      !qc.order_by()[0].desc) {
-    info->order_by_consumed = true;
+  const auto& ob = qc->order_by();
+  if (ob.size() == 1 && ob[0].iColumn == Column::kTs && !ob[0].desc) {
+    qc->mutable_order_by()->clear();
   }
   return SQLITE_OK;
 }
@@ -97,22 +99,23 @@ int WindowOperatorTable::Update(int argc,
   return SQLITE_OK;
 }
 
-WindowOperatorTable::Cursor::Cursor(const WindowOperatorTable* table,
-                                    int64_t window_start,
-                                    int64_t window_end,
-                                    int64_t step_size,
-                                    const QueryConstraints& qc,
-                                    sqlite3_value** argv)
-    : window_start_(window_start),
-      window_end_(window_end),
-      step_size_(step_size),
-      table_(table) {
+WindowOperatorTable::Cursor::Cursor(WindowOperatorTable* table)
+    : SqliteTable::Cursor(table), table_(table) {}
+
+int WindowOperatorTable::Cursor::Filter(const QueryConstraints& qc,
+                                        sqlite3_value** argv,
+                                        FilterHistory) {
+  *this = Cursor(table_);
+  window_start_ = table_->window_start_;
+  window_end_ = table_->window_start_ + table_->window_dur_;
+  step_size_ = table_->quantum_ == 0 ? table_->window_dur_ : table_->quantum_;
+
   current_ts_ = window_start_;
 
   // Set return first if there is a equals constraint on the row id asking to
   // return the first row.
   bool return_first = qc.constraints().size() == 1 &&
-                      qc.constraints()[0].iColumn == Column::kRowId &&
+                      qc.constraints()[0].column == Column::kRowId &&
                       IsOpEq(qc.constraints()[0].op) &&
                       sqlite3_value_int(argv[0]) == 0;
   if (return_first) {
@@ -120,6 +123,7 @@ WindowOperatorTable::Cursor::Cursor(const WindowOperatorTable* table,
   } else {
     filter_type_ = FilterType::kReturnAll;
   }
+  return SQLITE_OK;
 }
 
 int WindowOperatorTable::Cursor::Column(sqlite3_context* context, int N) {

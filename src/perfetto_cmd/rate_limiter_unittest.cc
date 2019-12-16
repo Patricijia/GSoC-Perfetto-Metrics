@@ -18,13 +18,12 @@
 
 #include <stdio.h>
 
-#include "perfetto/base/file_utils.h"
-#include "perfetto/base/scoped_file.h"
-#include "perfetto/base/temp_file.h"
-#include "perfetto/base/utils.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/temp_file.h"
+#include "perfetto/ext/base/utils.h"
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
+#include "test/gtest_and_gmock.h"
 
 using testing::_;
 using testing::NiceMock;
@@ -138,6 +137,7 @@ TEST(RateLimiterTest, DropBox_IgnoreGuardrails) {
   StrictMock<MockRateLimiter> limiter;
   RateLimiter::Args args;
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.ignore_guardrails = true;
   args.current_time = base::TimeSeconds(41);
@@ -160,6 +160,7 @@ TEST(RateLimiterTest, DropBox_EmptyState) {
   StrictMock<MockRateLimiter> limiter;
   RateLimiter::Args args;
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(10000);
 
@@ -187,6 +188,7 @@ TEST(RateLimiterTest, DropBox_NormalUpload) {
   input.set_total_bytes_uploaded(1024 * 1024 * 2);
   ASSERT_TRUE(limiter.SaveStateConcrete(input));
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(input.last_trace_timestamp() + 60 * 10);
 
@@ -208,6 +210,7 @@ TEST(RateLimiterTest, DropBox_FailedToLoadState) {
   StrictMock<MockRateLimiter> limiter;
   RateLimiter::Args args;
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
 
   WriteGarbageToFile(limiter.GetStateFilePath().c_str());
@@ -232,6 +235,7 @@ TEST(RateLimiterTest, DropBox_NoTimeTravel) {
   input.set_last_trace_timestamp(100);
   ASSERT_TRUE(limiter.SaveStateConcrete(input));
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(99);
 
@@ -255,6 +259,7 @@ TEST(RateLimiterTest, DropBox_TooSoon) {
   input.set_last_trace_timestamp(10000);
   ASSERT_TRUE(limiter.SaveStateConcrete(input));
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(10000 + 60 * 4);
 
@@ -262,7 +267,9 @@ TEST(RateLimiterTest, DropBox_TooSoon) {
   ASSERT_FALSE(limiter.ShouldTrace(args));
 }
 
-TEST(RateLimiterTest, DropBox_TooMuch) {
+// TODO(hjd): Undisable when is it possible to unittest
+// user vs. non-user behaviour.
+TEST(RateLimiterTest, DISABLED_DropBox_TooMuch) {
   StrictMock<MockRateLimiter> limiter;
   RateLimiter::Args args;
 
@@ -270,6 +277,7 @@ TEST(RateLimiterTest, DropBox_TooMuch) {
   input.set_total_bytes_uploaded(10 * 1024 * 1024 + 1);
   ASSERT_TRUE(limiter.SaveStateConcrete(input));
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(60 * 60);
 
@@ -285,6 +293,7 @@ TEST(RateLimiterTest, DropBox_TooMuch_Override) {
   input.set_total_bytes_uploaded(10 * 1024 * 1024 + 1);
   ASSERT_TRUE(limiter.SaveStateConcrete(input));
 
+  args.allow_user_build_tracing = true;
   args.is_dropbox = true;
   args.current_time = base::TimeSeconds(60 * 60);
   args.max_upload_bytes_override = 10 * 1024 * 1024 + 2;
@@ -347,6 +356,27 @@ TEST(RateLimiterTest, DropBox_FailedToSave) {
 
   EXPECT_CALL(limiter, SaveState(_)).WillOnce(Return(false));
   ASSERT_FALSE(limiter.OnTraceDone(args, true, 1024 * 1024));
+}
+
+TEST(RateLimiterTest, DropBox_CantTraceOnUser) {
+  StrictMock<MockRateLimiter> limiter;
+  RateLimiter::Args args;
+
+  args.allow_user_build_tracing = false;
+  args.is_dropbox = true;
+  args.current_time = base::TimeSeconds(10000);
+
+  EXPECT_CALL(limiter, SaveState(_));
+  EXPECT_CALL(limiter, LoadState(_));
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_USERDEBUG_BUILD) || \
+    PERFETTO_BUILDFLAG(PERFETTO_STANDALONE_BUILD)
+  ASSERT_TRUE(limiter.ShouldTrace(args));
+#else
+  // Assuming the only way to test on a userbuild is to build the tests in tree
+  // targeting a user build.
+  ASSERT_FALSE(limiter.ShouldTrace(args));
+#endif
 }
 
 }  // namespace

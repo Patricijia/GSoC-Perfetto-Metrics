@@ -22,20 +22,24 @@
 #include <stdlib.h>
 #include <string.h>  // For strerror.
 
+#include "perfetto/base/build_config.h"
+#include "perfetto/base/compiler.h"
+
+// TODO(primiano): movee this to base/build_config.h, turn into
+// PERFETTO_BUILDFLAG(DCHECK_IS_ON) and update call sites to use that instead.
 #if defined(NDEBUG) && !defined(DCHECK_ALWAYS_ON)
 #define PERFETTO_DCHECK_IS_ON() 0
 #else
 #define PERFETTO_DCHECK_IS_ON() 1
 #endif
 
-#if !defined(PERFETTO_FORCE_DLOG)
-#define PERFETTO_DLOG_IS_ON() PERFETTO_DCHECK_IS_ON()
+#if PERFETTO_BUILDFLAG(PERFETTO_FORCE_DLOG_ON)
+#define PERFETTO_DLOG_IS_ON() 1
+#elif PERFETTO_BUILDFLAG(PERFETTO_FORCE_DLOG_OFF)
+#define PERFETTO_DLOG_IS_ON() 0
 #else
-#define PERFETTO_DLOG_IS_ON() PERFETTO_FORCE_DLOG
+#define PERFETTO_DLOG_IS_ON() PERFETTO_DCHECK_IS_ON()
 #endif
-
-#include "perfetto/base/build_config.h"
-#include "perfetto/base/utils.h"
 
 #if defined(PERFETTO_ANDROID_ASYNC_SAFE_LOG)
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
@@ -169,6 +173,8 @@ constexpr const char* kLogFmt[] = {"\x1b[2m", "\x1b[39m", "\x1b[32m\x1b[1m",
     PERFETTO_IMMEDIATE_CRASH();        \
   } while (0)
 
+#define PERFETTO_DFATAL_OR_ELOG(...) PERFETTO_DFATAL(__VA_ARGS__)
+
 #else
 
 #define PERFETTO_DCHECK(x) \
@@ -176,6 +182,7 @@ constexpr const char* kLogFmt[] = {"\x1b[2m", "\x1b[39m", "\x1b[32m\x1b[1m",
   } while (false && (x))
 
 #define PERFETTO_DFATAL(...) ::perfetto::base::ignore_result(__VA_ARGS__)
+#define PERFETTO_DFATAL_OR_ELOG(...) PERFETTO_ELOG(__VA_ARGS__)
 
 #endif  // PERFETTO_DCHECK_IS_ON()
 

@@ -26,10 +26,12 @@
 #include <tuple>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/paged_memory.h"
-#include "perfetto/tracing/core/basic_types.h"
-#include "perfetto/tracing/core/slice.h"
-#include "perfetto/tracing/core/trace_stats.h"
+#include "perfetto/ext/base/paged_memory.h"
+#include "perfetto/ext/base/thread_annotations.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/tracing/core/basic_types.h"
+#include "perfetto/ext/tracing/core/slice.h"
+#include "perfetto/ext/tracing/core/trace_stats.h"
 
 namespace perfetto {
 
@@ -261,7 +263,7 @@ class TraceBuffer {
   // | ChunkRecord 1 | Chunk payload 1  || ChunkRecord 2 | Chunk payload 2 | ...
   // +---------------+------------------++---------------+-----------------+
   // Most of the ChunkRecord fields are copied from SharedMemoryABI::ChunkHeader
-  // (the chunk header used in the the shared memory buffers).
+  // (the chunk header used in the shared memory buffers).
   // A ChunkRecord can be a special "padding" record. In this case its payload
   // should be ignored and the record should be just skipped.
   //
@@ -586,6 +588,16 @@ class TraceBuffer {
     PERFETTO_CHECK(wptr + sizeof(record) + size <= end());
     memcpy(wptr, &record, sizeof(record));
     if (PERFETTO_LIKELY(src)) {
+      // If the producer modifies the data in the shared memory buffer while we
+      // are copying it to the central buffer, TSAN will (rightfully) flag that
+      // as a race. However the entire purpose of copying the data into the
+      // central buffer is that we can validate it without worrying that the
+      // producer changes it from under our feet, so this race is benign. The
+      // alternative would be to try computing which part of the buffer is safe
+      // to read (assuming a well-behaving client), but the risk of introducing
+      // a bug that way outweighs the benefit.
+      PERFETTO_ANNOTATE_BENIGN_RACE_SIZED(
+          src, size, "Benign race when copying chunk from shared memory.")
       memcpy(wptr + sizeof(record), src, size);
     } else {
       PERFETTO_DCHECK(size == record.size - sizeof(record));

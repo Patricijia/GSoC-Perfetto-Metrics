@@ -22,12 +22,12 @@
 
 #include <inttypes.h>
 #include <unwindstack/Elf.h>
-#include <unwindstack/UserArm.h>
-#include <unwindstack/UserArm64.h>
-#include <unwindstack/UserMips.h>
-#include <unwindstack/UserMips64.h>
-#include <unwindstack/UserX86.h>
-#include <unwindstack/UserX86_64.h>
+#include <unwindstack/MachineArm.h>
+#include <unwindstack/MachineArm64.h>
+#include <unwindstack/MachineMips.h>
+#include <unwindstack/MachineMips64.h>
+#include <unwindstack/MachineX86.h>
+#include <unwindstack/MachineX86_64.h>
 
 #include "src/profiling/memory/shared_ring_buffer.h"
 
@@ -44,6 +44,8 @@ struct ClientConfiguration {
   // If interval == 1, sample every allocation.
   // Must be >= 1.
   uint64_t interval;
+  bool block_client;
+  uint64_t block_client_timeout_us;
 };
 
 // Types needed for the wire format used for communication between the client
@@ -68,12 +70,12 @@ constexpr size_t kMaxRegisterDataSize =
       constexpr_max(
         constexpr_max(
             constexpr_max(
-              sizeof(unwindstack::arm_user_regs),
-              sizeof(unwindstack::arm64_user_regs)),
-            sizeof(unwindstack::x86_user_regs)),
-          sizeof(unwindstack::x86_64_user_regs)),
-        sizeof(unwindstack::mips_user_regs)),
-      sizeof(unwindstack::mips64_user_regs)
+              sizeof(uint32_t) * unwindstack::ARM_REG_LAST,
+              sizeof(uint64_t) * unwindstack::ARM64_REG_LAST),
+            sizeof(uint32_t) * unwindstack::X86_REG_LAST),
+          sizeof(uint64_t) * unwindstack::X86_64_REG_LAST),
+        sizeof(uint32_t) * unwindstack::MIPS_REG_LAST),
+      sizeof(uint64_t) * unwindstack::MIPS64_REG_LAST
   );
 // clang-format on
 
@@ -89,16 +91,16 @@ struct AllocMetadata {
   // Size of the allocation that was made.
   uint64_t alloc_size;
   // Total number of bytes attributed to this allocation.
-  uint64_t total_size;
+  uint64_t sample_size;
   // Pointer returned by malloc(2) for this allocation.
   uint64_t alloc_address;
   // Current value of the stack pointer.
   uint64_t stack_pointer;
   // Offset of the data at stack_pointer from the start of this record.
   uint64_t stack_pointer_offset;
+  uint64_t clock_monotonic_coarse_timestamp;
   alignas(uint64_t) char register_data[kMaxRegisterDataSize];
-  // CPU architecture of the client. This determines the size of the
-  // register data that follows this struct.
+  // CPU architecture of the client.
   unwindstack::ArchEnum arch;
 };
 
@@ -109,6 +111,7 @@ struct FreeBatchEntry {
 
 struct FreeBatch {
   uint64_t num_entries;
+  uint64_t clock_monotonic_coarse_timestamp;
   FreeBatchEntry entries[kFreeBatchSize];
 
   FreeBatch() { num_entries = 0; }
@@ -116,8 +119,9 @@ struct FreeBatch {
 
 enum HandshakeFDs : size_t {
   kHandshakeMaps = 0,
-  kHandshakeMem = 1,
-  kHandshakeSize = 2,
+  kHandshakeMem,
+  kHandshakePageIdle,
+  kHandshakeSize,
 };
 
 struct WireMessage {

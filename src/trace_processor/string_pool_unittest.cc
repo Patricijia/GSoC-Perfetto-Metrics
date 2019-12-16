@@ -18,7 +18,7 @@
 
 #include <random>
 
-#include "gtest/gtest.h"
+#include "test/gtest_and_gmock.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -49,7 +49,7 @@ TEST(StringPoolTest, NullPointerHandling) {
   StringPool pool;
 
   auto id = pool.InternString(NullTermStringView());
-  ASSERT_EQ(id, 0);
+  ASSERT_EQ(id, 0u);
   ASSERT_EQ(pool.Get(id).c_str(), nullptr);
 }
 
@@ -65,6 +65,20 @@ TEST(StringPoolTest, Iterator) {
   pool.InternString(kString);
 
   it = pool.CreateIterator();
+  ASSERT_TRUE(++it);
+  ASSERT_STREQ(it.StringView().c_str(), kString);
+  ASSERT_FALSE(++it);
+}
+
+TEST(StringPoolTest, ConstIterator) {
+  StringPool pool;
+  static char kString[] = "Test String";
+  pool.InternString(kString);
+
+  const StringPool& const_pool = pool;
+
+  auto it = const_pool.CreateIterator();
+  ASSERT_TRUE(it);
   ASSERT_TRUE(++it);
   ASSERT_STREQ(it.StringView().c_str(), kString);
   ASSERT_FALSE(++it);
@@ -105,7 +119,28 @@ TEST(StringPoolTest, StressTest) {
     }
     string_map.erase(it_pair.first, it_pair.second);
   }
-  ASSERT_EQ(string_map.size(), 0);
+  ASSERT_EQ(string_map.size(), 0u);
+}
+
+TEST(StringPoolTest, BigString) {
+  constexpr size_t kBigStringSize = 33 * 1024 * 1024;
+  std::unique_ptr<char[]> str1(new char[kBigStringSize + 1]);
+  std::unique_ptr<char[]> str2(new char[kBigStringSize + 1]);
+  for (size_t i = 0; i < kBigStringSize; i++) {
+    str1.get()[i] = 'A' + static_cast<char>(i % 32);
+    str2.get()[i] = 'A' + static_cast<char>((i + 7) % 32);
+  }
+  str1.get()[kBigStringSize] = '\0';
+  str2.get()[kBigStringSize] = '\0';
+
+  StringPool pool;
+  StringPool::Id id1 =
+      pool.InternString(base::StringView(str1.get(), kBigStringSize));
+  StringPool::Id id2 =
+      pool.InternString(base::StringView(str2.get(), kBigStringSize));
+
+  ASSERT_EQ(str1.get(), pool.Get(id1));
+  ASSERT_EQ(str2.get(), pool.Get(id2));
 }
 
 }  // namespace

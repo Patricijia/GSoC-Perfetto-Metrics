@@ -23,7 +23,7 @@ SchedSliceTable::SchedSliceTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void SchedSliceTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  Table::Register<SchedSliceTable>(db, storage, "sched");
+  SqliteTable::Register<SchedSliceTable>(db, storage, "sched");
 }
 
 StorageSchema SchedSliceTable::CreateStorageSchema() {
@@ -32,11 +32,12 @@ StorageSchema SchedSliceTable::CreateStorageSchema() {
       .AddOrderedNumericColumn("ts", &slices.start_ns())
       .AddNumericColumn("cpu", &slices.cpus())
       .AddNumericColumn("dur", &slices.durations())
-      .AddColumn<TsEndColumn>("ts_end", &slices.start_ns(), &slices.durations())
+      .AddGenericNumericColumn(
+          "ts_end", TsEndAccessor(&slices.start_ns(), &slices.durations()))
       .AddNumericColumn("utid", &slices.utids(), &slices.rows_for_utids())
       .AddColumn<EndStateColumn>("end_state", &slices.end_state())
       .AddNumericColumn("priority", &slices.priorities())
-      .AddColumn<IdColumn>("row_id", TableId::kSched)
+      .AddGenericNumericColumn("row_id", RowIdAccessor(TableId::kSched))
       .Build({"cpu", "ts"});
 }
 
@@ -50,8 +51,9 @@ int SchedSliceTable::BestIndex(const QueryConstraints& qc,
 
   // We should be able to handle any constraint and any order by clause given
   // to us.
-  info->order_by_consumed = true;
-  std::fill(info->omit.begin(), info->omit.end(), true);
+  info->sqlite_omit_order_by = true;
+  auto& omit_cs = info->sqlite_omit_constraint;
+  std::fill(omit_cs.begin(), omit_cs.end(), true);
 
   return SQLITE_OK;
 }
@@ -61,7 +63,7 @@ uint32_t SchedSliceTable::EstimateQueryCost(const QueryConstraints& qc) {
 
   size_t ts_idx = schema().ColumnIndexFromName("ts");
   auto has_ts_column = [ts_idx](const QueryConstraints::Constraint& c) {
-    return c.iColumn == static_cast<int>(ts_idx);
+    return c.column == static_cast<int>(ts_idx);
   };
   bool has_time_constraint = std::any_of(cs.begin(), cs.end(), has_ts_column);
   if (has_time_constraint) {
@@ -72,8 +74,7 @@ uint32_t SchedSliceTable::EstimateQueryCost(const QueryConstraints& qc) {
 
   size_t utid_idx = schema().ColumnIndexFromName("utid");
   auto has_utid_eq_cs = [utid_idx](const QueryConstraints::Constraint& c) {
-    return c.iColumn == static_cast<int>(utid_idx) &&
-           sqlite_utils::IsOpEq(c.op);
+    return c.column == static_cast<int>(utid_idx) && sqlite_utils::IsOpEq(c.op);
   };
   bool has_utid_eq = std::any_of(cs.begin(), cs.end(), has_utid_eq_cs);
   if (has_utid_eq) {
@@ -201,8 +202,8 @@ StorageColumn::Comparator SchedSliceTable::EndStateColumn::Sort(
   };
 }
 
-Table::ColumnType SchedSliceTable::EndStateColumn::GetType() const {
-  return Table::ColumnType::kString;
+SqlValue::Type SchedSliceTable::EndStateColumn::GetType() const {
+  return SqlValue::Type::kString;
 }
 
 }  // namespace trace_processor

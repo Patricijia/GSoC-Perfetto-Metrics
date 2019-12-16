@@ -12,80 +12,129 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {fromNs} from '../../common/time';
+import {fromNs, toNs} from '../../common/time';
+import {LIMIT} from '../../common/track_data';
 import {
   TrackController,
-  trackControllerRegistry
+  trackControllerRegistry,
 } from '../../controller/track_controller';
 
 import {Config, Data, SLICE_TRACK_KIND} from './common';
 
 class ChromeSliceTrackController extends TrackController<Config, Data> {
   static readonly kind = SLICE_TRACK_KIND;
-  private busy = false;
+  private setup = false;
 
-  onBoundsChange(start: number, end: number, resolution: number) {
-    // TODO: we should really call TraceProcessor.Interrupt() at this point.
-    if (this.busy) return;
-    const LIMIT = 10000;
+  async onBoundsChange(start: number, end: number, resolution: number):
+      Promise<Data> {
+    const startNs = toNs(start);
+    const endNs = toNs(end);
+    // Ns in 1px width. We want all slices smaller than 1px to be grouped.
+    const minNs = toNs(resolution);
 
-    // TODO: "ts >= x - dur" below is inefficient because doesn't allow to use
-    // any index. We need to introduce ts_lower_bound also for the slices table
-    // (see sched table).
-    const query = `select ts,dur,depth,cat,name from slices ` +
-        `where utid = ${this.config.utid} ` +
-        `and ts >= ${Math.round(start * 1e9)} - dur ` +
-        `and ts <= ${Math.round(end * 1e9)} ` +
-        `and dur >= ${Math.round(resolution * 1e9)} ` +
-        `order by ts ` +
-        `limit ${LIMIT};`;
+    if (!this.setup) {
+      await this.query(
+          `create virtual table ${this.tableName('window')} using window;`);
 
-    this.busy = true;
-    this.engine.query(query).then(rawResult => {
-      this.busy = false;
-      if (rawResult.error) {
-        throw new Error(`Query error "${query}": ${rawResult.error}`);
-      }
+      await this.query(
+          `create view ${this.tableName('small')} as ` +
+          `select ts,dur,depth,name,slice_id from slice ` +
+          `where track_id = ${this.config.trackId} ` +
+          `and dur < ${minNs} ` +
+          `order by ts;`);
 
-      const numRows = +rawResult.numRecords;
+      await this.query(`create virtual table ${this.tableName('span')} using
+      span_join(${this.tableName('small')} PARTITIONED depth,
+      ${this.tableName('window')});`);
 
-      const slices: Data = {
-        start,
-        end,
-        resolution,
-        strings: [],
-        starts: new Float64Array(numRows),
-        ends: new Float64Array(numRows),
-        depths: new Uint16Array(numRows),
-        titles: new Uint16Array(numRows),
-        categories: new Uint16Array(numRows),
-      };
+      this.setup = true;
+    }
 
-      const stringIndexes = new Map<string, number>();
-      function internString(str: string) {
-        let idx = stringIndexes.get(str);
-        if (idx !== undefined) return idx;
-        idx = slices.strings.length;
-        slices.strings.push(str);
-        stringIndexes.set(str, idx);
-        return idx;
-      }
+    const windowDurNs = Math.max(1, endNs - startNs);
 
-      for (let row = 0; row < numRows; row++) {
-        const cols = rawResult.columns;
-        const startSec = fromNs(+cols[0].longValues![row]);
-        slices.starts[row] = startSec;
-        slices.ends[row] = startSec + fromNs(+cols[1].longValues![row]);
-        slices.depths[row] = +cols[2].longValues![row];
-        slices.categories[row] = internString(cols[3].stringValues![row]);
-        slices.titles[row] = internString(cols[4].stringValues![row]);
-      }
-      if (numRows === LIMIT) {
-        slices.end = slices.ends[slices.ends.length - 1];
-      }
-      this.publish(slices);
-    });
+    this.query(`update ${this.tableName('window')} set
+    window_start=${startNs},
+    window_dur=${windowDurNs},
+    quantum=${minNs}`);
+
+    await this.query(`drop view if exists ${this.tableName('small')}`);
+    await this.query(`drop view if exists ${this.tableName('big')}`);
+    await this.query(`drop view if exists ${this.tableName('summary')}`);
+
+    await this.query(
+        `create view ${this.tableName('small')} as ` +
+        `select ts,dur,depth,name,slice_id from slice ` +
+        `where track_id = ${this.config.trackId} ` +
+        `and dur < ${minNs} ` +
+        `order by ts `);
+
+    await this.query(
+        `create view ${this.tableName('big')} as ` +
+        `select ts,dur,depth,name,slice_id from slice ` +
+        `where track_id = ${this.config.trackId} ` +
+        `and ts >= ${startNs} - dur ` +
+        `and ts <= ${endNs} ` +
+        `and dur >= ${minNs} ` +
+        `order by ts `);
+
+    // So that busy slices never overlap, we use the start of the bucket
+    // as the ts, even though min(ts) would technically be more accurate.
+    await this.query(`create view ${this.tableName('summary')} as select
+      (quantum_ts * ${minNs} + ${startNs}) as ts,
+      ${minNs} as dur,
+      depth,
+      'Busy' as name,
+      -1 as slice_id
+      from ${this.tableName('span')}
+      group by depth, quantum_ts
+      order by ts;`);
+
+    const query = `select * from ${this.tableName('summary')} UNION ` +
+        `select * from ${this.tableName('big')} order by ts limit ${LIMIT}`;
+
+    const rawResult = await this.query(query);
+
+    if (rawResult.error) {
+      throw new Error(`Query error "${query}": ${rawResult.error}`);
+    }
+
+    const numRows = +rawResult.numRecords;
+
+    const slices: Data = {
+      start,
+      end,
+      resolution,
+      length: numRows,
+      strings: [],
+      sliceIds: new Float64Array(numRows),
+      starts: new Float64Array(numRows),
+      ends: new Float64Array(numRows),
+      depths: new Uint16Array(numRows),
+      titles: new Uint16Array(numRows),
+    };
+
+    const stringIndexes = new Map<string, number>();
+    function internString(str: string) {
+      let idx = stringIndexes.get(str);
+      if (idx !== undefined) return idx;
+      idx = slices.strings.length;
+      slices.strings.push(str);
+      stringIndexes.set(str, idx);
+      return idx;
+    }
+
+    for (let row = 0; row < numRows; row++) {
+      const cols = rawResult.columns;
+      const startSec = fromNs(+cols[0].longValues![row]);
+      slices.starts[row] = startSec;
+      slices.ends[row] = startSec + fromNs(+cols[1].longValues![row]);
+      slices.depths[row] = +cols[2].longValues![row];
+      slices.titles[row] = internString(cols[3].stringValues![row]);
+      slices.sliceIds[row] = +cols[4].longValues![row];
+    }
+    return slices;
   }
+
 }
 
 

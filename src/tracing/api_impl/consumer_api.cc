@@ -27,29 +27,29 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <condition_variable>
 #include <memory>
 #include <mutex>
 #include <thread>
 
 #include "perfetto/base/build_config.h"
-#include "perfetto/base/event.h"
-#include "perfetto/base/scoped_file.h"
-#include "perfetto/base/temp_file.h"
-#include "perfetto/base/thread_checker.h"
-#include "perfetto/base/unix_task_runner.h"
-#include "perfetto/base/utils.h"
-#include "perfetto/tracing/core/consumer.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/temp_file.h"
+#include "perfetto/ext/base/thread_checker.h"
+#include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/tracing/core/consumer.h"
+#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
+#include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/tracing/core/trace_config.h"
-#include "perfetto/tracing/core/trace_packet.h"
-#include "perfetto/tracing/ipc/consumer_ipc_client.h"
-#include "src/tracing/ipc/default_socket.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 #include <linux/memfd.h>
 #include <sys/syscall.h>
 #endif
 
-#include "perfetto/config/trace_config.pb.h"
+#include "protos/perfetto/config/trace_config.gen.h"
 
 #define PERFETTO_EXPORTED_API __attribute__((visibility("default")))
 
@@ -64,7 +64,7 @@ class TracingSession : public Consumer {
                  Handle,
                  OnStateChangedCb,
                  void* callback_arg,
-                 const perfetto::protos::TraceConfig&);
+                 const TraceConfig&);
   ~TracingSession() override;
 
   // Note: if making this class moveable, the move-ctor/dtor must be updated
@@ -117,12 +117,11 @@ class TracingSession : public Consumer {
   PERFETTO_THREAD_CHECKER(thread_checker_)
 };
 
-TracingSession::TracingSession(
-    base::TaskRunner* task_runner,
-    Handle handle,
-    OnStateChangedCb callback,
-    void* callback_arg,
-    const perfetto::protos::TraceConfig& trace_config_proto)
+TracingSession::TracingSession(base::TaskRunner* task_runner,
+                               Handle handle,
+                               OnStateChangedCb callback,
+                               void* callback_arg,
+                               const TraceConfig& trace_config_proto)
     : task_runner_(task_runner),
       handle_(handle),
       callback_(callback),
@@ -319,9 +318,8 @@ Handle TracingController::Create(const void* config_proto_buf,
                                  size_t config_len,
                                  OnStateChangedCb callback,
                                  void* callback_arg) {
-  perfetto::protos::TraceConfig config_proto;
-  bool parsed = config_proto.ParseFromArray(config_proto_buf,
-                                            static_cast<int>(config_len));
+  TraceConfig config_proto;
+  bool parsed = config_proto.ParseFromArray(config_proto_buf, config_len);
   if (!parsed) {
     PERFETTO_ELOG("Failed to decode TraceConfig proto");
     return kInvalidHandle;
@@ -350,7 +348,7 @@ void TracingController::StartTracing(Handle handle) {
   if (it == sessions_.end()) {
     PERFETTO_ELOG("StartTracing(): Invalid tracing session handle");
     return;
-  };
+  }
   TracingSession* session = it->second.get();
   task_runner_->PostTask([session] { session->StartTracing(); });
 }

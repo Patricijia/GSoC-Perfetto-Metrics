@@ -14,11 +14,12 @@
 # limitations under the License.
 
 from os import sys, path
-
-sys.path.append(path.dirname(path.abspath(__file__)))
+sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
 import synth_common
 
 trace = synth_common.create_trace()
+trace.add_system_info(arch='aarch64')
+
 trace.add_process_tree_packet()
 trace.add_process(pid=1, ppid=0, cmdline="init")
 trace.add_process(pid=2, ppid=1, cmdline="two_thread_process")

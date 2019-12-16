@@ -19,14 +19,13 @@
 
 #include "src/trace_processor/storage_table.h"
 #include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/variadic.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 class ArgsTable : public StorageTable {
  public:
-  using VariadicType = TraceStorage::Args::Variadic::Type;
-
   static void RegisterTable(sqlite3* db, const TraceStorage* storage);
 
   ArgsTable(sqlite3*, const TraceStorage*);
@@ -40,7 +39,7 @@ class ArgsTable : public StorageTable {
   class ValueColumn final : public StorageColumn {
    public:
     ValueColumn(std::string col_name,
-                VariadicType type,
+                Variadic::Type type,
                 const TraceStorage* storage);
 
     void ReportResult(sqlite3_context* ctx, uint32_t row) const override;
@@ -51,16 +50,20 @@ class ArgsTable : public StorageTable {
 
     Comparator Sort(const QueryConstraints::OrderBy& ob) const override;
 
-    bool IsNaturallyOrdered() const override { return false; }
+    bool HasOrdering() const override { return false; }
 
-    Table::ColumnType GetType() const override {
+    SqlValue::Type GetType() const override {
       switch (type_) {
-        case VariadicType::kInt:
-          return Table::ColumnType::kLong;
-        case VariadicType::kReal:
-          return Table::ColumnType::kDouble;
-        case VariadicType::kString:
-          return Table::ColumnType::kString;
+        case Variadic::Type::kInt:
+        case Variadic::Type::kUint:
+        case Variadic::Type::kPointer:
+        case Variadic::Type::kBool:
+          return SqlValue::Type::kLong;
+        case Variadic::Type::kJson:
+        case Variadic::Type::kString:
+          return SqlValue::Type::kString;
+        case Variadic::Type::kReal:
+          return SqlValue::Type::kDouble;
       }
       PERFETTO_FATAL("Not reached");  // For gcc
     }
@@ -68,7 +71,7 @@ class ArgsTable : public StorageTable {
    private:
     int CompareRefsAsc(uint32_t f, uint32_t s) const;
 
-    TraceStorage::Args::Variadic::Type type_;
+    Variadic::Type type_;
     const TraceStorage* storage_ = nullptr;
   };
 

@@ -23,21 +23,28 @@
 #include <fstream>
 #include <regex>
 
-#include "perfetto/base/file_utils.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/base/pipe.h"
-#include "perfetto/base/string_splitter.h"
-#include "perfetto/base/string_utils.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/pipe.h"
+#include "perfetto/ext/base/string_splitter.h"
+#include "perfetto/ext/base/string_utils.h"
 
 namespace perfetto {
 
 using base::StartsWith;
 using base::Contains;
 
+std::string EventNameToProtoFieldName(const std::string& name) {
+  return (name == "0") ? "zero" : name;
+}
+
+std::string EventNameToProtoName(const std::string& name) {
+  return ToCamelCase(EventNameToProtoFieldName(name)) + "FtraceEvent";
+}
+
 std::vector<FtraceEventName> ReadWhitelist(const std::string& filename) {
   std::string line;
   std::vector<FtraceEventName> lines;
-
   std::ifstream fin(filename, std::ios::in);
   if (!fin) {
     fprintf(stderr, "failed to open whitelist %s\n", filename.c_str());
@@ -50,54 +57,8 @@ std::vector<FtraceEventName> ReadWhitelist(const std::string& filename) {
   return lines;
 }
 
-void PrintEventFormatterMain(const std::set<std::string>& events) {
-  printf(
-      "\nAdd output to FormatEventText in "
-      "tools/trace_to_text/ftrace_event_formatter.cc\n");
-  for (auto event : events) {
-    printf(
-        "else if (event.has_%s()) {\nconst auto& inner = event.%s();\nreturn "
-        "Format%s(inner);\n} ",
-        event.c_str(), event.c_str(), ToCamelCase(event).c_str());
-  }
-}
-
-// Add output to ParseInode in ftrace_inode_handler
-void PrintInodeHandlerMain(const std::string& event_name,
-                           const perfetto::Proto& proto) {
-  for (const auto& p : proto.fields) {
-    const Proto::Field& field = p.second;
-    if (Contains(field.name, "ino") && !Contains(field.name, "minor"))
-      printf(
-          "else if (event.has_%s() && event.%s().%s()) {\n*inode = "
-          "static_cast<uint64_t>(event.%s().%s());\n return true;\n} ",
-          event_name.c_str(), event_name.c_str(), field.name.c_str(),
-          event_name.c_str(), field.name.c_str());
-  }
-}
-
-void PrintEventFormatterUsingStatements(const std::set<std::string>& events) {
-  printf("\nAdd output to tools/trace_to_text/ftrace_event_formatter.cc\n");
-  for (auto event : events) {
-    printf("using protos::%sFtraceEvent;\n", ToCamelCase(event).c_str());
-  }
-}
-
-void PrintEventFormatterFunctions(const std::set<std::string>& events) {
-  printf(
-      "\nAdd output to tools/trace_to_text/ftrace_event_formatter.cc and "
-      "then manually go through format files to match fields\n");
-  for (auto event : events) {
-    printf(
-        "std::string Format%s(const %sFtraceEvent& event) {"
-        "\nchar line[2048];"
-        "\nsprintf(line,\"%s: );\nreturn std::string(line);\n}\n",
-        ToCamelCase(event).c_str(), ToCamelCase(event).c_str(), event.c_str());
-  }
-}
-
 bool GenerateProto(const FtraceEvent& format, Proto* proto_out) {
-  proto_out->name = ToCamelCase(format.name) + "FtraceEvent";
+  proto_out->name = EventNameToProtoName(format.name);
   proto_out->event_name = format.name;
   std::set<std::string> seen;
   // TODO(hjd): We should be cleverer about id assignment.
@@ -136,10 +97,11 @@ void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_whitelist,
   *fout << "option optimize_for = LITE_RUNTIME;\n\n";
 
   for (const std::string& group : groups) {
-    *fout << R"(import "perfetto/trace/ftrace/)" << group << R"(.proto";)"
+    *fout << R"(import "protos/perfetto/trace/ftrace/)" << group
+          << R"(.proto";)"
           << "\n";
   }
-  *fout << "import \"perfetto/trace/ftrace/generic.proto\";\n";
+  *fout << "import \"protos/perfetto/trace/ftrace/generic.proto\";\n";
   *fout << "\n";
   *fout << "package perfetto.protos;\n\n";
   *fout << R"(message FtraceEvent {
@@ -163,19 +125,20 @@ void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_whitelist,
       continue;
     }
 
-    std::string typeName = ToCamelCase(event.name()) + "FtraceEvent";
+    std::string field_name = EventNameToProtoFieldName(event.name());
+    std::string type_name = EventNameToProtoName(event.name());
 
     // "    " (indent) + TypeName + " " + field_name + " = " + 123 + ";"
-    if (4 + typeName.size() + 1 + event.name().size() + 3 + 3 + 1 <= 80) {
+    if (4 + type_name.size() + 1 + field_name.size() + 3 + 3 + 1 <= 80) {
       // Everything fits in one line:
-      *fout << "    " << typeName << " " << event.name() << " = " << i << ";\n";
-    } else if (4 + typeName.size() + 1 + event.name().size() + 2 <= 80) {
+      *fout << "    " << type_name << " " << field_name << " = " << i << ";\n";
+    } else if (4 + type_name.size() + 1 + field_name.size() + 2 <= 80) {
       // Everything fits except the field id:
-      *fout << "    " << typeName << " " << event.name() << " =\n        " << i
+      *fout << "    " << type_name << " " << field_name << " =\n        " << i
             << ";\n";
     } else {
       // Nothing fits:
-      *fout << "    " << typeName << "\n        " << event.name() << " = " << i
+      *fout << "    " << type_name << "\n        " << field_name << " = " << i
             << ";\n";
     }
     ++i;
@@ -195,16 +158,35 @@ void GenerateFtraceEventProto(const std::vector<FtraceEventName>& raw_whitelist,
 std::string SingleEventInfo(perfetto::Proto proto,
                             const std::string& group,
                             const uint32_t proto_field_id) {
-  std::string s = "";
-  s += "    event->name = \"" + proto.event_name + "\";\n";
-  s += "    event->group = \"" + group + "\";\n";
-  s += "    event->proto_field_id = " + std::to_string(proto_field_id) + ";\n";
+  std::string s = "{";
+  s += "\"" + proto.event_name + "\", ";
+  s += "\"" + group + "\", ";
 
+  // Vector of fields.
+  s += "{ ";
   for (const auto& field : proto.SortedFields()) {
-    s += "    event->fields.push_back(MakeField(\"" + field->name + "\", " +
-         std::to_string(field->number) + ", ProtoSchemaType::k" +
-         ToCamelCase(field->type.ToString()) + "));\n";
+    // Ignore the "ip" field from print events. This field has not proven
+    // particularly useful and takes up a large amount of space (30% of total
+    // PrintFtraceEvent size and up to 12% of the entire trace in some
+    // configurations)
+    if (group == "ftrace" && proto.event_name == "print" && field->name == "ip")
+      continue;
+    s += "{";
+    s += "kUnsetOffset, ";
+    s += "kUnsetSize, ";
+    s += "FtraceFieldType::kInvalidFtraceFieldType, ";
+    s += "\"" + field->name + "\", ";
+    s += std::to_string(field->number) + ", ";
+    s += "ProtoSchemaType::k" + ToCamelCase(field->type.ToString()) + ", ";
+    s += "TranslationStrategy::kInvalidTranslationStrategy";
+    s += "}, ";
   }
+  s += "}, ";
+
+  s += "kUnsetFtraceId, ";
+  s += std::to_string(proto_field_id) + ", ";
+  s += "kUnsetSize";
+  s += "}";
   return s;
 }
 
@@ -223,20 +205,20 @@ namespace perfetto {
 using protozero::proto_utils::ProtoSchemaType;
 
 std::vector<Event> GetStaticEventInfo() {
-  std::vector<Event> events;
+  static constexpr uint16_t kUnsetOffset = 0;
+  static constexpr uint16_t kUnsetSize = 0;
+  static constexpr uint16_t kUnsetFtraceId = 0;
+  return
 )";
 
+  s += " {";
   for (const auto& event : events_info) {
-    s += "\n";
-    s += "  {\n";
-    s += "    events.emplace_back(Event{});\n";
-    s += "    Event* event = &events.back();\n";
     s += event;
-    s += "  }\n";
+    s += ",\n";
   }
+  s += "};";
 
   s += R"(
-  return events;
 }
 
 }  // namespace perfetto

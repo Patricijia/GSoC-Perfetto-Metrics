@@ -17,9 +17,10 @@
 #include "perfetto/protozero/proto_decoder.h"
 
 #include <string.h>
+#include <limits>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/utils.h"
+#include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/proto_utils.h"
 
 namespace protozero {
@@ -56,10 +57,13 @@ ParseOneField(const uint8_t* const buffer, const uint8_t* const end) {
     return res;
 
   uint64_t preamble = 0;
-  if (PERFETTO_LIKELY(*pos < 0x80)) {  // Fastpath for fields with ID < 32.
+  if (PERFETTO_LIKELY(*pos < 0x80)) {  // Fastpath for fields with ID < 16.
     preamble = *(pos++);
   } else {
-    pos = ParseVarInt(pos, end, &preamble);
+    const uint8_t* next = ParseVarInt(pos, end, &preamble);
+    if (PERFETTO_UNLIKELY(pos == next))
+      return res;
+    pos = next;
   }
 
   uint32_t field_id = static_cast<uint32_t>(preamble >> kFieldTypeNumBits);
@@ -128,7 +132,7 @@ ParseOneField(const uint8_t* const buffer, const uint8_t* const end) {
   }
 
   if (PERFETTO_UNLIKELY(field_id > std::numeric_limits<uint16_t>::max())) {
-    PERFETTO_DFATAL("Cannot parse proto field ids > 0xFFFF");
+    // PERFETTO_DFATAL("Cannot parse proto field ids > 0xFFFF");
     return res;
   }
 
@@ -141,7 +145,7 @@ ParseOneField(const uint8_t* const buffer, const uint8_t* const end) {
 }  // namespace
 
 Field ProtoDecoder::FindField(uint32_t field_id) {
-  Field res;
+  Field res{};
   auto old_position = read_ptr_;
   read_ptr_ = begin_;
   for (auto f = ReadField(); f.valid(); f = ReadField()) {

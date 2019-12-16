@@ -19,15 +19,17 @@
 #include <condition_variable>
 #include <mutex>
 
-#include "gtest/gtest.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/time.h"
-#include "perfetto/base/utils.h"
-#include "perfetto/trace/test_event.pbzero.h"
-#include "perfetto/trace/trace_packet.pbzero.h"
-#include "perfetto/traced/traced.h"
-#include "perfetto/tracing/core/trace_packet.h"
-#include "perfetto/tracing/core/trace_writer.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/traced/traced.h"
+#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/tracing/core/data_source_config.h"
+
+#include "protos/perfetto/config/test_config.gen.h"
+#include "protos/perfetto/trace/test_event.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 
@@ -37,11 +39,13 @@ FakeProducer::~FakeProducer() = default;
 void FakeProducer::Connect(
     const char* socket_name,
     base::TaskRunner* task_runner,
+    std::function<void()> on_setup_data_source_instance,
     std::function<void()> on_create_data_source_instance) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   task_runner_ = task_runner;
   endpoint_ = ProducerIPCClient::Connect(
       socket_name, this, "android.perfetto.FakeProducer", task_runner);
+  on_setup_data_source_instance_ = std::move(on_setup_data_source_instance);
   on_create_data_source_instance_ = std::move(on_create_data_source_instance);
 }
 
@@ -54,11 +58,13 @@ void FakeProducer::OnConnect() {
 
 void FakeProducer::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  FAIL() << "Producer unexpectedly disconnected from the service";
+  PERFETTO_FATAL("Producer unexpectedly disconnected from the service");
 }
 
 void FakeProducer::SetupDataSource(DataSourceInstanceID,
-                                   const DataSourceConfig&) {}
+                                   const DataSourceConfig&) {
+  task_runner_->PostTask(on_setup_data_source_instance_);
+}
 
 void FakeProducer::StartDataSource(DataSourceInstanceID,
                                    const DataSourceConfig& source_config) {

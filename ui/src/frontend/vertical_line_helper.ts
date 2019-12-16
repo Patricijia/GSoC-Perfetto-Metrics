@@ -34,24 +34,29 @@ function drawVerticalLine(ctx: CanvasRenderingContext2D,
     ctx.strokeStyle = color;
     const prevLineWidth = ctx.lineWidth;
     ctx.lineWidth = lineWidth;
-    ctx.moveTo(xPos + (lineWidth / 2), 0);
-    ctx.lineTo(xPos + (lineWidth / 2), height);
+    ctx.moveTo(xPos, 0);
+    ctx.lineTo(xPos, height);
     ctx.stroke();
     ctx.closePath();
     ctx.lineWidth = prevLineWidth;
 }
 
-export function drawVerticalSelection(ctx: CanvasRenderingContext2D,
-                                      timeScale: TimeScale,
-                                      timeStart: number,
-                                      timeEnd: number,
-                                      height: number,
-                                      color: string) {
-    const xStartPos = TRACK_SHELL_WIDTH +
-                      Math.floor(timeScale.timeToPx(timeStart));
-    const xEndPos = TRACK_SHELL_WIDTH + Math.floor(timeScale.timeToPx(timeEnd));
-    ctx.fillStyle = color;
-    ctx.fillRect(xStartPos, 0, xEndPos - xStartPos, height);
-    drawVerticalLine(ctx, xStartPos, height, `rgba(52,69,150)`);
-    drawVerticalLine(ctx, xEndPos, height, `rgba(52,69,150)`);
-  }
+export function drawVerticalSelection(
+    ctx: CanvasRenderingContext2D,
+    timeScale: TimeScale,
+    timeStart: number,
+    timeEnd: number,
+    height: number,
+    color: string) {
+  const xStartPos =
+      TRACK_SHELL_WIDTH + Math.floor(timeScale.timeToPx(timeStart));
+  const xEndPos = TRACK_SHELL_WIDTH + Math.floor(timeScale.timeToPx(timeEnd));
+  const width = timeScale.endPx;
+  ctx.fillStyle = color;
+  ctx.fillRect(0, 0, xStartPos, height);
+  // In the worst case xEndPos may be far to the left of the canvas (and so be
+  // <0) in this case fill the whole screen.
+  ctx.fillRect(Math.max(xEndPos, 0), 0, width + TRACK_SHELL_WIDTH, height);
+  drawVerticalLine(ctx, xStartPos, height, `rgba(52,69,150)`);
+  drawVerticalLine(ctx, xEndPos, height, `rgba(52,69,150)`);
+}

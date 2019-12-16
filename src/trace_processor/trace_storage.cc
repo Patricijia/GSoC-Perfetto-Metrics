@@ -20,7 +20,13 @@
 #include <algorithm>
 #include <limits>
 
+#include "perfetto/ext/base/no_destructor.h"
+
+namespace perfetto {
+namespace trace_processor {
+
 namespace {
+
 template <typename T>
 void MaybeUpdateMinMax(T begin_it,
                        T end_it,
@@ -33,63 +39,75 @@ void MaybeUpdateMinMax(T begin_it,
   *min_value = std::min(*min_value, *minmax.first);
   *max_value = std::max(*max_value, *minmax.second);
 }
+
+std::vector<const char*> CreateRefTypeStringMap() {
+  std::vector<const char*> map(static_cast<size_t>(RefType::kRefMax));
+  map[static_cast<size_t>(RefType::kRefNoRef)] = nullptr;
+  map[static_cast<size_t>(RefType::kRefUtid)] = "utid";
+  map[static_cast<size_t>(RefType::kRefCpuId)] = "cpu";
+  map[static_cast<size_t>(RefType::kRefGpuId)] = "gpu";
+  map[static_cast<size_t>(RefType::kRefIrq)] = "irq";
+  map[static_cast<size_t>(RefType::kRefSoftIrq)] = "softirq";
+  map[static_cast<size_t>(RefType::kRefUpid)] = "upid";
+  map[static_cast<size_t>(RefType::kRefTrack)] = "track";
+  return map;
+}
+
 }  // namespace
 
-namespace perfetto {
-namespace trace_processor {
+const std::vector<const char*>& GetRefTypeStringMap() {
+  static const base::NoDestructor<std::vector<const char*>> map(
+      CreateRefTypeStringMap());
+  return map.ref();
+}
 
-TraceStorage::TraceStorage() {
+TraceStorage::TraceStorage(const Config& config)
+    : string_pool_(config.string_pool_block_size_bytes) {
   // Upid/utid 0 is reserved for idle processes/threads.
   unique_processes_.emplace_back(0);
   unique_threads_.emplace_back(0);
-
-  // Reserve string ID 0 for the empty string.
-  InternString("");
 }
 
 TraceStorage::~TraceStorage() {}
 
-StringId TraceStorage::InternString(base::StringView str) {
-  // Temporarily return the empty string's id as the null string.
-  // TODO(lalitm): remove this as part of the usage of StringPool.
-  if (str.data() == nullptr)
-    return 0;
-
-  auto hash = str.Hash();
-  auto id_it = string_index_.find(hash);
-  if (id_it != string_index_.end()) {
-    PERFETTO_DCHECK(base::StringView(string_pool_[id_it->second]) == str);
-    return id_it->second;
-  }
-  string_pool_.emplace_back(str.ToStdString());
-  StringId string_id = static_cast<uint32_t>(string_pool_.size() - 1);
-  string_index_.emplace(hash, string_id);
-  return string_id;
-}
-
-void TraceStorage::ResetStorage() {
-  *this = TraceStorage();
-}
-
-void TraceStorage::SqlStats::RecordQueryBegin(const std::string& query,
-                                              int64_t time_queued,
-                                              int64_t time_started) {
+uint32_t TraceStorage::SqlStats::RecordQueryBegin(const std::string& query,
+                                                  int64_t time_queued,
+                                                  int64_t time_started) {
   if (queries_.size() >= kMaxLogEntries) {
     queries_.pop_front();
     times_queued_.pop_front();
     times_started_.pop_front();
+    times_first_next_.pop_front();
     times_ended_.pop_front();
+    popped_queries_++;
   }
   queries_.push_back(query);
   times_queued_.push_back(time_queued);
   times_started_.push_back(time_started);
+  times_first_next_.push_back(0);
   times_ended_.push_back(0);
+  return static_cast<uint32_t>(popped_queries_ + queries_.size() - 1);
 }
 
-void TraceStorage::SqlStats::RecordQueryEnd(int64_t time_ended) {
-  PERFETTO_DCHECK(!times_ended_.empty());
-  PERFETTO_DCHECK(times_ended_.back() == 0);
-  times_ended_.back() = time_ended;
+void TraceStorage::SqlStats::RecordQueryFirstNext(uint32_t row,
+                                                  int64_t time_first_next) {
+  // This means we've popped this query off the queue of queries before it had
+  // a chance to finish. Just silently drop this number.
+  if (popped_queries_ > row)
+    return;
+  uint32_t queue_row = row - popped_queries_;
+  PERFETTO_DCHECK(queue_row < queries_.size());
+  times_first_next_[queue_row] = time_first_next;
+}
+
+void TraceStorage::SqlStats::RecordQueryEnd(uint32_t row, int64_t time_ended) {
+  // This means we've popped this query off the queue of queries before it had
+  // a chance to finish. Just silently drop this number.
+  if (popped_queries_ > row)
+    return;
+  uint32_t queue_row = row - popped_queries_;
+  PERFETTO_DCHECK(queue_row < queries_.size());
+  times_ended_[queue_row] = time_ended;
 }
 
 std::pair<int64_t, int64_t> TraceStorage::GetTraceTimestampBoundsNs() const {
@@ -105,9 +123,17 @@ std::pair<int64_t, int64_t> TraceStorage::GetTraceTimestampBoundsNs() const {
                     nestable_slices_.start_ns().end(), &start_ns, &end_ns);
   MaybeUpdateMinMax(android_log_.timestamps().begin(),
                     android_log_.timestamps().end(), &start_ns, &end_ns);
+  MaybeUpdateMinMax(raw_events_.timestamps().begin(),
+                    raw_events_.timestamps().end(), &start_ns, &end_ns);
+  MaybeUpdateMinMax(heap_profile_allocations_.timestamps().begin(),
+                    heap_profile_allocations_.timestamps().end(), &start_ns,
+                    &end_ns);
 
   if (start_ns == std::numeric_limits<int64_t>::max()) {
     return std::make_pair(0, 0);
+  }
+  if (start_ns == end_ns) {
+    end_ns += 1;
   }
   return std::make_pair(start_ns, end_ns);
 }

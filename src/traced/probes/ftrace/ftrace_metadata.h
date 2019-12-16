@@ -31,10 +31,11 @@ namespace perfetto {
 using BlockDeviceID = decltype(stat::st_dev);
 using Inode = decltype(stat::st_ino);
 
+// Container for tracking miscellaneous information while parsing ftrace events,
+// scoped to an individual data source.
 struct FtraceMetadata {
   FtraceMetadata();
 
-  uint32_t overwrite_count = 0;
   BlockDeviceID last_seen_device_id = 0;
 #if PERFETTO_DCHECK_IS_ON()
   bool seen_device_id = false;
@@ -44,11 +45,13 @@ struct FtraceMetadata {
   // A vector not a set to keep the writer_fast.
   std::vector<std::pair<Inode, BlockDeviceID>> inode_and_device;
   std::vector<int32_t> pids;
+  std::vector<int32_t> rename_pids;
 
   void AddDevice(BlockDeviceID);
   void AddInode(Inode);
   void AddPid(int32_t);
   void AddCommonPid(int32_t);
+  void AddRenamePid(int32_t);
   void Clear();
   void FinishEvent();
 };

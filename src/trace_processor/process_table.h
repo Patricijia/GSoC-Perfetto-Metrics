@@ -20,46 +20,55 @@
 #include <limits>
 #include <memory>
 
-#include "src/trace_processor/table.h"
+#include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 // The implementation of the SQLite table containing each unique process with
-// their details (only name at the moment).
-class ProcessTable : public Table {
+// their details.
+class ProcessTable : public SqliteTable {
  public:
-  enum Column { kUpid = 0, kName = 1, kPid = 2 };
-
-  static void RegisterTable(sqlite3* db, const TraceStorage* storage);
-
-  ProcessTable(sqlite3*, const TraceStorage*);
-
-  // Table implementation.
-  base::Optional<Table::Schema> Init(int, const char* const*) override;
-  std::unique_ptr<Table::Cursor> CreateCursor(const QueryConstraints&,
-                                              sqlite3_value**) override;
-  int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
-
- private:
-  class Cursor : public Table::Cursor {
+  enum Column {
+    kUpid = 0,
+    kName = 1,
+    kPid = 2,
+    kStartTs = 3,
+    kEndTs = 4,
+    kParentUpid = 5,
+    kUid = 6
+  };
+  class Cursor : public SqliteTable::Cursor {
    public:
-    Cursor(const TraceStorage*, const QueryConstraints&, sqlite3_value**);
+    Cursor(ProcessTable*);
 
     // Implementation of Table::Cursor.
+    int Filter(const QueryConstraints&,
+               sqlite3_value**,
+               FilterHistory) override;
     int Next() override;
     int Eof() override;
     int Column(sqlite3_context*, int N) override;
 
    private:
     const TraceStorage* const storage_;
-    UniquePid min;
-    UniquePid max;
-    UniquePid current;
-    bool desc;
+    UniquePid min_ = 0;
+    UniquePid max_ = 0;
+    uint32_t index_ = 0;
+    bool desc_ = false;
   };
 
+  static void RegisterTable(sqlite3* db, const TraceStorage* storage);
+
+  ProcessTable(sqlite3*, const TraceStorage*);
+
+  // Table implementation.
+  util::Status Init(int, const char* const*, SqliteTable::Schema*) override;
+  std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
+  int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+
+ private:
   const TraceStorage* const storage_;
 };
 }  // namespace trace_processor

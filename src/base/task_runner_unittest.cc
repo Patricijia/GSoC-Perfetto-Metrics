@@ -14,22 +14,17 @@
  * limitations under the License.
  */
 
-#include "perfetto/base/unix_task_runner.h"
-
-#include "gtest/gtest.h"
-#include "perfetto/base/build_config.h"
-#include "perfetto/base/scoped_file.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_EMBEDDER_BUILD)
-#include "perfetto/base/android_task_runner.h"
-#endif
+#include "perfetto/ext/base/unix_task_runner.h"
 
 #include <thread>
 
-#include "perfetto/base/file_utils.h"
-#include "perfetto/base/pipe.h"
+#include "perfetto/base/build_config.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/pipe.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/utils.h"
 #include "src/base/test/gtest_test_suite.h"
+#include "test/gtest_and_gmock.h"
 
 namespace perfetto {
 namespace base {
@@ -41,12 +36,7 @@ class TaskRunnerTest : public ::testing::Test {
   T task_runner;
 };
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_EMBEDDER_BUILD)
-using TaskRunnerTypes = ::testing::Types<AndroidTaskRunner, UnixTaskRunner>;
-#else
 using TaskRunnerTypes = ::testing::Types<UnixTaskRunner>;
-#endif
 
 TYPED_TEST_SUITE(TaskRunnerTest, TaskRunnerTypes);
 

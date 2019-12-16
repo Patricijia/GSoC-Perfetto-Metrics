@@ -18,53 +18,60 @@
 
 #include <string.h>
 
-#include "gmock/gmock.h"
-#include "gtest/gtest.h"
-#include "perfetto/base/file_utils.h"
-#include "perfetto/base/temp_file.h"
-#include "perfetto/base/utils.h"
-#include "perfetto/tracing/core/consumer.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/temp_file.h"
+#include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/tracing/core/consumer.h"
+#include "perfetto/ext/tracing/core/producer.h"
+#include "perfetto/ext/tracing/core/shared_memory.h"
+#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "perfetto/tracing/core/producer.h"
-#include "perfetto/tracing/core/shared_memory.h"
-#include "perfetto/tracing/core/trace_packet.h"
-#include "perfetto/tracing/core/trace_writer.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/tracing/core/shared_memory_arbiter_impl.h"
 #include "src/tracing/core/trace_writer_impl.h"
 #include "src/tracing/test/mock_consumer.h"
 #include "src/tracing/test/mock_producer.h"
 #include "src/tracing/test/test_shared_memory.h"
+#include "test/gtest_and_gmock.h"
 
-#include "perfetto/trace/test_event.pbzero.h"
-#include "perfetto/trace/trace.pb.h"
-#include "perfetto/trace/trace_packet.pb.h"
-#include "perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/trace/test_event.pbzero.h"
+#include "protos/perfetto/trace/trace.pb.h"
+#include "protos/perfetto/trace/trace_packet.pb.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 using ::testing::_;
+using ::testing::AssertionFailure;
+using ::testing::AssertionResult;
+using ::testing::AssertionSuccess;
 using ::testing::Contains;
 using ::testing::ElementsAreArray;
 using ::testing::Eq;
+using ::testing::ExplainMatchResult;
 using ::testing::InSequence;
 using ::testing::Invoke;
 using ::testing::InvokeWithoutArgs;
+using ::testing::IsEmpty;
 using ::testing::Mock;
 using ::testing::Not;
 using ::testing::Property;
 using ::testing::StrictMock;
+using ::testing::StringMatchResultListener;
 
 namespace perfetto {
 
 namespace {
 constexpr size_t kDefaultShmSizeKb = TracingServiceImpl::kDefaultShmSize / 1024;
+constexpr size_t kDefaultShmPageSizeKb =
+    TracingServiceImpl::kDefaultShmPageSize / 1024;
 constexpr size_t kMaxShmSizeKb = TracingServiceImpl::kMaxShmSize / 1024;
 
-::testing::AssertionResult HasTriggerModeInternal(
+AssertionResult HasTriggerModeInternal(
     const std::vector<protos::TracePacket>& packets,
     protos::TraceConfig::TriggerConfig::TriggerMode mode) {
-  ::testing::StringMatchResultListener matcher_result_string;
-  bool contains = ::testing::ExplainMatchResult(
+  StringMatchResultListener matcher_result_string;
+  bool contains = ExplainMatchResult(
       Contains(Property(
           &protos::TracePacket::trace_config,
           Property(&protos::TraceConfig::trigger_config,
@@ -72,9 +79,9 @@ constexpr size_t kMaxShmSizeKb = TracingServiceImpl::kMaxShmSize / 1024;
                             Eq(mode))))),
       packets, &matcher_result_string);
   if (contains) {
-    return ::testing::AssertionSuccess();
+    return AssertionSuccess();
   }
-  return ::testing::AssertionFailure() << matcher_result_string.str();
+  return AssertionFailure() << matcher_result_string.str();
 }
 
 MATCHER_P(HasTriggerMode, mode, "") {
@@ -186,6 +193,35 @@ class TracingServiceImplTest : public testing::Test {
   std::unique_ptr<TracingServiceImpl> svc;
 };
 
+TEST_F(TracingServiceImplTest, AtMostOneConfig) {
+  std::unique_ptr<MockConsumer> consumer_a = CreateMockConsumer();
+  std::unique_ptr<MockConsumer> consumer_b = CreateMockConsumer();
+
+  consumer_a->Connect(svc.get());
+  consumer_b->Connect(svc.get());
+
+  TraceConfig trace_config_a;
+  trace_config_a.add_buffers()->set_size_kb(128);
+  trace_config_a.set_duration_ms(0);
+  trace_config_a.set_unique_session_name("foo");
+
+  TraceConfig trace_config_b;
+  trace_config_b.add_buffers()->set_size_kb(128);
+  trace_config_b.set_duration_ms(0);
+  trace_config_b.set_unique_session_name("foo");
+
+  consumer_a->EnableTracing(trace_config_a);
+  consumer_b->EnableTracing(trace_config_b);
+
+  // This will stop immediately since it has the same unique session name.
+  consumer_b->WaitForTracingDisabled();
+
+  consumer_a->DisableTracing();
+  consumer_a->WaitForTracingDisabled();
+
+  EXPECT_THAT(consumer_b->ReadBuffers(), IsEmpty());
+}
+
 TEST_F(TracingServiceImplTest, RegisterAndUnregister) {
   std::unique_ptr<MockProducer> mock_producer_1 = CreateMockProducer();
   std::unique_ptr<MockProducer> mock_producer_2 = CreateMockProducer();
@@ -290,7 +326,7 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerDeferredStart) {
 
   ASSERT_EQ(1u, tracing_session()->received_triggers.size());
   EXPECT_EQ("trigger_name",
-            tracing_session()->received_triggers[0].second.name());
+            tracing_session()->received_triggers[0].trigger_name);
 
   EXPECT_THAT(
       consumer->ReadBuffers(),
@@ -335,7 +371,7 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerTimeOut) {
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 }
 
 // Creates a tracing session with a START_TRACING trigger and checks that
@@ -383,7 +419,7 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerDifferentProducer) {
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 }
 
 // Creates a tracing session with a START_TRACING trigger and checks that the
@@ -475,7 +511,7 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerDifferentTrigger) {
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 }
 
 // Creates a tracing session with a START_TRACING trigger and checks that any
@@ -506,9 +542,6 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTriggers) {
   producer->WaitForTracingSetup();
 
   producer->WaitForDataSourceSetup("ds_1");
-
-  // Make sure we don't get unexpected DataSourceStart() notifications yet.
-  task_runner.RunUntilIdle();
 
   std::vector<std::string> req;
   req.push_back("not_correct_trigger");
@@ -559,9 +592,6 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
 
   producer->WaitForDataSourceSetup("ds_1");
 
-  // Make sure we don't get unexpected DataSourceStart() notifications yet from
-  // consumer_1.
-  task_runner.RunUntilIdle();
   auto tracing_session_1_id = GetTracingSessionID();
 
   (*trace_config.mutable_data_sources())[0].mutable_config()->set_name("ds_2");
@@ -573,9 +603,6 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
 
   producer->WaitForDataSourceSetup("ds_2");
 
-  // Make sure we don't get unexpected DataSourceStart() notifications yet from
-  // consumer_2.
-  task_runner.RunUntilIdle();
   auto tracing_session_2_id = GetTracingSessionID();
   EXPECT_NE(tracing_session_1_id, tracing_session_2_id);
 
@@ -597,7 +624,7 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
   auto* tracing_session_1 = GetTracingSession(tracing_session_1_id);
   ASSERT_EQ(1u, tracing_session_1->received_triggers.size());
   EXPECT_EQ("trigger_name",
-            tracing_session_1->received_triggers[0].second.name());
+            tracing_session_1->received_triggers[0].trigger_name);
 
   // This is actually dependent on the order in which the triggers were received
   // but there isn't really a better way than iteration order so probably not to
@@ -606,13 +633,10 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
   ASSERT_EQ(2u, tracing_session_2->received_triggers.size());
 
   EXPECT_EQ("trigger_name",
-            tracing_session_2->received_triggers[0].second.name());
-  EXPECT_EQ(1u, tracing_session_2->received_triggers[0].second.stop_delay_ms());
+            tracing_session_2->received_triggers[0].trigger_name);
 
   EXPECT_EQ("trigger_name_2",
-            tracing_session_2->received_triggers[1].second.name());
-  EXPECT_EQ(8.64e+7,
-            tracing_session_2->received_triggers[1].second.stop_delay_ms());
+            tracing_session_2->received_triggers[1].trigger_name);
 
   auto writer1 = producer->CreateTraceWriter("ds_1");
   auto writer2 = producer->CreateTraceWriter("ds_2");
@@ -668,6 +692,233 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
       HasTriggerMode(protos::TraceConfig::TriggerConfig::START_TRACING));
 }
 
+// Creates a tracing session with a START_TRACING trigger and checks that the
+// received_triggers are emitted as packets.
+TEST_F(TracingServiceImplTest, EmitTriggersWithStartTracingTrigger) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer", /* uid = */ 123u);
+
+  producer->RegisterDataSource("ds_1");
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  trace_config.add_data_sources()->mutable_config()->set_name("ds_1");
+  auto* trigger_config = trace_config.mutable_trigger_config();
+  trigger_config->set_trigger_mode(TraceConfig::TriggerConfig::START_TRACING);
+  auto* trigger = trigger_config->add_triggers();
+  trigger->set_name("trigger_name");
+  trigger->set_stop_delay_ms(1);
+  trigger->set_producer_name_regex("mock_produc[e-r]+");
+
+  trigger_config->set_trigger_timeout_ms(30000);
+
+  consumer->EnableTracing(trace_config);
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("ds_1");
+
+  // The trace won't start until we send the trigger since we have a
+  // START_TRACING trigger defined.
+  std::vector<std::string> req;
+  req.push_back("trigger_name");
+  req.push_back("trigger_name_2");
+  req.push_back("trigger_name_3");
+  producer->endpoint()->ActivateTriggers(req);
+
+  producer->WaitForDataSourceStart("ds_1");
+  auto writer1 = producer->CreateTraceWriter("ds_1");
+  producer->WaitForFlush(writer1.get());
+  producer->WaitForDataSourceStop("ds_1");
+  consumer->WaitForTracingDisabled();
+
+  ASSERT_EQ(1u, tracing_session()->received_triggers.size());
+  EXPECT_EQ("trigger_name",
+            tracing_session()->received_triggers[0].trigger_name);
+
+  auto packets = consumer->ReadBuffers();
+  EXPECT_THAT(
+      packets,
+      Contains(Property(
+          &protos::TracePacket::trace_config,
+          Property(
+              &protos::TraceConfig::trigger_config,
+              Property(
+                  &protos::TraceConfig::TriggerConfig::trigger_mode,
+                  Eq(protos::TraceConfig::TriggerConfig::START_TRACING))))));
+  auto expect_received_trigger = [&](const std::string& name) {
+    return Contains(AllOf(
+        Property(
+            &protos::TracePacket::trigger,
+            AllOf(Property(&protos::Trigger::trigger_name, Eq(name)),
+                  Property(&protos::Trigger::trusted_producer_uid, Eq(123)),
+                  Property(&protos::Trigger::producer_name,
+                           Eq("mock_producer")))),
+        Property(&protos::TracePacket::trusted_packet_sequence_id,
+                 Eq(kServicePacketSequenceID))));
+  };
+  EXPECT_THAT(packets, expect_received_trigger("trigger_name"));
+  EXPECT_THAT(packets, Not(expect_received_trigger("trigger_name_2")));
+  EXPECT_THAT(packets, Not(expect_received_trigger("trigger_name_3")));
+}
+
+// Creates a tracing session with a START_TRACING trigger and checks that the
+// received_triggers are emitted as packets.
+TEST_F(TracingServiceImplTest, EmitTriggersWithStopTracingTrigger) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer", /* uid = */ 321u);
+
+  producer->RegisterDataSource("ds_1");
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  trace_config.add_data_sources()->mutable_config()->set_name("ds_1");
+  auto* trigger_config = trace_config.mutable_trigger_config();
+  trigger_config->set_trigger_mode(TraceConfig::TriggerConfig::STOP_TRACING);
+  auto* trigger = trigger_config->add_triggers();
+  trigger->set_name("trigger_name");
+  trigger->set_stop_delay_ms(1);
+  trigger = trigger_config->add_triggers();
+  trigger->set_name("trigger_name_3");
+  trigger->set_stop_delay_ms(30000);
+
+  trigger_config->set_trigger_timeout_ms(30000);
+
+  consumer->EnableTracing(trace_config);
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("ds_1");
+  producer->WaitForDataSourceStart("ds_1");
+
+  // The trace won't start until we send the trigger since we have a
+  // START_TRACING trigger defined.
+  std::vector<std::string> req;
+  req.push_back("trigger_name");
+  req.push_back("trigger_name_2");
+  req.push_back("trigger_name_3");
+  producer->endpoint()->ActivateTriggers(req);
+
+  auto writer1 = producer->CreateTraceWriter("ds_1");
+  producer->WaitForFlush(writer1.get());
+  producer->WaitForDataSourceStop("ds_1");
+  consumer->WaitForTracingDisabled();
+
+  ASSERT_EQ(2u, tracing_session()->received_triggers.size());
+  EXPECT_EQ("trigger_name",
+            tracing_session()->received_triggers[0].trigger_name);
+  EXPECT_EQ("trigger_name_3",
+            tracing_session()->received_triggers[1].trigger_name);
+
+  auto packets = consumer->ReadBuffers();
+  EXPECT_THAT(
+      packets,
+      Contains(Property(
+          &protos::TracePacket::trace_config,
+          Property(
+              &protos::TraceConfig::trigger_config,
+              Property(
+                  &protos::TraceConfig::TriggerConfig::trigger_mode,
+                  Eq(protos::TraceConfig::TriggerConfig::STOP_TRACING))))));
+
+  auto expect_received_trigger = [&](const std::string& name) {
+    return Contains(AllOf(
+        Property(
+            &protos::TracePacket::trigger,
+            AllOf(Property(&protos::Trigger::trigger_name, Eq(name)),
+                  Property(&protos::Trigger::trusted_producer_uid, Eq(321)),
+                  Property(&protos::Trigger::producer_name,
+                           Eq("mock_producer")))),
+        Property(&protos::TracePacket::trusted_packet_sequence_id,
+                 Eq(kServicePacketSequenceID))));
+  };
+  EXPECT_THAT(packets, expect_received_trigger("trigger_name"));
+  EXPECT_THAT(packets, Not(expect_received_trigger("trigger_name_2")));
+  EXPECT_THAT(packets, expect_received_trigger("trigger_name_3"));
+}
+
+// Creates a tracing session with a START_TRACING trigger and checks that the
+// received_triggers are emitted as packets even ones after the initial
+// ReadBuffers() call.
+TEST_F(TracingServiceImplTest, EmitTriggersRepeatedly) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer");
+
+  // Create two data sources but enable only one of them.
+  producer->RegisterDataSource("ds_1");
+  producer->RegisterDataSource("ds_2");
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  trace_config.add_data_sources()->mutable_config()->set_name("ds_1");
+  auto* trigger_config = trace_config.mutable_trigger_config();
+  trigger_config->set_trigger_mode(TraceConfig::TriggerConfig::STOP_TRACING);
+  auto* trigger = trigger_config->add_triggers();
+  trigger->set_name("trigger_name");
+  trigger->set_stop_delay_ms(1);
+  trigger = trigger_config->add_triggers();
+  trigger->set_name("trigger_name_2");
+  trigger->set_stop_delay_ms(1);
+
+  trigger_config->set_trigger_timeout_ms(30000);
+
+  auto expect_received_trigger = [&](const std::string& name) {
+    return Contains(
+        AllOf(Property(&protos::TracePacket::trigger,
+                       AllOf(Property(&protos::Trigger::trigger_name, Eq(name)),
+                             Property(&protos::Trigger::producer_name,
+                                      Eq("mock_producer")))),
+              Property(&protos::TracePacket::trusted_packet_sequence_id,
+                       Eq(kServicePacketSequenceID))));
+  };
+
+  consumer->EnableTracing(trace_config);
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("ds_1");
+  producer->WaitForDataSourceStart("ds_1");
+
+  // The trace won't start until we send the trigger. since we have a
+  // START_TRACING trigger defined.
+  producer->endpoint()->ActivateTriggers({"trigger_name"});
+
+  auto packets = consumer->ReadBuffers();
+  EXPECT_THAT(
+      packets,
+      Contains(Property(
+          &protos::TracePacket::trace_config,
+          Property(
+              &protos::TraceConfig::trigger_config,
+              Property(
+                  &protos::TraceConfig::TriggerConfig::trigger_mode,
+                  Eq(protos::TraceConfig::TriggerConfig::STOP_TRACING))))));
+  EXPECT_THAT(packets, expect_received_trigger("trigger_name"));
+  EXPECT_THAT(packets, Not(expect_received_trigger("trigger_name_2")));
+
+  // Send a new trigger.
+  producer->endpoint()->ActivateTriggers({"trigger_name_2"});
+
+  auto writer1 = producer->CreateTraceWriter("ds_1");
+  producer->WaitForFlush(writer1.get());
+  producer->WaitForDataSourceStop("ds_1");
+  consumer->WaitForTracingDisabled();
+
+  ASSERT_EQ(2u, tracing_session()->received_triggers.size());
+  EXPECT_EQ("trigger_name",
+            tracing_session()->received_triggers[0].trigger_name);
+  EXPECT_EQ("trigger_name_2",
+            tracing_session()->received_triggers[1].trigger_name);
+
+  packets = consumer->ReadBuffers();
+  // We don't rewrite the old trigger.
+  EXPECT_THAT(packets, Not(expect_received_trigger("trigger_name")));
+  EXPECT_THAT(packets, expect_received_trigger("trigger_name_2"));
+}
+
 // Creates a tracing session with a STOP_TRACING trigger and checks that the
 // session is cleaned up after |trigger_timeout_ms|.
 TEST_F(TracingServiceImplTest, StopTracingTriggerTimeout) {
@@ -702,7 +953,7 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerTimeout) {
   producer->WaitForDataSourceStart("ds_1");
 
   // The trace won't return data until unless we send a trigger at this point.
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 
   auto writer = producer->CreateTraceWriter("ds_1");
   producer->WaitForFlush(writer.get());
@@ -711,7 +962,7 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerTimeout) {
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 }
 
 // Creates a tracing session with a STOP_TRACING trigger and checks that the
@@ -745,16 +996,14 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerRingBuffer) {
   producer->WaitForDataSourceSetup("ds_1");
   producer->WaitForDataSourceStart("ds_1");
 
-  task_runner.RunUntilIdle();
-
   // The trace won't return data until unless we send a trigger at this point.
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 
   // We write into the buffer a large packet which takes up the whole buffer. We
   // then add a bunch of smaller ones which causes the larger packet to be
   // dropped. After we activate the session we should only see a bunch of the
   // smaller ones.
-  static const int kNumTestPackets = 10;
+  static const size_t kNumTestPackets = 10;
   static const char kPayload[] = "1234567890abcdef-";
 
   auto writer = producer->CreateTraceWriter("ds_1");
@@ -767,7 +1016,7 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerRingBuffer) {
   }
 
   // Now we add a bunch of data before the trigger and after.
-  for (int i = 0; i < kNumTestPackets; i++) {
+  for (size_t i = 0; i < kNumTestPackets; i++) {
     if (i == kNumTestPackets / 2) {
       std::vector<std::string> req;
       req.push_back("trigger_name");
@@ -782,21 +1031,19 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerRingBuffer) {
 
   ASSERT_EQ(1u, tracing_session()->received_triggers.size());
   EXPECT_EQ("trigger_name",
-            tracing_session()->received_triggers[0].second.name());
+            tracing_session()->received_triggers[0].trigger_name);
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
-  // There are 5 preample packets plus the kNumTestPackets we wrote out. The
-  // large_payload one should be overwritten.
-  static const uint32_t kNumPreamblePackets = 5;
+
   auto packets = consumer->ReadBuffers();
-  EXPECT_EQ(kNumTestPackets + kNumPreamblePackets, packets.size());
+  EXPECT_LT(kNumTestPackets, packets.size());
   // We expect for the TraceConfig preamble packet to be there correctly and
   // then we expect each payload to be there, but not the |large_payload|
   // packet.
   EXPECT_THAT(packets,
               HasTriggerMode(protos::TraceConfig::TriggerConfig::STOP_TRACING));
-  for (int i = 0; i < kNumTestPackets; i++) {
+  for (size_t i = 0; i < kNumTestPackets; i++) {
     std::string payload = kPayload;
     payload += std::to_string(i);
     EXPECT_THAT(packets, Contains(Property(
@@ -806,10 +1053,9 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerRingBuffer) {
 
   // The large payload was overwritten before we trigger and ReadBuffers so it
   // should not be in the returned data.
-  EXPECT_THAT(packets,
-              ::testing::Not(Contains(Property(
-                  &protos::TracePacket::for_testing,
-                  Property(&protos::TestEvent::str, Eq(large_payload))))));
+  EXPECT_THAT(packets, Not(Contains(Property(&protos::TracePacket::for_testing,
+                                             Property(&protos::TestEvent::str,
+                                                      Eq(large_payload))))));
 }
 
 // Creates a tracing session with a STOP_TRACING trigger and checks that the
@@ -845,10 +1091,8 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerMultipleTriggers) {
   producer->WaitForDataSourceSetup("ds_1");
   producer->WaitForDataSourceStart("ds_1");
 
-  task_runner.RunUntilIdle();
-
   // The trace won't return data until unless we send a trigger at this point.
-  EXPECT_THAT(consumer->ReadBuffers(), ::testing::IsEmpty());
+  EXPECT_THAT(consumer->ReadBuffers(), IsEmpty());
 
   std::vector<std::string> req;
   req.push_back("trigger_name");
@@ -861,9 +1105,9 @@ TEST_F(TracingServiceImplTest, StopTracingTriggerMultipleTriggers) {
 
   ASSERT_EQ(2u, tracing_session()->received_triggers.size());
   EXPECT_EQ("trigger_name",
-            tracing_session()->received_triggers[0].second.name());
+            tracing_session()->received_triggers[0].trigger_name);
   EXPECT_EQ("trigger_name_2",
-            tracing_session()->received_triggers[1].second.name());
+            tracing_session()->received_triggers[1].trigger_name);
 
   producer->WaitForDataSourceStop("ds_1");
   consumer->WaitForTracingDisabled();
@@ -883,8 +1127,7 @@ TEST_F(TracingServiceImplTest, LockdownMode) {
   trace_config.add_buffers()->set_size_kb(128);
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
   ds_config->set_name("data_source");
-  trace_config.set_lockdown_mode(
-      TraceConfig::LockdownModeOperation::LOCKDOWN_SET);
+  trace_config.set_lockdown_mode(TraceConfig::LOCKDOWN_SET);
   consumer->EnableTracing(trace_config);
 
   producer->WaitForTracingSetup();
@@ -903,8 +1146,7 @@ TEST_F(TracingServiceImplTest, LockdownMode) {
   producer->WaitForDataSourceStop("data_source");
   consumer->WaitForTracingDisabled();
 
-  trace_config.set_lockdown_mode(
-      TraceConfig::LockdownModeOperation::LOCKDOWN_CLEAR);
+  trace_config.set_lockdown_mode(TraceConfig::LOCKDOWN_CLEAR);
   consumer->EnableTracing(trace_config);
   producer->WaitForDataSourceSetup("data_source");
   producer->WaitForDataSourceStart("data_source");
@@ -1102,11 +1344,13 @@ TEST_F(TracingServiceImplTest, WriteIntoFileAndStopOnMaxSize) {
   producer->WaitForDataSourceStart("data_source");
 
   // The preamble packets are:
+  // Trace start clocksnapshot
   // Config
   // SystemInfo
-  // 3x unknown
+  // Trace read clocksnapshot
+  // Trace synchronisation
   static const int kNumPreamblePackets = 5;
-  static const int kNumTestPackets = 10;
+  static const int kNumTestPackets = 9;
   static const char kPayload[] = "1234567890abcdef-";
 
   std::unique_ptr<TraceWriter> writer =
@@ -1154,8 +1398,20 @@ TEST_F(TracingServiceImplTest, WriteIntoFileAndStopOnMaxSize) {
 TEST_F(TracingServiceImplTest, ProducerShmAndPageSizeOverriddenByTraceConfig) {
   std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
   consumer->Connect(svc.get());
-  const size_t kConfigPageSizesKb[] = /****/ {16, 16, 4, 0, 16, 8, 3, 4096, 4};
-  const size_t kExpectedPageSizesKb[] = /**/ {16, 16, 4, 4, 16, 8, 4, 64, 4};
+  const size_t kMaxPageSizeKb = SharedMemoryABI::kMaxPageSize / 1024;
+  const size_t kConfigPageSizesKb[] = /**/ {16, 0, 3, 2, 16, 8, 0, 4096, 0};
+  const size_t kPageHintSizesKb[] = /****/ {0, 4, 0, 0, 8, 0, 4096, 0, 0};
+  const size_t kExpectedPageSizesKb[] = {
+      16,                     // Use config value.
+      4,                      // Config is 0, use hint.
+      kDefaultShmPageSizeKb,  // Config % 4 != 0, take default.
+      kDefaultShmPageSizeKb,  // Less than page size, take default.
+      16,                     // Ignore the hint.
+      8,                      // Use config value.
+      kMaxPageSizeKb,         // Hint too big, take max value.
+      kMaxPageSizeKb,         // Config too high, take max value.
+      4                       // Fallback to default.
+  };
 
   const size_t kConfigSizesKb[] = /**/ {0, 16, 0, 20, 32, 7, 0, 96, 4096000};
   const size_t kHintSizesKb[] = /****/ {0, 0, 16, 32, 16, 0, 7, 96, 4096000};
@@ -1176,7 +1432,8 @@ TEST_F(TracingServiceImplTest, ProducerShmAndPageSizeOverriddenByTraceConfig) {
   for (size_t i = 0; i < kNumProducers; i++) {
     auto name = "mock_producer_" + std::to_string(i);
     producer[i] = CreateMockProducer();
-    producer[i]->Connect(svc.get(), name, geteuid(), kHintSizesKb[i] * 1024);
+    producer[i]->Connect(svc.get(), name, geteuid(), kHintSizesKb[i] * 1024,
+                         kPageHintSizesKb[i] * 1024);
     producer[i]->RegisterDataSource("data_source");
   }
 
@@ -1323,7 +1580,7 @@ TEST_F(TracingServiceImplTest, BatchFlushes) {
   ASSERT_EQ(4u, GetNumPendingFlushes());
 
   // Make the producer reply only to the 3rd flush request.
-  testing::InSequence seq;
+  InSequence seq;
   producer->WaitForFlush(nullptr, /*reply=*/false);  // Do NOT reply to flush 1.
   producer->WaitForFlush(nullptr, /*reply=*/false);  // Do NOT reply to flush 2.
   producer->WaitForFlush(writer.get());              // Reply only to flush 3.
@@ -1399,6 +1656,83 @@ TEST_F(TracingServiceImplTest, PeriodicFlush) {
                 Contains(Property(&protos::TracePacket::for_testing,
                                   Property(&protos::TestEvent::str,
                                            Eq("f_" + std::to_string(i))))));
+  }
+}
+
+TEST_F(TracingServiceImplTest, PeriodicClearIncrementalState) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer");
+
+  // Incremental data source that expects to receive the clear.
+  producer->RegisterDataSource("ds_incremental1", false, false,
+                               /*handles_incremental_state_clear=*/true);
+
+  // Incremental data source that expects to receive the clear.
+  producer->RegisterDataSource("ds_incremental2", false, false,
+                               /*handles_incremental_state_clear=*/true);
+
+  // Data source that does *not* advertise itself as supporting incremental
+  // state clears.
+  producer->RegisterDataSource("ds_selfcontained", false, false,
+                               /*handles_incremental_state_clear=*/false);
+
+  // Incremental data source that is registered, but won't be active within the
+  // test's tracing session.
+  producer->RegisterDataSource("ds_inactive", false, false,
+                               /*handles_incremental_state_clear=*/true);
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  trace_config.mutable_incremental_state_config()->set_clear_period_ms(1);
+  trace_config.add_data_sources()->mutable_config()->set_name(
+      "ds_selfcontained");
+  trace_config.add_data_sources()->mutable_config()->set_name(
+      "ds_incremental1");
+  trace_config.add_data_sources()->mutable_config()->set_name(
+      "ds_incremental2");
+
+  // note: the mocking is very brittle, and has to assume a specific order of
+  // the data sources' setup/start.
+  consumer->EnableTracing(trace_config);
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("ds_selfcontained");
+  producer->WaitForDataSourceSetup("ds_incremental1");
+  producer->WaitForDataSourceSetup("ds_incremental2");
+  producer->WaitForDataSourceStart("ds_selfcontained");
+  producer->WaitForDataSourceStart("ds_incremental1");
+  producer->WaitForDataSourceStart("ds_incremental2");
+
+  DataSourceInstanceID ds_incremental1 =
+      producer->GetDataSourceInstanceId("ds_incremental1");
+  DataSourceInstanceID ds_incremental2 =
+      producer->GetDataSourceInstanceId("ds_incremental2");
+
+  const size_t kNumClears = 3;
+  std::function<void()> checkpoint =
+      task_runner.CreateCheckpoint("clears_received");
+  std::vector<std::vector<DataSourceInstanceID>> clears_seen;
+  EXPECT_CALL(*producer, ClearIncrementalState(_, _))
+      .WillRepeatedly(Invoke([&clears_seen, &checkpoint](
+                                 const DataSourceInstanceID* data_source_ids,
+                                 size_t num_data_sources) {
+        std::vector<DataSourceInstanceID> ds_ids;
+        for (size_t i = 0; i < num_data_sources; i++) {
+          ds_ids.push_back(*data_source_ids++);
+        }
+        clears_seen.push_back(ds_ids);
+        if (clears_seen.size() >= kNumClears)
+          checkpoint();
+      }));
+  task_runner.RunUntilCheckpoint("clears_received");
+
+  consumer->DisableTracing();
+
+  // Assert that the clears were only for the active incremental data sources.
+  ASSERT_EQ(clears_seen.size(), kNumClears);
+  for (const std::vector<DataSourceInstanceID>& ds_ids : clears_seen) {
+    ASSERT_THAT(ds_ids, ElementsAreArray({ds_incremental1, ds_incremental2}));
   }
 }
 
@@ -1523,7 +1857,6 @@ TEST_F(TracingServiceImplTest, OnDataSourceAddedWhilePendingDisableAcks) {
 // skips the ack and checks that the service invokes the OnTracingDisabled()
 // after the timeout.
 TEST_F(TracingServiceImplTest, OnTracingDisabledCalledAnywaysInCaseOfTimeout) {
-  svc->override_data_source_test_timeout_ms_for_testing = 1;
   std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
   consumer->Connect(svc.get());
 
@@ -1535,6 +1868,7 @@ TEST_F(TracingServiceImplTest, OnTracingDisabledCalledAnywaysInCaseOfTimeout) {
   trace_config.add_buffers()->set_size_kb(128);
   trace_config.add_data_sources()->mutable_config()->set_name("data_source");
   trace_config.set_duration_ms(1);
+  trace_config.set_data_source_stop_timeout_ms(1);
 
   consumer->EnableTracing(trace_config);
   producer->WaitForTracingSetup();
@@ -1564,7 +1898,7 @@ TEST_F(TracingServiceImplTest, SessionId) {
   producer2->Connect(svc.get(), "mock_producer2");
   producer2->RegisterDataSource("ds_2A");
 
-  testing::InSequence seq;
+  InSequence seq;
   TracingSessionID last_session_id = 0;
   for (int i = 0; i < 3; i++) {
     TraceConfig trace_config;
@@ -2114,6 +2448,62 @@ TEST_F(TracingServiceImplTest, ScrapeBuffersOnFlush) {
   consumer->WaitForTracingDisabled();
 }
 
+TEST_F(TracingServiceImplTest, ScrapeBuffersFromAnotherThread) {
+  // This test verifies that there are no reported TSAN races while scraping
+  // buffers from a producer which is actively writing more trace data
+  // concurrently.
+  svc->SetSMBScrapingEnabled(true);
+
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer");
+  ProducerID producer_id = *last_producer_id();
+  producer->RegisterDataSource("data_source");
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("data_source");
+  ds_config->set_target_buffer(0);
+  consumer->EnableTracing(trace_config);
+
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("data_source");
+  producer->WaitForDataSourceStart("data_source");
+  consumer->StartTracing();
+
+  std::unique_ptr<TraceWriter> writer = producer->endpoint()->CreateTraceWriter(
+      tracing_session()->buffers_index[0]);
+  WaitForTraceWritersChanged(producer_id);
+
+  constexpr int kPacketCount = 10;
+  std::atomic<int> packets_written{};
+  std::thread writer_thread([&] {
+    for (int i = 0; i < kPacketCount; i++) {
+      writer->NewTracePacket()->set_for_testing()->set_str("payload");
+      packets_written.store(i, std::memory_order_relaxed);
+    }
+  });
+
+  // Wait until the thread has had some time to write some packets.
+  while (packets_written.load(std::memory_order_relaxed) < kPacketCount / 2)
+    base::SleepMicroseconds(5000);
+
+  // Disabling tracing will trigger scraping.
+  consumer->DisableTracing();
+  writer_thread.join();
+
+  // Because we don't synchronize with the producer thread, we can't make any
+  // guarantees about the number of packets we will successfully read. We just
+  // verify that no TSAN races are reported.
+  consumer->ReadBuffers();
+
+  producer->WaitForDataSourceStop("data_source");
+  consumer->WaitForTracingDisabled();
+}
+
 // Test scraping on producer disconnect.
 TEST_F(TracingServiceImplTest, ScrapeBuffersOnProducerDisconnect) {
   svc->SetSMBScrapingEnabled(true);
@@ -2311,8 +2701,7 @@ TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstances) {
     ObservableEvents::DataSourceInstanceStateChange change;
     change.set_producer_name("mock_producer");
     change.set_data_source_name("data_source");
-    change.set_state(ObservableEvents::DataSourceInstanceStateChange::
-                         DATA_SOURCE_INSTANCE_STATE_STARTED);
+    change.set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STARTED);
     EXPECT_EQ(events.instance_state_changes_size(), 1);
     EXPECT_THAT(events.instance_state_changes(), Contains(Eq(change)));
   }
@@ -2326,8 +2715,7 @@ TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstances) {
     ObservableEvents::DataSourceInstanceStateChange change;
     change.set_producer_name("mock_producer");
     change.set_data_source_name("data_source");
-    change.set_state(ObservableEvents::DataSourceInstanceStateChange::
-                         DATA_SOURCE_INSTANCE_STATE_STOPPED);
+    change.set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STOPPED);
     EXPECT_EQ(events.instance_state_changes_size(), 1);
     EXPECT_THAT(events.instance_state_changes(), Contains(Eq(change)));
   }
@@ -2347,8 +2735,7 @@ TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstances) {
     ObservableEvents::DataSourceInstanceStateChange change;
     change.set_producer_name("mock_producer");
     change.set_data_source_name("data_source");
-    change.set_state(ObservableEvents::DataSourceInstanceStateChange::
-                         DATA_SOURCE_INSTANCE_STATE_STOPPED);
+    change.set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STOPPED);
     EXPECT_EQ(events.instance_state_changes_size(), 1);
     EXPECT_THAT(events.instance_state_changes(), Contains(Eq(change)));
   }
@@ -2364,8 +2751,7 @@ TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstances) {
     ObservableEvents::DataSourceInstanceStateChange change;
     change.set_producer_name("mock_producer");
     change.set_data_source_name("data_source");
-    change.set_state(ObservableEvents::DataSourceInstanceStateChange::
-                         DATA_SOURCE_INSTANCE_STATE_STARTED);
+    change.set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STARTED);
     EXPECT_EQ(events.instance_state_changes_size(), 1);
     EXPECT_THAT(events.instance_state_changes(), Contains(Eq(change)));
   }
@@ -2380,6 +2766,112 @@ TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstances) {
   consumer->DisableTracing();
   producer->WaitForDataSourceStop("data_source");
   consumer->WaitForTracingDisabled();
+}
+
+TEST_F(TracingServiceImplTest, ObserveEventsDataSourceInstancesUnregister) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer = CreateMockProducer();
+  producer->Connect(svc.get(), "mock_producer");
+  producer->RegisterDataSource("data_source");
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("data_source");
+
+  // Start tracing before the consumer is interested in events. The consumer's
+  // OnObservableEvents() should not be called yet.
+  consumer->EnableTracing(trace_config);
+  producer->WaitForTracingSetup();
+  producer->WaitForDataSourceSetup("data_source");
+  producer->WaitForDataSourceStart("data_source");
+
+  // Calling ObserveEvents should cause an event for the initial instance state.
+  consumer->ObserveEvents(TracingService::ConsumerEndpoint::
+                              ObservableEventType::kDataSourceInstances);
+  {
+    ObservableEvents event;
+    ObservableEvents::DataSourceInstanceStateChange* change =
+        event.add_instance_state_changes();
+    change->set_producer_name("mock_producer");
+    change->set_data_source_name("data_source");
+    change->set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STARTED);
+    EXPECT_CALL(*consumer, OnObservableEvents(Eq(event)))
+        .WillOnce(InvokeWithoutArgs(
+            task_runner.CreateCheckpoint("data_source_started")));
+
+    task_runner.RunUntilCheckpoint("data_source_started");
+  }
+  {
+    ObservableEvents event;
+    ObservableEvents::DataSourceInstanceStateChange* change =
+        event.add_instance_state_changes();
+    change->set_producer_name("mock_producer");
+    change->set_data_source_name("data_source");
+    change->set_state(ObservableEvents::DATA_SOURCE_INSTANCE_STATE_STOPPED);
+    EXPECT_CALL(*consumer, OnObservableEvents(Eq(event)))
+        .WillOnce(InvokeWithoutArgs(
+            task_runner.CreateCheckpoint("data_source_stopped")));
+  }
+  producer->UnregisterDataSource("data_source");
+  producer->WaitForDataSourceStop("data_source");
+  task_runner.RunUntilCheckpoint("data_source_stopped");
+
+  consumer->DisableTracing();
+  consumer->WaitForTracingDisabled();
+}
+
+TEST_F(TracingServiceImplTest, QueryServiceState) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  std::unique_ptr<MockProducer> producer1 = CreateMockProducer();
+  producer1->Connect(svc.get(), "producer1");
+
+  std::unique_ptr<MockProducer> producer2 = CreateMockProducer();
+  producer2->Connect(svc.get(), "producer2");
+
+  producer1->RegisterDataSource("common_ds");
+  producer2->RegisterDataSource("common_ds");
+
+  producer1->RegisterDataSource("p1_ds");
+  producer2->RegisterDataSource("p2_ds");
+
+  TracingServiceState svc_state = consumer->QueryServiceState();
+
+  EXPECT_EQ(svc_state.producers_size(), 2);
+  EXPECT_EQ(svc_state.producers().at(0).id(), 1);
+  EXPECT_EQ(svc_state.producers().at(0).name(), "producer1");
+  EXPECT_EQ(svc_state.producers().at(1).id(), 2);
+  EXPECT_EQ(svc_state.producers().at(1).name(), "producer2");
+
+  EXPECT_EQ(svc_state.data_sources_size(), 4);
+
+  EXPECT_EQ(svc_state.data_sources().at(0).producer_id(), 1);
+  EXPECT_EQ(svc_state.data_sources().at(0).ds_descriptor().name(), "common_ds");
+
+  EXPECT_EQ(svc_state.data_sources().at(1).producer_id(), 2);
+  EXPECT_EQ(svc_state.data_sources().at(1).ds_descriptor().name(), "common_ds");
+
+  EXPECT_EQ(svc_state.data_sources().at(2).producer_id(), 1);
+  EXPECT_EQ(svc_state.data_sources().at(2).ds_descriptor().name(), "p1_ds");
+
+  EXPECT_EQ(svc_state.data_sources().at(3).producer_id(), 2);
+  EXPECT_EQ(svc_state.data_sources().at(3).ds_descriptor().name(), "p2_ds");
+
+  // Test that descriptors are cleared when a producer disconnects.
+  producer1.reset();
+  svc_state = consumer->QueryServiceState();
+
+  EXPECT_EQ(svc_state.producers_size(), 1);
+  EXPECT_EQ(svc_state.data_sources_size(), 2);
+
+  EXPECT_EQ(svc_state.data_sources().at(0).producer_id(), 2);
+  EXPECT_EQ(svc_state.data_sources().at(0).ds_descriptor().name(), "common_ds");
+  EXPECT_EQ(svc_state.data_sources().at(1).producer_id(), 2);
+  EXPECT_EQ(svc_state.data_sources().at(1).ds_descriptor().name(), "p2_ds");
 }
 
 }  // namespace perfetto

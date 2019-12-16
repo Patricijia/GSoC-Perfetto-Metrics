@@ -16,9 +16,10 @@
 
 #include "src/tracing/test/mock_producer.h"
 
+#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "perfetto/tracing/core/trace_writer.h"
 #include "src/base/test/test_task_runner.h"
 
 using ::testing::_;
@@ -46,10 +47,13 @@ MockProducer::~MockProducer() {
 void MockProducer::Connect(TracingService* svc,
                            const std::string& producer_name,
                            uid_t uid,
-                           size_t shared_memory_size_hint_bytes) {
+                           size_t shared_memory_size_hint_bytes,
+                           size_t shared_memory_page_size_hint_bytes) {
   producer_name_ = producer_name;
-  service_endpoint_ = svc->ConnectProducer(this, uid, producer_name,
-                                           shared_memory_size_hint_bytes);
+  service_endpoint_ = svc->ConnectProducer(
+      this, uid, producer_name, shared_memory_size_hint_bytes,
+      /*in_process=*/true, TracingService::ProducerSMBScrapingMode::kDefault,
+      shared_memory_page_size_hint_bytes);
   auto checkpoint_name = "on_producer_connect_" + producer_name;
   auto on_connect = task_runner_->CreateCheckpoint(checkpoint_name);
   EXPECT_CALL(*this, OnConnect()).WillOnce(Invoke(on_connect));
@@ -58,11 +62,13 @@ void MockProducer::Connect(TracingService* svc,
 
 void MockProducer::RegisterDataSource(const std::string& name,
                                       bool ack_stop,
-                                      bool ack_start) {
+                                      bool ack_start,
+                                      bool handle_incremental_state_clear) {
   DataSourceDescriptor ds_desc;
   ds_desc.set_name(name);
   ds_desc.set_will_notify_on_stop(ack_stop);
   ds_desc.set_will_notify_on_start(ack_start);
+  ds_desc.set_handles_incremental_state_clear(handle_incremental_state_clear);
   service_endpoint_->RegisterDataSource(ds_desc);
 }
 

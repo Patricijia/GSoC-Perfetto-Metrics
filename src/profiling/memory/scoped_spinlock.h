@@ -18,7 +18,7 @@
 #define SRC_PROFILING_MEMORY_SCOPED_SPINLOCK_H_
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/utils.h"
+#include "perfetto/ext/base/utils.h"
 
 #include <atomic>
 #include <new>
@@ -29,7 +29,12 @@ namespace profiling {
 
 class ScopedSpinlock {
  public:
-  enum class Mode { Try, Blocking };
+  enum class Mode {
+    // Try for a fixed number of attempts, then return an unlocked handle.
+    Try,
+    // Keep spinning until successful.
+    Blocking
+  };
 
   ScopedSpinlock(std::atomic<bool>* lock, Mode mode) : lock_(lock) {
     if (PERFETTO_LIKELY(!lock_->exchange(true, std::memory_order_acquire))) {

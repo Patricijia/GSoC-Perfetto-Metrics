@@ -17,24 +17,18 @@ import {Patch, produce} from 'immer';
 import {assertExists} from '../base/logging';
 import {Remote} from '../base/remote';
 import {DeferredAction, StateActions} from '../common/actions';
-import {Engine} from '../common/engine';
 import {createEmptyState, State} from '../common/state';
-import {
-  createWasmEngine,
-  destroyWasmEngine,
-  WasmEngineProxy
-} from '../common/wasm_engine_proxy';
-
 import {ControllerAny} from './controller';
 
+type PublishKinds = 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|
+    'LegacyTrace'|'SliceDetails'|'CounterDetails'|'HeapProfileDetails'|
+    'HeapProfileFlamegraph'|'FileDownload'|'Loading'|'Search'|'BufferUsage'|
+    'RecordingLog'|'SearchResult';
 
 export interface App {
   state: State;
   dispatch(action: DeferredAction): void;
-  publish(
-      what: 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|'LegacyTrace'|
-            'SliceDetails',
-      data: {}, transferList?: Array<{}>): void;
+  publish(what: PublishKinds, data: {}, transferList?: Array<{}>): void;
 }
 
 /**
@@ -91,21 +85,8 @@ class Globals implements App {
     assertExists(this._frontend).send<void>('patchState', [patches]);
   }
 
-  createEngine(): Engine {
-    const id = new Date().toUTCString();
-    const portAndId = {id, worker: createWasmEngine(id)};
-    return new WasmEngineProxy(portAndId);
-  }
-
-  destroyEngine(id: string): void {
-    destroyWasmEngine(id);
-  }
-
   // TODO: this needs to be cleaned up.
-  publish(
-      what: 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|'LegacyTrace'|
-            'SliceDetails',
-      data: {}, transferList?: Transferable[]) {
+  publish(what: PublishKinds, data: {}, transferList?: Transferable[]) {
     assertExists(this._frontend)
         .send<void>(`publish${what}`, [data], transferList);
   }

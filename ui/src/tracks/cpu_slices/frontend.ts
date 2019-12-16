@@ -15,8 +15,9 @@
 import {search, searchEq} from '../../base/binary_search';
 import {assertTrue} from '../../base/logging';
 import {Actions} from '../../common/actions';
+import {cropText, drawDoubleHeadedArrow} from '../../common/canvas_utils';
 import {TrackState} from '../../common/state';
-import {cropText} from '../../common/track_utils';
+import {timeToString} from '../../common/time';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {colorForThread, hueForCpu} from '../../frontend/colorizer';
 import {globals} from '../../frontend/globals';
@@ -31,9 +32,10 @@ import {
   SummaryData
 } from './common';
 
-
-const MARGIN_TOP = 5;
-const RECT_HEIGHT = 30;
+const MARGIN_TOP = 3;
+const RECT_HEIGHT = 24;
+const TRACK_HEIGHT = MARGIN_TOP * 2 + RECT_HEIGHT;
+const SUMMARY_HEIGHT = TRACK_HEIGHT - MARGIN_TOP;
 
 class CpuSliceTrack extends Track<Config, Data> {
   static readonly kind = CPU_SLICE_TRACK_KIND;
@@ -50,26 +52,22 @@ class CpuSliceTrack extends Track<Config, Data> {
     this.hue = hueForCpu(this.config.cpu);
   }
 
+  getHeight(): number {
+    return TRACK_HEIGHT;
+  }
+
   renderCanvas(ctx: CanvasRenderingContext2D): void {
     // TODO: fonts and colors should come from the CSS and not hardcoded here.
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const data = this.data();
 
-    // If there aren't enough cached slices data in |data| request more to
-    // the controller.
-    const inRange = data !== undefined &&
-        (visibleWindowTime.start >= data.start &&
-         visibleWindowTime.end <= data.end);
-    if (!inRange || data === undefined ||
-        data.resolution !== globals.getCurResolution()) {
-      globals.requestTrackData(this.trackState.id);
-    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     // If the cached trace slices don't fully cover the visible time range,
     // show a gray rectangle with a "Loading..." label.
     checkerboardExcept(
         ctx,
+        this.getHeight(),
         timeScale.timeToPx(visibleWindowTime.start),
         timeScale.timeToPx(visibleWindowTime.end),
         timeScale.timeToPx(data.start),
@@ -85,7 +83,7 @@ class CpuSliceTrack extends Track<Config, Data> {
   renderSummary(ctx: CanvasRenderingContext2D, data: SummaryData): void {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const startPx = Math.floor(timeScale.timeToPx(visibleWindowTime.start));
-    const bottomY = MARGIN_TOP + RECT_HEIGHT;
+    const bottomY = TRACK_HEIGHT;
 
     let lastX = startPx;
     let lastY = bottomY;
@@ -100,7 +98,7 @@ class CpuSliceTrack extends Track<Config, Data> {
       lastX = Math.floor(timeScale.timeToPx(startTime));
 
       ctx.lineTo(lastX, lastY);
-      lastY = MARGIN_TOP + Math.round(RECT_HEIGHT * (1 - utilization));
+      lastY = MARGIN_TOP + Math.round(SUMMARY_HEIGHT * (1 - utilization));
       ctx.lineTo(lastX, lastY);
     }
     ctx.lineTo(lastX, bottomY);
@@ -174,32 +172,70 @@ class CpuSliceTrack extends Track<Config, Data> {
       const rectXCenter = rectStart + rectWidth / 2;
       ctx.fillStyle = '#fff';
       ctx.font = '12px Google Sans';
-      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 3);
+      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 1);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.font = '10px Google Sans';
-      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 11);
+      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 9);
     }
 
-    // Draw a rectangle around the slice that is currently selected.
     const selection = globals.state.currentSelection;
+    const details = globals.sliceDetails;
     if (selection !== null && selection.kind === 'SLICE') {
-      const sliceIndex = searchEq(data.ids, selection.id);
-      if (sliceIndex[0] !== sliceIndex[1]) {
-        const tStart = data.starts[sliceIndex[0]];
-        const tEnd = data.ends[sliceIndex[0]];
-        const utid = data.utids[sliceIndex[0]];
+      const [startIndex, endIndex] = searchEq(data.ids, selection.id);
+      if (startIndex !== endIndex) {
+        const tStart = data.starts[startIndex];
+        const tEnd = data.ends[startIndex];
+        const utid = data.utids[startIndex];
         const color = colorForThread(globals.threads.get(utid));
         const rectStart = timeScale.timeToPx(tStart);
         const rectEnd = timeScale.timeToPx(tEnd);
+        // Draw a rectangle around the slice that is currently selected.
         ctx.strokeStyle = `hsl(${color.h}, ${color.s}%, 30%)`;
         ctx.beginPath();
         ctx.lineWidth = 3;
-        ctx.moveTo(rectStart, MARGIN_TOP - 1.5);
-        ctx.lineTo(rectEnd, MARGIN_TOP - 1.5);
-        ctx.lineTo(rectEnd, MARGIN_TOP + RECT_HEIGHT + 1.5);
-        ctx.lineTo(rectStart, MARGIN_TOP + RECT_HEIGHT + 1.5);
-        ctx.lineTo(rectStart, MARGIN_TOP - 1.5);
-        ctx.stroke();
+        ctx.strokeRect(
+            rectStart, MARGIN_TOP - 1.5, rectEnd - rectStart, RECT_HEIGHT + 3);
+        ctx.closePath();
+        // Draw arrow from wakeup time of current slice.
+        if (details.wakeupTs) {
+          const wakeupPos = timeScale.timeToPx(details.wakeupTs);
+          const latencyWidth = rectStart - wakeupPos;
+          drawDoubleHeadedArrow(
+              ctx,
+              wakeupPos,
+              MARGIN_TOP + RECT_HEIGHT,
+              latencyWidth,
+              latencyWidth >= 20);
+          // Latency time with a white semi-transparent background.
+          const displayText = timeToString(tStart - details.wakeupTs);
+          const measured = ctx.measureText(displayText);
+          if (latencyWidth >= measured.width + 2) {
+            ctx.fillStyle = 'rgba(255,255,255,0.7)';
+            ctx.fillRect(
+                wakeupPos + latencyWidth / 2 - measured.width / 2 - 1,
+                MARGIN_TOP + RECT_HEIGHT - 12,
+                measured.width + 2,
+                11);
+            ctx.textBaseline = 'bottom';
+            ctx.fillStyle = 'black';
+            ctx.fillText(
+                displayText,
+                wakeupPos + (latencyWidth) / 2,
+                MARGIN_TOP + RECT_HEIGHT - 1);
+          }
+        }
+      }
+
+      // Draw diamond if the track being drawn is the cpu of the waker.
+      if (this.config.cpu === details.wakerCpu && details.wakeupTs) {
+        const wakeupPos = Math.floor(timeScale.timeToPx(details.wakeupTs));
+        ctx.beginPath();
+        ctx.moveTo(wakeupPos, MARGIN_TOP + RECT_HEIGHT / 2 + 8);
+        ctx.fillStyle = 'black';
+        ctx.lineTo(wakeupPos + 6, MARGIN_TOP + RECT_HEIGHT / 2);
+        ctx.lineTo(wakeupPos, MARGIN_TOP + RECT_HEIGHT / 2 - 8);
+        ctx.lineTo(wakeupPos - 6, MARGIN_TOP + RECT_HEIGHT / 2);
+        ctx.fill();
         ctx.closePath();
       }
     }
@@ -224,8 +260,10 @@ class CpuSliceTrack extends Track<Config, Data> {
       ctx.fillRect(this.mouseXpos!, MARGIN_TOP, width + 16, RECT_HEIGHT);
       ctx.fillStyle = 'hsl(200, 50%, 40%)';
       ctx.textAlign = 'left';
-      ctx.fillText(line1, this.mouseXpos! + 8, 18);
-      ctx.fillText(line2, this.mouseXpos! + 8, 28);
+      ctx.fillText(
+          line1, this.mouseXpos! + 8, MARGIN_TOP + RECT_HEIGHT / 2 - 2);
+      ctx.fillText(
+          line2, this.mouseXpos! + 8, MARGIN_TOP + RECT_HEIGHT / 2 + 10);
     }
   }
 
@@ -270,12 +308,10 @@ class CpuSliceTrack extends Track<Config, Data> {
     const time = timeScale.pxToTime(x);
     const index = search(data.starts, time);
     const id = index === -1 ? undefined : data.ids[index];
-    if (id && this.utidHoveredInThisTrack !== -1) {
-      globals.dispatch(Actions.selectSlice(
-        {utid: this.utidHoveredInThisTrack, id}));
-      return true;
-    }
-    return false;
+    if (!id || this.utidHoveredInThisTrack === -1) return false;
+    globals.makeSelection(
+        Actions.selectSlice({id, trackId: this.trackState.id}));
+    return true;
   }
 }
 

@@ -16,8 +16,8 @@
 
 #include "src/tracing/test/mock_consumer.h"
 
+#include "perfetto/ext/tracing/core/trace_stats.h"
 #include "perfetto/tracing/core/trace_config.h"
-#include "perfetto/tracing/core/trace_stats.h"
 #include "src/base/test/test_task_runner.h"
 
 using ::testing::_;
@@ -109,7 +109,7 @@ std::vector<protos::TracePacket> MockConsumer::ReadBuffers() {
             for (TracePacket& packet : *packets) {
               decoded_packets.emplace_back();
               protos::TracePacket* decoded_packet = &decoded_packets.back();
-              packet.Decode(decoded_packet);
+              decoded_packet->ParseFromString(packet.GetRawBytesForTesting());
             }
             if (!has_more)
               on_read_buffers();
@@ -159,6 +159,22 @@ ObservableEvents MockConsumer::WaitForObservableEvents() {
       }));
   task_runner_->RunUntilCheckpoint(checkpoint_name);
   return events;
+}
+
+TracingServiceState MockConsumer::QueryServiceState() {
+  static int i = 0;
+  TracingServiceState res;
+  std::string checkpoint_name = "query_service_state_" + std::to_string(i++);
+  auto checkpoint = task_runner_->CreateCheckpoint(checkpoint_name);
+  auto callback = [checkpoint, &res](bool success,
+                                     const TracingServiceState& svc_state) {
+    EXPECT_TRUE(success);
+    res = svc_state;
+    checkpoint();
+  };
+  service_endpoint_->QueryServiceState(callback);
+  task_runner_->RunUntilCheckpoint(checkpoint_name);
+  return res;
 }
 
 }  // namespace perfetto
