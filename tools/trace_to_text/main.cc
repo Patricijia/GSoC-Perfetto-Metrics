@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <stdio.h>
+
 #include <fstream>
 #include <iostream>
 #include <limits>
@@ -21,6 +23,7 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "tools/trace_to_text/deobfuscate_profile.h"
 #include "tools/trace_to_text/symbolize_profile.h"
 #include "tools/trace_to_text/trace_to_json.h"
 #include "tools/trace_to_text/trace_to_profile.h"
@@ -31,6 +34,10 @@
 #include "perfetto_version.gen.h"
 #else
 #define PERFETTO_GET_GIT_REVISION() "unknown"
+#endif
+
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include <unistd.h>
 #endif
 
 namespace perfetto {
@@ -176,6 +183,8 @@ int Main(int argc, char** argv) {
   if (format == "symbolize")
     return SymbolizeProfile(input_stream, output_stream);
 
+  if (format == "deobfuscate")
+    return DeobfuscateProfile(input_stream, output_stream);
   return Usage(argv[0]);
 }
 

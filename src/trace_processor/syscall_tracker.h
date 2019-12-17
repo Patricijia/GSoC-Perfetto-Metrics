@@ -21,6 +21,7 @@
 #include <tuple>
 
 #include "perfetto/ext/base/string_view.h"
+#include "src/trace_processor/destructible.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_storage.h"
@@ -39,12 +40,18 @@ enum Architecture {
   kX86_64,
 };
 
-class SyscallTracker {
+class SyscallTracker : public Destructible {
  public:
   explicit SyscallTracker(TraceProcessorContext*);
   SyscallTracker(const SyscallTracker&) = delete;
   SyscallTracker& operator=(const SyscallTracker&) = delete;
   virtual ~SyscallTracker();
+  static SyscallTracker* GetOrCreate(TraceProcessorContext* context) {
+    if (!context->syscall_tracker) {
+      context->syscall_tracker.reset(new SyscallTracker(context));
+    }
+    return static_cast<SyscallTracker*>(context->syscall_tracker.get());
+  }
 
   void SetArchitecture(Architecture architecture);
 
@@ -52,8 +59,7 @@ class SyscallTracker {
     StringId name = SyscallNumberToStringId(syscall_num);
     if (!name.is_null()) {
       TrackId track_id = context_->track_tracker->InternThreadTrack(utid);
-      context_->slice_tracker->Begin(ts, track_id, utid, RefType::kRefUtid,
-                                     0 /* cat */, name);
+      context_->slice_tracker->Begin(ts, track_id, 0 /* cat */, name);
     }
   }
 

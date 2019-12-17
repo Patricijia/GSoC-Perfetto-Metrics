@@ -75,7 +75,8 @@ namespace {
 constexpr int kMaxBuffersPerConsumer = 128;
 constexpr base::TimeMillis kSnapshotsInterval(10 * 1000);
 constexpr int kDefaultWriteIntoFilePeriodMs = 5000;
-constexpr int kMaxConcurrentTracingSessions = 5;
+constexpr int kMaxConcurrentTracingSessions = 15;
+constexpr int64_t kMinSecondsBetweenTracesGuardrail = 5 * 60;
 
 constexpr uint32_t kMillisPerHour = 3600000;
 constexpr uint32_t kMaxTracingDurationMillis = 7 * 24 * kMillisPerHour;
@@ -421,7 +422,7 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   }
 
   if (cfg.buffers_size() > kMaxBuffersPerConsumer) {
-    PERFETTO_DLOG("Too many buffers configured (%d)", cfg.buffers_size());
+    PERFETTO_ELOG("Too many buffers configured (%d)", cfg.buffers_size());
     return false;
   }
 
@@ -434,6 +435,34 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
             name.c_str());
         return false;
       }
+    }
+  }
+
+  if (cfg.enable_extra_guardrails()) {
+    // unique_session_name can be empty
+    const std::string& name = cfg.unique_session_name();
+    int64_t now_s = base::GetBootTimeS().count();
+
+    // Remove any entries where the time limit has passed so this map doesn't
+    // grow indefinitely:
+    std::map<std::string, int64_t>& sessions = session_to_last_trace_s_;
+    for (auto it = sessions.cbegin(); it != sessions.cend();) {
+      if (now_s - it->second > kMinSecondsBetweenTracesGuardrail) {
+        it = sessions.erase(it);
+      } else {
+        ++it;
+      }
+    }
+
+    int64_t& previous_s = session_to_last_trace_s_[name];
+    if (previous_s == 0) {
+      previous_s = now_s;
+    } else {
+      PERFETTO_ELOG(
+          "A trace with unique session name \"%s\" began less than %" PRId64
+          "s ago (%" PRId64 "s)",
+          name.c_str(), kMinSecondsBetweenTracesGuardrail, now_s - previous_s);
+      return false;
     }
   }
 
@@ -573,9 +602,10 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
   tracing_session->state = TracingSession::CONFIGURED;
   PERFETTO_LOG(
       "Configured tracing, #sources:%zu, duration:%d ms, #buffers:%d, total "
-      "buffer size:%zu KB, total sessions:%zu",
+      "buffer size:%zu KB, total sessions:%zu session name: %s",
       cfg.data_sources().size(), tracing_session->config.duration_ms(),
-      cfg.buffers_size(), total_buf_size_kb, tracing_sessions_.size());
+      cfg.buffers_size(), total_buf_size_kb, tracing_sessions_.size(),
+      cfg.unique_session_name().c_str());
 
   // Start the data sources, unless this is a case of early setup + fast
   // triggering, either through TraceConfig.deferred_start or
@@ -2161,7 +2191,7 @@ void TracingServiceImpl::UpdateMemoryGuardrail() {
 
   // Set the guard rail to 32MB + the sum of all the buffers over a 30 second
   // interval.
-  uint64_t guardrail = 32 * 1024 * 1024 + total_buffer_bytes;
+  uint64_t guardrail = base::kWatchdogDefaultMemorySlack + total_buffer_bytes;
   base::Watchdog::GetInstance()->SetMemoryLimit(guardrail, 30 * 1000);
 #endif
 }
@@ -2236,14 +2266,22 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
     c->set_timestamp(
         static_cast<uint64_t>(base::FromPosixTimespec(clock.ts).count()));
   }
-#else   // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#else   // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
+        // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   auto wall_time_ns = static_cast<uint64_t>(base::GetWallTimeNs().count());
   if (set_root_timestamp)
     root_timestamp_ns = wall_time_ns;
   auto* c = clock_snapshot->add_clocks();
   c->set_clock_id(protos::pbzero::ClockSnapshot::Clock::MONOTONIC);
   c->set_timestamp(wall_time_ns);
-#endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+  // The default trace clock is boot time, so we always need to emit a path to
+  // it. However since we don't actually have a boot time source on these
+  // platforms, pretend that wall time equals boot time.
+  c = clock_snapshot->add_clocks();
+  c->set_clock_id(protos::pbzero::ClockSnapshot::Clock::BOOTTIME);
+  c->set_timestamp(wall_time_ns);
+#endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
+        // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 
   if (root_timestamp_ns)
     packet->set_timestamp(root_timestamp_ns);
@@ -2307,8 +2345,9 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
     return;
   tracing_session->did_emit_system_info = true;
   protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   auto* info = packet->set_system_info();
+  base::ignore_result(info);  // For PERFETTO_OS_WIN.
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   struct utsname uname_info;
   if (uname(&uname_info) == 0) {
     auto* utsname_info = info->set_utsname();
@@ -2317,7 +2356,15 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
     utsname_info->set_machine(uname_info.machine);
     utsname_info->set_release(uname_info.release);
   }
-#endif
+#endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+  char value[PROP_VALUE_MAX];
+  if (__system_property_get("ro.build.fingerprint", value)) {
+    info->set_android_build_fingerprint(value);
+  } else {
+    PERFETTO_ELOG("Unable to read ro.build.fingerprint");
+  }
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   packet->set_trusted_uid(static_cast<int32_t>(uid_));
   packet->set_trusted_packet_sequence_id(kServicePacketSequenceID);
   SerializeAndAppendPacket(packets, packet.SerializeAsArray());

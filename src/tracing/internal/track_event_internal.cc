@@ -24,7 +24,10 @@
 #include "perfetto/tracing/track_event_category_registry.h"
 #include "perfetto/tracing/track_event_interned_data_index.h"
 #include "protos/perfetto/common/data_source_descriptor.gen.h"
+#include "protos/perfetto/trace/clock_snapshot.pbzero.h"
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
+#include "protos/perfetto/trace/trace_packet_defaults.pbzero.h"
+#include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
 #include "protos/perfetto/trace/track_event/process_descriptor.pbzero.h"
 #include "protos/perfetto/trace/track_event/thread_descriptor.pbzero.h"
 
@@ -67,25 +70,68 @@ struct InternedEventName
   }
 };
 
+struct InternedDebugAnnotationName
+    : public TrackEventInternedDataIndex<
+          InternedDebugAnnotationName,
+          perfetto::protos::pbzero::InternedData::
+              kDebugAnnotationNamesFieldNumber,
+          const char*,
+          SmallInternedDataTraits> {
+  static void Add(protos::pbzero::InternedData* interned_data,
+                  size_t iid,
+                  const char* value) {
+    auto name = interned_data->add_debug_annotation_names();
+    name->set_iid(iid);
+    name->set_name(value);
+  }
+};
+
+constexpr protos::pbzero::ClockSnapshot::Clock::BuiltinClocks GetClockType() {
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  return protos::pbzero::ClockSnapshot::Clock::BOOTTIME;
+#else
+  return protos::pbzero::ClockSnapshot::Clock::MONOTONIC;
+#endif
+}
+
 uint64_t GetTimeNs() {
-  // TODO(skyostil): Consider using boot time where available.
+  if (GetClockType() == protos::pbzero::ClockSnapshot::Clock::BOOTTIME)
+    return static_cast<uint64_t>(perfetto::base::GetBootTimeNs().count());
+  PERFETTO_DCHECK(GetClockType() ==
+                  protos::pbzero::ClockSnapshot::Clock::MONOTONIC);
   return static_cast<uint64_t>(perfetto::base::GetWallTimeNs().count());
+}
+
+protozero::MessageHandle<protos::pbzero::TracePacket> NewTracePacket(
+    TraceWriterBase* trace_writer,
+    uint64_t timestamp) {
+  auto packet = trace_writer->NewTracePacket();
+  packet->set_timestamp(timestamp);
+  // TODO(skyostil): Stop emitting this for every event once the trace processor
+  // understands trace packet defaults.
+  if (GetClockType() != protos::pbzero::ClockSnapshot::Clock::BOOTTIME)
+    packet->set_timestamp_clock_id(GetClockType());
+  return packet;
 }
 
 // static
 void WriteSequenceDescriptors(TraceWriterBase* trace_writer,
                               uint64_t timestamp) {
   if (perfetto::base::GetThreadId() == g_main_thread) {
-    auto packet = trace_writer->NewTracePacket();
-    packet->set_timestamp(timestamp);
+    auto packet = NewTracePacket(trace_writer, timestamp);
     packet->set_incremental_state_cleared(true);
+    auto defaults = packet->set_trace_packet_defaults();
+    defaults->set_timestamp_clock_id(GetClockType());
     auto pd = packet->set_process_descriptor();
     pd->set_pid(static_cast<int32_t>(base::GetProcessId()));
     // TODO(skyostil): Record command line.
   }
   {
-    auto packet = trace_writer->NewTracePacket();
-    packet->set_timestamp(timestamp);
+    auto packet = NewTracePacket(trace_writer, timestamp);
+    packet->set_incremental_state_cleared(true);
+    auto defaults = packet->set_trace_packet_defaults();
+    defaults->set_timestamp_clock_id(GetClockType());
     auto td = packet->set_thread_descriptor();
     td->set_pid(static_cast<int32_t>(base::GetProcessId()));
     td->set_tid(static_cast<int32_t>(perfetto::base::GetThreadId()));
@@ -145,8 +191,7 @@ EventContext TrackEventInternal::WriteEvent(
     incr_state->was_cleared = false;
     WriteSequenceDescriptors(trace_writer, timestamp);
   }
-  auto packet = trace_writer->NewTracePacket();
-  packet->set_timestamp(timestamp);
+  auto packet = NewTracePacket(trace_writer, timestamp);
 
   // We assume that |category| and |name| point to strings with static lifetime.
   // This means we can use their addresses as interning keys.
@@ -162,6 +207,15 @@ EventContext TrackEventInternal::WriteEvent(
     track_event->set_name_iid(name_iid);
   }
   return ctx;
+}
+
+// static
+protos::pbzero::DebugAnnotation* TrackEventInternal::AddDebugAnnotation(
+    perfetto::EventContext* event_ctx,
+    const char* name) {
+  auto annotation = event_ctx->event()->add_debug_annotations();
+  annotation->set_name_iid(InternedDebugAnnotationName::Get(event_ctx, name));
+  return annotation;
 }
 
 }  // namespace internal

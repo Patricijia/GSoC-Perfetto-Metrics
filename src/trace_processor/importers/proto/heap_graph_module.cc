@@ -89,11 +89,37 @@ bool ForEachVarInt(const T& decoder, F fn) {
 
 }  // namespace
 
-void HeapGraphModule::ParseHeapGraph(int64_t ts, protozero::ConstBytes blob) {
+using perfetto::protos::pbzero::TracePacket;
+
+HeapGraphModule::HeapGraphModule(TraceProcessorContext* context)
+    : context_(context) {
+  context_->heap_graph_tracker.reset(new HeapGraphTracker(context_));
+  RegisterForField(TracePacket::kHeapGraphFieldNumber, context);
+  RegisterForField(TracePacket::kDeobfuscationMappingFieldNumber, context);
+}
+
+void HeapGraphModule::ParsePacket(
+    const protos::pbzero::TracePacket::Decoder& decoder,
+    const TimestampedTracePiece& ttp,
+    uint32_t field_id) {
+  switch (field_id) {
+    case TracePacket::kHeapGraphFieldNumber:
+      ParseHeapGraph(decoder.trusted_packet_sequence_id(), ttp.timestamp,
+                     decoder.heap_graph());
+      return;
+    case TracePacket::kDeobfuscationMappingFieldNumber:
+      ParseDeobfuscationMapping(decoder.deobfuscation_mapping());
+      return;
+  }
+}
+
+void HeapGraphModule::ParseHeapGraph(uint32_t seq_id,
+                                     int64_t ts,
+                                     protozero::ConstBytes blob) {
   protos::pbzero::HeapGraph::Decoder heap_graph(blob.data, blob.size);
   UniquePid upid = context_->process_tracker->GetOrCreateProcess(
       static_cast<uint32_t>(heap_graph.pid()));
-  context_->heap_graph_tracker->SetPacketIndex(heap_graph.index());
+  context_->heap_graph_tracker->SetPacketIndex(seq_id, heap_graph.index());
   for (auto it = heap_graph.objects(); it; ++it) {
     protos::pbzero::HeapGraphObject::Decoder object(*it);
     HeapGraphTracker::SourceObject obj;
@@ -131,7 +157,7 @@ void HeapGraphModule::ParseHeapGraph(int64_t ts, protozero::ConstBytes blob) {
       ref.owned_object_id = object_ids[i];
       obj.references.emplace_back(std::move(ref));
     }
-    context_->heap_graph_tracker->AddObject(upid, ts, std::move(obj));
+    context_->heap_graph_tracker->AddObject(seq_id, upid, ts, std::move(obj));
   }
   for (auto it = heap_graph.type_names(); it; ++it) {
     protos::pbzero::InternedString::Decoder entry(*it);
@@ -139,7 +165,7 @@ void HeapGraphModule::ParseHeapGraph(int64_t ts, protozero::ConstBytes blob) {
     auto str_view = base::StringView(str, entry.str().size);
 
     context_->heap_graph_tracker->AddInternedTypeName(
-        entry.iid(), context_->storage->InternString(str_view));
+        seq_id, entry.iid(), context_->storage->InternString(str_view));
   }
   for (auto it = heap_graph.field_names(); it; ++it) {
     protos::pbzero::InternedString::Decoder entry(*it);
@@ -147,7 +173,7 @@ void HeapGraphModule::ParseHeapGraph(int64_t ts, protozero::ConstBytes blob) {
     auto str_view = base::StringView(str, entry.str().size);
 
     context_->heap_graph_tracker->AddInternedFieldName(
-        entry.iid(), context_->storage->InternString(str_view));
+        seq_id, entry.iid(), context_->storage->InternString(str_view));
   }
   for (auto it = heap_graph.roots(); it; ++it) {
     protos::pbzero::HeapGraphRoot::Decoder entry(*it);
@@ -166,10 +192,74 @@ void HeapGraphModule::ParseHeapGraph(int64_t ts, protozero::ConstBytes blob) {
           stats::heap_graph_malformed_packet, static_cast<int>(upid));
       break;
     }
-    context_->heap_graph_tracker->AddRoot(upid, ts, std::move(src_root));
+    context_->heap_graph_tracker->AddRoot(seq_id, upid, ts,
+                                          std::move(src_root));
   }
   if (!heap_graph.continued()) {
-    context_->heap_graph_tracker->FinalizeProfile();
+    context_->heap_graph_tracker->FinalizeProfile(seq_id);
+  }
+}
+
+void HeapGraphModule::ParseDeobfuscationMapping(protozero::ConstBytes blob) {
+  // TODO(fmayer): Support multiple profiles in the same trace.
+  protos::pbzero::DeobfuscationMapping::Decoder deobfuscation_mapping(
+      blob.data, blob.size);
+  for (auto class_it = deobfuscation_mapping.obfuscated_classes(); class_it;
+       ++class_it) {
+    protos::pbzero::ObfuscatedClass::Decoder cls(*class_it);
+    auto obfuscated_class_name_id =
+        context_->storage->string_pool().GetId(cls.obfuscated_name());
+    if (!obfuscated_class_name_id) {
+      PERFETTO_DLOG("Class string %s not found",
+                    cls.obfuscated_name().ToStdString().c_str());
+    } else {
+      const std::vector<int64_t>* cls_objects =
+          context_->heap_graph_tracker->RowsForType(*obfuscated_class_name_id);
+
+      if (cls_objects) {
+        auto interned_deobfuscated_name =
+            context_->storage->InternString(cls.deobfuscated_name());
+        for (int64_t row : *cls_objects) {
+          context_->storage->mutable_heap_graph_object_table()
+              ->mutable_deobfuscated_type_name()
+              ->Set(static_cast<uint32_t>(row), interned_deobfuscated_name);
+        }
+      } else {
+        PERFETTO_DLOG("Class %s not found",
+                      cls.obfuscated_name().ToStdString().c_str());
+      }
+    }
+    for (auto member_it = cls.obfuscated_members(); member_it; ++member_it) {
+      protos::pbzero::ObfuscatedMember::Decoder member(*member_it);
+
+      std::string merged_obfuscated = cls.obfuscated_name().ToStdString() +
+                                      "." +
+                                      member.obfuscated_name().ToStdString();
+      std::string merged_deobfuscated =
+          cls.deobfuscated_name().ToStdString() + "." +
+          member.deobfuscated_name().ToStdString();
+
+      auto obfuscated_field_name_id = context_->storage->string_pool().GetId(
+          base::StringView(merged_obfuscated));
+      if (!obfuscated_field_name_id) {
+        PERFETTO_DLOG("Field string %s not found", merged_obfuscated.c_str());
+        continue;
+      }
+
+      const std::vector<int64_t>* field_references =
+          context_->heap_graph_tracker->RowsForField(*obfuscated_field_name_id);
+      if (field_references) {
+        auto interned_deobfuscated_name = context_->storage->InternString(
+            base::StringView(merged_deobfuscated));
+        for (int64_t row : *field_references) {
+          context_->storage->mutable_heap_graph_reference_table()
+              ->mutable_deobfuscated_field_name()
+              ->Set(static_cast<uint32_t>(row), interned_deobfuscated_name);
+        }
+      } else {
+        PERFETTO_DLOG("Field %s not found", merged_obfuscated.c_str());
+      }
+    }
   }
 }
 

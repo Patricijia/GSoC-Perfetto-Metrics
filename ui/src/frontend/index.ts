@@ -21,6 +21,7 @@ import * as m from 'mithril';
 import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions} from '../common/actions';
+import {AggregateCpuData} from '../common/aggregation_data';
 import {
   LogBoundsKey,
   LogEntriesKey,
@@ -28,9 +29,6 @@ import {
   LogExistsKey
 } from '../common/logs';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
-import {
-  HeapProfileFlamegraphKey
-} from '../tracks/heap_profile_flamegraph/common';
 
 import {maybeShowErrorDialog} from './error_dialog';
 import {
@@ -44,8 +42,7 @@ import {
 import {HomePage} from './home_page';
 import {openBufferWithLegacyTraceViewer} from './legacy_trace_viewer';
 import {postMessageHandler} from './post_message_handler';
-import {RecordPage} from './record_page';
-import {updateAvailableAdbDevices} from './record_page';
+import {RecordPage, updateAvailableAdbDevices} from './record_page';
 import {Router} from './router';
 import {CheckHttpRpcConnection} from './rpc_http_dialog';
 import {ViewerPage} from './viewer_page';
@@ -100,8 +97,6 @@ class FrontendApi {
     if ([LogExistsKey, LogBoundsKey, LogEntriesKey].includes(args.id)) {
       const data = globals.trackDataStore.get(LogExistsKey) as LogExists;
       if (data && data.exists) globals.rafScheduler.scheduleFullRedraw();
-    } else if (HeapProfileFlamegraphKey === args.id) {
-      globals.rafScheduler.scheduleFullRedraw();
     } else {
       globals.rafScheduler.scheduleRedraw();
     }
@@ -130,8 +125,8 @@ class FrontendApi {
     this.redraw();
   }
 
-  publishHeapDumpDetails(click: HeapProfileDetails) {
-    globals.heapDumpDetails = click;
+  publishHeapProfileDetails(click: HeapProfileDetails) {
+    globals.heapProfileDetails = click;
     this.redraw();
   }
 
@@ -177,6 +172,11 @@ class FrontendApi {
 
   publishRecordingLog(args: {logs: string}) {
     globals.setRecordingLog(args.logs);
+    this.redraw();
+  }
+
+  publishAggregateCpuData(args: AggregateCpuData) {
+    globals.aggregateCpuData = args;
     this.redraw();
   }
 
@@ -277,8 +277,10 @@ function main() {
 
   updateAvailableAdbDevices();
   try {
-    navigator.usb.addEventListener('connect', updateAvailableAdbDevices);
-    navigator.usb.addEventListener('disconnect', updateAvailableAdbDevices);
+    navigator.usb.addEventListener(
+        'connect', () => updateAvailableAdbDevices());
+    navigator.usb.addEventListener(
+        'disconnect', () => updateAvailableAdbDevices());
   } catch (e) {
     console.error('WebUSB API not supported');
   }

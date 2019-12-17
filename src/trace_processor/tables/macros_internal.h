@@ -159,7 +159,8 @@ class MacroTable : public Table {
 #define PERFETTO_TP_ROW_DEFINITION(type, name, ...) type name = {};
 
 // Used to generate an equality implementation on Table::Row.
-#define PERFETTO_TP_ROW_EQUALS(type, name, ...) other.name == name&&
+#define PERFETTO_TP_ROW_EQUALS(type, name, ...) \
+  TypedColumn<type>::Equals(other.name, name)&&
 
 // Defines the parent row field in Insert.
 #define PERFETTO_TP_PARENT_ROW_INSERT(type, name, ...) row.name,
@@ -282,8 +283,9 @@ class MacroTable : public Table {
       return id;                                                              \
     }                                                                         \
                                                                               \
-    const Column& id() const {                                                \
-      return columns_[static_cast<uint32_t>(ColumnIndex::id)];                \
+    const IdColumn& id() const {                                              \
+      return static_cast<const IdColumn&>(                                    \
+          columns_[static_cast<uint32_t>(ColumnIndex::id)]);                  \
     }                                                                         \
                                                                               \
     const TypedColumn<StringPool::Id>& type() const {                         \

@@ -19,7 +19,7 @@ profileable manifest flag.
 On Linux / MacOS, use the `tools/heap_profile` script to heap profile a
 process. If you are having trouble make sure you are using the
 [latest version](
-https://raw.githubusercontent.com/catapult-project/perfetto/master/tools/heap_profile).
+https://raw.githubusercontent.com/google/perfetto/master/tools/heap_profile).
 
 See all the arguments using `tools/heap_profile -h`, or use the defaults
 and just profile a process (e.g. `system_server`):
@@ -161,8 +161,8 @@ called.
 
 ## Manual dumping
 You can trigger a manual dump of all currently profiled processes by running
-`adb killall -USR1 heapprofd`. This can be useful for seeing the current memory
-usage of the target in a specific state.
+`adb shell killall -USR1 heapprofd`. This can be useful for seeing the current
+memory usage of the target in a specific state.
 
 This dump will show up in addition to the dump at the end of the profile that is
 always produced. You can create multiple of these dumps, and they will be

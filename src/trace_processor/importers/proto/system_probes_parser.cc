@@ -290,10 +290,11 @@ void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
     protos::pbzero::Utsname::Decoder utsname(utsname_blob.data,
                                              utsname_blob.size);
     base::StringView machine = utsname.machine();
+    SyscallTracker* syscall_tracker = SyscallTracker::GetOrCreate(context_);
     if (machine == "aarch64" || machine == "armv8l") {
-      context_->syscall_tracker->SetArchitecture(kAarch64);
+      syscall_tracker->SetArchitecture(kAarch64);
     } else if (machine == "x86_64") {
-      context_->syscall_tracker->SetArchitecture(kX86_64);
+      syscall_tracker->SetArchitecture(kX86_64);
     } else {
       PERFETTO_ELOG("Unknown architecture %s", machine.ToStdString().c_str());
     }
@@ -315,6 +316,13 @@ void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
                                    Variadic::String(release_id));
     context_->storage->SetMetadata(metadata::system_machine,
                                    Variadic::String(machine_id));
+  }
+
+  if (packet.has_android_build_fingerprint()) {
+    context_->storage->SetMetadata(
+        metadata::android_build_fingerprint,
+        Variadic::String(context_->storage->InternString(
+            packet.android_build_fingerprint())));
   }
 }
 

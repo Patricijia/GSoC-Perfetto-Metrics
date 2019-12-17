@@ -18,12 +18,19 @@
 
 #include <array>
 #include <atomic>
+#include <chrono>
+#include <thread>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/public/consumer_api.h"
 
-#include "protos/perfetto/config/trace_config.pb.h"
-#include "protos/perfetto/trace/trace.pb.h"
+#include "protos/perfetto/config/data_source_config.gen.h"
+#include "protos/perfetto/config/ftrace/ftrace_config.gen.h"
+#include "protos/perfetto/config/trace_config.gen.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event.gen.h"
+#include "protos/perfetto/trace/ftrace/ftrace_event_bundle.gen.h"
+#include "protos/perfetto/trace/trace.gen.h"
+#include "protos/perfetto/trace/trace_packet.gen.h"
 
 using namespace perfetto::consumer;
 
@@ -32,24 +39,25 @@ namespace {
 int g_pointer = 0;
 
 std::string GetConfig(uint32_t duration_ms) {
-  perfetto::protos::TraceConfig trace_config;
+  perfetto::protos::gen::TraceConfig trace_config;
   trace_config.set_duration_ms(duration_ms);
   trace_config.add_buffers()->set_size_kb(4096);
   trace_config.set_deferred_start(true);
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
   ds_config->set_name("linux.ftrace");
-  ds_config->mutable_ftrace_config()->add_ftrace_events("sched_switch");
-  ds_config->mutable_ftrace_config()->add_ftrace_events(
-      "mm_filemap_add_to_page_cache");
-  ds_config->mutable_ftrace_config()->add_ftrace_events(
-      "mm_filemap_delete_from_page_cache");
+
+  perfetto::protos::gen::FtraceConfig ftrace_config;
+  ftrace_config.add_ftrace_events("sched_switch");
+  ftrace_config.add_ftrace_events("mm_filemap_add_to_page_cache");
+  ftrace_config.add_ftrace_events("mm_filemap_delete_from_page_cache");
+  ds_config->set_ftrace_config_raw(ftrace_config.SerializeAsString());
   ds_config->set_target_buffer(0);
   return trace_config.SerializeAsString();
 }
 
 void DumpTrace(TraceBuffer buf) {
-  perfetto::protos::Trace trace;
-  bool parsed = trace.ParseFromArray(buf.begin, static_cast<int>(buf.size));
+  perfetto::protos::gen::Trace trace;
+  bool parsed = trace.ParseFromArray(buf.begin, buf.size);
   if (!parsed) {
     PERFETTO_ELOG("Failed to parse the trace");
     return;
@@ -92,12 +100,12 @@ void TestSingle() {
   auto handle = Create(cfg.data(), cfg.size(), &OnStateChanged, &g_pointer);
   PERFETTO_ILOG("Starting, handle=%" PRId64 " state=%d", handle,
                 static_cast<int>(PollState(handle)));
-  usleep(100000);
+  std::this_thread::sleep_for(std::chrono::milliseconds(100));
   StartTracing(handle);
   // Wait for either completion or error.
   while (static_cast<int>(PollState(handle)) > 0 &&
          PollState(handle) != State::kTraceEnded) {
-    usleep(10000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
   if (PollState(handle) == State::kTraceEnded) {
@@ -130,14 +138,14 @@ void TestMany() {
         all_connected = false;
       }
     }
-    usleep(10000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
   // Start only 3 out of 5 sessions, scattering them with 1 second delay.
   for (size_t i = 0; i < handles.size(); i++) {
     if (i % 2 == 0) {
       StartTracing(handles[i]);
-      sleep(1);
+      std::this_thread::sleep_for(std::chrono::seconds(1));
     }
   }
 
@@ -149,7 +157,7 @@ void TestMany() {
         num_complete++;
       }
     }
-    usleep(10000);
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
   }
 
   // Read the trace buffers.

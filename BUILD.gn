@@ -82,6 +82,17 @@ if (enable_perfetto_integration_tests) {
   ]
 }
 
+if (enable_perfetto_trace_processor_json) {
+  executable("trace_processor_minimal_smoke_tests") {
+    testonly = true
+    deps = [
+      "gn:default_deps",
+      "src/trace_processor:storage_minimal_smoke_tests",
+    ]
+  }
+  all_targets += [ ":trace_processor_minimal_smoke_tests" ]
+}
+
 if (enable_perfetto_benchmarks) {
   import("gn/perfetto_benchmarks.gni")
   executable("perfetto_benchmarks") {
@@ -113,7 +124,6 @@ if (perfetto_build_standalone) {
 
     # For checking all generated xxx.gen.{cc,h} files without waiting for
     # embedders to try to use them and fail.
-    "protos/perfetto/trace:cpp",
     "protos/perfetto/config:cpp",
     "protos/perfetto/common:cpp",
 
@@ -124,6 +134,12 @@ if (perfetto_build_standalone) {
     # Used in the when updating the ftrace protos
     "protos/perfetto/trace/ftrace:descriptor",
   ]
+}
+
+# The CTS code is built (but not ran) also in standalone builds. This is to
+# catch refactoring breakages earlier without having to wait for treehugger.
+if (is_android && (perfetto_build_standalone || perfetto_build_with_android)) {
+  all_targets += [ "test/cts:perfetto_cts_deps" ]
 }
 
 group("all") {
@@ -195,7 +211,7 @@ if (!build_with_chromium) {
   # on how to use the Perfetto Client API from the android tree.
   static_library("libperfetto_client_experimental") {
     complete_static_lib = true
-    deps = [
+    public_deps = [
       "gn:default_deps",
       "src/tracing",
       "src/tracing:client_api",
@@ -204,6 +220,7 @@ if (!build_with_chromium) {
     sources = [
       "include/perfetto/tracing.h",
     ]
+    assert_no_deps = [ "//gn:protobuf_lite" ]
   }
 }
 
@@ -216,7 +233,7 @@ if (build_with_chromium) {
     public_configs = [ "gn:public_config" ]
     deps = [
       "src/trace_processor:export_json",
-      "src/trace_processor:storage",
+      "src/trace_processor:storage_minimal",
       "src/tracing",
     ]
     configs -= [ "//build/config/compiler:chromium_code" ]
@@ -231,7 +248,6 @@ if (build_with_chromium) {
       "protos/perfetto/trace/interned_data:zero",
       "protos/perfetto/trace/profiling:zero",
       "protos/perfetto/trace/track_event:zero",
-      "src/tracing:sliced_protobuf_input_stream",
     ]
   }
   if (enable_perfetto_trace_processor_sqlite) {

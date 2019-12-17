@@ -25,39 +25,31 @@
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/importers/proto/android_probes_module.h"
-#include "src/trace_processor/importers/proto/graphics_event_module.h"
 #include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/heap_graph_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
-#include "src/trace_processor/importers/proto/system_probes_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/stack_profile_tracker.h"
-#include "src/trace_processor/syscall_tracker.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/track_tracker.h"
-#include "src/trace_processor/vulkan_memory_tracker.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.config = cfg;
-  context_.storage.reset(new TraceStorage());
+  context_.storage.reset(new TraceStorage(context_.config));
   context_.track_tracker.reset(new TrackTracker(&context_));
   context_.args_tracker.reset(new ArgsTracker(&context_));
   context_.slice_tracker.reset(new SliceTracker(&context_));
   context_.event_tracker.reset(new EventTracker(&context_));
   context_.process_tracker.reset(new ProcessTracker(&context_));
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_SYSCALLS)
-  context_.syscall_tracker.reset(new SyscallTracker(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_SYSCALLS)
   context_.clock_tracker.reset(new ClockTracker(&context_));
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
@@ -65,21 +57,21 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.systrace_parser.reset(new SystraceParser(&context_));
   context_.binder_tracker.reset(new BinderTracker(&context_));
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_GRAPHICS)
-  context_.vulkan_memory_tracker.reset(new VulkanMemoryTracker(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_GRAPHICS)
-  context_.ftrace_module.reset(
-      new ProtoImporterModule<FtraceModule>(&context_));
-  context_.track_event_module.reset(
-      new ProtoImporterModule<TrackEventModule>(&context_));
-  context_.system_probes_module.reset(
-      new ProtoImporterModule<SystemProbesModule>(&context_));
-  context_.android_probes_module.reset(
-      new ProtoImporterModule<AndroidProbesModule>(&context_));
-  context_.heap_graph_module.reset(
-      new ProtoImporterModule<HeapGraphModule>(&context_));
-  context_.graphics_event_module.reset(
-      new ProtoImporterModule<GraphicsEventModule>(&context_));
+
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
+  context_.modules.emplace_back(new FtraceModuleImpl(&context_));
+#else
+  context_.modules.emplace_back(new FtraceModule());
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
+  // Ftrace module is special, because it has one extra method for parsing
+  // ftrace packets. So we need to store a pointer to it separately.
+  context_.ftrace_module =
+      static_cast<FtraceModule*>(context_.modules.back().get());
+
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
+  context_.modules.emplace_back(new HeapGraphModule(&context_));
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
+  context_.modules.emplace_back(new TrackEventModule(&context_));
 }
 
 TraceProcessorStorageImpl::~TraceProcessorStorageImpl() {}

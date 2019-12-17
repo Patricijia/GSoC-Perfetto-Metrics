@@ -20,11 +20,17 @@
 
 #include "perfetto/base/logging.h"
 #include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/importers/proto/args_table_utils.h"
+#include "src/trace_processor/importers/proto/chrome_compositor_scheduler_state.descriptor.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/track_tracker.h"
 
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
+#include "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.pbzero.h"
+#include "protos/perfetto/trace/track_event/chrome_keyed_service.pbzero.h"
+#include "protos/perfetto/trace/track_event/chrome_legacy_ipc.pbzero.h"
+#include "protos/perfetto/trace/track_event/chrome_user_event.pbzero.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
 #include "protos/perfetto/trace/track_event/log_message.pbzero.h"
 #include "protos/perfetto/trace/track_event/source_location.pbzero.h"
@@ -41,6 +47,43 @@ using protozero::ConstBytes;
 // with these placeholder values.
 constexpr int64_t kPendingThreadDuration = -1;
 constexpr int64_t kPendingThreadInstructionDelta = -1;
+
+void AddStringToArgsTable(const char* field,
+                          const protozero::ConstChars& str,
+                          const ProtoToArgsTable::ParsingOverrideState& state) {
+  auto val = state.context->storage->InternString(base::StringView(str));
+  auto key = state.context->storage->InternString(base::StringView(field));
+  state.args_tracker->AddArg(state.row_id, key, key, Variadic::String(val));
+}
+
+bool MaybeParseSourceLocation(
+    std::string prefix,
+    const ProtoToArgsTable::ParsingOverrideState& state,
+    const protozero::Field& field) {
+  auto* decoder = state.sequence_state->LookupInternedMessage<
+      protos::pbzero::InternedData::kSourceLocationsFieldNumber,
+      protos::pbzero::SourceLocation>(state.sequence_generation,
+                                      field.as_uint64());
+  if (!decoder) {
+    // Lookup failed fall back on default behaviour which will just put
+    // the source_location_iid into the args table.
+    return false;
+  }
+  {
+    ProtoToArgsTable::ScopedStringAppender scoped("file_name", &prefix);
+    AddStringToArgsTable(prefix.c_str(), decoder->file_name(), state);
+  }
+  {
+    ProtoToArgsTable::ScopedStringAppender scoped("function_name", &prefix);
+    AddStringToArgsTable(prefix.c_str(), decoder->function_name(), state);
+  }
+  ProtoToArgsTable::ScopedStringAppender scoped("line_number", &prefix);
+  auto key = state.context->storage->InternString(base::StringView(prefix));
+  state.args_tracker->AddArg(state.row_id, key, key,
+                             Variadic::Integer(decoder->line_number()));
+  // By returning false we expect this field to be handled like regular.
+  return true;
+}
 }  // namespace
 
 TrackEventParser::TrackEventParser(TraceProcessorContext* context)
@@ -93,7 +136,54 @@ TrackEventParser::TrackEventParser(TraceProcessorContext* context)
           context->storage->InternString("legacy_event.flow_direction")),
       flow_direction_value_in_id_(context->storage->InternString("in")),
       flow_direction_value_out_id_(context->storage->InternString("out")),
-      flow_direction_value_inout_id_(context->storage->InternString("inout")) {}
+      flow_direction_value_inout_id_(context->storage->InternString("inout")),
+      chrome_user_event_action_args_key_id_(
+          context->storage->InternString("user_event.action")),
+      chrome_legacy_ipc_class_args_key_id_(
+          context->storage->InternString("legacy_ipc.class")),
+      chrome_legacy_ipc_line_args_key_id_(
+          context->storage->InternString("legacy_ipc.line")),
+      chrome_keyed_service_name_args_key_id_(
+          context->storage->InternString("keyed_service.name")),
+      chrome_legacy_ipc_class_ids_{
+          {context->storage->InternString("UNSPECIFIED"),
+           context->storage->InternString("AUTOMATION"),
+           context->storage->InternString("FRAME"),
+           context->storage->InternString("PAGE"),
+           context->storage->InternString("VIEW"),
+           context->storage->InternString("WIDGET"),
+           context->storage->InternString("INPUT"),
+           context->storage->InternString("TEST"),
+           context->storage->InternString("WORKER"),
+           context->storage->InternString("NACL"),
+           context->storage->InternString("GPU_CHANNEL"),
+           context->storage->InternString("MEDIA"),
+           context->storage->InternString("PPAPI"),
+           context->storage->InternString("CHROME"),
+           context->storage->InternString("DRAG"),
+           context->storage->InternString("PRINT"),
+           context->storage->InternString("EXTENSION"),
+           context->storage->InternString("TEXT_INPUT_CLIENT"),
+           context->storage->InternString("BLINK_TEST"),
+           context->storage->InternString("ACCESSIBILITY"),
+           context->storage->InternString("PRERENDER"),
+           context->storage->InternString("CHROMOTING"),
+           context->storage->InternString("BROWSER_PLUGIN"),
+           context->storage->InternString("ANDROID_WEB_VIEW"),
+           context->storage->InternString("NACL_HOST"),
+           context->storage->InternString("ENCRYPTED_MEDIA"),
+           context->storage->InternString("CAST"),
+           context->storage->InternString("GIN_JAVA_BRIDGE"),
+           context->storage->InternString("CHROME_UTILITY_PRINTING"),
+           context->storage->InternString("OZONE_GPU"),
+           context->storage->InternString("WEB_TEST"),
+           context->storage->InternString("NETWORK_HINTS"),
+           context->storage->InternString("EXTENSIONS_GUEST_VIEW"),
+           context->storage->InternString("GUEST_VIEW"),
+           context->storage->InternString("MEDIA_PLAYER_DELEGATE"),
+           context->storage->InternString("EXTENSION_WORKER"),
+           context->storage->InternString("SUBRESOURCE_FILTER"),
+           context->storage->InternString("UNFREEZABLE_FRAME")}} {}
 
 void TrackEventParser::ParseTrackEvent(int64_t ts,
                                        int64_t tts,
@@ -102,6 +192,21 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
                                        size_t sequence_state_generation,
                                        ConstBytes blob) {
   using LegacyEvent = protos::pbzero::TrackEvent::LegacyEvent;
+
+  protos::pbzero::TrackEventDefaults::Decoder* defaults = nullptr;
+  auto* packet_defaults_view =
+      sequence_state->GetTracePacketDefaultsView(sequence_state_generation);
+  if (packet_defaults_view) {
+    auto* track_event_defaults_view =
+        packet_defaults_view
+            ->GetOrCreateSubmessageView<protos::pbzero::TracePacketDefaults,
+                                        protos::pbzero::TracePacketDefaults::
+                                            kTrackEventDefaultsFieldNumber>();
+    if (track_event_defaults_view) {
+      defaults = track_event_defaults_view
+                     ->GetOrCreateDecoder<protos::pbzero::TrackEventDefaults>();
+    }
+  }
 
   protos::pbzero::TrackEvent::Decoder event(blob.data, blob.size);
 
@@ -185,9 +290,14 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
     name_id = storage->InternString(event.name());
   }
 
-  // TODO(eseckler): Also consider track_uuid from TrackEventDefaults.
-  // Fall back to the default descriptor track (uuid 0).
-  uint64_t track_uuid = event.has_track_uuid() ? event.track_uuid() : 0u;
+  // Consider track_uuid from the packet and TrackEventDefaults, fall back to
+  // the default descriptor track (uuid 0).
+  uint64_t track_uuid =
+      event.has_track_uuid()
+          ? event.track_uuid()
+          : (defaults && defaults->has_track_uuid() ? defaults->track_uuid()
+                                                    : 0u);
+
   TrackId track_id;
   base::Optional<UniqueTid> utid;
   base::Optional<UniqueTid> upid;
@@ -366,6 +476,20 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
                       sequence_state_generation, ts, utid, args_tracker,
                       row_id);
     }
+    if (event.has_cc_scheduler_state()) {
+      ParseCcScheduler(event.cc_scheduler_state(), sequence_state,
+                       sequence_state_generation, args_tracker, row_id);
+    }
+    if (event.has_chrome_user_event()) {
+      ParseChromeUserEvent(event.chrome_user_event(), args_tracker, row_id);
+    }
+    if (event.has_chrome_legacy_ipc()) {
+      ParseChromeLegacyIpc(event.chrome_legacy_ipc(), args_tracker, row_id);
+    }
+    if (event.has_chrome_keyed_service()) {
+      ParseChromeKeyedService(event.chrome_keyed_service(), args_tracker,
+                              row_id);
+    }
 
     if (legacy_tid) {
       args_tracker->AddArg(row_id, legacy_event_original_tid_id_,
@@ -418,9 +542,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
         return;
       }
 
-      auto opt_slice_id =
-          slice_tracker->Begin(ts, track_id, *utid, RefType::kRefUtid,
-                               category_id, name_id, args_callback);
+      auto opt_slice_id = slice_tracker->Begin(ts, track_id, category_id,
+                                               name_id, args_callback);
       if (opt_slice_id.has_value()) {
         auto* thread_slices = storage->mutable_thread_slices();
         PERFETTO_DCHECK(!thread_slices->slice_count() ||
@@ -459,8 +582,7 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
       if (duration_ns < 0)
         return;
       auto opt_slice_id = slice_tracker->Scoped(
-          ts, track_id, *utid, RefType::kRefUtid, category_id, name_id,
-          duration_ns, args_callback);
+          ts, track_id, category_id, name_id, duration_ns, args_callback);
       if (opt_slice_id.has_value()) {
         auto* thread_slices = storage->mutable_thread_slices();
         PERFETTO_DCHECK(!thread_slices->slice_count() ||
@@ -483,10 +605,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
       switch (legacy_event.instant_event_scope()) {
         case LegacyEvent::SCOPE_UNSPECIFIED:
         case LegacyEvent::SCOPE_THREAD: {
-          // TODO(lalitm): Associate thread slices with track instead.
           auto opt_slice_id = slice_tracker->Scoped(
-              ts, track_id, *utid, RefType::kRefUtid, category_id, name_id,
-              duration_ns, args_callback);
+              ts, track_id, category_id, name_id, duration_ns, args_callback);
           if (opt_slice_id.has_value()) {
             auto* thread_slices = storage->mutable_thread_slices();
             PERFETTO_DCHECK(!thread_slices->slice_count() ||
@@ -498,14 +618,12 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
           break;
         }
         case LegacyEvent::SCOPE_GLOBAL: {
-          slice_tracker->Scoped(ts, track_id, /*ref=*/0, RefType::kRefNoRef,
-                                category_id, name_id, duration_ns,
+          slice_tracker->Scoped(ts, track_id, category_id, name_id, duration_ns,
                                 args_callback);
           break;
         }
         case LegacyEvent::SCOPE_PROCESS: {
-          slice_tracker->Scoped(ts, track_id, *upid, RefType::kRefUpid,
-                                category_id, name_id, duration_ns,
+          slice_tracker->Scoped(ts, track_id, category_id, name_id, duration_ns,
                                 args_callback);
           break;
         }
@@ -518,9 +636,8 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
       break;
     }
     case 'b': {  // TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN
-      auto opt_slice_id =
-          slice_tracker->Begin(ts, track_id, track_id, RefType::kRefTrack,
-                               category_id, name_id, args_callback);
+      auto opt_slice_id = slice_tracker->Begin(ts, track_id, category_id,
+                                               name_id, args_callback);
       // For the time beeing, we only create vtrack slice rows if we need to
       // store thread timestamps/counters.
       if (legacy_event.use_async_tts() && opt_slice_id.has_value()) {
@@ -550,8 +667,7 @@ void TrackEventParser::ParseTrackEvent(int64_t ts,
       int64_t duration_ns = 0;
       int64_t tidelta = 0;
       auto opt_slice_id = slice_tracker->Scoped(
-          ts, track_id, track_id, RefType::kRefTrack, category_id, name_id,
-          duration_ns, args_callback);
+          ts, track_id, category_id, name_id, duration_ns, args_callback);
       if (legacy_event.use_async_tts() && opt_slice_id.has_value()) {
         auto* vtrack_slices = storage->mutable_virtual_track_slices();
         PERFETTO_DCHECK(!vtrack_slices->slice_count() ||
@@ -910,6 +1026,98 @@ void TrackEventParser::ParseLogMessage(ConstBytes blob,
   args_tracker->AddArg(row, log_message_body_key_id_, log_message_body_key_id_,
                        Variadic::String(log_message_id));
   // TODO(nicomazz): Add the source location as an argument.
+}
+
+void TrackEventParser::ParseCcScheduler(ConstBytes cc,
+                                        PacketSequenceState* sequence_state,
+                                        size_t sequence_state_generation,
+                                        ArgsTracker* args_tracker,
+                                        RowId row) {
+  // The 79 decides the initial amount of memory reserved in the prefix. This
+  // was determined my manually counting the length of the longest column.
+  constexpr size_t kCcSchedulerStateMaxColumnLength = 79;
+  ProtoToArgsTable helper(
+      sequence_state, sequence_state_generation, context_, args_tracker,
+      /* starting_prefix = */ "", kCcSchedulerStateMaxColumnLength);
+  auto status = helper.AddProtoFileDescriptor(
+      kChromeCompositorSchedulerStateDescriptor.data(),
+      kChromeCompositorSchedulerStateDescriptor.size());
+  PERFETTO_DCHECK(status.ok());
+
+  // Switch |source_location_iid| into its interned data variant.
+  helper.AddParsingOverride(
+      "begin_impl_frame_args.current_args.source_location_iid",
+      [](const ProtoToArgsTable::ParsingOverrideState& state,
+         const protozero::Field& field) {
+        return MaybeParseSourceLocation("begin_impl_frame_args.current_args",
+                                        state, field);
+      });
+  helper.AddParsingOverride(
+      "begin_impl_frame_args.last_args.source_location_iid",
+      [](const ProtoToArgsTable::ParsingOverrideState& state,
+         const protozero::Field& field) {
+        return MaybeParseSourceLocation("begin_impl_frame_args.last_args",
+                                        state, field);
+      });
+  helper.AddParsingOverride(
+      "begin_frame_observer_state.last_begin_frame_args.source_location_iid",
+      [](const ProtoToArgsTable::ParsingOverrideState& state,
+         const protozero::Field& field) {
+        return MaybeParseSourceLocation(
+            "begin_frame_observer_state.last_begin_frame_args", state, field);
+      });
+  helper.InternProtoIntoArgsTable(
+      cc, ".perfetto.protos.ChromeCompositorSchedulerState", row);
+}
+
+void TrackEventParser::ParseChromeUserEvent(
+    protozero::ConstBytes chrome_user_event,
+    ArgsTracker* args_tracker,
+    RowId row) {
+  protos::pbzero::ChromeUserEvent::Decoder event(chrome_user_event.data,
+                                                 chrome_user_event.size);
+  if (event.has_action()) {
+    StringId action_id = context_->storage->InternString(event.action());
+    args_tracker->AddArg(row, chrome_user_event_action_args_key_id_,
+                         chrome_user_event_action_args_key_id_,
+                         Variadic::String(action_id));
+  }
+}
+
+void TrackEventParser::ParseChromeLegacyIpc(
+    protozero::ConstBytes chrome_legacy_ipc,
+    ArgsTracker* args_tracker,
+    RowId row) {
+  protos::pbzero::ChromeLegacyIpc::Decoder event(chrome_legacy_ipc.data,
+                                                 chrome_legacy_ipc.size);
+  if (event.has_message_class()) {
+    size_t message_class_index = static_cast<size_t>(event.message_class());
+    if (message_class_index >= chrome_legacy_ipc_class_ids_.size())
+      message_class_index = 0;
+    args_tracker->AddArg(
+        row, chrome_legacy_ipc_class_args_key_id_,
+        chrome_legacy_ipc_class_args_key_id_,
+        Variadic::String(chrome_legacy_ipc_class_ids_[message_class_index]));
+  }
+  if (event.has_message_line()) {
+    args_tracker->AddArg(row, chrome_legacy_ipc_line_args_key_id_,
+                         chrome_legacy_ipc_line_args_key_id_,
+                         Variadic::Integer(event.message_line()));
+  }
+}
+
+void TrackEventParser::ParseChromeKeyedService(
+    protozero::ConstBytes chrome_keyed_service,
+    ArgsTracker* args_tracker,
+    RowId row) {
+  protos::pbzero::ChromeKeyedService::Decoder event(chrome_keyed_service.data,
+                                                    chrome_keyed_service.size);
+  if (event.has_name()) {
+    StringId action_id = context_->storage->InternString(event.name());
+    args_tracker->AddArg(row, chrome_keyed_service_name_args_key_id_,
+                         chrome_keyed_service_name_args_key_id_,
+                         Variadic::String(action_id));
+  }
 }
 
 }  // namespace trace_processor

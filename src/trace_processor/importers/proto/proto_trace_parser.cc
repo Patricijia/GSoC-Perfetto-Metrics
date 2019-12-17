@@ -30,15 +30,11 @@
 #include "perfetto/ext/base/uuid.h"
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/clock_tracker.h"
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
-#include "src/trace_processor/importers/proto/android_probes_module.h"
-#include "src/trace_processor/importers/proto/graphics_event_module.h"
-#include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
-#include "src/trace_processor/importers/proto/system_probes_module.h"
-#include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
@@ -204,31 +200,21 @@ void ProtoTraceParser::ParseTracePacketImpl(
     TimestampedTracePiece ttp,
     const protos::pbzero::TracePacket::Decoder& packet) {
   // TODO(eseckler): Propagate statuses from modules.
-  if (!context_->ftrace_module->ParsePacket(packet, ttp).ignored())
-    return;
-
-  if (!context_->track_event_module->ParsePacket(packet, ttp).ignored())
-    return;
-
-  if (!context_->system_probes_module->ParsePacket(packet, ttp).ignored())
-    return;
-
-  if (!context_->android_probes_module->ParsePacket(packet, ttp).ignored())
-    return;
-
-  if (!context_->heap_graph_module->ParsePacket(packet, ttp).ignored())
-    return;
-
-  if (!context_->graphics_event_module->ParsePacket(packet, ttp).ignored())
-    return;
+  auto& modules = context_->modules_by_field;
+  for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
+    if (modules[field_id] && packet.Get(field_id).valid()) {
+      modules[field_id]->ParsePacket(packet, ttp, field_id);
+      return;
+    }
+  }
 
   if (packet.has_trace_stats())
     ParseTraceStats(packet.trace_stats());
 
   if (packet.has_profile_packet()) {
-    ParseProfilePacket(ts, ttp.packet_sequence_state,
-                       ttp.packet_sequence_state_generation,
-                       packet.profile_packet());
+    ParseProfilePacket(
+        ts, ttp.packet_sequence_state, ttp.packet_sequence_state_generation,
+        packet.trusted_packet_sequence_id(), packet.profile_packet());
   }
 
   if (packet.has_streaming_profile_packet()) {
@@ -262,13 +248,8 @@ void ProtoTraceParser::ParseFtracePacket(uint32_t cpu,
                                          int64_t /*ts*/,
                                          TimestampedTracePiece ttp) {
   PERFETTO_DCHECK(ttp.json_value == nullptr);
-
-  ModuleResult res = context_->ftrace_module->ParseFtracePacket(cpu, ttp);
-  PERFETTO_DCHECK(!res.ignored());
-  // TODO(eseckler): Propagate status.
-  if (!res.ok()) {
-    PERFETTO_ELOG("%s", res.message().c_str());
-  }
+  PERFETTO_DCHECK(context_->ftrace_module);
+  context_->ftrace_module->ParseFtracePacket(cpu, ttp);
 
   // TODO(lalitm): maybe move this to the flush method in the trace processor
   // once we have it. This may reduce performance in the ArgsTracker though so
@@ -341,9 +322,10 @@ void ProtoTraceParser::ParseTraceStats(ConstBytes blob) {
 void ProtoTraceParser::ParseProfilePacket(int64_t,
                                           PacketSequenceState* sequence_state,
                                           size_t sequence_state_generation,
+                                          uint32_t seq_id,
                                           ConstBytes blob) {
   protos::pbzero::ProfilePacket::Decoder packet(blob.data, blob.size);
-  context_->heap_profile_tracker->SetProfilePacketIndex(packet.index());
+  context_->heap_profile_tracker->SetProfilePacketIndex(seq_id, packet.index());
 
   for (auto it = packet.strings(); it; ++it) {
     protos::pbzero::InternedString::Decoder entry(*it);
@@ -377,6 +359,17 @@ void ProtoTraceParser::ParseProfilePacket(int64_t,
   for (auto it = packet.process_dumps(); it; ++it) {
     protos::pbzero::ProfilePacket::ProcessHeapSamples::Decoder entry(*it);
 
+    auto maybe_timestamp = context_->clock_tracker->ToTraceTime(
+        protos::pbzero::ClockSnapshot::Clock::MONOTONIC_COARSE,
+        static_cast<int64_t>(entry.timestamp()));
+
+    if (!maybe_timestamp) {
+      context_->storage->IncrementStats(stats::clock_sync_failure);
+      continue;
+    }
+
+    int64_t timestamp = *maybe_timestamp;
+
     int pid = static_cast<int>(entry.pid());
 
     if (entry.buffer_corrupted())
@@ -394,14 +387,14 @@ void ProtoTraceParser::ParseProfilePacket(int64_t,
 
       HeapProfileTracker::SourceAllocation src_allocation;
       src_allocation.pid = entry.pid();
-      src_allocation.timestamp = static_cast<int64_t>(entry.timestamp());
+      src_allocation.timestamp = timestamp;
       src_allocation.callstack_id = sample.callstack_id();
       src_allocation.self_allocated = sample.self_allocated();
       src_allocation.self_freed = sample.self_freed();
       src_allocation.alloc_count = sample.alloc_count();
       src_allocation.free_count = sample.free_count();
 
-      context_->heap_profile_tracker->StoreAllocation(src_allocation);
+      context_->heap_profile_tracker->StoreAllocation(seq_id, src_allocation);
     }
   }
   if (!packet.continued()) {
@@ -409,7 +402,7 @@ void ProtoTraceParser::ParseProfilePacket(int64_t,
     ProfilePacketInternLookup intern_lookup(sequence_state,
                                             sequence_state_generation);
     context_->heap_profile_tracker->FinalizeProfile(
-        &sequence_state->stack_profile_tracker(), &intern_lookup);
+        seq_id, &sequence_state->stack_profile_tracker(), &intern_lookup);
   }
 }
 
@@ -526,7 +519,7 @@ void ProtoTraceParser::ParseChromeEvents(int64_t ts, ConstBytes blob) {
       } else if (metadata.has_json_value()) {
         value = Variadic::Json(storage->InternString(metadata.json_value()));
       } else {
-        PERFETTO_FATAL("Empty ChromeMetadata message");
+        context_->storage->IncrementStats(stats::empty_chrome_metadata);
       }
       args.AddArg(row_id, name_id, name_id, value);
     }
@@ -578,8 +571,8 @@ void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
       name_id = context_->storage->InternString(fallback);
     }
     TrackId track_id = context_->track_tracker->InternThreadTrack(utid);
-    context_->slice_tracker->Scoped(ts, track_id, utid, RefType::kRefUtid,
-                                    cat_id, name_id, event.event_duration_ns());
+    context_->slice_tracker->Scoped(ts, track_id, cat_id, name_id,
+                                    event.event_duration_ns());
   } else if (event.has_counter_id()) {
     auto cid = event.counter_id();
     if (cid < metatrace::COUNTERS_MAX) {
@@ -601,7 +594,9 @@ void ProtoTraceParser::ParseTraceConfig(ConstBytes blob) {
   protos::pbzero::TraceConfig::Decoder trace_config(blob.data, blob.size);
 
   // TODO(eseckler): Propagate statuses from modules.
-  context_->android_probes_module->ParseTraceConfig(trace_config);
+  for (auto& module : context_->modules) {
+    module->ParseTraceConfig(trace_config);
+  }
 
   int64_t uuid_msb = trace_config.trace_uuid_msb();
   int64_t uuid_lsb = trace_config.trace_uuid_lsb();

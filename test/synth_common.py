@@ -275,6 +275,68 @@ class Trace(object):
     gpu_counter.counter_id = counter_id
     gpu_counter.int_value = value
 
+  def add_gpu_render_stages_hw_queue_spec(self, specs=[]):
+    packet = self.add_packet()
+    spec = self.packet.gpu_render_stage_event.specifications
+    for s in specs:
+      hw_queue = spec.hw_queue.add()
+      hw_queue.name = s.get('name', '')
+      if 'description' in s:
+        hw_queue.description = s['description']
+
+  def add_gpu_render_stages_stage_spec(self, specs=[]):
+    packet = self.add_packet()
+    spec = self.packet.gpu_render_stage_event.specifications
+    for s in specs:
+      stage = spec.stage.add()
+      stage.name = s.get('name', '')
+      if 'description' in s:
+        stage.description = s['description']
+
+  def add_gpu_render_stages(self,
+                            ts,
+                            event_id,
+                            duration,
+                            hw_queue_id,
+                            stage_id,
+                            context,
+                            render_target_handle=None,
+                            render_pass_handle=None,
+                            command_buffer_handle=None,
+                            submission_id=None,
+                            extra_data={}):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    render_stage = self.packet.gpu_render_stage_event
+    render_stage.event_id = event_id
+    render_stage.duration = duration
+    render_stage.hw_queue_id = hw_queue_id
+    render_stage.stage_id = stage_id
+    render_stage.context = context
+    if render_target_handle is not None:
+      render_stage.render_target_handle = render_target_handle
+    if render_pass_handle is not None:
+      render_stage.render_pass_handle = render_pass_handle
+    if command_buffer_handle is not None:
+      render_stage.command_buffer_handle = command_buffer_handle
+    if submission_id is not None:
+      render_stage.submission_id = submission_id
+    for key, value in extra_data.items():
+      data = render_stage.extra_data.add()
+      data.name = key
+      if value is not None:
+        data.value = value
+
+  def add_vk_debug_marker(self, ts, pid, vk_device, obj_type, obj, obj_name):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    debug_marker = (self.packet.vulkan_api_event.vk_debug_utils_object_name)
+    debug_marker.pid = pid
+    debug_marker.vk_device = vk_device
+    debug_marker.object_type = obj_type
+    debug_marker.object = obj
+    debug_marker.object_name = obj_name
+
   def add_gpu_log(self, ts, severity, tag, message):
     packet = self.add_packet()
     packet.timestamp = ts
@@ -295,35 +357,6 @@ class Trace(object):
     if event_type >= 0:
       buffer_event.type = event_type
     buffer_event.duration_ns = duration
-
-  def add_thread_track_descriptor(self,
-                                  ps,
-                                  ts,
-                                  uuid,
-                                  pid,
-                                  tid,
-                                  thread_name,
-                                  inc_state_cleared=False):
-    packet = self.add_packet()
-    packet.trusted_packet_sequence_id = ps
-    packet.timestamp = ts
-    if inc_state_cleared:
-      packet.incremental_state_cleared = True
-    track = packet.track_descriptor
-    track.uuid = uuid
-    track.thread.pid = pid
-    track.thread.tid = tid
-    track.thread.thread_name = thread_name
-
-  def add_track_event(self, ps, ts, track_uuid, cat, name, type):
-    packet = self.add_packet()
-    packet.trusted_packet_sequence_id = ps
-    packet.timestamp = ts
-    event = packet.track_event
-    event.track_uuid = track_uuid
-    event.categories.append(cat)
-    event.name = name
-    event.type = type
 
 
 def create_trace():

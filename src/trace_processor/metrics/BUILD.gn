@@ -23,6 +23,7 @@ sql_files = [
   "android/android_mem.sql",
   "android/android_mem_unagg.sql",
   "android/android_ion.sql",
+  "android/android_lmk_reason.sql",
   "android/android_lmk.sql",
   "android/android_powrails.sql",
   "android/android_startup_launches.sql",
@@ -35,6 +36,7 @@ sql_files = [
   "android/process_unagg_mem_view.sql",
   "android/process_mem.sql",
   "android/process_metadata.sql",
+  "android/process_oom_score.sql",
   "android/mem_stats_priority_breakdown.sql",
   "android/span_view_stats.sql",
   "android/upid_span_view.sql",
@@ -62,8 +64,6 @@ action("gen_merged_sql_metrics") {
 if (enable_perfetto_trace_processor_metrics) {
   source_set("lib") {
     sources = [
-      "descriptors.cc",
-      "descriptors.h",
       "metrics.cc",
       "metrics.descriptor.h",
       "metrics.h",
@@ -82,6 +82,7 @@ if (enable_perfetto_trace_processor_metrics) {
     ]
     public_deps = [
       ":gen_merged_sql_metrics",
+      "../../trace_processor:descriptors",
     ]
   }
 

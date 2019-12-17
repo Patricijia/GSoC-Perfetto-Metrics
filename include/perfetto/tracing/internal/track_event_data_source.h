@@ -25,6 +25,7 @@
 #include "perfetto/tracing/track_event_category_registry.h"
 #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
+#include <type_traits>
 #include <unordered_map>
 
 namespace perfetto {
@@ -39,6 +40,16 @@ struct TrackEventDataSourceTraits : public perfetto::DefaultDataSourceTraits {
                                                       TracingTLS* root_tls) {
     return &root_tls->track_event_tls;
   }
+};
+
+// A helper that ensures movable debug annotations are passed by value to
+// minimize binary size at the call site, while allowing non-movable and
+// non-copiable arguments to be passed by reference.
+// TODO(skyostil): Remove this with C++17.
+template <typename T>
+struct DebugAnnotationArg {
+  using type = typename std::
+      conditional<std::is_move_constructible<T>::value, T, T&&>::type;
 };
 
 // A generic track event data source which is instantiated once per track event
@@ -93,6 +104,87 @@ class TrackEventDataSource
           arg_function(TrackEventInternal::WriteEvent(
               ctx.tls_inst_->trace_writer.get(), ctx.GetIncrementalState(),
               Registry->GetCategory(CategoryIndex)->name, event_name, type));
+        });
+  }
+
+  // Trace point with one debug annotation.
+  //
+  // This type of trace point is implemented with an inner helper function which
+  // ensures |arg_value| is only passed by reference when required (i.e., with a
+  // custom DebugAnnotation type). This avoids the binary and runtime overhead
+  // of unnecessarily passing all types debug annotations by reference.
+  //
+  // Note that for this to work well, the _outer_ function (this function) has
+  // to be inlined at the call site while the _inner_ function
+  // (TraceForCategoryWithDebugAnnotations) is still outlined to minimize
+  // overall binary size.
+  template <size_t CategoryIndex, typename ArgType>
+  static void TraceForCategory(uint32_t instances,
+                               const char* event_name,
+                               perfetto::protos::pbzero::TrackEvent::Type type,
+                               const char* arg_name,
+                               ArgType&& arg_value) PERFETTO_ALWAYS_INLINE {
+    TraceForCategoryWithDebugAnnotations<CategoryIndex, ArgType>(
+        instances, event_name, type, arg_name,
+        std::forward<ArgType>(arg_value));
+  }
+
+  template <size_t CategoryIndex, typename ArgType>
+  static void TraceForCategoryWithDebugAnnotations(
+      uint32_t instances,
+      const char* event_name,
+      perfetto::protos::pbzero::TrackEvent::Type type,
+      const char* arg_name,
+      typename internal::DebugAnnotationArg<ArgType>::type arg_value)
+      PERFETTO_NO_INLINE {
+    Base::template TraceWithInstances<CategoryTracePointTraits<CategoryIndex>>(
+        instances, [&](typename Base::TraceContext ctx) {
+          // TODO(skyostil): Intern categories at compile time.
+          auto event_ctx = TrackEventInternal::WriteEvent(
+              ctx.tls_inst_->trace_writer.get(), ctx.GetIncrementalState(),
+              Registry->GetCategory(CategoryIndex)->name, event_name, type);
+          TrackEventInternal::AddDebugAnnotation(&event_ctx, arg_name,
+                                                 arg_value);
+        });
+  }
+
+  // Trace point with two debug annotations. Note that we only support up to two
+  // direct debug annotations. For more complicated arguments, you should
+  // define your own argument type in track_event.proto and use a lambda to fill
+  // it in your trace point.
+  template <size_t CategoryIndex, typename ArgType, typename ArgType2>
+  static void TraceForCategory(uint32_t instances,
+                               const char* event_name,
+                               perfetto::protos::pbzero::TrackEvent::Type type,
+                               const char* arg_name,
+                               ArgType&& arg_value,
+                               const char* arg_name2,
+                               ArgType2&& arg_value2) PERFETTO_ALWAYS_INLINE {
+    TraceForCategoryWithDebugAnnotations<CategoryIndex, ArgType, ArgType2>(
+        instances, event_name, type, arg_name, std::forward<ArgType>(arg_value),
+        arg_name2, std::forward<ArgType2>(arg_value2));
+  }
+
+  template <size_t CategoryIndex, typename ArgType, typename ArgType2>
+  static void TraceForCategoryWithDebugAnnotations(
+      uint32_t instances,
+      const char* event_name,
+      perfetto::protos::pbzero::TrackEvent::Type type,
+      const char* arg_name,
+      typename internal::DebugAnnotationArg<ArgType>::type arg_value,
+      const char* arg_name2,
+      typename internal::DebugAnnotationArg<ArgType2>::type arg_value2)
+      PERFETTO_NO_INLINE {
+    Base::template TraceWithInstances<CategoryTracePointTraits<CategoryIndex>>(
+        instances, [&](typename Base::TraceContext ctx) {
+          // TODO(skyostil): Intern categories at compile time.
+          auto event_ctx = TrackEventInternal::WriteEvent(
+              ctx.tls_inst_->trace_writer.get(), ctx.GetIncrementalState(),
+              Registry->GetCategory(CategoryIndex)->name, event_name, type);
+          TrackEventInternal::AddDebugAnnotation(&event_ctx, arg_name,
+                                                 arg_value);
+          TrackEventInternal::AddDebugAnnotation(&event_ctx, arg_name2,
+                                                 arg_value2);
         });
   }
 

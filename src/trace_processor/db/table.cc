@@ -55,40 +55,13 @@ Table Table::CopyExceptRowMaps() const {
   Table table(string_pool_, nullptr);
   table.size_ = size_;
   for (const Column& col : columns_) {
-    table.columns_.emplace_back(col, &table, col.col_idx_, col.row_map_idx_);
-  }
-  return table;
-}
-
-Table Table::Filter(const std::vector<Constraint>& cs) const {
-  // TODO(lalitm): we can add optimizations here depending on whether this is
-  // an lvalue or rvalue.
-
-  if (cs.empty())
-    return Copy();
-
-  // Create a RowMap indexing all rows and filter this down to the rows which
-  // meet all the constraints.
-  RowMap rm(0, size_);
-  for (const Constraint& c : cs) {
-    columns_[c.col_idx].FilterInto(c.op, c.value, &rm);
-  }
-
-  // Return a copy of this table with the RowMaps using the computed filter
-  // RowMap and with the updated size.
-  Table table = CopyExceptRowMaps();
-  table.size_ = rm.size();
-  for (const RowMap& map : row_maps_) {
-    table.row_maps_.emplace_back(map.SelectRows(rm));
-    PERFETTO_DCHECK(table.row_maps_.back().size() == table.size());
+    table.columns_.emplace_back(col, &table, col.index_in_table(),
+                                col.row_map_idx_);
   }
   return table;
 }
 
 Table Table::Sort(const std::vector<Order>& od) const {
-  // TODO(lalitm): we can add optimizations here depending on whether this is
-  // an lvalue or rvalue.
-
   if (od.empty())
     return Copy();
 
@@ -122,7 +95,9 @@ Table Table::Sort(const std::vector<Order>& od) const {
   // the first constraint in the below loop) in a non-stable way. However, this
   // is more subtle than it appears as we would then need special handling where
   // there are order bys on a column which is already sorted (e.g. ts, id).
-  // Investigate whether the performance gains from this are worthwhile.
+  // Investigate whether the performance gains from this are worthwhile. This
+  // also needs changes to the constraint modification logic in DbSqliteTable
+  // which currently eliminates constraints on sorted columns.
   for (auto it = od.rbegin(); it != od.rend(); ++it) {
     columns_[it->col_idx].StableSort(it->desc, &idx);
   }

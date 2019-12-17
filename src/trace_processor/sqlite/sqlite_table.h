@@ -167,7 +167,10 @@ class SqliteTable : public sqlite3_vtab {
     bool sqlite_omit_order_by = false;
 
     // Stores the estimated cost of this query.
-    uint32_t estimated_cost = 0;
+    double estimated_cost = 0;
+
+    // Estimated row count.
+    int64_t estimated_rows = 0;
   };
 
   template <typename Context>

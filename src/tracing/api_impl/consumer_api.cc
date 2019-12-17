@@ -49,7 +49,7 @@
 #include <sys/syscall.h>
 #endif
 
-#include "protos/perfetto/config/trace_config.pb.h"
+#include "protos/perfetto/config/trace_config.gen.h"
 
 #define PERFETTO_EXPORTED_API __attribute__((visibility("default")))
 
@@ -64,7 +64,7 @@ class TracingSession : public Consumer {
                  Handle,
                  OnStateChangedCb,
                  void* callback_arg,
-                 const perfetto::protos::TraceConfig&);
+                 const TraceConfig&);
   ~TracingSession() override;
 
   // Note: if making this class moveable, the move-ctor/dtor must be updated
@@ -117,18 +117,17 @@ class TracingSession : public Consumer {
   PERFETTO_THREAD_CHECKER(thread_checker_)
 };
 
-TracingSession::TracingSession(
-    base::TaskRunner* task_runner,
-    Handle handle,
-    OnStateChangedCb callback,
-    void* callback_arg,
-    const perfetto::protos::TraceConfig& trace_config_proto)
+TracingSession::TracingSession(base::TaskRunner* task_runner,
+                               Handle handle,
+                               OnStateChangedCb callback,
+                               void* callback_arg,
+                               const TraceConfig& trace_config_proto)
     : task_runner_(task_runner),
       handle_(handle),
       callback_(callback),
       callback_arg_(callback_arg) {
   PERFETTO_DETACH_FROM_THREAD(thread_checker_);
-  trace_config_.FromProto(trace_config_proto);
+  trace_config_ = trace_config_proto;
   trace_config_.set_write_into_file(true);
 
   // TODO(primiano): this really doesn't matter because the trace will be
@@ -319,9 +318,8 @@ Handle TracingController::Create(const void* config_proto_buf,
                                  size_t config_len,
                                  OnStateChangedCb callback,
                                  void* callback_arg) {
-  perfetto::protos::TraceConfig config_proto;
-  bool parsed = config_proto.ParseFromArray(config_proto_buf,
-                                            static_cast<int>(config_len));
+  TraceConfig config_proto;
+  bool parsed = config_proto.ParseFromArray(config_proto_buf, config_len);
   if (!parsed) {
     PERFETTO_ELOG("Failed to decode TraceConfig proto");
     return kInvalidHandle;

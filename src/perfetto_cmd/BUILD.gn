@@ -44,6 +44,12 @@ executable("trigger_perfetto") {
   ]
 }
 
+source_set("perfetto_atoms") {
+  sources = [
+    "perfetto_atoms.h",
+  ]
+}
+
 # Contains all the implementation but not the main() entry point. This target
 # is shared both by the executable and tests.
 source_set("perfetto_cmd") {
@@ -52,11 +58,13 @@ source_set("perfetto_cmd") {
     "../../include/perfetto/ext/traced",
   ]
   deps = [
+    ":perfetto_atoms",
     ":trigger_producer",
     "../../gn:default_deps",
     "../../gn:zlib",
-    "../../protos/perfetto/common:lite",
-    "../../protos/perfetto/config:lite",
+    "../../protos/perfetto/common:cpp",
+    "../../protos/perfetto/config:cpp",
+    "../../protos/perfetto/config/ftrace:cpp",
     "../android_internal:lazy_library_loader",
     "../base",
     "../protozero",
@@ -103,14 +111,13 @@ source_set("trigger_producer") {
   ]
   deps = [
     "../../gn:default_deps",
-    "../../protos/perfetto/config:lite",
     "../base",
     "../tracing:ipc",
   ]
 }
 
 perfetto_proto_library("protos") {
-  proto_generators = [ "lite" ]
+  proto_generators = [ "cpp" ]
   sources = [
     "perfetto_cmd_state.proto",
   ]
@@ -127,9 +134,9 @@ perfetto_unittest_source_set("unittests") {
     "../../gn:zlib",
     "../../include/perfetto/base",
     "../../include/perfetto/ext/base",
-    "../../protos/perfetto/config:lite",
-    "../../protos/perfetto/trace:lite",
-    "../protozero",
+    "../../protos/perfetto/config:cpp",
+    "../../protos/perfetto/config/ftrace:cpp",
+    "../../protos/perfetto/trace:cpp",
     "../tracing",
   ]
   sources = [

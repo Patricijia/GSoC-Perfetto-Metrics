@@ -33,6 +33,16 @@ const DOWN_ICON = 'keyboard_arrow_down';
 const DRAG_HANDLE_HEIGHT_PX = 28;
 const DEFAULT_DETAILS_HEIGHT_PX = 230 + DRAG_HANDLE_HEIGHT_PX;
 
+function getFullScreenHeight() {
+  const panelContainer =
+      document.querySelector('.pan-and-zoom-content') as HTMLElement;
+  if (panelContainer !== null) {
+    return panelContainer.clientHeight;
+  } else {
+    return DEFAULT_DETAILS_HEIGHT_PX;
+  }
+}
+
 function hasLogs(): boolean {
   const data = globals.trackDataStore.get(LogExistsKey) as LogExists;
   return data && data.exists;
@@ -44,16 +54,20 @@ interface DragHandleAttrs {
   tabs: Tab[];
 }
 
-export type Tab = 'current_selection'|'time_range'|'android_logs';
+export type Tab = 'current_selection'|'cpu_slices'|'android_logs';
 
 class DragHandle implements m.ClassComponent<DragHandleAttrs> {
   private dragStartHeight = 0;
   private height = 0;
+  private previousHeight = this.height;
   private resize: (height: number) => void = () => {};
   private isClosed = this.height <= DRAG_HANDLE_HEIGHT_PX;
+  private isFullscreen = false;
+  // We can't get real fullscreen height until the pan_and_zoom_handler exists.
+  private fullscreenHeight = DEFAULT_DETAILS_HEIGHT_PX;
   private tabNames = new Map<Tab, string>([
     ['current_selection', 'Current Selection'],
-    ['time_range', 'Time Range'],
+    ['cpu_slices', 'CPU Slices'],
     ['android_logs', 'Android Logs']
   ]);
 
@@ -62,6 +76,7 @@ class DragHandle implements m.ClassComponent<DragHandleAttrs> {
     this.resize = attrs.resize;
     this.height = attrs.height;
     this.isClosed = this.height <= DRAG_HANDLE_HEIGHT_PX;
+    this.fullscreenHeight = getFullScreenHeight();
     const elem = dom as HTMLElement;
     new DragGestureHandler(
         elem,
@@ -77,9 +92,11 @@ class DragHandle implements m.ClassComponent<DragHandleAttrs> {
   }
 
   onDrag(_x: number, y: number) {
-    const newHeight = this.dragStartHeight + (DRAG_HANDLE_HEIGHT_PX / 2) - y;
-    this.isClosed = Math.floor(newHeight) <= DRAG_HANDLE_HEIGHT_PX;
-    this.resize(Math.floor(newHeight));
+    const newHeight =
+        Math.floor(this.dragStartHeight + (DRAG_HANDLE_HEIGHT_PX / 2) - y);
+    this.isClosed = newHeight <= DRAG_HANDLE_HEIGHT_PX;
+    this.isFullscreen = newHeight >= this.fullscreenHeight;
+    this.resize(newHeight);
     globals.rafScheduler.scheduleFullRedraw();
   }
 
@@ -111,21 +128,36 @@ class DragHandle implements m.ClassComponent<DragHandleAttrs> {
     return m(
         '.handle',
         m('.tabs', attrs.tabs.map(renderTab)),
-        m('i.material-icons',
-          {
-            onclick: () => {
-              if (this.height === DRAG_HANDLE_HEIGHT_PX) {
+        m('.buttons',
+          m('i.material-icons',
+            {
+              onclick: () => {
                 this.isClosed = false;
-                this.resize(DEFAULT_DETAILS_HEIGHT_PX);
-              } else {
-                this.isClosed = true;
-                this.resize(DRAG_HANDLE_HEIGHT_PX);
-              }
-              globals.rafScheduler.scheduleFullRedraw();
+                this.isFullscreen = true;
+                this.resize(this.fullscreenHeight);
+                globals.rafScheduler.scheduleFullRedraw();
+              },
+              title: 'Open fullscreen',
+              disabled: this.isFullscreen
             },
-            title
-          },
-          icon));
+            'vertical_align_top'),
+          m('i.material-icons',
+            {
+              onclick: () => {
+                if (this.height === DRAG_HANDLE_HEIGHT_PX) {
+                  this.isClosed = false;
+                  this.resize(this.previousHeight);
+                } else {
+                  this.isFullscreen = false;
+                  this.isClosed = true;
+                  this.previousHeight = this.height;
+                  this.resize(DRAG_HANDLE_HEIGHT_PX);
+                }
+                globals.rafScheduler.scheduleFullRedraw();
+              },
+              title
+            },
+            icon)));
   }
 }
 
@@ -181,16 +213,14 @@ export class DetailsPanel implements m.ClassComponent {
       detailsPanels.set('android_logs', m(LogPanel, {}));
     }
 
-    if (globals.frontendLocalState.selectedTimeRange.startSec !== undefined &&
-        globals.frontendLocalState.selectedTimeRange.endSec !== undefined) {
-      detailsPanels.set('time_range', m(AggregationPanel));
+    if (globals.frontendLocalState.selectedArea.area !== undefined) {
+      detailsPanels.set('cpu_slices', m(AggregationPanel));
     }
 
     const wasShowing = this.showDetailsPanel;
     this.showDetailsPanel = detailsPanels.size > 0;
-    // Pop up details panel on first selection.
-    if (!wasShowing && this.showDetailsPanel &&
-        this.detailsHeight === DRAG_HANDLE_HEIGHT_PX) {
+    // The first time the details panel appears, it should be default height.
+    if (!wasShowing && this.showDetailsPanel) {
       this.detailsHeight = DEFAULT_DETAILS_HEIGHT_PX;
     }
 

@@ -38,6 +38,7 @@
 #include "protos/perfetto/trace/ftrace/power.pbzero.h"
 #include "protos/perfetto/trace/ftrace/raw_syscalls.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sched.pbzero.h"
+#include "protos/perfetto/trace/ftrace/sde.pbzero.h"
 #include "protos/perfetto/trace/ftrace/signal.pbzero.h"
 #include "protos/perfetto/trace/ftrace/systrace.pbzero.h"
 #include "protos/perfetto/trace/ftrace/task.pbzero.h"
@@ -260,11 +261,11 @@ util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
         break;
       }
       case FtraceEvent::kPrintFieldNumber: {
-        ParsePrint(cpu, ts, pid, data);
+        ParsePrint(ts, pid, data);
         break;
       }
       case FtraceEvent::kZeroFieldNumber: {
-        ParseZero(cpu, ts, pid, data);
+        ParseZero(ts, pid, data);
         break;
       }
       case FtraceEvent::kRssStatFieldNumber: {
@@ -337,6 +338,10 @@ util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
       }
       case FtraceEvent::kBinderLockedFieldNumber: {
         ParseBinderLocked(ts, pid, data);
+        break;
+      }
+      case FtraceEvent::kSdeTracingMarkWriteFieldNumber: {
+        ParseSdeTracingMarkWrite(ts, pid, data);
         break;
       }
       default:
@@ -516,22 +521,32 @@ void FtraceParser::ParseCpuIdle(int64_t ts, ConstBytes blob) {
   context_->event_tracker->PushCounter(ts, new_state, track);
 }
 
-void FtraceParser::ParsePrint(uint32_t,
-                              int64_t ts,
-                              uint32_t pid,
-                              ConstBytes blob) {
+void FtraceParser::ParsePrint(int64_t ts, uint32_t pid, ConstBytes blob) {
   protos::pbzero::PrintFtraceEvent::Decoder evt(blob.data, blob.size);
   context_->systrace_parser->ParsePrintEvent(ts, pid, evt.buf());
 }
 
-void FtraceParser::ParseZero(uint32_t,
-                             int64_t ts,
-                             uint32_t pid,
-                             ConstBytes blob) {
+void FtraceParser::ParseZero(int64_t ts, uint32_t pid, ConstBytes blob) {
   protos::pbzero::ZeroFtraceEvent::Decoder evt(blob.data, blob.size);
   uint32_t tgid = static_cast<uint32_t>(evt.pid());
   context_->systrace_parser->ParseZeroEvent(ts, pid, evt.flag(), evt.name(),
                                             tgid, evt.value());
+}
+
+void FtraceParser::ParseSdeTracingMarkWrite(int64_t ts,
+                                            uint32_t pid,
+                                            ConstBytes blob) {
+  protos::pbzero::SdeTracingMarkWriteFtraceEvent::Decoder evt(blob.data,
+                                                              blob.size);
+  if (!evt.has_trace_type() && !evt.has_trace_begin()) {
+    context_->storage->IncrementStats(stats::systrace_parse_failure);
+    return;
+  }
+
+  uint32_t tgid = static_cast<uint32_t>(evt.pid());
+  context_->systrace_parser->ParseSdeTracingMarkWrite(
+      ts, pid, static_cast<char>(evt.trace_type()), evt.trace_begin(),
+      evt.trace_name(), tgid, evt.value());
 }
 
 void FtraceParser::ParseRssStat(int64_t ts, uint32_t pid, ConstBytes blob) {
@@ -582,13 +597,11 @@ void FtraceParser::ParseIonHeapGrowOrShrink(int64_t ts,
   context_->event_tracker->PushCounter(ts, total_bytes, track);
 
   // Push the change counter.
-  // TODO(b/121331269): these should really be instant events. For now we
-  // manually reset them to 0 after 1ns.
+  // TODO(b/121331269): these should really be instant events.
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
   track =
       context_->track_tracker->InternThreadCounterTrack(change_name_id, utid);
   context_->event_tracker->PushCounter(ts, change_bytes, track);
-  context_->event_tracker->PushCounter(ts + 1, 0, track);
 
   // We are reusing the same function for ion_heap_grow and ion_heap_shrink.
   // It is fine as the arguments are the same, but we need to be sure that the
@@ -694,10 +707,11 @@ void FtraceParser::ParseSysEvent(int64_t ts,
   uint32_t syscall_num = static_cast<uint32_t>(evt.id());
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
 
+  SyscallTracker* syscall_tracker = SyscallTracker::GetOrCreate(context_);
   if (is_enter) {
-    context_->syscall_tracker->Enter(ts, utid, syscall_num);
+    syscall_tracker->Enter(ts, utid, syscall_num);
   } else {
-    context_->syscall_tracker->Exit(ts, utid, syscall_num);
+    syscall_tracker->Exit(ts, utid, syscall_num);
   }
 
   // We are reusing the same function for sys_enter and sys_exit.

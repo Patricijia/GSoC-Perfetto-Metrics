@@ -31,10 +31,12 @@
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_view.h"
 #include "perfetto/ext/base/utils.h"
+#include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/containers/string_pool.h"
 #include "src/trace_processor/ftrace_utils.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/stats.h"
-#include "src/trace_processor/string_pool.h"
+#include "src/trace_processor/tables/counter_tables.h"
 #include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/tables/slice_tables.h"
 #include "src/trace_processor/tables/track_tables.h"
@@ -96,14 +98,14 @@ enum class RefType {
   kRefMax
 };
 
-const std::vector<const char*>& GetRefTypeStringMap();
+const std::vector<NullTermStringView>& GetRefTypeStringMap();
 
 // Stores a data inside a trace file in a columnar form. This makes it efficient
 // to read or search across a single field of the trace (e.g. all the thread
 // names for a given CPU).
 class TraceStorage {
  public:
-  TraceStorage();
+  TraceStorage(const Config& = Config());
 
   virtual ~TraceStorage();
 
@@ -322,76 +324,6 @@ class TraceStorage {
     std::deque<std::vector<uint32_t>> rows_for_utids_;
   };
 
-  class NestableSlices {
-   public:
-    inline uint32_t AddSlice(int64_t start_ns,
-                             int64_t duration_ns,
-                             TrackId track_id,
-                             int64_t ref,
-                             RefType type,
-                             StringId category,
-                             StringId name,
-                             uint8_t depth,
-                             int64_t stack_id,
-                             int64_t parent_stack_id) {
-      start_ns_.emplace_back(start_ns);
-      durations_.emplace_back(duration_ns);
-      track_id_.emplace_back(track_id);
-      refs_.emplace_back(ref);
-      types_.emplace_back(type);
-      categories_.emplace_back(category);
-      names_.emplace_back(name);
-      depths_.emplace_back(depth);
-      stack_ids_.emplace_back(stack_id);
-      parent_stack_ids_.emplace_back(parent_stack_id);
-      arg_set_ids_.emplace_back(kInvalidArgSetId);
-      return slice_count() - 1;
-    }
-
-    void set_duration(uint32_t index, int64_t duration_ns) {
-      durations_[index] = duration_ns;
-    }
-
-    void set_stack_id(uint32_t index, int64_t stack_id) {
-      stack_ids_[index] = stack_id;
-    }
-
-    void set_arg_set_id(uint32_t index, ArgSetId id) {
-      arg_set_ids_[index] = id;
-    }
-
-    uint32_t slice_count() const {
-      return static_cast<uint32_t>(start_ns_.size());
-    }
-
-    const std::deque<int64_t>& start_ns() const { return start_ns_; }
-    const std::deque<int64_t>& durations() const { return durations_; }
-    const std::deque<TrackId>& track_id() const { return track_id_; }
-    const std::deque<int64_t>& refs() const { return refs_; }
-    const std::deque<RefType>& types() const { return types_; }
-    const std::deque<StringId>& categories() const { return categories_; }
-    const std::deque<StringId>& names() const { return names_; }
-    const std::deque<uint8_t>& depths() const { return depths_; }
-    const std::deque<int64_t>& stack_ids() const { return stack_ids_; }
-    const std::deque<int64_t>& parent_stack_ids() const {
-      return parent_stack_ids_;
-    }
-    const std::deque<ArgSetId>& arg_set_ids() const { return arg_set_ids_; }
-
-   private:
-    std::deque<int64_t> start_ns_;
-    std::deque<int64_t> durations_;
-    std::deque<TrackId> track_id_;
-    std::deque<int64_t> refs_;
-    std::deque<RefType> types_;
-    std::deque<StringId> categories_;
-    std::deque<StringId> names_;
-    std::deque<uint8_t> depths_;
-    std::deque<int64_t> stack_ids_;
-    std::deque<int64_t> parent_stack_ids_;
-    std::deque<ArgSetId> arg_set_ids_;
-  };
-
   class ThreadSlices {
    public:
     inline uint32_t AddThreadSlice(uint32_t slice_id,
@@ -512,64 +444,6 @@ class TraceStorage {
     std::deque<int64_t> thread_duration_ns_;
     std::deque<int64_t> thread_instruction_counts_;
     std::deque<int64_t> thread_instruction_deltas_;
-  };
-
-  class CounterValues {
-   public:
-    inline uint32_t AddCounterValue(TrackId track_id,
-                                    int64_t timestamp,
-                                    double value) {
-      track_id_.emplace_back(track_id);
-      timestamps_.emplace_back(timestamp);
-      values_.emplace_back(value);
-      arg_set_ids_.emplace_back(kInvalidArgSetId);
-
-      if (track_id != kInvalidTrackId) {
-        if (track_id >= rows_for_track_id_.size()) {
-          rows_for_track_id_.resize(track_id + 1);
-        }
-        rows_for_track_id_[track_id].emplace_back(size() - 1);
-      }
-      return size() - 1;
-    }
-
-    void set_track_id(uint32_t index, TrackId track_id) {
-      PERFETTO_DCHECK(track_id_[index] == kInvalidTrackId);
-
-      track_id_[index] = track_id;
-      if (track_id >= rows_for_track_id_.size()) {
-        rows_for_track_id_.resize(track_id + 1);
-      }
-
-      auto* new_rows = &rows_for_track_id_[track_id];
-      new_rows->insert(
-          std::upper_bound(new_rows->begin(), new_rows->end(), index), index);
-    }
-
-    void set_arg_set_id(uint32_t row, ArgSetId id) { arg_set_ids_[row] = id; }
-
-    uint32_t size() const { return static_cast<uint32_t>(track_id_.size()); }
-
-    const std::deque<TrackId>& track_ids() const { return track_id_; }
-
-    const std::deque<int64_t>& timestamps() const { return timestamps_; }
-
-    const std::deque<double>& values() const { return values_; }
-
-    const std::deque<ArgSetId>& arg_set_ids() const { return arg_set_ids_; }
-
-    const std::deque<std::vector<uint32_t>>& rows_for_track_id() const {
-      return rows_for_track_id_;
-    }
-
-   private:
-    std::deque<TrackId> track_id_;
-    std::deque<int64_t> timestamps_;
-    std::deque<double> values_;
-    std::deque<ArgSetId> arg_set_ids_;
-
-    // Indexed by track_id and contains the row numbers corresponding to it.
-    std::deque<std::vector<uint32_t>> rows_for_track_id_;
   };
 
   class SqlStats {
@@ -1169,8 +1043,8 @@ class TraceStorage {
   const Slices& slices() const { return slices_; }
   Slices* mutable_slices() { return &slices_; }
 
-  const NestableSlices& nestable_slices() const { return nestable_slices_; }
-  NestableSlices* mutable_nestable_slices() { return &nestable_slices_; }
+  const tables::SliceTable& slice_table() const { return slice_table_; }
+  tables::SliceTable* mutable_slice_table() { return &slice_table_; }
 
   const ThreadSlices& thread_slices() const { return thread_slices_; }
   ThreadSlices* mutable_thread_slices() { return &thread_slices_; }
@@ -1187,8 +1061,8 @@ class TraceStorage {
   }
   tables::GpuSliceTable* mutable_gpu_slice_table() { return &gpu_slice_table_; }
 
-  const CounterValues& counter_values() const { return counter_values_; }
-  CounterValues* mutable_counter_values() { return &counter_values_; }
+  const tables::CounterTable& counter_table() const { return counter_table_; }
+  tables::CounterTable* mutable_counter_table() { return &counter_table_; }
 
   const SqlStats& sql_stats() const { return sql_stats_; }
   SqlStats* mutable_sql_stats() { return &sql_stats_; }
@@ -1358,7 +1232,7 @@ class TraceStorage {
   std::deque<Thread> unique_threads_;
 
   // Slices coming from userspace events (e.g. Chromium TRACE_EVENT macros).
-  NestableSlices nestable_slices_;
+  tables::SliceTable slice_table_{&string_pool_, nullptr};
 
   // Additional attributes for threads slices (sub-type of NestableSlices).
   ThreadSlices thread_slices_;
@@ -1373,7 +1247,7 @@ class TraceStorage {
 
   // The values from the Counter events from the trace. This includes CPU
   // frequency events as well systrace trace_marker counter events.
-  CounterValues counter_values_;
+  tables::CounterTable counter_table_{&string_pool_, nullptr};
 
   SqlStats sql_stats_;
 

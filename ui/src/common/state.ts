@@ -29,8 +29,15 @@ export type OmniboxState =
 export type VisibleState =
     Timestamped<{startSec: number; endSec: number; resolution: number;}>;
 
-export type SelectedTimeRange =
-    Timestamped<{startSec?: number; endSec?: number;}>;
+export type TimestampedAreaSelection = Timestamped<AreaSelection>;
+export interface AreaSelection {
+  area?: Area;
+}
+export interface Area {
+  startSec: number;
+  endSec: number;
+  tracks: string[];
+}
 
 export const MAX_TIME = 180;
 
@@ -40,6 +47,16 @@ export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 export type EngineMode = 'WASM'|'HTTP_RPC';
 
 export type NewEngineMode = 'USE_HTTP_RPC_IF_AVAILABLE'|'FORCE_BUILTIN_WASM';
+
+export interface CallsiteInfo {
+  id: number;
+  parentId: number;
+  depth: number;
+  name?: string;
+  totalSize: number;
+  selfSize: number;
+  mapping: string;
+}
 
 export interface TraceFileSource {
   type: 'FILE';
@@ -108,7 +125,7 @@ export interface TraceTime {
 export interface FrontendLocalState {
   omniboxState: OmniboxState;
   visibleState: VisibleState;
-  selectedTimeRange: SelectedTimeRange;
+  selectedArea: TimestampedAreaSelection;
 }
 
 export interface Status {
@@ -153,6 +170,8 @@ export interface HeapProfileFlamegraph {
   id: number;
   upid: number;
   ts: number;
+  expandedCallsite?: CallsiteInfo;
+  viewingOption?: string;
 }
 
 export interface ChromeSliceSelection {
@@ -436,7 +455,7 @@ export function createEmptyState(): State {
         lastUpdate: 0,
         resolution: 0,
       },
-      selectedTimeRange: {
+      selectedArea: {
         lastUpdate: 0,
       },
     },

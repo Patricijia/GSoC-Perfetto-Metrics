@@ -54,12 +54,16 @@ class HeapGraphTracker : public HeapGraphWalker::Delegate {
 
   explicit HeapGraphTracker(TraceProcessorContext* context);
 
-  void AddRoot(UniquePid upid, int64_t ts, SourceRoot root);
-  void AddObject(UniquePid upid, int64_t ts, SourceObject obj);
-  void AddInternedTypeName(uint64_t intern_id, StringPool::Id strid);
-  void AddInternedFieldName(uint64_t intern_id, StringPool::Id strid);
-  void FinalizeProfile();
-  void SetPacketIndex(uint64_t index);
+  void AddRoot(uint32_t seq_id, UniquePid upid, int64_t ts, SourceRoot root);
+  void AddObject(uint32_t seq_id, UniquePid upid, int64_t ts, SourceObject obj);
+  void AddInternedTypeName(uint32_t seq_id,
+                           uint64_t intern_id,
+                           StringPool::Id strid);
+  void AddInternedFieldName(uint32_t seq_id,
+                            uint64_t intern_id,
+                            StringPool::Id strid);
+  void FinalizeProfile(uint32_t seq);
+  void SetPacketIndex(uint32_t seq_id, uint64_t index);
 
   ~HeapGraphTracker() override = default;
   // HeapGraphTracker::Delegate
@@ -68,20 +72,43 @@ class HeapGraphTracker : public HeapGraphWalker::Delegate {
                    int64_t retained,
                    int64_t unique_retained) override;
 
+  const std::vector<int64_t>* RowsForType(StringPool::Id type_name) const {
+    auto it = class_to_rows_.find(type_name);
+    if (it == class_to_rows_.end())
+      return nullptr;
+    return &it->second;
+  }
+
+  const std::vector<int64_t>* RowsForField(StringPool::Id field_name) const {
+    auto it = field_to_rows_.find(field_name);
+    if (it == field_to_rows_.end())
+      return nullptr;
+    return &it->second;
+  }
+
  private:
-  bool SetPidAndTimestamp(UniquePid upid, int64_t ts);
+  struct SequenceState {
+    SequenceState(HeapGraphTracker* tracker) : walker(tracker) {}
+
+    UniquePid current_upid = 0;
+    int64_t current_ts = 0;
+    std::vector<SourceObject> current_objects;
+    std::vector<SourceRoot> current_roots;
+    std::map<uint64_t, StringPool::Id> interned_type_names;
+    std::map<uint64_t, StringPool::Id> interned_field_names;
+    std::map<uint64_t, int64_t> object_id_to_row;
+    uint64_t prev_index = 0;
+    HeapGraphWalker walker;
+  };
+
+  SequenceState& GetOrCreateSequence(uint32_t seq_id);
+  bool SetPidAndTimestamp(SequenceState* seq, UniquePid upid, int64_t ts);
+
   TraceProcessorContext* const context_;
+  std::map<uint32_t, SequenceState> sequence_state_;
 
-  UniquePid current_upid_ = 0;
-  int64_t current_ts_ = 0;
-  std::vector<SourceObject> current_objects_;
-  std::vector<SourceRoot> current_roots_;
-  std::map<uint64_t, StringPool::Id> interned_type_names_;
-  std::map<uint64_t, StringPool::Id> interned_field_names_;
-  std::map<uint64_t, int64_t> object_id_to_row_;
-  uint64_t prev_index_ = 0;
-
-  HeapGraphWalker walker_{this};
+  std::map<StringPool::Id, std::vector<int64_t>> class_to_rows_;
+  std::map<StringPool::Id, std::vector<int64_t>> field_to_rows_;
 };
 
 }  // namespace trace_processor

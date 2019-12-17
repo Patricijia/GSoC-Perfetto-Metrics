@@ -72,13 +72,14 @@ void ArgsTracker::Flush() {
         storage->mutable_raw_events()->set_arg_set_id(row, set_id);
         break;
       case TableId::kCounterValues:
-        storage->mutable_counter_values()->set_arg_set_id(row, set_id);
+        storage->mutable_counter_table()->mutable_arg_set_id()->Set(row,
+                                                                    set_id);
         break;
       case TableId::kInstants:
         storage->mutable_instants()->set_arg_set_id(row, set_id);
         break;
       case TableId::kNestableSlices:
-        storage->mutable_nestable_slices()->set_arg_set_id(row, set_id);
+        storage->mutable_slice_table()->mutable_arg_set_id()->Set(row, set_id);
         break;
       // Special case: overwrites the metadata table row.
       case TableId::kMetadataTable:

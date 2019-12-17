@@ -58,7 +58,9 @@ group("lite") {
   ]
 }
 
+# This is only for tests because bloats binary size.
 group("cpp") {
+  testonly = true
   public_deps = [
     ":minimal_cpp",
     ":non_minimal_cpp",
@@ -66,6 +68,11 @@ group("cpp") {
 }
 
 perfetto_proto_library("non_minimal_@TYPE@") {
+  proto_generators = [
+    "cpp",
+    "lite",
+    "zero",
+  ]
   deps = [
     ":minimal_@TYPE@",
     "../config:@TYPE@",

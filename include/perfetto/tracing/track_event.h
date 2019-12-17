@@ -54,8 +54,18 @@
 //
 //       int main() {
 //         perfetto::TrackEvent::Register();
-//         TRACK_EVENT("category", "MyEvent");
-//         ...
+//
+//         // A basic track event with just a name.
+//         TRACE_EVENT("category", "MyEvent");
+//
+//         // A track event with (up to two) debug annotations.
+//         TRACE_EVENT("category", "MyEvent", "parameter", 42);
+//
+//         // A track event with a strongly typed parameter.
+//         TRACE_EVENT("category", "MyEvent", [](perfetto::EventContext ctx) {
+//           ctx.event()->set_foo(42);
+//           ctx.event()->set_bar(.5f);
+//         });
 //       }
 //
 // ====================
@@ -116,7 +126,7 @@
 #define PERFETTO_DEFINE_CATEGORIES(...)                        \
   namespace PERFETTO_TRACK_EVENT_NAMESPACE {                   \
   /* The list of category names */                             \
-  PERFETTO_INTERNAL_DECLARE_CATEGORIES(__VA_ARGS__);           \
+  PERFETTO_INTERNAL_DECLARE_CATEGORIES(__VA_ARGS__)            \
   /* The track event data source for this set of categories */ \
   PERFETTO_INTERNAL_DECLARE_TRACK_EVENT_DATA_SOURCE();         \
   }  // namespace PERFETTO_TRACK_EVENT_NAMESPACE
@@ -125,12 +135,21 @@
 // namespace.
 #define PERFETTO_TRACK_EVENT_STATIC_STORAGE() \
   namespace PERFETTO_TRACK_EVENT_NAMESPACE {  \
-  PERFETTO_INTERNAL_CATEGORY_STORAGE();       \
+  PERFETTO_INTERNAL_CATEGORY_STORAGE()        \
   }  // namespace PERFETTO_TRACK_EVENT_NAMESPACE
 
 // Begin a thread-scoped slice under |category| with the title |name|. Both
 // strings must be static constants. The track event is only recorded if
 // |category| is enabled for a tracing session.
+//
+// |name| must be a string with static lifetime (i.e., the same
+// address must not be used for a different event name in the future). If you
+// want to use a dynamically allocated name, do this:
+//
+//  TRACE_EVENT("category", nullptr, [&](perfetto::EventContext ctx) {
+//    ctx.event()->set_name(dynamic_name);
+//  });
+//
 #define TRACE_EVENT_BEGIN(category, name, ...) \
   PERFETTO_INTERNAL_TRACK_EVENT(               \
       category, name,                          \
@@ -144,13 +163,8 @@
 
 // Begin a thread-scoped slice which gets automatically closed when going out of
 // scope.
-#define TRACE_EVENT(category, name, ...)               \
-  TRACE_EVENT_BEGIN(category, name, ##__VA_ARGS__);    \
-  struct {                                             \
-    struct EventFinalizer {                            \
-      ~EventFinalizer() { TRACE_EVENT_END(category); } \
-    } finalizer;                                       \
-  } PERFETTO_INTERNAL_UID(scoped_event)
+#define TRACE_EVENT(category, name, ...) \
+  PERFETTO_INTERNAL_SCOPED_TRACK_EVENT(category, name, ##__VA_ARGS__)
 
 // Emit a thread-scoped slice which has zero duration.
 // TODO(skyostil): Add support for process-wide and global instant events.

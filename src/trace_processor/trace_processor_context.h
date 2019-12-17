@@ -18,36 +18,31 @@
 #define SRC_TRACE_PROCESSOR_TRACE_PROCESSOR_CONTEXT_H_
 
 #include <memory>
+#include <vector>
 
 #include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/destructible.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-class AndroidProbesModule;
 class ArgsTracker;
 class BinderTracker;
 class ChunkedTraceReader;
 class ClockTracker;
 class EventTracker;
 class FtraceModule;
-class GraphicsEventModule;
-class HeapGraphModule;
 class HeapGraphTracker;
 class HeapProfileTracker;
 class ProcessTracker;
 class SchedEventTracker;
 class SliceTracker;
-class SyscallTracker;
-class SystemProbesModule;
 class SystraceParser;
 class TraceParser;
 class TraceSorter;
 class TraceStorage;
-class TrackEventModule;
 class TrackTracker;
-class VulkanMemoryTracker;
 
 class TraceProcessorContext {
  public:
@@ -61,7 +56,6 @@ class TraceProcessorContext {
   std::unique_ptr<ArgsTracker> args_tracker;
   std::unique_ptr<SliceTracker> slice_tracker;
   std::unique_ptr<ProcessTracker> process_tracker;
-  std::unique_ptr<SyscallTracker> syscall_tracker;
   std::unique_ptr<EventTracker> event_tracker;
   std::unique_ptr<SchedEventTracker> sched_tracker;
   std::unique_ptr<ClockTracker> clock_tracker;
@@ -71,17 +65,20 @@ class TraceProcessorContext {
   std::unique_ptr<HeapProfileTracker> heap_profile_tracker;
   std::unique_ptr<SystraceParser> systrace_parser;
   std::unique_ptr<HeapGraphTracker> heap_graph_tracker;
-  std::unique_ptr<VulkanMemoryTracker> vulkan_memory_tracker;
   std::unique_ptr<BinderTracker> binder_tracker;
 
-  std::unique_ptr<ProtoImporterModule<FtraceModule>> ftrace_module;
-  std::unique_ptr<ProtoImporterModule<TrackEventModule>> track_event_module;
-  std::unique_ptr<ProtoImporterModule<SystemProbesModule>> system_probes_module;
-  std::unique_ptr<ProtoImporterModule<AndroidProbesModule>>
-      android_probes_module;
-  std::unique_ptr<ProtoImporterModule<HeapGraphModule>> heap_graph_module;
-  std::unique_ptr<ProtoImporterModule<GraphicsEventModule>>
-      graphics_event_module;
+  // These fields are stored as pointers to Destructible objects rather than
+  // their actual type (a subclass of Destructible), as the concrete subclass
+  // type is only available in the storage_full target. To access these fields,
+  // use the GetOrCreate() method on their subclass type,
+  // e.g. SyscallTracker::GetOrCreate(context).
+  std::unique_ptr<Destructible> syscall_tracker;  // SyscallTracker.
+
+  // The module at the index N is registered to handle field id N in
+  // TracePacket.
+  std::vector<ProtoImporterModule*> modules_by_field;
+  std::vector<std::unique_ptr<ProtoImporterModule>> modules;
+  FtraceModule* ftrace_module;
 };
 
 }  // namespace trace_processor

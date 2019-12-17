@@ -29,7 +29,6 @@ namespace stats {
   F(android_log_num_failed,                   kSingle,  kError,    kTrace),    \
   F(android_log_num_skipped,                  kSingle,  kError,    kTrace),    \
   F(android_log_num_total,                    kSingle,  kInfo,     kTrace),    \
-  F(atrace_tgid_mismatch,                     kSingle,  kError,    kTrace),    \
   F(counter_events_out_of_order,              kSingle,  kError,    kAnalysis), \
   F(ftrace_bundle_tokenizer_errors,           kSingle,  kError,    kAnalysis), \
   F(ftrace_cpu_bytes_read_begin,              kIndexed, kInfo,     kTrace),    \
@@ -124,7 +123,8 @@ namespace stats {
   F(misplaced_end_event,                      kSingle,  kDataLoss, kAnalysis), \
   F(sched_waking_out_of_order,                kSingle,  kError,    kAnalysis), \
   F(compact_sched_switch_skipped,             kSingle,  kInfo,     kAnalysis), \
-  F(compact_sched_waking_skipped,             kSingle,  kInfo,     kAnalysis)
+  F(compact_sched_waking_skipped,             kSingle,  kInfo,     kAnalysis), \
+  F(empty_chrome_metadata,                    kSingle,  kError,    kTrace)
 // clang-format on
 
 enum Type {

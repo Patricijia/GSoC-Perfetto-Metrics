@@ -15,6 +15,7 @@
 import {Draft} from 'immer';
 
 import {assertExists} from '../base/logging';
+import {CallsiteInfo} from '../common/state';
 import {ConvertTrace, ConvertTraceToPprof} from '../controller/trace_converter';
 
 import {
@@ -27,9 +28,9 @@ import {
   RecordConfig,
   RecordingTarget,
   SCROLLING_TRACK_GROUP,
-  SelectedTimeRange,
   State,
   Status,
+  TimestampedAreaSelection,
   TraceSource,
   TraceTime,
   TrackState,
@@ -440,6 +441,18 @@ export const StateActions = {
     };
   },
 
+  expandHeapProfileFlamegraph(
+      state: StateDraft, args: {expandedCallsite?: CallsiteInfo}): void {
+    if (state.currentHeapProfileFlamegraph === null) return;
+    state.currentHeapProfileFlamegraph.expandedCallsite = args.expandedCallsite;
+  },
+
+  changeViewHeapProfileFlamegraph(
+      state: StateDraft, args: {viewingOption: string}): void {
+    if (state.currentHeapProfileFlamegraph === null) return;
+    state.currentHeapProfileFlamegraph.viewingOption = args.viewingOption;
+  },
+
   selectChromeSlice(state: StateDraft, args: {id: number, trackId: string}):
       void {
         state.currentSelection = {
@@ -512,8 +525,8 @@ export const StateActions = {
     state.frontendLocalState.omniboxState = args;
   },
 
-  selectTimeRange(state: StateDraft, args: SelectedTimeRange): void {
-    state.frontendLocalState.selectedTimeRange = args;
+  selectArea(state: StateDraft, args: TimestampedAreaSelection): void {
+    state.frontendLocalState.selectedArea = args;
   },
 
   setVisibleTraceTime(state: StateDraft, args: VisibleState): void {
