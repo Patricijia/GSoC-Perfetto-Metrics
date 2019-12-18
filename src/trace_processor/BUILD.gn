@@ -83,6 +83,8 @@ source_set("storage_minimal") {
     "chunked_trace_reader.h",
     "clock_tracker.cc",
     "clock_tracker.h",
+    "destructible.cc",
+    "destructible.h",
     "event_tracker.cc",
     "event_tracker.h",
     "forwarding_trace_parser.cc",
@@ -99,8 +101,6 @@ source_set("storage_minimal") {
     "importers/ftrace/ftrace_tokenizer.h",
     "importers/ftrace/sched_event_tracker.h",
     "importers/fuchsia/fuchsia_provider_view.h",
-    "importers/proto/android_probes_module.h",
-    "importers/proto/android_probes_parser.h",
     "importers/proto/args_table_utils.cc",
     "importers/proto/args_table_utils.h",
     "importers/proto/chrome_compositor_scheduler_state.descriptor.h",
@@ -115,8 +115,6 @@ source_set("storage_minimal") {
     "importers/proto/proto_trace_parser.h",
     "importers/proto/proto_trace_tokenizer.cc",
     "importers/proto/proto_trace_tokenizer.h",
-    "importers/proto/system_probes_module.h",
-    "importers/proto/system_probes_parser.h",
     "importers/proto/track_event_module.cc",
     "importers/proto/track_event_module.h",
     "importers/proto/track_event_parser.cc",
@@ -153,12 +151,12 @@ source_set("storage_minimal") {
   ]
 
   deps = [
-    ":common",
     ":descriptors",
     "../../gn:default_deps",
     "../../gn:zlib",
     "../base",
     "../protozero",
+    "containers",
     "tables",
   ]
   public_deps = [
@@ -203,19 +201,6 @@ source_set("storage_minimal") {
       enable_perfetto_trace_processor_fuchsia) {
     sources += [ "ftrace_utils.cc" ]
   }
-  if (enable_perfetto_trace_processor_system_probes) {
-    sources += [
-      "importers/proto/system_probes_module.cc",
-      "importers/proto/system_probes_parser.cc",
-    ]
-    deps += [ "../../include/perfetto/ext/traced:sys_stats_counters" ]
-  }
-  if (enable_perfetto_trace_processor_android_probes) {
-    sources += [
-      "importers/proto/android_probes_module.cc",
-      "importers/proto/android_probes_parser.cc",
-    ]
-  }
   if (enable_perfetto_trace_processor_heap_graphs) {
     sources += [
       "importers/proto/heap_graph_module.cc",
@@ -247,10 +232,18 @@ source_set("storage_minimal") {
 
 source_set("storage_full") {
   sources = [
+    "importers/proto/android_probes_module.cc",
+    "importers/proto/android_probes_module.h",
+    "importers/proto/android_probes_parser.cc",
+    "importers/proto/android_probes_parser.h",
     "importers/proto/graphics_event_module.cc",
     "importers/proto/graphics_event_module.h",
     "importers/proto/graphics_event_parser.cc",
     "importers/proto/graphics_event_parser.h",
+    "importers/proto/system_probes_module.cc",
+    "importers/proto/system_probes_module.h",
+    "importers/proto/system_probes_parser.cc",
+    "importers/proto/system_probes_parser.h",
     "importers/proto/vulkan_memory_tracker.cc",
     "importers/proto/vulkan_memory_tracker.h",
     "register_additional_modules.cc",
@@ -260,6 +253,7 @@ source_set("storage_full") {
     ":storage_minimal",
   ]
   deps = [
+    "../../include/perfetto/ext/traced:sys_stats_counters",
     "../../protos/perfetto/common:zero",
     "../../protos/perfetto/trace:zero",
     "../../protos/perfetto/trace/android:zero",
@@ -269,6 +263,20 @@ source_set("storage_full") {
   ]
   if (enable_perfetto_trace_processor_json) {
     public_deps += [ "../../gn:jsoncpp" ]
+  }
+
+  # Include these sources only if they are not already included in
+  # storage_minimal.
+  # TODO(khokhlov): Remove this 'if' when modules that use this tracker are
+  # migrated to storage_full.
+  if (!enable_perfetto_trace_processor_syscalls) {
+    sources += [
+      "syscall_tracker.cc",
+      "syscalls_aarch32.h",
+      "syscalls_aarch64.h",
+      "syscalls_armeabi.h",
+      "syscalls_x86_64.h",
+    ]
   }
 }
 
@@ -343,7 +351,6 @@ if (enable_perfetto_trace_processor_sqlite) {
     ]
 
     deps = [
-      ":common",
       ":storage_full",
       "../../gn:default_deps",
       "../../gn:sqlite",
@@ -370,21 +377,6 @@ if (enable_perfetto_trace_processor_sqlite) {
       deps += [ ":export_json" ]
     }
   }
-}
-
-# TODO(lalitm): we need to find a better home for the classes here.
-source_set("common") {
-  sources = [
-    "null_term_string_view.h",
-    "string_pool.cc",
-    "string_pool.h",
-  ]
-
-  deps = [
-    "../../gn:default_deps",
-    "../base",
-    "../protozero",
-  ]
 }
 
 if (enable_perfetto_trace_processor_metrics) {  # shell requires metrics.
@@ -423,15 +415,12 @@ perfetto_unittest_source_set("unittests") {
     "importers/proto/args_table_utils_unittest.cc",
     "importers/proto/proto_trace_parser_unittest.cc",
     "importers/systrace/systrace_parser_unittest.cc",
-    "null_term_string_view_unittest.cc",
     "process_tracker_unittest.cc",
     "protozero_to_text_unittests.cc",
     "slice_tracker_unittest.cc",
-    "string_pool_unittest.cc",
     "trace_sorter_unittest.cc",
   ]
   deps = [
-    ":common",
     ":descriptors",
     ":protozero_to_text",
     ":storage_full",
@@ -452,6 +441,7 @@ perfetto_unittest_source_set("unittests") {
     "../base",
     "../protozero",
     "../protozero:testing_messages_zero",
+    "containers:unittests",
     "db:unittests",
     "tables:unittests",
   ]
@@ -526,6 +516,24 @@ source_set("integrationtests") {
     if (enable_perfetto_trace_processor_json_import) {
       deps += [ "../../gn:jsoncpp" ]
     }
+  }
+}
+
+if (enable_perfetto_trace_processor_json) {
+  source_set("storage_minimal_smoke_tests") {
+    testonly = true
+    sources = [
+      "storage_minimal_smoke_test.cc",
+    ]
+    deps = [
+      ":export_json",
+      ":storage_minimal",
+      "../../gn:default_deps",
+      "../../gn:gtest_and_gmock",
+      "../../gn:gtest_main",
+      "../../gn:jsoncpp",
+      "../base:test_support",
+    ]
   }
 }
 

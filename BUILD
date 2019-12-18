@@ -572,20 +572,30 @@ filegroup(
     ],
 )
 
+# GN target: //src/trace_processor/containers:containers
+filegroup(
+    name = "src_trace_processor_containers_containers",
+    srcs = [
+        "src/trace_processor/containers/bit_vector.cc",
+        "src/trace_processor/containers/bit_vector.h",
+        "src/trace_processor/containers/bit_vector_iterators.cc",
+        "src/trace_processor/containers/bit_vector_iterators.h",
+        "src/trace_processor/containers/null_term_string_view.h",
+        "src/trace_processor/containers/row_map.cc",
+        "src/trace_processor/containers/row_map.h",
+        "src/trace_processor/containers/sparse_vector.h",
+        "src/trace_processor/containers/string_pool.cc",
+        "src/trace_processor/containers/string_pool.h",
+    ],
+)
+
 # GN target: //src/trace_processor/db:lib
 filegroup(
     name = "src_trace_processor_db_lib",
     srcs = [
-        "src/trace_processor/db/bit_vector.cc",
-        "src/trace_processor/db/bit_vector.h",
-        "src/trace_processor/db/bit_vector_iterators.cc",
-        "src/trace_processor/db/bit_vector_iterators.h",
         "src/trace_processor/db/column.cc",
         "src/trace_processor/db/column.h",
         "src/trace_processor/db/compare.h",
-        "src/trace_processor/db/row_map.cc",
-        "src/trace_processor/db/row_map.h",
-        "src/trace_processor/db/sparse_vector.h",
         "src/trace_processor/db/table.cc",
         "src/trace_processor/db/table.h",
         "src/trace_processor/db/typed_column.h",
@@ -688,16 +698,6 @@ filegroup(
     ],
 )
 
-# GN target: //src/trace_processor:common
-filegroup(
-    name = "src_trace_processor_common",
-    srcs = [
-        "src/trace_processor/null_term_string_view.h",
-        "src/trace_processor/string_pool.cc",
-        "src/trace_processor/string_pool.h",
-    ],
-)
-
 # GN target: //src/trace_processor:descriptors
 filegroup(
     name = "src_trace_processor_descriptors",
@@ -775,10 +775,18 @@ filegroup(
 filegroup(
     name = "src_trace_processor_storage_full",
     srcs = [
+        "src/trace_processor/importers/proto/android_probes_module.cc",
+        "src/trace_processor/importers/proto/android_probes_module.h",
+        "src/trace_processor/importers/proto/android_probes_parser.cc",
+        "src/trace_processor/importers/proto/android_probes_parser.h",
         "src/trace_processor/importers/proto/graphics_event_module.cc",
         "src/trace_processor/importers/proto/graphics_event_module.h",
         "src/trace_processor/importers/proto/graphics_event_parser.cc",
         "src/trace_processor/importers/proto/graphics_event_parser.h",
+        "src/trace_processor/importers/proto/system_probes_module.cc",
+        "src/trace_processor/importers/proto/system_probes_module.h",
+        "src/trace_processor/importers/proto/system_probes_parser.cc",
+        "src/trace_processor/importers/proto/system_probes_parser.h",
         "src/trace_processor/importers/proto/vulkan_memory_tracker.cc",
         "src/trace_processor/importers/proto/vulkan_memory_tracker.h",
         "src/trace_processor/register_additional_modules.cc",
@@ -797,6 +805,8 @@ filegroup(
         "src/trace_processor/chunked_trace_reader.h",
         "src/trace_processor/clock_tracker.cc",
         "src/trace_processor/clock_tracker.h",
+        "src/trace_processor/destructible.cc",
+        "src/trace_processor/destructible.h",
         "src/trace_processor/event_tracker.cc",
         "src/trace_processor/event_tracker.h",
         "src/trace_processor/forwarding_trace_parser.cc",
@@ -832,10 +842,6 @@ filegroup(
         "src/trace_processor/importers/json/json_trace_tokenizer.h",
         "src/trace_processor/importers/json/json_trace_utils.cc",
         "src/trace_processor/importers/json/json_trace_utils.h",
-        "src/trace_processor/importers/proto/android_probes_module.cc",
-        "src/trace_processor/importers/proto/android_probes_module.h",
-        "src/trace_processor/importers/proto/android_probes_parser.cc",
-        "src/trace_processor/importers/proto/android_probes_parser.h",
         "src/trace_processor/importers/proto/args_table_utils.cc",
         "src/trace_processor/importers/proto/args_table_utils.h",
         "src/trace_processor/importers/proto/chrome_compositor_scheduler_state.descriptor.h",
@@ -853,10 +859,6 @@ filegroup(
         "src/trace_processor/importers/proto/proto_trace_parser.h",
         "src/trace_processor/importers/proto/proto_trace_tokenizer.cc",
         "src/trace_processor/importers/proto/proto_trace_tokenizer.h",
-        "src/trace_processor/importers/proto/system_probes_module.cc",
-        "src/trace_processor/importers/proto/system_probes_module.h",
-        "src/trace_processor/importers/proto/system_probes_parser.cc",
-        "src/trace_processor/importers/proto/system_probes_parser.h",
         "src/trace_processor/importers/proto/track_event_module.cc",
         "src/trace_processor/importers/proto/track_event_module.h",
         "src/trace_processor/importers/proto/track_event_parser.cc",
@@ -2518,7 +2520,7 @@ perfetto_cc_library(
     srcs = [
         ":src_base_base",
         ":src_protozero_protozero",
-        ":src_trace_processor_common",
+        ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
         ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",
@@ -2596,7 +2598,7 @@ perfetto_cc_binary(
         ":src_base_base",
         ":src_base_unix_socket",
         ":src_protozero_protozero",
-        ":src_trace_processor_common",
+        ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
         ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",
@@ -2749,7 +2751,7 @@ perfetto_cc_binary(
         ":src_base_base",
         ":src_profiling_deobfuscator",
         ":src_protozero_protozero",
-        ":src_trace_processor_common",
+        ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
         ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",

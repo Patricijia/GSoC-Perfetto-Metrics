@@ -5620,11 +5620,26 @@ filegroup {
   ],
 }
 
-// GN: //src/trace_processor:common
+// GN: //src/trace_processor/containers:containers
 filegroup {
-  name: "perfetto_src_trace_processor_common",
+  name: "perfetto_src_trace_processor_containers_containers",
   srcs: [
-    "src/trace_processor/string_pool.cc",
+    "src/trace_processor/containers/bit_vector.cc",
+    "src/trace_processor/containers/bit_vector_iterators.cc",
+    "src/trace_processor/containers/row_map.cc",
+    "src/trace_processor/containers/string_pool.cc",
+  ],
+}
+
+// GN: //src/trace_processor/containers:unittests
+filegroup {
+  name: "perfetto_src_trace_processor_containers_unittests",
+  srcs: [
+    "src/trace_processor/containers/bit_vector_unittest.cc",
+    "src/trace_processor/containers/null_term_string_view_unittest.cc",
+    "src/trace_processor/containers/row_map_unittest.cc",
+    "src/trace_processor/containers/sparse_vector_unittest.cc",
+    "src/trace_processor/containers/string_pool_unittest.cc",
   ],
 }
 
@@ -5632,10 +5647,7 @@ filegroup {
 filegroup {
   name: "perfetto_src_trace_processor_db_lib",
   srcs: [
-    "src/trace_processor/db/bit_vector.cc",
-    "src/trace_processor/db/bit_vector_iterators.cc",
     "src/trace_processor/db/column.cc",
-    "src/trace_processor/db/row_map.cc",
     "src/trace_processor/db/table.cc",
   ],
 }
@@ -5644,10 +5656,7 @@ filegroup {
 filegroup {
   name: "perfetto_src_trace_processor_db_unittests",
   srcs: [
-    "src/trace_processor/db/bit_vector_unittest.cc",
     "src/trace_processor/db/compare_unittest.cc",
-    "src/trace_processor/db/row_map_unittest.cc",
-    "src/trace_processor/db/sparse_vector_unittest.cc",
   ],
 }
 
@@ -5740,8 +5749,12 @@ filegroup {
 filegroup {
   name: "perfetto_src_trace_processor_storage_full",
   srcs: [
+    "src/trace_processor/importers/proto/android_probes_module.cc",
+    "src/trace_processor/importers/proto/android_probes_parser.cc",
     "src/trace_processor/importers/proto/graphics_event_module.cc",
     "src/trace_processor/importers/proto/graphics_event_parser.cc",
+    "src/trace_processor/importers/proto/system_probes_module.cc",
+    "src/trace_processor/importers/proto/system_probes_parser.cc",
     "src/trace_processor/importers/proto/vulkan_memory_tracker.cc",
     "src/trace_processor/register_additional_modules.cc",
   ],
@@ -5754,6 +5767,7 @@ filegroup {
     "src/trace_processor/args_tracker.cc",
     "src/trace_processor/binder_tracker.cc",
     "src/trace_processor/clock_tracker.cc",
+    "src/trace_processor/destructible.cc",
     "src/trace_processor/event_tracker.cc",
     "src/trace_processor/forwarding_trace_parser.cc",
     "src/trace_processor/ftrace_utils.cc",
@@ -5769,8 +5783,6 @@ filegroup {
     "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.cc",
     "src/trace_processor/importers/fuchsia/fuchsia_trace_tokenizer.cc",
     "src/trace_processor/importers/fuchsia/fuchsia_trace_utils.cc",
-    "src/trace_processor/importers/proto/android_probes_module.cc",
-    "src/trace_processor/importers/proto/android_probes_parser.cc",
     "src/trace_processor/importers/proto/args_table_utils.cc",
     "src/trace_processor/importers/proto/heap_graph_module.cc",
     "src/trace_processor/importers/proto/heap_graph_tracker.cc",
@@ -5778,8 +5790,6 @@ filegroup {
     "src/trace_processor/importers/proto/proto_importer_module.cc",
     "src/trace_processor/importers/proto/proto_trace_parser.cc",
     "src/trace_processor/importers/proto/proto_trace_tokenizer.cc",
-    "src/trace_processor/importers/proto/system_probes_module.cc",
-    "src/trace_processor/importers/proto/system_probes_parser.cc",
     "src/trace_processor/importers/proto/track_event_module.cc",
     "src/trace_processor/importers/proto/track_event_parser.cc",
     "src/trace_processor/importers/proto/track_event_tokenizer.cc",
@@ -5829,14 +5839,12 @@ filegroup {
     "src/trace_processor/importers/proto/proto_trace_parser_unittest.cc",
     "src/trace_processor/importers/systrace/systrace_parser_unittest.cc",
     "src/trace_processor/metadata_table_unittest.cc",
-    "src/trace_processor/null_term_string_view_unittest.cc",
     "src/trace_processor/process_table_unittest.cc",
     "src/trace_processor/process_tracker_unittest.cc",
     "src/trace_processor/protozero_to_text_unittests.cc",
     "src/trace_processor/sched_slice_table_unittest.cc",
     "src/trace_processor/slice_tracker_unittest.cc",
     "src/trace_processor/span_join_operator_table_unittest.cc",
-    "src/trace_processor/string_pool_unittest.cc",
     "src/trace_processor/syscall_tracker_unittest.cc",
     "src/trace_processor/thread_table_unittest.cc",
     "src/trace_processor/trace_sorter_unittest.cc",
@@ -6588,7 +6596,8 @@ cc_test {
     ":perfetto_src_protozero_testing_messages_lite_gen",
     ":perfetto_src_protozero_testing_messages_zero_gen",
     ":perfetto_src_protozero_unittests",
-    ":perfetto_src_trace_processor_common",
+    ":perfetto_src_trace_processor_containers_containers",
+    ":perfetto_src_trace_processor_containers_unittests",
     ":perfetto_src_trace_processor_db_lib",
     ":perfetto_src_trace_processor_db_unittests",
     ":perfetto_src_trace_processor_descriptors",
@@ -6802,7 +6811,7 @@ cc_binary_host {
     ":perfetto_protos_perfetto_trace_track_event_zero_gen",
     ":perfetto_src_base_base",
     ":perfetto_src_protozero_protozero",
-    ":perfetto_src_trace_processor_common",
+    ":perfetto_src_trace_processor_containers_containers",
     ":perfetto_src_trace_processor_db_lib",
     ":perfetto_src_trace_processor_descriptors",
     ":perfetto_src_trace_processor_lib",
@@ -6909,7 +6918,7 @@ cc_binary_host {
     ":perfetto_src_base_base",
     ":perfetto_src_profiling_deobfuscator",
     ":perfetto_src_protozero_protozero",
-    ":perfetto_src_trace_processor_common",
+    ":perfetto_src_trace_processor_containers_containers",
     ":perfetto_src_trace_processor_db_lib",
     ":perfetto_src_trace_processor_descriptors",
     ":perfetto_src_trace_processor_lib",

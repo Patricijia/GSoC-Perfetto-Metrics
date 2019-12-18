@@ -14,28 +14,38 @@
 
 import("../../../gn/test.gni")
 
-source_set("tables") {
+source_set("containers") {
   sources = [
-    "counter_tables.h",
-    "macros.h",
-    "macros_internal.h",
-    "profiler_tables.h",
-    "slice_tables.h",
-    "track_tables.h",
+    "bit_vector.cc",
+    "bit_vector.h",
+    "bit_vector_iterators.cc",
+    "bit_vector_iterators.h",
+    "null_term_string_view.h",
+    "row_map.cc",
+    "row_map.h",
+    "sparse_vector.h",
+    "string_pool.cc",
+    "string_pool.h",
   ]
   deps = [
     "../../../gn:default_deps",
-    "../db:lib",
+    "../../../include/perfetto/base",
+    "../../../include/perfetto/ext/base",
+    "../../../include/perfetto/protozero",
   ]
 }
 
-source_set("unittests") {
+perfetto_unittest_source_set("unittests") {
   testonly = true
   sources = [
-    "macros_unittest.cc",
+    "bit_vector_unittest.cc",
+    "null_term_string_view_unittest.cc",
+    "row_map_unittest.cc",
+    "sparse_vector_unittest.cc",
+    "string_pool_unittest.cc",
   ]
   deps = [
-    ":tables",
+    ":containers",
     "../../../gn:default_deps",
     "../../../gn:gtest_and_gmock",
   ]
@@ -45,12 +55,14 @@ if (enable_perfetto_benchmarks) {
   source_set("benchmarks") {
     testonly = true
     deps = [
-      ":tables",
+      ":containers",
       "../../../gn:benchmark",
       "../../../gn:default_deps",
     ]
     sources = [
-      "macros_benchmark.cc",
+      "bit_vector_benchmark.cc",
+      "row_map_benchmark.cc",
+      "sparse_vector_benchmark.cc",
     ]
   }
 }

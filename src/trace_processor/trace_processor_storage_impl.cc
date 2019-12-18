@@ -25,19 +25,16 @@
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/importers/proto/android_probes_module.h"
 #include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/heap_graph_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
-#include "src/trace_processor/importers/proto/system_probes_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/stack_profile_tracker.h"
-#include "src/trace_processor/syscall_tracker.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/track_tracker.h"
@@ -53,9 +50,6 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.slice_tracker.reset(new SliceTracker(&context_));
   context_.event_tracker.reset(new EventTracker(&context_));
   context_.process_tracker.reset(new ProcessTracker(&context_));
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_SYSCALLS)
-  context_.syscall_tracker.reset(new SyscallTracker(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_SYSCALLS)
   context_.clock_tracker.reset(new ClockTracker(&context_));
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
@@ -77,12 +71,6 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
   context_.modules.emplace_back(new HeapGraphModule(&context_));
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_ANDROID_PROBES)
-  context_.modules.emplace_back(new AndroidProbesModule(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_ANDROID_PROBES)
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
-  context_.modules.emplace_back(new SystemProbesModule(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_SYSTEM_PROBES)
   context_.modules.emplace_back(new TrackEventModule(&context_));
 }
 
