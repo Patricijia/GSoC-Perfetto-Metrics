@@ -24,11 +24,9 @@
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
-#include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/register_additional_modules.h"
@@ -99,7 +97,6 @@ class MockSchedEventTracker : public SchedEventTracker {
  public:
   MockSchedEventTracker(TraceProcessorContext* context)
       : SchedEventTracker(context) {}
-  virtual ~MockSchedEventTracker() = default;
 
   MOCK_METHOD9(PushSchedSwitch,
                void(uint32_t cpu,
@@ -245,7 +242,6 @@ class ProtoTraceParserTest : public ::testing::Test {
     context_.sorter.reset(new TraceSorter(&context_, 0 /*window size*/));
     context_.parser.reset(new ProtoTraceParser(&context_));
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-    context_.systrace_parser.reset(new SystraceParser(&context_));
     context_.modules.emplace_back(new FtraceModuleImpl(&context_));
 #else
     context_.modules.emplace_back(new FtraceModule());
@@ -253,9 +249,6 @@ class ProtoTraceParserTest : public ::testing::Test {
     context_.ftrace_module =
         static_cast<FtraceModule*>(context_.modules.back().get());
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
-    context_.modules.emplace_back(new HeapGraphModule(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
     context_.modules.emplace_back(new TrackEventModule(&context_));
 
     RegisterAdditionalModules(&context_);
@@ -371,9 +364,6 @@ TEST_F(ProtoTraceParserTest, LoadEventsIntoRaw) {
   static const char buf_value[] = "This is a print event";
   print->set_buf(buf_value);
 
-  EXPECT_CALL(*storage_, InternString(base::StringView(task_newtask)))
-      .Times(AtLeast(1));
-  EXPECT_CALL(*storage_, InternString(base::StringView(buf_value)));
   EXPECT_CALL(*process_, UpdateThread(123, 123));
 
   Tokenize();

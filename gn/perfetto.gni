@@ -149,9 +149,7 @@ declare_args() {
 
   # Build the perf event profiler (traced_perf).
   # TODO(b/144281346): under development.
-  enable_perfetto_traced_perf =
-      perfetto_build_with_android ||
-      (perfetto_build_standalone && (is_linux || is_android))
+  enable_perfetto_traced_perf = perfetto_build_with_android
 
   # The Trace Processor: offline analytical engine to process traces and compute
   # metrics using a SQL engine.
@@ -217,10 +215,6 @@ declare_args() {
 
   # Enables ftrace support in the trace processor.
   enable_perfetto_trace_processor_ftrace =
-      enable_perfetto_trace_processor && !(build_with_chromium && is_android)
-
-  # Enables parsing support for heap graphs in trace processor.
-  enable_perfetto_trace_processor_heap_graphs =
       enable_perfetto_trace_processor && !(build_with_chromium && is_android)
 
   # Enables JSON support in the trace processor. Required for JSON trace import
