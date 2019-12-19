@@ -389,8 +389,12 @@ void ProtoTraceParser::ParseProfilePacket(int64_t,
       src_allocation.pid = entry.pid();
       src_allocation.timestamp = timestamp;
       src_allocation.callstack_id = sample.callstack_id();
-      src_allocation.self_allocated = sample.self_allocated();
-      src_allocation.self_freed = sample.self_freed();
+      if (sample.self_max()) {
+        src_allocation.self_allocated = sample.self_max();
+      } else {
+        src_allocation.self_allocated = sample.self_allocated();
+        src_allocation.self_freed = sample.self_freed();
+      }
       src_allocation.alloc_count = sample.alloc_count();
       src_allocation.free_count = sample.free_count();
 
@@ -443,10 +447,10 @@ void ProtoTraceParser::ParseStreamingProfilePacket(
 
     int64_t callstack_id = *maybe_callstack_id;
 
-    TraceStorage::CpuProfileStackSamples::Row sample_row{
+    tables::CpuProfileStackSampleTable::Row sample_row{
         sequence_state->IncrementAndGetTrackEventTimeNs(*timestamp_it),
         callstack_id, utid};
-    storage->mutable_cpu_profile_stack_samples()->Insert(sample_row);
+    storage->mutable_cpu_profile_stack_sample_table()->Insert(sample_row);
   }
 }
 
@@ -623,7 +627,7 @@ void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
   for (auto addr_it = module_symbols.address_symbols(); addr_it; ++addr_it) {
     protos::pbzero::AddressSymbols::Decoder address_symbols(*addr_it);
 
-    uint32_t symbol_set_id = context_->storage->symbol_table().size();
+    uint32_t symbol_set_id = context_->storage->symbol_table().row_count();
     bool frame_found = false;
     for (int64_t mapping_row : mapping_rows) {
       std::vector<int64_t> frame_rows =

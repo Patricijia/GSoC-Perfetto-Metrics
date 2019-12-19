@@ -24,11 +24,9 @@
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/importers/proto/heap_graph_module.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
-#include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/register_additional_modules.h"
@@ -99,7 +97,6 @@ class MockSchedEventTracker : public SchedEventTracker {
  public:
   MockSchedEventTracker(TraceProcessorContext* context)
       : SchedEventTracker(context) {}
-  virtual ~MockSchedEventTracker() = default;
 
   MOCK_METHOD9(PushSchedSwitch,
                void(uint32_t cpu,
@@ -245,7 +242,6 @@ class ProtoTraceParserTest : public ::testing::Test {
     context_.sorter.reset(new TraceSorter(&context_, 0 /*window size*/));
     context_.parser.reset(new ProtoTraceParser(&context_));
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-    context_.systrace_parser.reset(new SystraceParser(&context_));
     context_.modules.emplace_back(new FtraceModuleImpl(&context_));
 #else
     context_.modules.emplace_back(new FtraceModule());
@@ -253,9 +249,6 @@ class ProtoTraceParserTest : public ::testing::Test {
     context_.ftrace_module =
         static_cast<FtraceModule*>(context_.modules.back().get());
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
-    context_.modules.emplace_back(new HeapGraphModule(&context_));
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_HEAP_GRAPHS)
     context_.modules.emplace_back(new TrackEventModule(&context_));
 
     RegisterAdditionalModules(&context_);
@@ -371,9 +364,6 @@ TEST_F(ProtoTraceParserTest, LoadEventsIntoRaw) {
   static const char buf_value[] = "This is a print event";
   print->set_buf(buf_value);
 
-  EXPECT_CALL(*storage_, InternString(base::StringView(task_newtask)))
-      .Times(AtLeast(1));
-  EXPECT_CALL(*storage_, InternString(base::StringView(buf_value)));
   EXPECT_CALL(*process_, UpdateThread(123, 123));
 
   Tokenize();
@@ -613,7 +603,7 @@ TEST_F(ProtoTraceParserTest, LoadMemInfo) {
                                    DoubleEq(value * 1024.0), 0u));
   Tokenize();
 
-  EXPECT_EQ(context_.storage->track_table().size(), 1u);
+  EXPECT_EQ(context_.storage->track_table().row_count(), 1u);
 }
 
 TEST_F(ProtoTraceParserTest, LoadVmStats) {
@@ -630,7 +620,7 @@ TEST_F(ProtoTraceParserTest, LoadVmStats) {
               PushCounter(static_cast<int64_t>(ts), DoubleEq(value), 0u));
   Tokenize();
 
-  EXPECT_EQ(context_.storage->track_table().size(), 1u);
+  EXPECT_EQ(context_.storage->track_table().row_count(), 1u);
 }
 
 TEST_F(ProtoTraceParserTest, LoadProcessPacket) {
@@ -1238,12 +1228,12 @@ TEST_F(ProtoTraceParserTest, TrackEventAsyncEvents) {
   context_.sorter->ExtractEventsForced();
 
   // First track is for the thread; others are the async event tracks.
-  EXPECT_EQ(storage_->track_table().size(), 4u);
+  EXPECT_EQ(storage_->track_table().row_count(), 4u);
   EXPECT_EQ(storage_->track_table().name()[1], 2u);
   EXPECT_EQ(storage_->track_table().name()[2], 4u);
   EXPECT_EQ(storage_->track_table().name()[3], 4u);
 
-  EXPECT_EQ(storage_->process_track_table().size(), 3u);
+  EXPECT_EQ(storage_->process_track_table().row_count(), 3u);
   EXPECT_EQ(storage_->process_track_table().upid()[0], 1u);
   EXPECT_EQ(storage_->process_track_table().upid()[1], 1u);
   EXPECT_EQ(storage_->process_track_table().upid()[2], 1u);
@@ -1403,11 +1393,11 @@ TEST_F(ProtoTraceParserTest, TrackEventWithTrackDescriptors) {
 
   // First track is "Thread track 1"; second is "Async track 1", third is
   // "Thread track 2".
-  EXPECT_EQ(storage_->track_table().size(), 3u);
+  EXPECT_EQ(storage_->track_table().row_count(), 3u);
   EXPECT_EQ(storage_->track_table().name()[0], 10u);  // "Thread track 1"
   EXPECT_EQ(storage_->track_table().name()[1], 11u);  // "Async track 1"
   EXPECT_EQ(storage_->track_table().name()[2], 12u);  // "Thread track 2"
-  EXPECT_EQ(storage_->thread_track_table().size(), 2u);
+  EXPECT_EQ(storage_->thread_track_table().row_count(), 2u);
   EXPECT_EQ(storage_->thread_track_table().utid()[0], 1u);
   EXPECT_EQ(storage_->thread_track_table().utid()[1], 2u);
 
@@ -1440,8 +1430,8 @@ TEST_F(ProtoTraceParserTest, TrackEventWithTrackDescriptors) {
   context_.sorter->ExtractEventsForced();
 
   // Track tables shouldn't have changed.
-  EXPECT_EQ(storage_->track_table().size(), 3u);
-  EXPECT_EQ(storage_->thread_track_table().size(), 2u);
+  EXPECT_EQ(storage_->track_table().row_count(), 3u);
+  EXPECT_EQ(storage_->thread_track_table().row_count(), 2u);
 
   EXPECT_EQ(storage_->virtual_track_slices().slice_count(), 1u);
   EXPECT_EQ(storage_->virtual_track_slices().slice_ids()[0], 0u);
@@ -2591,20 +2581,20 @@ TEST_F(ProtoTraceParserTest, ParseCPUProfileSamplesIntoTable) {
   Tokenize();
 
   // Verify cpu_profile_samples.
-  const auto& samples = storage_->cpu_profile_stack_samples();
-  EXPECT_EQ(samples.size(), 3u);
+  const auto& samples = storage_->cpu_profile_stack_sample_table();
+  EXPECT_EQ(samples.row_count(), 3u);
 
-  EXPECT_EQ(samples.timestamps()[0], 1010);
-  EXPECT_EQ(samples.callsite_ids()[0], 0);
-  EXPECT_EQ(samples.utids()[0], 1u);
+  EXPECT_EQ(samples.ts()[0], 1010);
+  EXPECT_EQ(samples.callsite_id()[0], 0);
+  EXPECT_EQ(samples.utid()[0], 1u);
 
-  EXPECT_EQ(samples.timestamps()[1], 1025);
-  EXPECT_EQ(samples.callsite_ids()[1], 1);
-  EXPECT_EQ(samples.utids()[1], 1u);
+  EXPECT_EQ(samples.ts()[1], 1025);
+  EXPECT_EQ(samples.callsite_id()[1], 1);
+  EXPECT_EQ(samples.utid()[1], 1u);
 
-  EXPECT_EQ(samples.timestamps()[2], 1067);
-  EXPECT_EQ(samples.callsite_ids()[2], 0);
-  EXPECT_EQ(samples.utids()[2], 1u);
+  EXPECT_EQ(samples.ts()[2], 1067);
+  EXPECT_EQ(samples.callsite_id()[2], 0);
+  EXPECT_EQ(samples.utid()[2], 1u);
 }
 
 }  // namespace

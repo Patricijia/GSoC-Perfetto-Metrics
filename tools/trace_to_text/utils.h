@@ -32,7 +32,6 @@
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/paged_memory.h"
 #include "perfetto/profiling/deobfuscator.h"
-#include "perfetto/profiling/symbolizer.h"
 
 namespace perfetto {
 
@@ -58,18 +57,11 @@ void ForEachPacketBlobInTrace(
     std::istream* input,
     const std::function<void(std::unique_ptr<char[]>, size_t)>&);
 
-std::vector<std::string> GetPerfettoBinaryPath();
 base::Optional<std::string> GetPerfettoProguardMapPath();
 
 bool ReadTrace(trace_processor::TraceProcessor* tp, std::istream* input);
 
 void WriteTracePacket(const std::string& str, std::ostream* output);
-
-// Generate ModuleSymbol protos for all unsymbolized frames in the database.
-// Wrap them in proto-encoded TracePackets messages and call callback.
-void SymbolizeDatabase(trace_processor::TraceProcessor* tp,
-                       Symbolizer* symbolizer,
-                       std::function<void(const std::string&)> callback);
 
 // Generate ObfuscationMapping protos for all obfuscated java names in the
 // database.
