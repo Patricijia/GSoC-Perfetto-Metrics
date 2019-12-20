@@ -111,6 +111,47 @@ perfetto_cc_library(
     ],
 )
 
+# GN target: //test:client_api_example
+perfetto_cc_binary(
+    name = "client_api_example",
+    srcs = [
+        "include/perfetto/tracing.h",
+        "test/client_api_example.cc",
+        ":include_perfetto_base_base",
+        ":include_perfetto_protozero_protozero",
+        ":include_perfetto_tracing_core_forward_decls",
+        ":include_perfetto_tracing_tracing",
+    ],
+    deps = [
+        ":libperfetto_client_experimental",
+        ":protos_perfetto_common_cpp",
+        ":protos_perfetto_common_zero",
+        ":protos_perfetto_config_android_zero",
+        ":protos_perfetto_config_ftrace_zero",
+        ":protos_perfetto_config_gpu_zero",
+        ":protos_perfetto_config_inode_file_zero",
+        ":protos_perfetto_config_power_zero",
+        ":protos_perfetto_config_process_stats_zero",
+        ":protos_perfetto_config_profiling_zero",
+        ":protos_perfetto_config_sys_stats_zero",
+        ":protos_perfetto_config_zero",
+        ":protos_perfetto_trace_android_zero",
+        ":protos_perfetto_trace_chrome_zero",
+        ":protos_perfetto_trace_filesystem_zero",
+        ":protos_perfetto_trace_ftrace_zero",
+        ":protos_perfetto_trace_gpu_zero",
+        ":protos_perfetto_trace_interned_data_zero",
+        ":protos_perfetto_trace_minimal_zero",
+        ":protos_perfetto_trace_non_minimal_zero",
+        ":protos_perfetto_trace_perfetto_zero",
+        ":protos_perfetto_trace_power_zero",
+        ":protos_perfetto_trace_profiling_zero",
+        ":protos_perfetto_trace_ps_zero",
+        ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_track_event_zero",
+    ],
+)
+
 # GN target: //:libperfetto
 perfetto_cc_library(
     name = "libperfetto",
@@ -743,8 +784,6 @@ filegroup(
         "src/trace_processor/android_logs_table.h",
         "src/trace_processor/args_table.cc",
         "src/trace_processor/args_table.h",
-        "src/trace_processor/cpu_profile_stack_sample_table.cc",
-        "src/trace_processor/cpu_profile_stack_sample_table.h",
         "src/trace_processor/filtered_row_index.cc",
         "src/trace_processor/filtered_row_index.h",
         "src/trace_processor/gfp_flags.cc",
@@ -2597,6 +2636,8 @@ perfetto_cc_binary(
         ":include_perfetto_trace_processor_trace_processor",
         ":src_base_base",
         ":src_base_unix_socket",
+        ":src_profiling_symbolizer_symbolize_database",
+        ":src_profiling_symbolizer_symbolizer",
         ":src_protozero_protozero",
         ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
