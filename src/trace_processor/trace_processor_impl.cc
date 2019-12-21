@@ -25,6 +25,7 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/android_logs_table.h"
 #include "src/trace_processor/args_table.h"
+#include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/instants_table.h"
 #include "src/trace_processor/metadata_table.h"
 #include "src/trace_processor/process_table.h"
@@ -37,16 +38,13 @@
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/stack_profile_frame_table.h"
-#include "src/trace_processor/stack_profile_mapping_table.h"
 #include "src/trace_processor/stats_table.h"
 #include "src/trace_processor/thread_table.h"
 #include "src/trace_processor/window_operator_table.h"
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql_metrics.h"
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 #include "src/trace_processor/export_json.h"
@@ -312,7 +310,6 @@ void CreateDemangledNameFunction(sqlite3* db) {
   }
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
                   std::vector<metrics::SqlMetricFile>* sql_metrics) {
@@ -343,7 +340,6 @@ void SetupMetrics(TraceProcessor* tp,
       PERFETTO_ELOG("Error initializing RepeatedField");
   }
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 }  // namespace
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
@@ -363,15 +359,11 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   CreateHashFunction(db);
   CreateDemangledNameFunction(db);
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
   SetupMetrics(this, *db_, &sql_metrics_);
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
   ArgsTable::RegisterTable(*db_, context_.storage.get());
   ProcessTable::RegisterTable(*db_, context_.storage.get());
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   SchedSliceTable::RegisterTable(*db_, context_.storage.get());
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   SqlStatsTable::RegisterTable(*db_, context_.storage.get());
   ThreadTable::RegisterTable(*db_, context_.storage.get());
   SpanJoinOperatorTable::RegisterTable(*db_, context_.storage.get());
@@ -381,7 +373,6 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   AndroidLogsTable::RegisterTable(*db_, context_.storage.get());
   RawTable::RegisterTable(*db_, context_.storage.get());
   StackProfileFrameTable::RegisterTable(*db_, context_.storage.get());
-  StackProfileMappingTable::RegisterTable(*db_, context_.storage.get());
   MetadataTable::RegisterTable(*db_, context_.storage.get());
 
   // New style db-backed tables.
@@ -439,6 +430,9 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   DbSqliteTable::RegisterTable(
       *db_, &storage->stack_profile_callsite_table(),
       storage->stack_profile_callsite_table().table_name());
+  DbSqliteTable::RegisterTable(
+      *db_, &storage->stack_profile_mapping_table(),
+      storage->stack_profile_mapping_table().table_name());
 
   DbSqliteTable::RegisterTable(
       *db_, &storage->vulkan_memory_allocations_table(),
@@ -473,6 +467,7 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 
   TraceProcessorStorageImpl::NotifyEndOfFile();
 
+  SchedEventTracker::GetOrCreate(&context_)->FlushPendingEvents();
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
 
   // Create a snapshot of all tables and views created so far. This is so later
@@ -543,7 +538,6 @@ void TraceProcessorImpl::InterruptQuery() {
   sqlite3_interrupt(db_.get());
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
                                                 const std::string& sql) {
   std::string stripped_sql;
@@ -623,7 +617,6 @@ util::Status TraceProcessorImpl::ComputeMetric(
   return metrics::ComputeMetrics(this, metric_names, sql_metrics_,
                                  root_descriptor, metrics_proto);
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
                                            sqlite3* db,
