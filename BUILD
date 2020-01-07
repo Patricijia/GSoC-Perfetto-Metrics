@@ -69,6 +69,7 @@ perfetto_cc_library(
     deps = [
         ":protos_perfetto_ipc_wire_protocol_cpp",
     ],
+    linkstatic = True,
 )
 
 # GN target: //src/protozero/protoc_plugin:cppgen_plugin
@@ -109,6 +110,7 @@ perfetto_cc_library(
         ":include_perfetto_ext_base_base",
         ":include_perfetto_protozero_protozero",
     ],
+    linkstatic = True,
 )
 
 # GN target: //test:client_api_example
@@ -233,6 +235,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_sys_stats_zero",
         ":protos_perfetto_trace_track_event_zero",
     ],
+    linkstatic = True,
 )
 
 # GN target: //include/perfetto/base:base
@@ -804,8 +807,6 @@ filegroup(
         "src/trace_processor/span_join_operator_table.h",
         "src/trace_processor/sql_stats_table.cc",
         "src/trace_processor/sql_stats_table.h",
-        "src/trace_processor/stack_profile_frame_table.cc",
-        "src/trace_processor/stack_profile_frame_table.h",
         "src/trace_processor/stats_table.cc",
         "src/trace_processor/stats_table.h",
         "src/trace_processor/storage_columns.cc",
@@ -838,6 +839,8 @@ filegroup(
         "src/trace_processor/importers/ftrace/ftrace_parser.h",
         "src/trace_processor/importers/ftrace/ftrace_tokenizer.cc",
         "src/trace_processor/importers/ftrace/ftrace_tokenizer.h",
+        "src/trace_processor/importers/ftrace/rss_stat_tracker.cc",
+        "src/trace_processor/importers/ftrace/rss_stat_tracker.h",
         "src/trace_processor/importers/ftrace/sched_event_tracker.cc",
         "src/trace_processor/importers/ftrace/sched_event_tracker.h",
         "src/trace_processor/importers/proto/android_probes_module.cc",
@@ -2477,6 +2480,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_sys_stats_zero",
         ":protos_perfetto_trace_track_event_zero",
     ],
+    linkstatic = True,
 )
 
 # GN target: //src/perfetto_cmd:perfetto
@@ -2616,6 +2620,7 @@ perfetto_cc_library(
            PERFETTO_CONFIG.deps.zlib + [
         ":cc_merged_sql_metrics",
     ],
+    linkstatic = True,
 )
 
 # GN target: //src/trace_processor:trace_processor_shell
@@ -2773,6 +2778,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_track_event_zero",
         ":protos_third_party_pprof_zero",
     ] + PERFETTO_CONFIG.deps.zlib,
+    linkstatic = True,
 )
 
 # GN target: //tools/trace_to_text:trace_to_text
