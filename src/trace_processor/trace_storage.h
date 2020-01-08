@@ -36,6 +36,7 @@
 #include "src/trace_processor/ftrace_utils.h"
 #include "src/trace_processor/metadata.h"
 #include "src/trace_processor/stats.h"
+#include "src/trace_processor/tables/android_tables.h"
 #include "src/trace_processor/tables/counter_tables.h"
 #include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/tables/slice_tables.h"
@@ -79,6 +80,8 @@ using TrackId = tables::TrackTable::Id;
 using CounterId = tables::CounterTable::Id;
 
 using SliceId = tables::SliceTable::Id;
+
+using InstantId = tables::InstantTable::Id;
 
 using MappingId = tables::StackProfileMappingTable::Id;
 
@@ -433,49 +436,6 @@ class TraceStorage {
     std::deque<int64_t> times_ended_;
   };
 
-  class Instants {
-   public:
-    inline uint32_t AddInstantEvent(int64_t timestamp,
-                                    StringId name_id,
-                                    double value,
-                                    int64_t ref,
-                                    RefType type) {
-      timestamps_.emplace_back(timestamp);
-      name_ids_.emplace_back(name_id);
-      values_.emplace_back(value);
-      refs_.emplace_back(ref);
-      types_.emplace_back(type);
-      arg_set_ids_.emplace_back(kInvalidArgSetId);
-      return static_cast<uint32_t>(instant_count() - 1);
-    }
-
-    void set_ref(uint32_t row, int64_t ref) { refs_[row] = ref; }
-
-    void set_arg_set_id(uint32_t row, ArgSetId id) { arg_set_ids_[row] = id; }
-
-    size_t instant_count() const { return timestamps_.size(); }
-
-    const std::deque<int64_t>& timestamps() const { return timestamps_; }
-
-    const std::deque<StringId>& name_ids() const { return name_ids_; }
-
-    const std::deque<double>& values() const { return values_; }
-
-    const std::deque<int64_t>& refs() const { return refs_; }
-
-    const std::deque<RefType>& types() const { return types_; }
-
-    const std::deque<ArgSetId>& arg_set_ids() const { return arg_set_ids_; }
-
-   private:
-    std::deque<int64_t> timestamps_;
-    std::deque<StringId> name_ids_;
-    std::deque<double> values_;
-    std::deque<int64_t> refs_;
-    std::deque<RefType> types_;
-    std::deque<ArgSetId> arg_set_ids_;
-  };
-
   class RawEvents {
    public:
     inline uint32_t AddRawEvent(int64_t timestamp,
@@ -510,37 +470,6 @@ class TraceStorage {
     std::deque<uint32_t> cpus_;
     std::deque<UniqueTid> utids_;
     std::deque<ArgSetId> arg_set_ids_;
-  };
-
-  class AndroidLogs {
-   public:
-    inline size_t AddLogEvent(int64_t timestamp,
-                              UniqueTid utid,
-                              uint8_t prio,
-                              StringId tag_id,
-                              StringId msg_id) {
-      timestamps_.emplace_back(timestamp);
-      utids_.emplace_back(utid);
-      prios_.emplace_back(prio);
-      tag_ids_.emplace_back(tag_id);
-      msg_ids_.emplace_back(msg_id);
-      return size() - 1;
-    }
-
-    size_t size() const { return timestamps_.size(); }
-
-    const std::deque<int64_t>& timestamps() const { return timestamps_; }
-    const std::deque<UniqueTid>& utids() const { return utids_; }
-    const std::deque<uint8_t>& prios() const { return prios_; }
-    const std::deque<StringId>& tag_ids() const { return tag_ids_; }
-    const std::deque<StringId>& msg_ids() const { return msg_ids_; }
-
-   private:
-    std::deque<int64_t> timestamps_;
-    std::deque<UniqueTid> utids_;
-    std::deque<uint8_t> prios_;
-    std::deque<StringId> tag_ids_;
-    std::deque<StringId> msg_ids_;
   };
 
   struct Stats {
@@ -831,11 +760,15 @@ class TraceStorage {
   const SqlStats& sql_stats() const { return sql_stats_; }
   SqlStats* mutable_sql_stats() { return &sql_stats_; }
 
-  const Instants& instants() const { return instants_; }
-  Instants* mutable_instants() { return &instants_; }
+  const tables::InstantTable& instant_table() const { return instant_table_; }
+  tables::InstantTable* mutable_instant_table() { return &instant_table_; }
 
-  const AndroidLogs& android_logs() const { return android_log_; }
-  AndroidLogs* mutable_android_log() { return &android_log_; }
+  const tables::AndroidLogTable& android_log_table() const {
+    return android_log_table_;
+  }
+  tables::AndroidLogTable* mutable_android_log_table() {
+    return &android_log_table_;
+  }
 
   const StatsMap& stats() const { return stats_; }
 
@@ -1052,14 +985,14 @@ class TraceStorage {
   // These are instantaneous events in the trace. They have no duration
   // and do not have a value that make sense to track over time.
   // e.g. signal events
-  Instants instants_;
+  tables::InstantTable instant_table_{&string_pool_, nullptr};
 
   // Raw events are every ftrace event in the trace. The raw event includes
   // the timestamp and the pid. The args for the raw event will be in the
   // args table. This table can be used to generate a text version of the
   // trace.
   RawEvents raw_events_;
-  AndroidLogs android_log_;
+  tables::AndroidLogTable android_log_table_{&string_pool_, nullptr};
 
   tables::StackProfileMappingTable stack_profile_mapping_table_{&string_pool_,
                                                                 nullptr};

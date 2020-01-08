@@ -240,6 +240,7 @@ source_set("storage_full") {
     ":storage_minimal",
   ]
   deps = [
+    "../../include/perfetto/ext/base:base",
     "../../include/perfetto/ext/traced:sys_stats_counters",
     "../../protos/perfetto/common:zero",
     "../../protos/perfetto/trace:zero",
@@ -279,16 +280,12 @@ if (enable_perfetto_trace_processor_json) {
 
 source_set("lib") {
   sources = [
-    "android_logs_table.cc",
-    "android_logs_table.h",
     "args_table.cc",
     "args_table.h",
     "filtered_row_index.cc",
     "filtered_row_index.h",
     "gfp_flags.cc",
     "gfp_flags.h",
-    "instants_table.cc",
-    "instants_table.h",
     "metadata_table.cc",
     "metadata_table.h",
     "process_table.cc",

@@ -751,6 +751,7 @@ filegroup(
 filegroup(
     name = "src_trace_processor_tables_tables",
     srcs = [
+        "src/trace_processor/tables/android_tables.h",
         "src/trace_processor/tables/counter_tables.h",
         "src/trace_processor/tables/macros.h",
         "src/trace_processor/tables/macros_internal.h",
@@ -782,16 +783,12 @@ filegroup(
 filegroup(
     name = "src_trace_processor_lib",
     srcs = [
-        "src/trace_processor/android_logs_table.cc",
-        "src/trace_processor/android_logs_table.h",
         "src/trace_processor/args_table.cc",
         "src/trace_processor/args_table.h",
         "src/trace_processor/filtered_row_index.cc",
         "src/trace_processor/filtered_row_index.h",
         "src/trace_processor/gfp_flags.cc",
         "src/trace_processor/gfp_flags.h",
-        "src/trace_processor/instants_table.cc",
-        "src/trace_processor/instants_table.h",
         "src/trace_processor/metadata_table.cc",
         "src/trace_processor/metadata_table.h",
         "src/trace_processor/process_table.cc",
@@ -2347,6 +2344,8 @@ perfetto_proto_library(
         "protos/perfetto/trace/track_event/chrome_histogram_sample.proto",
         "protos/perfetto/trace/track_event/chrome_keyed_service.proto",
         "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
+        "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
+        "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
         "protos/perfetto/trace/track_event/chrome_user_event.proto",
         "protos/perfetto/trace/track_event/debug_annotation.proto",
         "protos/perfetto/trace/track_event/log_message.proto",
