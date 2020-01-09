@@ -40,6 +40,7 @@ genrule {
     "src/trace_processor/metrics/android/process_oom_score.sql",
     "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
     "src/trace_processor/metrics/android/span_view_stats.sql",
+    "src/trace_processor/metrics/android/unmapped_java_symbols.sql",
     "src/trace_processor/metrics/android/unsymbolized_frames.sql",
     "src/trace_processor/metrics/android/upid_span_view.sql",
     "src/trace_processor/metrics/trace_metadata.sql",
@@ -2589,6 +2590,7 @@ genrule {
     "protos/perfetto/metrics/android/powrails_metric.proto",
     "protos/perfetto/metrics/android/process_metadata.proto",
     "protos/perfetto/metrics/android/startup_metric.proto",
+    "protos/perfetto/metrics/android/unmapped_java_symbols.proto",
     "protos/perfetto/metrics/android/unsymbolized_frames.proto",
   ],
   tools: [
@@ -2610,6 +2612,7 @@ genrule {
     "external/perfetto/protos/perfetto/metrics/android/powrails_metric.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/process_metadata.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/startup_metric.pbzero.cc",
+    "external/perfetto/protos/perfetto/metrics/android/unmapped_java_symbols.pbzero.cc",
     "external/perfetto/protos/perfetto/metrics/android/unsymbolized_frames.pbzero.cc",
   ],
 }
@@ -2631,6 +2634,7 @@ genrule {
     "protos/perfetto/metrics/android/powrails_metric.proto",
     "protos/perfetto/metrics/android/process_metadata.proto",
     "protos/perfetto/metrics/android/startup_metric.proto",
+    "protos/perfetto/metrics/android/unmapped_java_symbols.proto",
     "protos/perfetto/metrics/android/unsymbolized_frames.proto",
   ],
   tools: [
@@ -2652,6 +2656,7 @@ genrule {
     "external/perfetto/protos/perfetto/metrics/android/powrails_metric.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/process_metadata.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/startup_metric.pbzero.h",
+    "external/perfetto/protos/perfetto/metrics/android/unmapped_java_symbols.pbzero.h",
     "external/perfetto/protos/perfetto/metrics/android/unsymbolized_frames.pbzero.h",
   ],
   export_include_dirs: [
@@ -5724,7 +5729,6 @@ filegroup {
     "src/trace_processor/args_table.cc",
     "src/trace_processor/filtered_row_index.cc",
     "src/trace_processor/gfp_flags.cc",
-    "src/trace_processor/metadata_table.cc",
     "src/trace_processor/process_table.cc",
     "src/trace_processor/raw_table.cc",
     "src/trace_processor/read_trace.cc",
@@ -5841,6 +5845,7 @@ filegroup {
     "src/trace_processor/importers/proto/track_event_module.cc",
     "src/trace_processor/importers/proto/track_event_parser.cc",
     "src/trace_processor/importers/proto/track_event_tokenizer.cc",
+    "src/trace_processor/metadata_tracker.cc",
     "src/trace_processor/process_tracker.cc",
     "src/trace_processor/slice_tracker.cc",
     "src/trace_processor/stack_profile_tracker.cc",
@@ -5883,7 +5888,6 @@ filegroup {
     "src/trace_processor/importers/proto/heap_graph_walker_unittest.cc",
     "src/trace_processor/importers/proto/proto_trace_parser_unittest.cc",
     "src/trace_processor/importers/systrace/systrace_parser_unittest.cc",
-    "src/trace_processor/metadata_table_unittest.cc",
     "src/trace_processor/process_table_unittest.cc",
     "src/trace_processor/process_tracker_unittest.cc",
     "src/trace_processor/protozero_to_text_unittests.cc",
