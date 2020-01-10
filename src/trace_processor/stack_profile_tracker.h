@@ -18,6 +18,7 @@
 #define SRC_TRACE_PROCESSOR_STACK_PROFILE_TRACKER_H_
 
 #include <deque>
+#include <unordered_map>
 
 #include "perfetto/ext/base/optional.h"
 
@@ -165,7 +166,6 @@ class StackProfileTracker {
   std::unordered_map<SourceStringId, std::string> string_map_;
   std::unordered_map<SourceMappingId, int64_t> mappings_;
   std::unordered_map<SourceFrameId, int64_t> frames_;
-  std::unordered_map<SourceCallstack, int64_t> callstacks_from_frames_;
   std::unordered_map<SourceCallstackId, int64_t> callstacks_;
 
   // TODO(oysteine): Share these indices between the StackProfileTrackers,

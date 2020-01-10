@@ -23,8 +23,8 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
-#include "src/trace_processor/args_table.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/metadata_tracker.h"
 #include "src/trace_processor/process_table.h"
 #include "src/trace_processor/raw_table.h"
 #include "src/trace_processor/register_additional_modules.h"
@@ -36,6 +36,7 @@
 #include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/stats_table.h"
 #include "src/trace_processor/thread_table.h"
+#include "src/trace_processor/variadic.h"
 #include "src/trace_processor/window_operator_table.h"
 
 #include "src/trace_processor/metrics/metrics.descriptor.h"
@@ -369,7 +370,6 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   SetupMetrics(this, *db_, &sql_metrics_);
 
-  ArgsTable::RegisterTable(*db_, context_.storage.get());
   ProcessTable::RegisterTable(*db_, context_.storage.get());
   SchedSliceTable::RegisterTable(*db_, context_.storage.get());
   SqlStatsTable::RegisterTable(*db_, context_.storage.get());
@@ -381,6 +381,9 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   // New style db-backed tables.
   const TraceStorage* storage = context_.storage.get();
+
+  DbSqliteTable::RegisterTable(*db_, &storage->arg_table(),
+                               storage->arg_table().table_name());
 
   DbSqliteTable::RegisterTable(*db_, &storage->slice_table(),
                                storage->slice_table().table_name());
@@ -483,6 +486,9 @@ void TraceProcessorImpl::NotifyEndOfFile() {
   TraceProcessorStorageImpl::NotifyEndOfFile();
 
   SchedEventTracker::GetOrCreate(&context_)->FlushPendingEvents();
+  context_.metadata_tracker->SetMetadata(
+      metadata::trace_size_bytes,
+      Variadic::Integer(static_cast<int64_t>(bytes_parsed_)));
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
 
   // Create a snapshot of all tables and views created so far. This is so later
