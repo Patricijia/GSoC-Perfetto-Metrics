@@ -16,12 +16,16 @@
 
 #include "src/trace_processor/importers/proto/graphics_event_parser.h"
 
+#include <inttypes.h>
+
+#include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/field.h"
 #include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/trace_storage.h"
 #include "src/trace_processor/track_tracker.h"
 
 #include "protos/perfetto/common/gpu_counter_descriptor.pbzero.h"
@@ -94,6 +98,10 @@ GraphicsEventParser::GraphicsEventParser(TraceProcessorContext* context)
       description_id_(context->storage->InternString("description")),
       gpu_render_stage_scope_id_(
           context->storage->InternString("gpu_render_stage")),
+      command_buffer_handle_id_(
+          context->storage->InternString("VkCommandBuffer")),
+      render_target_handle_id_(context->storage->InternString("VkFramebuffer")),
+      render_pass_handle_id_(context->storage->InternString("VkRenderPass")),
       graphics_event_scope_id_(
           context->storage->InternString("graphics_frame_event")),
       unknown_event_name_id_(context->storage->InternString("unknown_event")),
@@ -226,7 +234,7 @@ void GraphicsEventParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
 }
 
 const StringId GraphicsEventParser::GetFullStageName(
-    const protos::pbzero::GpuRenderStageEvent_Decoder& event) {
+    const protos::pbzero::GpuRenderStageEvent_Decoder& event) const {
   size_t stage_id = static_cast<size_t>(event.stage_id());
   StringId stage_name;
 
@@ -244,16 +252,14 @@ const StringId GraphicsEventParser::GetFullStageName(
     char buffer[256];
     base::StringWriter str_writer(buffer, sizeof(buffer));
     str_writer.AppendString(context_->storage->GetString(stage_name));
-    auto framebuffer_names =
-        debug_marker_names_[static_cast<int32_t>(VK_OBJECT_TYPE_FRAMEBUFFER)];
     auto debug_marker_name =
-        framebuffer_names.find(event.render_target_handle());
+        FindDebugName(VK_OBJECT_TYPE_FRAMEBUFFER, event.render_target_handle());
     str_writer.AppendChar('[');
-    if (debug_marker_name == framebuffer_names.end()) {
+    if (debug_marker_name.has_value()) {
+      str_writer.AppendString(base::StringView(debug_marker_name.value()));
+    } else {
       str_writer.AppendLiteral("0x");
       str_writer.AppendHexInt(event.render_target_handle());
-    } else {
-      str_writer.AppendString(base::StringView(debug_marker_name->second));
     }
     str_writer.AppendChar(']');
     stage_name = context_->storage->InternString(str_writer.GetStringView());
@@ -306,6 +312,38 @@ void GraphicsEventParser::InsertGpuTrack(
   }
   ++gpu_hw_queue_counter_;
 }
+base::Optional<std::string> GraphicsEventParser::FindDebugName(
+    int32_t vk_object_type,
+    uint64_t vk_handle) const {
+  auto map = debug_marker_names_.find(vk_object_type);
+  if (map == debug_marker_names_.end()) {
+    return base::nullopt;
+  }
+
+  auto name = map->second.find(vk_handle);
+  if (name == map->second.end()) {
+    return base::nullopt;
+  } else {
+    return name->second;
+  }
+}
+
+void GraphicsEventParser::AddVulkanHandleArg(
+    ArgsTracker::BoundInserter* inserter,
+    StringId key,
+    int32_t vk_object_type,
+    uint64_t vk_handle) {
+  char buf[256];
+  auto debug_marker_name = FindDebugName(vk_object_type, vk_handle);
+  if (debug_marker_name.has_value()) {
+    snprintf(buf, base::ArraySize(buf), "0x%016" PRIx64 " (%s)", vk_handle,
+             debug_marker_name.value().c_str());
+  } else {
+    snprintf(buf, base::ArraySize(buf), "0x%016" PRIx64, vk_handle);
+  }
+  StringId value = context_->storage->InternString(buf);
+  inserter->AddArg(key, Variadic::String(value));
+}
 
 void GraphicsEventParser::ParseGpuRenderStageEvent(int64_t ts,
                                                    ConstBytes blob) {
@@ -339,6 +377,21 @@ void GraphicsEventParser::ParseGpuRenderStageEvent(int64_t ts,
       if (description != kNullStringId) {
         inserter->AddArg(description_id_, Variadic::String(description));
       }
+    }
+    if (event.has_command_buffer_handle()) {
+      AddVulkanHandleArg(inserter, command_buffer_handle_id_,
+                         VK_OBJECT_TYPE_COMMAND_BUFFER,
+                         event.command_buffer_handle());
+    }
+    if (event.has_render_target_handle()) {
+      AddVulkanHandleArg(inserter, render_target_handle_id_,
+                         VK_OBJECT_TYPE_FRAMEBUFFER,
+                         event.render_target_handle());
+    }
+    if (event.has_render_pass_handle()) {
+      AddVulkanHandleArg(inserter, render_pass_handle_id_,
+                         VK_OBJECT_TYPE_RENDER_PASS,
+                         event.render_pass_handle());
     }
     for (auto it = event.extra_data(); it; ++it) {
       protos::pbzero::GpuRenderStageEvent_ExtraData_Decoder datum(*it);
@@ -380,16 +433,19 @@ void GraphicsEventParser::ParseGpuRenderStageEvent(int64_t ts,
       gpu_hw_queue_ids_[hw_queue_id] = track_id;
     }
 
-    StringId stage_name = GetFullStageName(event);
-    const auto slice_id = context_->slice_tracker->Scoped(
-        ts, track_id, 0 /* cat */, stage_name,
-        static_cast<int64_t>(event.duration()), args_callback);
+    tables::GpuSliceTable::Row row;
+    row.ts = ts;
+    row.track_id = track_id.value;
+    row.name = GetFullStageName(event);
+    row.dur = static_cast<int64_t>(event.duration());
+    row.context_id = static_cast<int64_t>(event.context());
+    row.render_target = static_cast<int64_t>(event.render_target_handle());
+    row.render_pass = static_cast<int64_t>(event.render_pass_handle());
+    row.command_buffer = static_cast<int64_t>(event.command_buffer_handle());
+    row.submission_id = event.submission_id();
+    row.hw_queue_id = hw_queue_id;
 
-    context_->storage->mutable_gpu_slice_table()->Insert(
-        tables::GpuSliceTable::Row(
-            slice_id.value(), static_cast<int64_t>(event.context()),
-            static_cast<int64_t>(event.render_target_handle()),
-            base::nullopt /*frame_id*/, event.submission_id(), hw_queue_id));
+    context_->slice_tracker->ScopedGpu(row, args_callback);
   }
 }
 
@@ -456,19 +512,19 @@ void GraphicsEventParser::ParseGraphicsFrameEvent(int64_t timestamp,
   track.scope = graphics_event_scope_id_;
   TrackId track_id = context_->track_tracker->InternGpuTrack(track);
 
-  auto scoped_callback = [this,
-                          layer_name_id](ArgsTracker::BoundInserter* inserter) {
-    inserter->AddArg(layer_name_key_id_, Variadic::String(layer_name_id));
-  };
-  auto opt_slice_id =
-      context_->slice_tracker->Scoped(timestamp, track_id, 0 /* cat */,
-                                      event_name_id, duration, scoped_callback);
+  {
+    auto scoped_callback =
+        [this, layer_name_id](ArgsTracker::BoundInserter* inserter) {
+          inserter->AddArg(layer_name_key_id_, Variadic::String(layer_name_id));
+        };
 
-  if (opt_slice_id) {
     tables::GpuSliceTable::Row row;
-    row.slice_id = opt_slice_id.value();
+    row.ts = timestamp;
+    row.track_id = track_id.value;
+    row.name = event_name_id;
+    row.dur = duration;
     row.frame_id = frame_number;
-    context_->storage->mutable_gpu_slice_table()->Insert(row);
+    context_->slice_tracker->ScopedGpu(row, scoped_callback);
   }
 
   /* Displayed Frame track */
@@ -508,17 +564,18 @@ void GraphicsEventParser::ParseGraphicsFrameEvent(int64_t timestamp,
                            Variadic::String(present_frame_layer_name_id));
         };
         // End the current slice that's being tracked.
-        const auto present_slice_id_end =
-            context_->slice_tracker->End(timestamp, present_track_id_, 0,
-                                         present_event_name_id_, args_callback);
+        const auto opt_slice_id = context_->slice_tracker->EndGpu(
+            timestamp, present_track_id_, args_callback);
 
-        if (present_slice_id_end) {
+        if (opt_slice_id) {
           // The slice could have had additional buffers in it, so we need to
           // update the name.
-          context_->storage->mutable_slice_table()->mutable_name()->Set(
-              present_slice_id_end.value(),
-              context_->storage->InternString(
-                  present_frame_name_.GetStringView()));
+          auto* slice_table = context_->storage->mutable_slice_table();
+
+          uint32_t row_idx = *slice_table->id().IndexOf(*opt_slice_id);
+          StringId frame_name_id = context_->storage->InternString(
+              present_frame_name_.GetStringView());
+          slice_table->mutable_name()->Set(row_idx, frame_name_id);
         }
 
         present_frame_layer_name_.reset();
@@ -531,15 +588,13 @@ void GraphicsEventParser::ParseGraphicsFrameEvent(int64_t timestamp,
       present_frame_layer_name_.AppendString(event.layer_name());
       present_event_name_id_ =
           context_->storage->InternString(present_frame_name_.GetStringView());
-      const auto present_slice_id = context_->slice_tracker->Begin(
-          timestamp, present_track_id_, 0 /* cat */, present_event_name_id_);
 
-      if (present_slice_id) {
-        tables::GpuSliceTable::Row row;
-        row.slice_id = present_slice_id.value();
-        row.frame_id = frame_number;
-        context_->storage->mutable_gpu_slice_table()->Insert(row);
-      }
+      tables::GpuSliceTable::Row row;
+      row.ts = timestamp;
+      row.track_id = present_track_id_.value;
+      row.name = present_event_name_id_;
+      row.frame_id = frame_number;
+      context_->slice_tracker->BeginGpu(row);
     }
   }
 }
@@ -555,6 +610,8 @@ void GraphicsEventParser::UpdateVulkanMemoryAllocationCounters(
     case VulkanMemoryEvent::SOURCE_DRIVER:
       allocation_scope = static_cast<VulkanMemoryEvent::AllocationScope>(
           event.allocation_scope());
+      if (allocation_scope == VulkanMemoryEvent::SCOPE_UNSPECIFIED)
+        return;
       switch (event.operation()) {
         case VulkanMemoryEvent::OP_CREATE:
           vulkan_driver_memory_counters_[allocation_scope] +=
@@ -746,12 +803,13 @@ void GraphicsEventParser::ParseGpuLog(int64_t ts, ConstBytes blob) {
       severity < log_severity_ids_.size()
           ? log_severity_ids_[static_cast<size_t>(event.severity())]
           : log_severity_ids_[log_severity_ids_.size() - 1];
-  const auto slice_id = context_->slice_tracker->Scoped(
-      ts, track_id, 0 /* cat */, severity_id, 0 /* duration */, args_callback);
 
   tables::GpuSliceTable::Row row;
-  row.slice_id = slice_id.value();
-  context_->storage->mutable_gpu_slice_table()->Insert(row);
+  row.ts = ts;
+  row.track_id = track_id.value;
+  row.name = severity_id;
+  row.dur = 0;
+  context_->slice_tracker->ScopedGpu(row, args_callback);
 }
 
 void GraphicsEventParser::ParseVulkanApiEvent(ConstBytes blob) {

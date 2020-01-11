@@ -25,7 +25,8 @@
 #include <regex>
 #include <unordered_set>
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -76,6 +77,7 @@ constexpr int kMaxBuffersPerConsumer = 128;
 constexpr base::TimeMillis kSnapshotsInterval(10 * 1000);
 constexpr int kDefaultWriteIntoFilePeriodMs = 5000;
 constexpr int kMaxConcurrentTracingSessions = 15;
+constexpr int kMaxConcurrentTracingSessionsPerUid = 5;
 constexpr int64_t kMinSecondsBetweenTracesGuardrail = 5 * 60;
 
 constexpr uint32_t kMillisPerHour = 3600000;
@@ -85,7 +87,7 @@ constexpr uint32_t kMaxTracingDurationMillis = 7 * 24 * kMillisPerHour;
 constexpr uint32_t kGuardrailsMaxTracingBufferSizeKb = 128 * 1024;
 constexpr uint32_t kGuardrailsMaxTracingDurationMillis = 24 * kMillisPerHour;
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) || PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 struct iovec {
   void* iov_base;  // Address
   size_t iov_len;  // Block size
@@ -114,7 +116,8 @@ uid_t getuid() {
 uid_t geteuid() {
   return 0;
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) ||
+        // PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 
 // Partially encodes a CommitDataRequest in an int32 for the purposes of
 // metatracing. Note that it encodes only the bottom 10 bits of the producer id
@@ -464,6 +467,17 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
           name.c_str(), kMinSecondsBetweenTracesGuardrail, now_s - previous_s);
       return false;
     }
+  }
+
+  const long sessions_for_uid = std::count_if(
+      tracing_sessions_.begin(), tracing_sessions_.end(),
+      [consumer](const decltype(tracing_sessions_)::value_type& s) {
+        return s.second.consumer_uid == consumer->uid_;
+      });
+  if (sessions_for_uid >= kMaxConcurrentTracingSessionsPerUid) {
+    PERFETTO_ELOG("Too many concurrent tracing sesions (%ld) for uid %d",
+                  sessions_for_uid, static_cast<int>(consumer->uid_));
+    return false;
   }
 
   // TODO(primiano): This is a workaround to prevent that a producer gets stuck
@@ -2223,7 +2237,8 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
   auto* clock_snapshot = packet->set_clock_snapshot();
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) &&    \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct {
     clockid_t id;
     protos::pbzero::ClockSnapshot::Clock::BuiltinClocks type;
@@ -2266,8 +2281,9 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
     c->set_timestamp(
         static_cast<uint64_t>(base::FromPosixTimespec(clock.ts).count()));
   }
-#else   // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
-        // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#else  // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
+       // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) &&
+       // !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   auto wall_time_ns = static_cast<uint64_t>(base::GetWallTimeNs().count());
   if (set_root_timestamp)
     root_timestamp_ns = wall_time_ns;
@@ -2347,7 +2363,8 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
   protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
   auto* info = packet->set_system_info();
   base::ignore_result(info);  // For PERFETTO_OS_WIN.
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct utsname uname_info;
   if (uname(&uname_info) == 0) {
     auto* utsname_info = info->set_utsname();

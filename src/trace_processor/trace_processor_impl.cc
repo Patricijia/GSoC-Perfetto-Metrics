@@ -25,7 +25,6 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/metadata_tracker.h"
-#include "src/trace_processor/process_table.h"
 #include "src/trace_processor/raw_table.h"
 #include "src/trace_processor/register_additional_modules.h"
 #include "src/trace_processor/sched_slice_table.h"
@@ -35,7 +34,6 @@
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/stats_table.h"
-#include "src/trace_processor/thread_table.h"
 #include "src/trace_processor/variadic.h"
 #include "src/trace_processor/window_operator_table.h"
 
@@ -180,18 +178,6 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 
   sqlite3_exec(db,
-               "CREATE VIEW gpu_slice AS "
-               "SELECT "
-               "* "
-               "FROM internal_gpu_slice join internal_slice "
-               "ON internal_gpu_slice.slice_id = internal_slice.id;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
-
-  sqlite3_exec(db,
                "CREATE VIEW instants AS "
                "SELECT "
                "*, "
@@ -208,6 +194,30 @@ void CreateBuiltinViews(sqlite3* db) {
   sqlite3_exec(db,
                "CREATE VIEW slices AS "
                "SELECT * FROM slice;",
+               0, 0, &error);
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+
+  sqlite3_exec(db,
+               "CREATE VIEW thread AS "
+               "SELECT "
+               "id as utid, "
+               "* "
+               "FROM internal_thread;",
+               0, 0, &error);
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+
+  sqlite3_exec(db,
+               "CREATE VIEW process AS "
+               "SELECT "
+               "id as upid, "
+               "* "
+               "FROM internal_process;",
                0, 0, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
@@ -370,10 +380,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   SetupMetrics(this, *db_, &sql_metrics_);
 
-  ProcessTable::RegisterTable(*db_, context_.storage.get());
   SchedSliceTable::RegisterTable(*db_, context_.storage.get());
   SqlStatsTable::RegisterTable(*db_, context_.storage.get());
-  ThreadTable::RegisterTable(*db_, context_.storage.get());
   SpanJoinOperatorTable::RegisterTable(*db_, context_.storage.get());
   WindowOperatorTable::RegisterTable(*db_, context_.storage.get());
   StatsTable::RegisterTable(*db_, context_.storage.get());
@@ -384,6 +392,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   DbSqliteTable::RegisterTable(*db_, &storage->arg_table(),
                                storage->arg_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->thread_table(),
+                               storage->thread_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->process_table(),
+                               storage->process_table().table_name());
 
   DbSqliteTable::RegisterTable(*db_, &storage->slice_table(),
                                storage->slice_table().table_name());
@@ -433,6 +445,9 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   DbSqliteTable::RegisterTable(
       *db_, &storage->heap_profile_allocation_table(),
       storage->heap_profile_allocation_table().table_name());
+  DbSqliteTable::RegisterTable(
+      *db_, &storage->heap_graph_allocation_table(),
+      storage->heap_graph_allocation_table().table_name());
   DbSqliteTable::RegisterTable(
       *db_, &storage->cpu_profile_stack_sample_table(),
       storage->cpu_profile_stack_sample_table().table_name());
