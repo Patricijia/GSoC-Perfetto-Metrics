@@ -58,6 +58,7 @@
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
 #include "protos/perfetto/trace/track_event/log_message.pbzero.h"
+#include "protos/perfetto/trace/track_event/process_descriptor.pbzero.h"
 #include "protos/perfetto/trace/track_event/source_location.pbzero.h"
 #include "protos/perfetto/trace/track_event/task_execution.pbzero.h"
 #include "protos/perfetto/trace/track_event/thread_descriptor.pbzero.h"
@@ -149,6 +150,8 @@ class MockProcessTracker : public ProcessTracker {
   MOCK_METHOD2(UpdateThread, UniqueTid(uint32_t tid, uint32_t tgid));
 
   MOCK_METHOD1(GetOrCreateProcess, UniquePid(uint32_t pid));
+  MOCK_METHOD2(SetProcessNameIfUnset,
+               void(UniquePid upid, StringId process_name_id));
 };
 
 // Mock trace storage that behaves like the real implementation, but allows for
@@ -337,8 +340,8 @@ TEST_F(ProtoTraceParserTest, LoadEventsIntoRaw) {
 
   Tokenize();
 
-  const auto& raw = context_.storage->raw_events();
-  ASSERT_EQ(raw.raw_event_count(), 2u);
+  const auto& raw = context_.storage->raw_table();
+  ASSERT_EQ(raw.row_count(), 2u);
   const auto& args = context_.storage->arg_table();
   ASSERT_EQ(args.row_count(), 6u);
   ASSERT_EQ(args.int_value()[0], 123);
@@ -388,13 +391,14 @@ TEST_F(ProtoTraceParserTest, LoadGenericFtrace) {
 
   Tokenize();
 
-  const auto& raw = storage_->raw_events();
+  const auto& raw = storage_->raw_table();
 
-  ASSERT_EQ(raw.raw_event_count(), 1u);
-  ASSERT_EQ(raw.timestamps().back(), 100);
-  ASSERT_EQ(storage_->thread_table().tid()[raw.utids().back()], 10u);
+  ASSERT_EQ(raw.row_count(), 1u);
+  ASSERT_EQ(raw.ts()[raw.row_count() - 1], 100);
+  ASSERT_EQ(storage_->thread_table().tid()[raw.utid()[raw.row_count() - 1]],
+            10u);
 
-  auto set_id = raw.arg_set_ids().back();
+  auto set_id = raw.arg_set_id()[raw.row_count() - 1];
 
   const auto& args = storage_->arg_table();
   RowMap rm = args.FilterToRowMap({args.arg_set_id().eq(set_id)});
@@ -624,6 +628,53 @@ TEST_F(ProtoTraceParserTest, LoadThreadPacket) {
 
   EXPECT_CALL(*process_, UpdateThread(1, 2));
   Tokenize();
+}
+
+TEST_F(ProtoTraceParserTest, ProcessNameFromProcessDescriptor) {
+  context_.sorter.reset(new TraceSorter(
+      &context_, std::numeric_limits<int64_t>::max() /*window size*/));
+  {
+    auto* packet = trace_.add_packet();
+    packet->set_trusted_packet_sequence_id(1);
+    packet->set_incremental_state_cleared(true);
+    auto* process_desc = packet->set_process_descriptor();
+    process_desc->set_pid(15);
+    process_desc->set_process_name("OldProcessName");
+  }
+  {
+    auto* packet = trace_.add_packet();
+    packet->set_trusted_packet_sequence_id(1);
+    packet->set_incremental_state_cleared(true);
+    auto* process_desc = packet->set_process_descriptor();
+    process_desc->set_pid(15);
+    process_desc->set_process_name("NewProcessName");
+  }
+  {
+    auto* packet = trace_.add_packet();
+    packet->set_trusted_packet_sequence_id(2);
+    packet->set_incremental_state_cleared(true);
+    auto* process_desc = packet->set_process_descriptor();
+    process_desc->set_pid(16);
+    process_desc->set_process_name("DifferentProcessName");
+  }
+
+  EXPECT_CALL(*process_, GetOrCreateProcess(15))
+      .WillRepeatedly(testing::Return(1u));
+  EXPECT_CALL(*process_, GetOrCreateProcess(16)).WillOnce(testing::Return(2u));
+
+  EXPECT_CALL(*storage_, InternString(base::StringView("OldProcessName")))
+      .WillOnce(Return(1));
+  EXPECT_CALL(*process_, SetProcessNameIfUnset(1u, StringId(1)));
+  // Packet with same thread, but different name should update the name.
+  EXPECT_CALL(*storage_, InternString(base::StringView("NewProcessName")))
+      .WillOnce(Return(2));
+  EXPECT_CALL(*process_, SetProcessNameIfUnset(1u, StringId(2)));
+  EXPECT_CALL(*storage_, InternString(base::StringView("DifferentProcessName")))
+      .WillOnce(Return(3));
+  EXPECT_CALL(*process_, SetProcessNameIfUnset(2u, StringId(3)));
+
+  Tokenize();
+  context_.sorter->ExtractEventsForced();
 }
 
 TEST_F(ProtoTraceParserTest, ThreadNameFromThreadDescriptor) {
@@ -2108,15 +2159,15 @@ TEST_F(ProtoTraceParserTest, TrackEventParseLegacyEventIntoRawTable) {
 
   ::testing::Mock::VerifyAndClearExpectations(storage_);
 
-  // Verify raw_events and args contents.
-  const auto& raw_events = storage_->raw_events();
-  EXPECT_EQ(raw_events.raw_event_count(), 1u);
-  EXPECT_EQ(raw_events.timestamps()[0], 1010000);
-  EXPECT_EQ(raw_events.name_ids()[0],
+  // Verify raw_table and args contents.
+  const auto& raw_table = storage_->raw_table();
+  EXPECT_EQ(raw_table.row_count(), 1u);
+  EXPECT_EQ(raw_table.ts()[0], 1010000);
+  EXPECT_EQ(raw_table.name()[0],
             storage_->InternString("track_event.legacy_event"));
-  EXPECT_EQ(raw_events.cpus()[0], 0u);
-  EXPECT_EQ(raw_events.utids()[0], 1u);
-  EXPECT_EQ(raw_events.arg_set_ids()[0], 1u);
+  EXPECT_EQ(raw_table.cpu()[0], 0u);
+  EXPECT_EQ(raw_table.utid()[0], 1u);
+  EXPECT_EQ(raw_table.arg_set_id()[0], 1u);
 
   EXPECT_GE(storage_->arg_table().row_count(), 13u);
 
@@ -2215,8 +2266,8 @@ TEST_F(ProtoTraceParserTest, ParseEventWithClockIdButWithoutClockSnapshot) {
   context_.sorter->ExtractEventsForced();
 
   // Metadata should have created a raw event.
-  const auto& raw_events = storage_->raw_events();
-  EXPECT_EQ(raw_events.raw_event_count(), 1u);
+  const auto& raw_table = storage_->raw_table();
+  EXPECT_EQ(raw_table.row_count(), 1u);
 }
 
 TEST_F(ProtoTraceParserTest, ParseChromeMetadataEventIntoRawTable) {
@@ -2245,12 +2296,12 @@ TEST_F(ProtoTraceParserTest, ParseChromeMetadataEventIntoRawTable) {
   Tokenize();
   context_.sorter->ExtractEventsForced();
 
-  // Verify raw_events and args contents.
-  const auto& raw_events = storage_->raw_events();
-  EXPECT_EQ(raw_events.raw_event_count(), 1u);
-  EXPECT_EQ(raw_events.name_ids()[0],
+  // Verify raw_table and args contents.
+  const auto& raw_table = storage_->raw_table();
+  EXPECT_EQ(raw_table.row_count(), 1u);
+  EXPECT_EQ(raw_table.name()[0],
             storage_->InternString("chrome_event.metadata"));
-  EXPECT_EQ(raw_events.arg_set_ids()[0], 1u);
+  EXPECT_EQ(raw_table.arg_set_id()[0], 1u);
 
   EXPECT_EQ(storage_->arg_table().row_count(), 2u);
   EXPECT_TRUE(HasArg(1u, storage_->InternString(kStringName),
@@ -2279,12 +2330,12 @@ TEST_F(ProtoTraceParserTest, ParseChromeLegacyFtraceIntoRawTable) {
 
   context_.sorter->ExtractEventsForced();
 
-  // Verify raw_events and args contents.
-  const auto& raw_events = storage_->raw_events();
-  EXPECT_EQ(raw_events.raw_event_count(), 1u);
-  EXPECT_EQ(raw_events.name_ids()[0],
+  // Verify raw_table and args contents.
+  const auto& raw_table = storage_->raw_table();
+  EXPECT_EQ(raw_table.row_count(), 1u);
+  EXPECT_EQ(raw_table.name()[0],
             storage_->InternString("chrome_event.legacy_system_trace"));
-  EXPECT_EQ(raw_events.arg_set_ids()[0], 1u);
+  EXPECT_EQ(raw_table.arg_set_id()[0], 1u);
 
   EXPECT_EQ(storage_->arg_table().row_count(), 1u);
   EXPECT_TRUE(HasArg(1u, storage_->InternString("data"),
@@ -2310,12 +2361,12 @@ TEST_F(ProtoTraceParserTest, ParseChromeLegacyJsonIntoRawTable) {
 
   context_.sorter->ExtractEventsForced();
 
-  // Verify raw_events and args contents.
-  const auto& raw_events = storage_->raw_events();
-  EXPECT_EQ(raw_events.raw_event_count(), 1u);
-  EXPECT_EQ(raw_events.name_ids()[0],
+  // Verify raw_table and args contents.
+  const auto& raw_table = storage_->raw_table();
+  EXPECT_EQ(raw_table.row_count(), 1u);
+  EXPECT_EQ(raw_table.name()[0],
             storage_->InternString("chrome_event.legacy_user_trace"));
-  EXPECT_EQ(raw_events.arg_set_ids()[0], 1u);
+  EXPECT_EQ(raw_table.arg_set_id()[0], 1u);
 
   EXPECT_EQ(storage_->arg_table().row_count(), 1u);
   EXPECT_TRUE(
@@ -2495,7 +2546,6 @@ TEST_F(ProtoTraceParserTest, ParseCPUProfileSamplesIntoTable) {
   }
 
   EXPECT_CALL(*process_, UpdateThread(16, 15))
-      .Times(2)
       .WillRepeatedly(Return(1));
 
   Tokenize();

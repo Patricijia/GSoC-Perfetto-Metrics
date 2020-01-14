@@ -14,12 +14,23 @@
  * limitations under the License.
  */
 
-#include "test/task_runner_thread_delegates.h"
+#ifndef SRC_TRACE_PROCESSOR_TYPES_GFP_FLAGS_H_
+#define SRC_TRACE_PROCESSOR_TYPES_GFP_FLAGS_H_
+
+#include <tuple>
+#include "perfetto/ext/base/string_writer.h"
 
 namespace perfetto {
+namespace trace_processor {
 
-ServiceDelegate::~ServiceDelegate() = default;
-ProbesProducerDelegate::~ProbesProducerDelegate() = default;
-FakeProducerDelegate::~FakeProducerDelegate() = default;
+// GFP flags in ftrace events should be parsed and read differently depending
+// the kernel version. This function writes a human readable version of the
+// flag.
+void WriteGfpFlag(uint64_t value,
+                  std::tuple<uint32_t, uint32_t> version,
+                  base::StringWriter* writer);
 
+}  // namespace trace_processor
 }  // namespace perfetto
+
+#endif  // SRC_TRACE_PROCESSOR_TYPES_GFP_FLAGS_H_

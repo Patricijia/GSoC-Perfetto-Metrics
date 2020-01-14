@@ -25,7 +25,6 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/metadata_tracker.h"
-#include "src/trace_processor/raw_table.h"
 #include "src/trace_processor/register_additional_modules.h"
 #include "src/trace_processor/sched_slice_table.h"
 #include "src/trace_processor/span_join_operator_table.h"
@@ -33,8 +32,9 @@
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
+#include "src/trace_processor/sqlite_raw_table.h"
 #include "src/trace_processor/stats_table.h"
-#include "src/trace_processor/variadic.h"
+#include "src/trace_processor/types/variadic.h"
 #include "src/trace_processor/window_operator_table.h"
 
 #include "src/trace_processor/metrics/metrics.descriptor.h"
@@ -380,16 +380,18 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   SetupMetrics(this, *db_, &sql_metrics_);
 
-  SchedSliceTable::RegisterTable(*db_, context_.storage.get());
-  SqlStatsTable::RegisterTable(*db_, context_.storage.get());
-  SpanJoinOperatorTable::RegisterTable(*db_, context_.storage.get());
-  WindowOperatorTable::RegisterTable(*db_, context_.storage.get());
-  StatsTable::RegisterTable(*db_, context_.storage.get());
-  RawTable::RegisterTable(*db_, context_.storage.get());
-
-  // New style db-backed tables.
   const TraceStorage* storage = context_.storage.get();
 
+  SchedSliceTable::RegisterTable(*db_, storage);
+  SqlStatsTable::RegisterTable(*db_, storage);
+  SpanJoinOperatorTable::RegisterTable(*db_, storage);
+  WindowOperatorTable::RegisterTable(*db_, storage);
+  StatsTable::RegisterTable(*db_, storage);
+
+  // New style tables but with some custom logic.
+  SqliteRawTable::RegisterTable(*db_, context_.storage.get());
+
+  // New style db-backed tables.
   DbSqliteTable::RegisterTable(*db_, &storage->arg_table(),
                                storage->arg_table().table_name());
   DbSqliteTable::RegisterTable(*db_, &storage->thread_table(),
@@ -446,8 +448,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
       *db_, &storage->heap_profile_allocation_table(),
       storage->heap_profile_allocation_table().table_name());
   DbSqliteTable::RegisterTable(
-      *db_, &storage->heap_graph_allocation_table(),
-      storage->heap_graph_allocation_table().table_name());
+      *db_, &storage->experimental_heap_graph_allocation_table(),
+      storage->experimental_heap_graph_allocation_table().table_name());
   DbSqliteTable::RegisterTable(
       *db_, &storage->cpu_profile_stack_sample_table(),
       storage->cpu_profile_stack_sample_table().table_name());

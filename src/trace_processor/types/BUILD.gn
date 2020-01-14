@@ -1,4 +1,4 @@
-# Copyright (C) 2017 The Android Open Source Project
+# Copyright (C) 2020 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,18 +12,16 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../gn/perfetto.gni")
-
-source_set("base") {
+source_set("types") {
   sources = [
-    "build_config.h",
-    "compiler.h",
-    "export.h",
-    "flat_set.h",
-    "logging.h",
-    "proc_utils.h",
-    "task_runner.h",
-    "thread_utils.h",
-    "time.h",
+    "gfp_flags.cc",
+    "gfp_flags.h",
+    "variadic.cc",
+    "variadic.h",
+  ]
+  deps = [
+    "../../../gn:default_deps",
+    "../../../include/perfetto/ext/base",
+    "../containers",
   ]
 }

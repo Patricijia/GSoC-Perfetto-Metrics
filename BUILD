@@ -245,8 +245,11 @@ filegroup(
         "include/perfetto/base/build_config.h",
         "include/perfetto/base/compiler.h",
         "include/perfetto/base/export.h",
+        "include/perfetto/base/flat_set.h",
         "include/perfetto/base/logging.h",
+        "include/perfetto/base/proc_utils.h",
         "include/perfetto/base/task_runner.h",
+        "include/perfetto/base/thread_utils.h",
         "include/perfetto/base/time.h",
     ],
 )
@@ -259,7 +262,6 @@ filegroup(
         "include/perfetto/ext/base/container_annotations.h",
         "include/perfetto/ext/base/event_fd.h",
         "include/perfetto/ext/base/file_utils.h",
-        "include/perfetto/ext/base/flat_set.h",
         "include/perfetto/ext/base/hash.h",
         "include/perfetto/ext/base/lookup_set.h",
         "include/perfetto/ext/base/metatrace.h",
@@ -268,7 +270,6 @@ filegroup(
         "include/perfetto/ext/base/optional.h",
         "include/perfetto/ext/base/paged_memory.h",
         "include/perfetto/ext/base/pipe.h",
-        "include/perfetto/ext/base/proc_utils.h",
         "include/perfetto/ext/base/scoped_file.h",
         "include/perfetto/ext/base/small_set.h",
         "include/perfetto/ext/base/string_splitter.h",
@@ -279,7 +280,6 @@ filegroup(
         "include/perfetto/ext/base/thread_annotations.h",
         "include/perfetto/ext/base/thread_checker.h",
         "include/perfetto/ext/base/thread_task_runner.h",
-        "include/perfetto/ext/base/thread_utils.h",
         "include/perfetto/ext/base/unix_socket.h",
         "include/perfetto/ext/base/unix_task_runner.h",
         "include/perfetto/ext/base/utils.h",
@@ -477,6 +477,7 @@ filegroup(
         "include/perfetto/tracing/trace_writer_base.h",
         "include/perfetto/tracing/tracing.h",
         "include/perfetto/tracing/tracing_backend.h",
+        "include/perfetto/tracing/track.h",
         "include/perfetto/tracing/track_event.h",
         "include/perfetto/tracing/track_event_category_registry.h",
         "include/perfetto/tracing/track_event_interned_data_index.h",
@@ -763,6 +764,17 @@ filegroup(
     ],
 )
 
+# GN target: //src/trace_processor/types:types
+filegroup(
+    name = "src_trace_processor_types_types",
+    srcs = [
+        "src/trace_processor/types/gfp_flags.cc",
+        "src/trace_processor/types/gfp_flags.h",
+        "src/trace_processor/types/variadic.cc",
+        "src/trace_processor/types/variadic.h",
+    ],
+)
+
 # GN target: //src/trace_processor:descriptors
 filegroup(
     name = "src_trace_processor_descriptors",
@@ -787,10 +799,6 @@ filegroup(
     srcs = [
         "src/trace_processor/filtered_row_index.cc",
         "src/trace_processor/filtered_row_index.h",
-        "src/trace_processor/gfp_flags.cc",
-        "src/trace_processor/gfp_flags.h",
-        "src/trace_processor/raw_table.cc",
-        "src/trace_processor/raw_table.h",
         "src/trace_processor/read_trace.cc",
         "src/trace_processor/row_iterators.cc",
         "src/trace_processor/row_iterators.h",
@@ -800,6 +808,8 @@ filegroup(
         "src/trace_processor/span_join_operator_table.h",
         "src/trace_processor/sql_stats_table.cc",
         "src/trace_processor/sql_stats_table.h",
+        "src/trace_processor/sqlite_raw_table.cc",
+        "src/trace_processor/sqlite_raw_table.h",
         "src/trace_processor/stats_table.cc",
         "src/trace_processor/stats_table.h",
         "src/trace_processor/storage_columns.cc",
@@ -950,8 +960,6 @@ filegroup(
         "src/trace_processor/trace_storage.h",
         "src/trace_processor/track_tracker.cc",
         "src/trace_processor/track_tracker.h",
-        "src/trace_processor/variadic.cc",
-        "src/trace_processor/variadic.h",
         "src/trace_processor/virtual_destructors.cc",
     ],
 )
@@ -1126,6 +1134,7 @@ filegroup(
         "src/tracing/internal/track_event_internal.cc",
         "src/tracing/platform.cc",
         "src/tracing/tracing.cc",
+        "src/tracing/track.cc",
         "src/tracing/track_event_category_registry.cc",
         "src/tracing/virtual_destructors.cc",
     ],
@@ -2571,6 +2580,7 @@ perfetto_cc_library(
         ":src_trace_processor_storage_full",
         ":src_trace_processor_storage_minimal",
         ":src_trace_processor_tables_tables",
+        ":src_trace_processor_types_types",
     ],
     hdrs = [
         ":include_perfetto_base_base",
@@ -2654,6 +2664,7 @@ perfetto_cc_binary(
         ":src_trace_processor_storage_full",
         ":src_trace_processor_storage_minimal",
         ":src_trace_processor_tables_tables",
+        ":src_trace_processor_types_types",
     ],
     visibility = [
         "//visibility:public",
@@ -2809,6 +2820,7 @@ perfetto_cc_binary(
         ":src_trace_processor_storage_full",
         ":src_trace_processor_storage_minimal",
         ":src_trace_processor_tables_tables",
+        ":src_trace_processor_types_types",
         ":tools_trace_to_text_common",
         ":tools_trace_to_text_full",
         ":tools_trace_to_text_pprofbuilder",

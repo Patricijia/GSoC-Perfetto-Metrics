@@ -1,5 +1,5 @@
-/*
- * Copyright (C) 2019 The Android Open Source Project
+#/*
+ * Copyright (C) 2018 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,23 +14,12 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_GFP_FLAGS_H_
-#define SRC_TRACE_PROCESSOR_GFP_FLAGS_H_
-
-#include <tuple>
-#include "perfetto/ext/base/string_writer.h"
+#include "src/trace_processor/types/variadic.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-// GFP flags in ftrace events should be parsed and read differently depending
-// the kernel version. This function writes a human readable version of the
-// flag.
-void WriteGfpFlag(uint64_t value,
-                  std::tuple<uint32_t, uint32_t> version,
-                  base::StringWriter* writer);
+constexpr const char* Variadic::kTypeNames[];
 
 }  // namespace trace_processor
 }  // namespace perfetto
-
-#endif  // SRC_TRACE_PROCESSOR_GFP_FLAGS_H_

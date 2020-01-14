@@ -26,7 +26,7 @@
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/stats.h"
 #include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/variadic.h"
+#include "src/trace_processor/types/variadic.h"
 
 #include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sched.pbzero.h"
@@ -194,8 +194,9 @@ size_t SchedEventTracker::AddRawEventAndStartSlice(uint32_t cpu,
                                                    int32_t next_prio) {
   // Push the raw event - this is done as the raw ftrace event codepath does
   // not insert sched_switch.
-  uint32_t row = context_->storage->mutable_raw_events()->AddRawEvent(
-      ts, sched_switch_id_, cpu, prev_utid);
+  RawId id = context_->storage->mutable_raw_table()->Insert(
+      {ts, sched_switch_id_, cpu, prev_utid});
+  uint32_t row = *context_->storage->raw_table().id().IndexOf(id);
 
   // Note: this ordering is important. The events should be pushed in the same
   // order as the order of fields in the proto; this is used by the raw table to
@@ -273,8 +274,9 @@ void SchedEventTracker::PushSchedWakingCompact(uint32_t cpu,
   auto curr_utid = pending_sched->last_utid;
 
   // Add an entry to the raw table.
-  uint32_t row = context_->storage->mutable_raw_events()->AddRawEvent(
-      ts, sched_waking_id_, cpu, curr_utid);
+  RawId id = context_->storage->mutable_raw_table()->Insert(
+      {ts, sched_waking_id_, cpu, curr_utid});
+  uint32_t row = *context_->storage->raw_table().id().IndexOf(id);
 
   // "success" is hardcoded as always 1 by the kernel, with a TODO to remove it.
   static constexpr int32_t kHardcodedSuccess = 1;
