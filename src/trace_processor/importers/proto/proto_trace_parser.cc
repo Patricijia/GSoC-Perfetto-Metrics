@@ -174,7 +174,8 @@ ProtoTraceParser::ProtoTraceParser(TraceProcessorContext* context)
           context->storage->InternString("chrome_event.legacy_user_trace")) {
   // TODO(140860736): Once we support null values for
   // stack_profile_frame.symbol_set_id remove this hack
-  context_->storage->mutable_symbol_table()->Insert({0, 0, 0, 0});
+  context_->storage->mutable_symbol_table()->Insert(
+      {0, kNullStringId, kNullStringId, 0});
 }
 
 ProtoTraceParser::~ProtoTraceParser() = default;
@@ -455,7 +456,8 @@ void ProtoTraceParser::ParseStreamingProfilePacket(
     int64_t callstack_id = *maybe_callstack_id;
 
     tables::CpuProfileStackSampleTable::Row sample_row{
-        sequence_state->state()->IncrementAndGetTrackEventTimeNs(*timestamp_it),
+        sequence_state->state()->IncrementAndGetTrackEventTimeNs(*timestamp_it *
+                                                                 1000),
         callstack_id, utid};
     storage->mutable_cpu_profile_stack_sample_table()->Insert(sample_row);
   }
@@ -517,7 +519,7 @@ void ProtoTraceParser::ParseChromeEvents(int64_t ts, ConstBytes blob) {
   if (bundle.has_metadata()) {
     RawId id = storage->mutable_raw_table()->Insert(
         {ts, raw_chrome_metadata_event_id_, 0, 0});
-    uint32_t row = *storage->raw_table().id().IndexOf(id);
+    auto inserter = args.AddArgsTo(id);
 
     // Metadata is proxied via a special event in the raw table to JSON export.
     for (auto it = bundle.metadata(); it; ++it) {
@@ -537,14 +539,13 @@ void ProtoTraceParser::ParseChromeEvents(int64_t ts, ConstBytes blob) {
         context_->storage->IncrementStats(stats::empty_chrome_metadata);
         continue;
       }
-      args.AddArg(TableId::kRawEvents, row, name_id, name_id, value);
+      args.AddArgsTo(id).AddArg(name_id, value);
     }
   }
 
   if (bundle.has_legacy_ftrace_output()) {
     RawId id = storage->mutable_raw_table()->Insert(
         {ts, raw_chrome_legacy_system_trace_event_id_, 0, 0});
-    uint32_t row = *storage->raw_table().id().IndexOf(id);
 
     std::string data;
     for (auto it = bundle.legacy_ftrace_output(); it; ++it) {
@@ -552,7 +553,7 @@ void ProtoTraceParser::ParseChromeEvents(int64_t ts, ConstBytes blob) {
     }
     Variadic value =
         Variadic::String(storage->InternString(base::StringView(data)));
-    args.AddArg(TableId::kRawEvents, row, data_name_id_, data_name_id_, value);
+    args.AddArgsTo(id).AddArg(data_name_id_, value);
   }
 
   if (bundle.has_legacy_json_trace()) {
@@ -564,11 +565,9 @@ void ProtoTraceParser::ParseChromeEvents(int64_t ts, ConstBytes blob) {
       }
       RawId id = storage->mutable_raw_table()->Insert(
           {ts, raw_chrome_legacy_user_trace_event_id_, 0, 0});
-      uint32_t row = *storage->raw_table().id().IndexOf(id);
       Variadic value =
           Variadic::String(storage->InternString(legacy_trace.data()));
-      args.AddArg(TableId::kRawEvents, row, data_name_id_, data_name_id_,
-                  value);
+      args.AddArgsTo(id).AddArg(data_name_id_, value);
     }
   }
 }
@@ -578,7 +577,7 @@ void ProtoTraceParser::ParseMetatraceEvent(int64_t ts, ConstBytes blob) {
   auto utid = context_->process_tracker->GetOrCreateThread(event.thread_id());
 
   StringId cat_id = metatrace_id_;
-  StringId name_id = 0;
+  StringId name_id = kNullStringId;
   char fallback[64];
 
   if (event.has_event_id()) {

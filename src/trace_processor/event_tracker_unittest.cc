@@ -68,7 +68,7 @@ TEST_F(EventTrackerTest, InsertSecondSched) {
 
   ASSERT_EQ(timestamps.size(), 2ul);
   ASSERT_EQ(timestamps[0], timestamp);
-  ASSERT_EQ(context.storage->thread_table().start_ts()[1], 0);
+  ASSERT_EQ(context.storage->thread_table().start_ts()[1], base::nullopt);
 
   auto name =
       context.storage->GetString(context.storage->thread_table().name()[1]);
@@ -103,7 +103,7 @@ TEST_F(EventTrackerTest, InsertThirdSched_SameThread) {
 
   ASSERT_EQ(timestamps.size(), 4ul);
   ASSERT_EQ(timestamps[0], timestamp);
-  ASSERT_EQ(context.storage->thread_table().start_ts()[1], 0);
+  ASSERT_EQ(context.storage->thread_table().start_ts()[1], base::nullopt);
   ASSERT_EQ(context.storage->slices().durations().at(0), 1u);
   ASSERT_EQ(context.storage->slices().durations().at(1), 11u - 1u);
   ASSERT_EQ(context.storage->slices().durations().at(2), 31u - 11u);
@@ -114,7 +114,7 @@ TEST_F(EventTrackerTest, InsertThirdSched_SameThread) {
 TEST_F(EventTrackerTest, CounterDuration) {
   uint32_t cpu = 3;
   int64_t timestamp = 100;
-  StringId name_id = 0;
+  StringId name_id = kNullStringId;
 
   TrackId track = context.track_tracker->InternCpuCounterTrack(name_id, cpu);
   context.event_tracker->PushCounter(timestamp, 1000, track);

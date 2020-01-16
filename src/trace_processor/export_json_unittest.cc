@@ -119,8 +119,7 @@ TEST_F(ExportJsonTest, StorageWithOneSlice) {
   const char* kName = "name";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(kThreadID);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -166,8 +165,7 @@ TEST_F(ExportJsonTest, StorageWithOneUnfinishedSlice) {
   const char* kName = "name";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(kThreadID);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -225,13 +223,14 @@ TEST_F(ExportJsonTest, StorageWithThreadName) {
   EXPECT_EQ(event["args"]["name"].asString(), kName);
 }
 
-TEST_F(ExportJsonTest, WrongTrackTypeIgnored) {
+TEST_F(ExportJsonTest, SystemEventsIgnored) {
   constexpr int64_t kCookie = 22;
   TrackId track = context_.track_tracker->InternAndroidAsyncTrack(
-      /*name=*/0, /*upid=*/0, kCookie);
+      /*name=*/kNullStringId, /*upid=*/0, kCookie);
   context_.args_tracker->Flush();  // Flush track args.
 
-  StringId cat_id = context_.storage->InternString("cat");
+  // System events have no category.
+  StringId cat_id = kNullStringId;
   StringId name_id = context_.storage->InternString("name");
   context_.storage->mutable_slice_table()->Insert(
       {0, 0, track.value, cat_id, name_id, 0, 0, 0});
@@ -376,15 +375,14 @@ TEST_F(ExportJsonTest, StorageWithChromeMetadata) {
 
   RawId id = storage->mutable_raw_table()->Insert(
       {0, storage->InternString("chrome_event.metadata"), 0, 0});
-  uint32_t row = *storage->raw_table().id().IndexOf(id);
 
   StringId name1_id = storage->InternString(base::StringView(kName1));
   StringId name2_id = storage->InternString(base::StringView(kName2));
   StringId value1_id = storage->InternString(base::StringView(kValue1));
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, name1_id, name1_id,
-                                Variadic::String(value1_id));
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, name2_id, name2_id,
-                                Variadic::Integer(kValue2));
+
+  context_.args_tracker->AddArgsTo(id)
+      .AddArg(name1_id, Variadic::String(value1_id))
+      .AddArg(name2_id, Variadic::Integer(kValue2));
   context_.args_tracker->Flush();
 
   base::TempFile temp_file = base::TempFile::Create();
@@ -407,8 +405,7 @@ TEST_F(ExportJsonTest, StorageWithArgs) {
   const char* kSrc = "source_file.cc";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -452,19 +449,16 @@ TEST_F(ExportJsonTest, StorageWithSliceAndFlowEventArgs) {
   TraceStorage* storage = context_.storage.get();
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = storage->InternString(base::StringView(kCategory));
   StringId name_id = storage->InternString(base::StringView(kName));
   SliceId id = storage->mutable_slice_table()->Insert(
       {0, 0, track.value, cat_id, name_id, 0, 0, 0});
-  uint32_t row = *storage->slice_table().id().IndexOf(id);
+  auto inserter = context_.args_tracker->AddArgsTo(id);
 
   auto add_arg = [&](const char* key, Variadic value) {
-    StringId key_id = storage->InternString(key);
-    context_.args_tracker->AddArg(TableId::kNestableSlices, row, key_id, key_id,
-                                  value);
+    inserter.AddArg(storage->InternString(key), value);
   };
 
   add_arg("legacy_event.bind_id", Variadic::UnsignedInteger(kBindId));
@@ -502,8 +496,7 @@ TEST_F(ExportJsonTest, StorageWithListArgs) {
   double kValues[] = {1.234, 2.345};
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -551,8 +544,7 @@ TEST_F(ExportJsonTest, StorageWithMultiplePointerArgs) {
   uint64_t kValue1 = std::numeric_limits<uint64_t>::max();
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -596,8 +588,7 @@ TEST_F(ExportJsonTest, StorageWithObjectListArgs) {
   int kValues[] = {123, 234};
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -644,8 +635,7 @@ TEST_F(ExportJsonTest, StorageWithNestedListArgs) {
   int kValues[] = {123, 234};
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -692,8 +682,7 @@ TEST_F(ExportJsonTest, StorageWithLegacyJsonArgs) {
   const char* kName = "name";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -762,8 +751,7 @@ TEST_F(ExportJsonTest, InstantEventOnThread) {
   const char* kName = "name";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(kThreadID);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
@@ -806,7 +794,7 @@ TEST_F(ExportJsonTest, AsyncEvents) {
   constexpr int64_t kSourceId = 235;
   TrackId track = context_.track_tracker->InternLegacyChromeAsyncTrack(
       name_id, upid, kSourceId, /*source_id_is_process_scoped=*/true,
-      /*source_scope=*/0);
+      /*source_scope=*/kNullStringId);
   context_.args_tracker->Flush();  // Flush track args.
 
   context_.storage->mutable_slice_table()->Insert(
@@ -897,7 +885,7 @@ TEST_F(ExportJsonTest, AsyncEventWithThreadTimestamp) {
   constexpr int64_t kSourceId = 235;
   TrackId track = context_.track_tracker->InternLegacyChromeAsyncTrack(
       name_id, upid, kSourceId, /*source_id_is_process_scoped=*/true,
-      /*source_scope=*/0);
+      /*source_scope=*/kNullStringId);
   context_.args_tracker->Flush();  // Flush track args.
 
   auto slice_id = context_.storage->mutable_slice_table()->Insert(
@@ -952,7 +940,7 @@ TEST_F(ExportJsonTest, UnfinishedAsyncEvent) {
   constexpr int64_t kSourceId = 235;
   TrackId track = context_.track_tracker->InternLegacyChromeAsyncTrack(
       name_id, upid, kSourceId, /*source_id_is_process_scoped=*/true,
-      /*source_scope=*/0);
+      /*source_scope=*/kNullStringId);
   context_.args_tracker->Flush();  // Flush track args.
 
   auto slice_id = context_.storage->mutable_slice_table()->Insert(
@@ -995,7 +983,7 @@ TEST_F(ExportJsonTest, AsyncInstantEvent) {
   constexpr int64_t kSourceId = 235;
   TrackId track = context_.track_tracker->InternLegacyChromeAsyncTrack(
       name_id, upid, kSourceId, /*source_id_is_process_scoped=*/true,
-      /*source_scope=*/0);
+      /*source_scope=*/kNullStringId);
   context_.args_tracker->Flush();  // Flush track args.
 
   context_.storage->mutable_slice_table()->Insert(
@@ -1056,12 +1044,11 @@ TEST_F(ExportJsonTest, RawEvent) {
   RawId id = storage->mutable_raw_table()->Insert(
       {kTimestamp, storage->InternString("track_event.legacy_event"), /*cpu=*/0,
        utid});
-  uint32_t row = *storage->raw_table().id().IndexOf(id);
+  auto inserter = context_.args_tracker->AddArgsTo(id);
 
   auto add_arg = [&](const char* key, Variadic value) {
     StringId key_id = storage->InternString(key);
-    context_.args_tracker->AddArg(TableId::kRawEvents, row, key_id, key_id,
-                                  value);
+    inserter.AddArg(key_id, value);
   };
 
   StringId cat_id = storage->InternString(base::StringView(kCategory));
@@ -1132,26 +1119,23 @@ TEST_F(ExportJsonTest, LegacyRawEvents) {
 
   RawId id = storage->mutable_raw_table()->Insert(
       {0, storage->InternString("chrome_event.legacy_system_trace"), 0, 0});
-  uint32_t row = *storage->raw_table().id().IndexOf(id);
+  auto inserter = context_.args_tracker->AddArgsTo(id);
 
   StringId data_id = storage->InternString("data");
   StringId ftrace_data_id = storage->InternString(kLegacyFtraceData);
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, data_id, data_id,
-                                Variadic::String(ftrace_data_id));
+  inserter.AddArg(data_id, Variadic::String(ftrace_data_id));
 
   id = storage->mutable_raw_table()->Insert(
       {0, storage->InternString("chrome_event.legacy_user_trace"), 0, 0});
-  row = *storage->raw_table().id().IndexOf(id);
+  inserter = context_.args_tracker->AddArgsTo(id);
   StringId json_data1_id = storage->InternString(kLegacyJsonData1);
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, data_id, data_id,
-                                Variadic::String(json_data1_id));
+  inserter.AddArg(data_id, Variadic::String(json_data1_id));
 
   id = storage->mutable_raw_table()->Insert(
       {0, storage->InternString("chrome_event.legacy_user_trace"), 0, 0});
-  row = *storage->raw_table().id().IndexOf(id);
+  inserter = context_.args_tracker->AddArgsTo(id);
   StringId json_data2_id = storage->InternString(kLegacyJsonData2);
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, data_id, data_id,
-                                Variadic::String(json_data2_id));
+  inserter.AddArg(data_id, Variadic::String(json_data2_id));
 
   context_.args_tracker->Flush();
 
@@ -1190,10 +1174,11 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
 
   // TODO(140860736): Once we support null values for
   // stack_profile_frame.symbol_set_id remove this hack
-  storage->mutable_symbol_table()->Insert({0, 0, 0, 0});
+  storage->mutable_symbol_table()->Insert({0, kNullStringId, kNullStringId, 0});
 
   auto* frames = storage->mutable_stack_profile_frame_table();
-  auto frame_id_1 = frames->Insert({/*name_id=*/0, module_id_1.value, 0x42});
+  auto frame_id_1 =
+      frames->Insert({/*name_id=*/kNullStringId, module_id_1.value, 0x42});
   uint32_t frame_row_1 = *frames->id().IndexOf(frame_id_1);
 
   uint32_t symbol_set_id = storage->symbol_table().row_count();
@@ -1202,7 +1187,8 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
        storage->InternString("foo_file"), 66});
   frames->mutable_symbol_set_id()->Set(frame_row_1, symbol_set_id);
 
-  auto frame_id_2 = frames->Insert({/*name_id=*/0, module_id_2.value, 0x4242});
+  auto frame_id_2 =
+      frames->Insert({/*name_id=*/kNullStringId, module_id_2.value, 0x4242});
   uint32_t frame_row_2 = *frames->id().IndexOf(frame_id_2);
 
   symbol_set_id = storage->symbol_table().row_count();
@@ -1246,8 +1232,7 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
 
 TEST_F(ExportJsonTest, ArgumentFilter) {
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(0);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
 
   StringId cat_id = context_.storage->InternString(base::StringView("cat"));
@@ -1259,18 +1244,16 @@ TEST_F(ExportJsonTest, ArgumentFilter) {
   StringId arg2_id = context_.storage->InternString(base::StringView("arg2"));
   StringId val_id = context_.storage->InternString(base::StringView("val"));
 
-  std::array<uint32_t, 3> slice_rows;
+  std::vector<ArgsTracker::BoundInserter> slice_inserters;
   for (size_t i = 0; i < name_ids.size(); i++) {
     auto slice_id = context_.storage->mutable_slice_table()->Insert(
         {0, 0, track.value, cat_id, name_ids[i], 0, 0, 0});
-    slice_rows[i] = *context_.storage->slice_table().id().IndexOf(slice_id);
+    slice_inserters.emplace_back(context_.args_tracker->AddArgsTo(slice_id));
   }
 
-  for (uint32_t row : slice_rows) {
-    context_.args_tracker->AddArg(TableId::kNestableSlices, row, arg1_id,
-                                  arg1_id, Variadic::Integer(5));
-    context_.args_tracker->AddArg(TableId::kNestableSlices, row, arg2_id,
-                                  arg2_id, Variadic::String(val_id));
+  for (auto& inserter : slice_inserters) {
+    inserter.AddArg(arg1_id, Variadic::Integer(5))
+        .AddArg(arg2_id, Variadic::String(val_id));
   }
   context_.args_tracker->Flush();
 
@@ -1326,15 +1309,14 @@ TEST_F(ExportJsonTest, MetadataFilter) {
 
   RawId id = storage->mutable_raw_table()->Insert(
       {0, storage->InternString("chrome_event.metadata"), 0, 0});
-  uint32_t row = *storage->raw_table().id().IndexOf(id);
 
   StringId name1_id = storage->InternString(base::StringView(kName1));
   StringId name2_id = storage->InternString(base::StringView(kName2));
   StringId value1_id = storage->InternString(base::StringView(kValue1));
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, name1_id, name1_id,
-                                Variadic::String(value1_id));
-  context_.args_tracker->AddArg(TableId::kRawEvents, row, name2_id, name2_id,
-                                Variadic::Integer(kValue2));
+
+  context_.args_tracker->AddArgsTo(id)
+      .AddArg(name1_id, Variadic::String(value1_id))
+      .AddArg(name2_id, Variadic::Integer(kValue2));
   context_.args_tracker->Flush();
 
   auto metadata_filter = [](const char* metadata_name) {
@@ -1360,8 +1342,7 @@ TEST_F(ExportJsonTest, LabelFilter) {
   const char* kName = "name";
 
   UniqueTid utid = context_.process_tracker->GetOrCreateThread(kThreadID);
-  TrackId track =
-      context_.track_tracker->GetOrCreateDescriptorTrackForThread(utid);
+  TrackId track = context_.track_tracker->InternThreadTrack(utid);
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
