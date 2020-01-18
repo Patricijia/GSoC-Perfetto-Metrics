@@ -73,6 +73,10 @@ using InstantId = tables::InstantTable::Id;
 
 using MappingId = tables::StackProfileMappingTable::Id;
 
+using FrameId = tables::StackProfileFrameTable::Id;
+
+using CallsiteId = tables::StackProfileCallsiteTable::Id;
+
 using MetadataId = tables::MetadataTable::Id;
 
 using RawId = tables::RawTable::Id;
@@ -558,15 +562,6 @@ class TraceStorage {
     return &heap_profile_allocation_table_;
   }
 
-  const tables::ExperimentalFlamegraphNodesTable&
-  experimental_flamegraph_nodes_table() const {
-    return experimental_flamegraph_nodes_table_;
-  }
-  tables::ExperimentalFlamegraphNodesTable*
-  mutable_experimental_flamegraph_nodes_table() {
-    return &experimental_flamegraph_nodes_table_;
-  }
-
   const tables::CpuProfileStackSampleTable& cpu_profile_stack_sample_table()
       const {
     return cpu_profile_stack_sample_table_;
@@ -611,6 +606,7 @@ class TraceStorage {
   }
 
   const StringPool& string_pool() const { return string_pool_; }
+  StringPool* mutable_string_pool() { return &string_pool_; }
 
   // Number of interned strings in the pool. Includes the empty string w/ ID=0.
   size_t string_count() const { return string_pool_.size(); }
@@ -620,7 +616,8 @@ class TraceStorage {
   std::pair<int64_t, int64_t> GetTraceTimestampBoundsNs() const;
 
   // TODO(lalitm): remove this when we have a better home.
-  std::vector<int64_t> FindMappingRow(StringId name, StringId build_id) const {
+  std::vector<MappingId> FindMappingRow(StringId name,
+                                        StringId build_id) const {
     auto it = stack_profile_mapping_index_.find(std::make_pair(name, build_id));
     if (it == stack_profile_mapping_index_.end())
       return {};
@@ -628,13 +625,14 @@ class TraceStorage {
   }
 
   // TODO(lalitm): remove this when we have a better home.
-  void InsertMappingRow(StringId name, StringId build_id, uint32_t row) {
+  void InsertMappingId(StringId name, StringId build_id, MappingId row) {
     auto pair = std::make_pair(name, build_id);
     stack_profile_mapping_index_[pair].emplace_back(row);
   }
 
   // TODO(lalitm): remove this when we have a better home.
-  std::vector<int64_t> FindFrameRow(size_t mapping_row, uint64_t rel_pc) const {
+  std::vector<FrameId> FindFrameIds(MappingId mapping_row,
+                                    uint64_t rel_pc) const {
     auto it =
         stack_profile_frame_index_.find(std::make_pair(mapping_row, rel_pc));
     if (it == stack_profile_frame_index_.end())
@@ -643,7 +641,7 @@ class TraceStorage {
   }
 
   // TODO(lalitm): remove this when we have a better home.
-  void InsertFrameRow(size_t mapping_row, uint64_t rel_pc, uint32_t row) {
+  void InsertFrameRow(MappingId mapping_row, uint64_t rel_pc, FrameId row) {
     auto pair = std::make_pair(mapping_row, rel_pc);
     stack_profile_frame_index_[pair].emplace_back(row);
   }
@@ -706,11 +704,11 @@ class TraceStorage {
 
   // TODO(lalitm): remove this when we find a better home for this.
   using MappingKey = std::pair<StringId /* name */, StringId /* build id */>;
-  std::map<MappingKey, std::vector<int64_t>> stack_profile_mapping_index_;
+  std::map<MappingKey, std::vector<MappingId>> stack_profile_mapping_index_;
 
   // TODO(lalitm): remove this when we find a better home for this.
-  using FrameKey = std::pair<size_t /* mapping row */, uint64_t /* rel_pc */>;
-  std::map<FrameKey, std::vector<int64_t>> stack_profile_frame_index_;
+  using FrameKey = std::pair<MappingId, uint64_t /* rel_pc */>;
+  std::map<FrameKey, std::vector<FrameId>> stack_profile_frame_index_;
 
   // One entry for each unique string in the trace.
   StringPool string_pool_;
@@ -793,8 +791,6 @@ class TraceStorage {
   tables::StackProfileCallsiteTable stack_profile_callsite_table_{&string_pool_,
                                                                   nullptr};
   tables::HeapProfileAllocationTable heap_profile_allocation_table_{
-      &string_pool_, nullptr};
-  tables::ExperimentalFlamegraphNodesTable experimental_flamegraph_nodes_table_{
       &string_pool_, nullptr};
   tables::CpuProfileStackSampleTable cpu_profile_stack_sample_table_{
       &string_pool_, nullptr};
