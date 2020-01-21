@@ -26,9 +26,9 @@ namespace trace_processor {
 // Implements the SQLite table interface for db tables.
 class DbSqliteTable : public SqliteTable {
  public:
-  class Cursor final : public SqliteTable::Cursor {
+  class Cursor : public SqliteTable::Cursor {
    public:
-    explicit Cursor(DbSqliteTable* table);
+    Cursor(SqliteTable*, const Table* table);
 
     Cursor(Cursor&&) noexcept = default;
     Cursor& operator=(Cursor&&) = default;
@@ -41,11 +41,21 @@ class DbSqliteTable : public SqliteTable {
     int Eof() override;
     int Column(sqlite3_context*, int N) override;
 
+   protected:
+    // Sets the table this class uses as the reference for all filter
+    // operations. Should be immediately followed by a call to Filter with
+    // |FilterHistory::kDifferent|.
+    void set_table(const Table* table) { initial_db_table_ = table; }
+
    private:
     enum class Mode {
       kSingleRow,
       kTable,
     };
+
+    // Tries to create a sorted table to cache in |sorted_cache_table_| if the
+    // constraint set matches the requirements.
+    void TryCacheCreateSortedTable(const QueryConstraints&, FilterHistory);
 
     const Table* SourceTable() const {
       // Try and use the sorted cache table (if it exists) to speed up the
@@ -100,6 +110,9 @@ class DbSqliteTable : public SqliteTable {
   std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
   int ModifyConstraints(QueryConstraints*) override;
   int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+
+  static SqliteTable::Schema ComputeSchema(const Table& table,
+                                           const char* table_name);
 
   // static for testing.
   static QueryCost EstimateCost(const Table& table, const QueryConstraints& qc);
