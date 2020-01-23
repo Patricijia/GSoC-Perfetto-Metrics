@@ -374,10 +374,14 @@ export class TraceController extends Controller<States> {
 
     const upidToProcessTracks = new Map();
     const rawProcessTracks = await engine.query(`
-      select id, upid, process_track.name, max(depth) as maxDepth
+      select
+        process_track.id as track_id,
+        process_track.upid,
+        process_track.name,
+        max(slice.depth) as max_depth
       from process_track
-      inner join slice on slice.track_id = process_track.id
-      group by track_id
+      join slice on slice.track_id = process_track.id
+      group by process_track.id
     `);
     for (let i = 0; i < rawProcessTracks.numRecords; i++) {
       const trackId = rawProcessTracks.columns[0].longValues![i];
@@ -464,6 +468,32 @@ export class TraceController extends Controller<States> {
           name,
           trackId,
         }
+      });
+    }
+
+    // Add global slice tracks.
+    const globalSliceTracks = await engine.query(`
+      select
+        track.name as track_name,
+        track.id as track_id,
+        max(depth) as max_depth
+      from track
+      join slice on track.id = slice.track_id
+      where track.type = 'track'
+      group by track_id
+    `);
+
+    for (let i = 0; i < globalSliceTracks.numRecords; i++) {
+      const name = globalSliceTracks.columns[0].stringValues![i];
+      const trackId = +globalSliceTracks.columns[1].longValues![i];
+      const maxDepth = +globalSliceTracks.columns[2].longValues![i];
+
+      tracksToAdd.push({
+        engineId: this.engineId,
+        kind: SLICE_TRACK_KIND,
+        name: `${name}`,
+        trackGroup: SCROLLING_TRACK_GROUP,
+        config: {maxDepth, trackId},
       });
     }
 
@@ -687,8 +717,6 @@ export class TraceController extends Controller<States> {
           name: `${threadName} [${tid}]`,
           trackGroup: pUuid,
           config: {
-            upid,
-            utid,
             maxDepth: threadTrack.maxDepth,
             trackId: threadTrack.trackId
           },

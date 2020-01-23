@@ -17,6 +17,7 @@
 
 #include "src/trace_processor/sqlite_experimental_flamegraph_table.h"
 
+#include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/proto/heap_graph_tracker.h"
 #include "src/trace_processor/trace_processor_context.h"
 
@@ -154,10 +155,13 @@ int SqliteExperimentalFlamegraphTable::Cursor::Filter(
   // Get the input column values and compute the flamegraph using them.
   values_ = GetInputValues(qc, argv);
 
-  // TODO(fmayer): extend this to support native profile as well.
   if (values_.profile_type == "graph") {
     auto* tracker = HeapGraphTracker::GetOrCreate(context_);
     table_ = tracker->BuildFlamegraph(values_.ts, values_.upid);
+  }
+  if (values_.profile_type == "native") {
+    table_ = BuildNativeFlamegraph(context_->storage.get(),
+                                   values_.upid, values_.ts);
   }
 
   // table_ can be nullptr precisely where the constraints passed to us don't

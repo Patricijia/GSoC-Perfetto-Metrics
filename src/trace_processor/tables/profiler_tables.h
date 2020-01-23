@@ -100,6 +100,10 @@ PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_PROFILE_ALLOCATION_DEF);
   C(int64_t, cumulative_count)                                            \
   C(int64_t, size)                                                        \
   C(int64_t, cumulative_size)                                             \
+  C(int64_t, alloc_count)                                                 \
+  C(int64_t, cumulative_alloc_count)                                      \
+  C(int64_t, alloc_size)                                                  \
+  C(int64_t, cumulative_alloc_size)                                       \
   C(base::Optional<uint32_t>, parent_id)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_EXPERIMENTAL_FLAMEGRAPH_NODES);
@@ -124,7 +128,7 @@ PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF);
 #define PERFETTO_TP_HEAP_GRAPH_REFERENCE_DEF(NAME, PARENT, C) \
   NAME(HeapGraphReferenceTable, "heap_graph_reference")       \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                           \
-  C(int64_t, reference_set_id)                                \
+  C(int64_t, reference_set_id, Column::Flag::kSorted)         \
   C(int64_t, owner_id)                                        \
   C(int64_t, owned_id)                                        \
   C(StringPool::Id, field_name)                               \
