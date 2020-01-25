@@ -265,7 +265,7 @@ UniquePid TrackEventParser::ParseProcessDescriptor(
   protos::pbzero::ProcessDescriptor::Decoder decoder(process_descriptor);
   UniquePid upid = context_->process_tracker->GetOrCreateProcess(
       static_cast<uint32_t>(decoder.pid()));
-  if (decoder.has_process_name()) {
+  if (decoder.has_process_name() && decoder.process_name().size) {
     // Don't override system-provided names.
     context_->process_tracker->SetProcessNameIfUnset(
         upid, context_->storage->InternString(decoder.process_name()));
@@ -306,7 +306,7 @@ UniqueTid TrackEventParser::ParseThreadDescriptor(
       static_cast<uint32_t>(decoder.tid()),
       static_cast<uint32_t>(decoder.pid()));
   StringId name_id = kNullStringId;
-  if (decoder.has_thread_name()) {
+  if (decoder.has_thread_name() && decoder.thread_name().size) {
     name_id = context_->storage->InternString(decoder.thread_name());
   } else if (decoder.has_chrome_thread_type()) {
     // TODO(skyostil): Remove parsing for legacy chrome_thread_type field.
@@ -456,6 +456,12 @@ void TrackEventParser::ParseTrackEvent(
   base::Optional<UniqueTid> utid;
   base::Optional<UniqueTid> upid;
 
+  // All events in legacy JSON require a thread ID, but for some types of events
+  // (e.g. async events or process/global-scoped instants), we don't store it in
+  // the slice/track model. To pass the utid through to the json export, we
+  // store it in an arg.
+  base::Optional<UniqueTid> legacy_passthrough_utid;
+
   // Determine track from track_uuid specified in either TrackEvent or
   // TrackEventDefaults. If a non-default track is not set, we either:
   //   a) fall back to the track specified by the sequence's (or event's) pid +
@@ -481,8 +487,16 @@ void TrackEventParser::ParseTrackEvent(
     } else {
       auto process_track_row =
           context_->storage->process_track_table().id().IndexOf(track_id);
-      if (process_track_row)
+      if (process_track_row) {
         upid = storage->process_track_table().upid()[*process_track_row];
+        if (sequence_state->state()->pid_and_tid_valid()) {
+          uint32_t pid = static_cast<uint32_t>(sequence_state->state()->pid());
+          uint32_t tid = static_cast<uint32_t>(sequence_state->state()->tid());
+          UniqueTid utid_candidate = procs->UpdateThread(tid, pid);
+          if (storage->thread_table().upid()[utid_candidate] == upid)
+            legacy_passthrough_utid = utid_candidate;
+        }
+      }
     }
   } else if ((!event.has_track_uuid() || !event.has_type()) &&
              (sequence_state->state()->pid_and_tid_valid() ||
@@ -501,12 +515,6 @@ void TrackEventParser::ParseTrackEvent(
   } else {
     track_id = track_tracker->GetOrCreateDefaultDescriptorTrack();
   }
-
-  // All events in legacy JSON require a thread ID, but for some types of events
-  // (e.g. async events or process/global-scoped instants), we don't store it in
-  // the slice/track model. To pass the utid through to the json export, we
-  // store it in an arg.
-  base::Optional<UniqueTid> legacy_passthrough_utid;
 
   // TODO(eseckler): Replace phase with type and remove handling of
   // legacy_event.phase() once it is no longer used by producers.
