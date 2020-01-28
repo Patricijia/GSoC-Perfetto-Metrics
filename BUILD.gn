@@ -114,7 +114,7 @@ if (enable_perfetto_fuzzers) {
 # compile-time checks for the CI.
 if (perfetto_build_standalone) {
   all_targets += [
-    "src/tracing:consumer_api_test",
+    "src/tracing/consumer_api_deprecated:consumer_api_test",
     "test/configs",
 
     # For syntax-checking the proto.
@@ -194,7 +194,7 @@ if (enable_perfetto_platform_services) {
       "gn:default_deps",
       "src/traced/probes",
       "src/traced/service",
-      "src/tracing:consumer_api_deprecated",
+      "src/tracing/consumer_api_deprecated",
     ]
   }
 }
@@ -208,9 +208,9 @@ if (!build_with_chromium) {
     complete_static_lib = true
     public_deps = [
       "gn:default_deps",
-      "src/tracing",
       "src/tracing:client_api",
       "src/tracing:platform_posix",
+      "src/tracing/core",
     ]
     sources = [ "include/perfetto/tracing.h" ]
     assert_no_deps = [ "//gn:protobuf_lite" ]
@@ -227,8 +227,8 @@ if (build_with_chromium) {
     deps = [
       "src/trace_processor:export_json",
       "src/trace_processor:storage_minimal",
-      "src/tracing",
       "src/tracing:client_api",
+      "src/tracing/core",
 
       # TODO(eseckler): Create a platform for chrome and hook it up somehow.
       "src/tracing:platform_fake",
@@ -248,7 +248,10 @@ if (build_with_chromium) {
       "protos/perfetto/trace/track_event:zero",
     ]
     if (enable_perfetto_ipc) {
-      deps += [ "src/tracing:ipc" ]
+      deps += [
+        "src/tracing/ipc/producer",
+        "src/tracing/ipc/service",
+      ]
       public_deps += [ "include/perfetto/ext/tracing/ipc:ipc" ]
     }
   }
