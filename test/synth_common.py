@@ -19,6 +19,8 @@ from google.protobuf import descriptor, descriptor_pb2, message_factory, reflect
 from google.protobuf.pyext import _message
 
 CLONE_THREAD = 0x00010000
+CLONE_VFORK = 0x00004000
+CLONE_VM = 0x00000100
 
 
 class Trace(object):
@@ -28,9 +30,10 @@ class Trace(object):
     self.proc_map = {}
     self.proc_map[0] = 'idle_thread'
 
-  def add_system_info(self, arch=None):
+  def add_system_info(self, arch="", fingerprint=""):
     self.packet = self.trace.packet.add()
     self.packet.system_info.utsname.machine = arch
+    self.packet.system_info.android_build_fingerprint = fingerprint
 
   def add_ftrace_packet(self, cpu):
     self.packet = self.trace.packet.add()
@@ -46,11 +49,15 @@ class Trace(object):
     ftrace.pid = tid
     return ftrace
 
-  def add_rss_stat(self, ts, tid, member, size):
+  def add_rss_stat(self, ts, tid, member, size, mm_id=None, curr=None):
     ftrace = self.__add_ftrace_event(ts, tid)
     rss_stat = ftrace.rss_stat
     rss_stat.member = member
     rss_stat.size = size
+    if mm_id is not None:
+      rss_stat.mm_id = mm_id
+    if curr is not None:
+      rss_stat.curr = curr
 
   def add_ion_event(self, ts, tid, heap_name, size):
     ftrace = self.__add_ftrace_event(ts, tid)
@@ -275,6 +282,68 @@ class Trace(object):
     gpu_counter.counter_id = counter_id
     gpu_counter.int_value = value
 
+  def add_gpu_render_stages_hw_queue_spec(self, specs=[]):
+    packet = self.add_packet()
+    spec = self.packet.gpu_render_stage_event.specifications
+    for s in specs:
+      hw_queue = spec.hw_queue.add()
+      hw_queue.name = s.get('name', '')
+      if 'description' in s:
+        hw_queue.description = s['description']
+
+  def add_gpu_render_stages_stage_spec(self, specs=[]):
+    packet = self.add_packet()
+    spec = self.packet.gpu_render_stage_event.specifications
+    for s in specs:
+      stage = spec.stage.add()
+      stage.name = s.get('name', '')
+      if 'description' in s:
+        stage.description = s['description']
+
+  def add_gpu_render_stages(self,
+                            ts,
+                            event_id,
+                            duration,
+                            hw_queue_id,
+                            stage_id,
+                            context,
+                            render_target_handle=None,
+                            render_pass_handle=None,
+                            command_buffer_handle=None,
+                            submission_id=None,
+                            extra_data={}):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    render_stage = self.packet.gpu_render_stage_event
+    render_stage.event_id = event_id
+    render_stage.duration = duration
+    render_stage.hw_queue_id = hw_queue_id
+    render_stage.stage_id = stage_id
+    render_stage.context = context
+    if render_target_handle is not None:
+      render_stage.render_target_handle = render_target_handle
+    if render_pass_handle is not None:
+      render_stage.render_pass_handle = render_pass_handle
+    if command_buffer_handle is not None:
+      render_stage.command_buffer_handle = command_buffer_handle
+    if submission_id is not None:
+      render_stage.submission_id = submission_id
+    for key, value in extra_data.items():
+      data = render_stage.extra_data.add()
+      data.name = key
+      if value is not None:
+        data.value = value
+
+  def add_vk_debug_marker(self, ts, pid, vk_device, obj_type, obj, obj_name):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    debug_marker = (self.packet.vulkan_api_event.vk_debug_utils_object_name)
+    debug_marker.pid = pid
+    debug_marker.vk_device = vk_device
+    debug_marker.object_type = obj_type
+    debug_marker.object = obj
+    debug_marker.object_name = obj_name
+
   def add_gpu_log(self, ts, severity, tag, message):
     packet = self.add_packet()
     packet.timestamp = ts
@@ -295,35 +364,6 @@ class Trace(object):
     if event_type >= 0:
       buffer_event.type = event_type
     buffer_event.duration_ns = duration
-
-  def add_thread_track_descriptor(self,
-                                  ps,
-                                  ts,
-                                  uuid,
-                                  pid,
-                                  tid,
-                                  thread_name,
-                                  inc_state_cleared=False):
-    packet = self.add_packet()
-    packet.trusted_packet_sequence_id = ps
-    packet.timestamp = ts
-    if inc_state_cleared:
-      packet.incremental_state_cleared = True
-    track = packet.track_descriptor
-    track.uuid = uuid
-    track.thread.pid = pid
-    track.thread.tid = tid
-    track.thread.thread_name = thread_name
-
-  def add_track_event(self, ps, ts, track_uuid, cat, name, type):
-    packet = self.add_packet()
-    packet.trusted_packet_sequence_id = ps
-    packet.timestamp = ts
-    event = packet.track_event
-    event.track_uuid = track_uuid
-    event.categories.append(cat)
-    event.name = name
-    event.type = type
 
 
 def create_trace():

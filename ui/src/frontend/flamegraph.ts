@@ -113,7 +113,7 @@ export class Flamegraph {
   draw(
       ctx: CanvasRenderingContext2D, width: number, height: number, x = 0,
       y = 0, unit = 'B') {
-    // TODO(tneda): Instead of pesimistic approach improve displaying text.
+    // TODO(taylori): Instead of pesimistic approach improve displaying text.
     const name = '____MMMMMMQQwwZZZZZZzzzzzznnnnnnwwwwwwWWWWWqq$$mmmmmm__';
     const charWidth = ctx.measureText(name).width / name.length;
     const nodeHeight = this.getNodeHeight();
@@ -136,7 +136,7 @@ export class Flamegraph {
     // Draw root node.
     ctx.fillStyle = this.generateColor('root', false);
     ctx.fillRect(x, currentY, width, nodeHeight);
-    ctx.font = `${this.textSize}px Google Sans`;
+    ctx.font = `${this.textSize}px Roboto Condensed`;
     const text = cropText(
         `root: ${
             this.displaySize(
@@ -199,7 +199,7 @@ export class Flamegraph {
       }
 
       // Draw name.
-      ctx.font = `${this.textSize}px Google Sans`;
+      ctx.font = `${this.textSize}px Roboto Condensed`;
       const text = cropText(name, charWidth, width - 2);
       ctx.fillStyle = 'black';
       ctx.fillText(text, currentX + 5, currentY + nodeHeight - 4);
@@ -284,7 +284,7 @@ export class Flamegraph {
           height - rectHeight - 8 :
           this.hoveredY + 4;
 
-      ctx.font = '12px Google Sans';
+      ctx.font = '12px Roboto Condensed';
       ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
       ctx.fillRect(rectXStart, rectYStart, rectWidth, rectHeight);
       ctx.fillStyle = 'hsl(200, 50%, 40%)';

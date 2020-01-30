@@ -76,22 +76,16 @@ action("gen_buildflags") {
     "PERFETTO_COMPONENT_BUILD=$perfetto_component_build",
     "PERFETTO_FORCE_DLOG_ON=$perfetto_force_dlog_on",
     "PERFETTO_FORCE_DLOG_OFF=$perfetto_force_dlog_off",
+    "PERFETTO_VERBOSE_LOGS=$perfetto_verbose_logs_enabled",
     "PERFETTO_VERSION_GEN=$enable_perfetto_version_gen",
-    "PERFETTO_TP_SQLITE=$enable_perfetto_trace_processor_sqlite",
     "PERFETTO_TP_PERCENTILE=$enable_perfetto_trace_processor_percentile",
     "PERFETTO_TP_LINENOISE=$enable_perfetto_trace_processor_linenoise",
-    "PERFETTO_TP_METRICS=$enable_perfetto_trace_processor_metrics",
-    "PERFETTO_TP_FTRACE=$enable_perfetto_trace_processor_ftrace",
     "PERFETTO_TP_HTTPD=$perfetto_tp_httpd",
-    "PERFETTO_TP_SYSTEM_PROBES=$enable_perfetto_trace_processor_system_probes",
-    "PERFETTO_TP_ANDROID_PROBES=$enable_perfetto_trace_processor_android_probes",
-    "PERFETTO_TP_HEAP_GRAPHS=$enable_perfetto_trace_processor_heap_graphs",
-    "PERFETTO_TP_GRAPHICS=$enable_perfetto_trace_processor_graphics",
     "PERFETTO_TP_JSON=$enable_perfetto_trace_processor_json",
     "PERFETTO_TP_JSON_IMPORT=$enable_perfetto_trace_processor_json_import",
     "PERFETTO_TP_FUCHSIA=$enable_perfetto_trace_processor_fuchsia",
-    "PERFETTO_TP_SYSCALLS=$enable_perfetto_trace_processor_syscalls",
     "PERFETTO_LOCAL_SYMBOLIZER=$perfetto_local_symbolizer",
+    "PERFETTO_ZLIB=$enable_perfetto_zlib",
   ]
 
   rel_out_path = rebase_path(gen_header_path, "$root_build_dir")
@@ -273,11 +267,11 @@ if (enable_perfetto_trace_processor_sqlite) {
       public_configs = [ ":sqlite_third_party_include_path" ]
     }
   }
+}
 
-  config("sqlite_third_party_include_path") {
-    include_dirs = [ "//third_party/sqlite" ]
-  }
-}  # if (enable_perfetto_trace_processor_sqlite)
+config("sqlite_third_party_include_path") {
+  include_dirs = [ "//third_party/sqlite" ]
+}
 
 if (enable_perfetto_trace_processor_json) {
   group("jsoncpp") {
@@ -315,7 +309,7 @@ if (enable_perfetto_heapprofd) {
 }
 
 # Zlib is used both by trace_processor and by perfetto_cmd.
-if (enable_perfetto_trace_processor || enable_perfetto_platform_services) {
+if (enable_perfetto_zlib) {
   group("zlib") {
     if (perfetto_root_path == "//") {
       public_configs = [ "//buildtools:zlib_config" ]

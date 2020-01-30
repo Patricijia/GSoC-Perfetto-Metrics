@@ -169,6 +169,7 @@ message GpuCounterDescriptor {
     FAHRENHEIT = 35;
     KELVIN = 36;
 
+    // Values should be out of 100.
     PERCENT = 37;
 
     INSTRUCTION = 40;
@@ -2295,6 +2296,7 @@ message FtraceEvent {
     SysExitFtraceEvent sys_exit = 330;
     ZeroFtraceEvent zero = 331;
     GpuFrequencyFtraceEvent gpu_frequency = 332;
+    // removed field with id 333
   }
 }
 
@@ -2640,6 +2642,8 @@ message MmPagePcpuDrainFtraceEvent {
 message RssStatFtraceEvent {
   optional int32 member = 1;
   optional int64 size = 2;
+  optional uint32 curr = 3;
+  optional uint32 mm_id = 4;
 }
 message IonHeapShrinkFtraceEvent {
   optional string heap_name = 1;
@@ -3555,7 +3559,7 @@ message Trace {
 // TracePacket(s).
 //
 // Next reserved id: 13 (up to 15).
-// Next id: 64.
+// Next id: 66.
 message TracePacket {
   // The timestamp of the TracePacket.
   // By default this timestamps refers to the trace clock (CLOCK_BOOTTIME on
@@ -3605,6 +3609,7 @@ message TracePacket {
     GraphicsFrameEvent graphics_frame_event = 57;
     // removed field with id 62
     GpuLog gpu_log = 63;
+    VulkanApiEvent vulkan_api_event = 65;
 
     // Only used in profile packets.
     ProfiledFrameSymbols profiled_frame_symbols = 55;
@@ -3737,6 +3742,418 @@ message TracePacketDefaults {
 }
 // End of protos/perfetto/trace/trace_packet_defaults.proto
 
+// Begin of protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto
+
+// Describes Chrome's Compositor scheduler's current state and associated
+// variables.
+//
+// These protos and enums were adapted from the corresponding original JSON
+// trace event for the scheduler state. In contrast to the JSON, we use strongly
+// typed enum values instead of strings for many fields, and
+// microsecond-granularity timestamps.
+//
+// The original format was generated in JSON by the code at
+// https://cs.chromium.org/chromium/src/cc/scheduler/scheduler.cc?l=870&rcl=5e15eabc9c0eec8daf94fdf78e93f13b6e3b63dd
+//
+// TODO(nuskos): Update link once we've switched to writing this proto.
+//
+// All non-delta-timestamps are absolute CLOCK_MONOTONIC timestamps.
+
+enum ChromeCompositorSchedulerAction {
+  CC_SCHEDULER_ACTION_UNSPECIFIED = 0;
+  CC_SCHEDULER_ACTION_NONE = 1;
+  CC_SCHEDULER_ACTION_SEND_BEGIN_MAIN_FRAME = 2;
+  CC_SCHEDULER_ACTION_COMMIT = 3;
+  CC_SCHEDULER_ACTION_ACTIVATE_SYNC_TREE = 4;
+  CC_SCHEDULER_ACTION_DRAW_IF_POSSIBLE = 5;
+  CC_SCHEDULER_ACTION_DRAW_FORCED = 6;
+  CC_SCHEDULER_ACTION_DRAW_ABORT = 7;
+  CC_SCHEDULER_ACTION_BEGIN_LAYER_TREE_FRAME_SINK_CREATION = 8;
+  CC_SCHEDULER_ACTION_PREPARE_TILES = 9;
+  CC_SCHEDULER_ACTION_INVALIDATE_LAYER_TREE_FRAME_SINK = 10;
+  CC_SCHEDULER_ACTION_PERFORM_IMPL_SIDE_INVALIDATION = 11;
+  CC_SCHEDULER_ACTION_NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_UNTIL = 12;
+  CC_SCHEDULER_ACTION_NOTIFY_BEGIN_MAIN_FRAME_NOT_EXPECTED_SOON = 13;
+}
+
+// Next id: 18
+message ChromeCompositorSchedulerState {
+  enum BeginImplFrameDeadlineMode {
+    DEADLINE_MODE_UNSPECIFIED = 0;
+    DEADLINE_MODE_NONE = 1;
+    DEADLINE_MODE_IMMEDIATE = 2;
+    DEADLINE_MODE_REGULAR = 3;
+    DEADLINE_MODE_LATE = 4;
+    DEADLINE_MODE_BLOCKED = 5;
+  }
+  optional ChromeCompositorStateMachine state_machine = 1;
+  optional bool observing_begin_frame_source = 2;
+  optional bool begin_impl_frame_deadline_task = 3;
+  optional bool pending_begin_frame_task = 4;
+  optional bool skipped_last_frame_missed_exceeded_deadline = 5;
+  optional bool skipped_last_frame_to_reduce_latency = 6;
+  optional ChromeCompositorSchedulerAction inside_action = 7;
+  optional BeginImplFrameDeadlineMode deadline_mode = 8;
+  optional int64 deadline_us = 9;
+  optional int64 deadline_scheduled_at_us = 10;
+  optional int64 now_us = 11;
+  optional int64 now_to_deadline_delta_us = 12;
+  optional int64 now_to_deadline_scheduled_at_delta_us = 13;
+  optional BeginImplFrameArgs begin_impl_frame_args = 14;
+  optional BeginFrameObserverState begin_frame_observer_state = 15;
+  optional BeginFrameSourceState begin_frame_source_state = 16;
+  optional CompositorTimingHistory compositor_timing_history = 17;
+}
+
+// Describes the current values stored in the Chrome Compositor state machine.
+// Next id: 3
+message ChromeCompositorStateMachine {
+  // Next id: 6
+  message MajorState {
+    enum BeginImplFrameState {
+      BEGIN_IMPL_FRAME_UNSPECIFIED = 0;
+      BEGIN_IMPL_FRAME_IDLE = 1;
+      BEGIN_IMPL_FRAME_INSIDE_BEGIN_FRAME = 2;
+      BEGIN_IMPL_FRAME_INSIDE_DEADLINE = 3;
+    }
+    enum BeginMainFrameState {
+      BEGIN_MAIN_FRAME_UNSPECIFIED = 0;
+      BEGIN_MAIN_FRAME_IDLE = 1;
+      BEGIN_MAIN_FRAME_SENT = 2;
+      BEGIN_MAIN_FRAME_READY_TO_COMMIT = 3;
+    }
+    enum LayerTreeFrameSinkState {
+      LAYER_TREE_FRAME_UNSPECIFIED = 0;
+      LAYER_TREE_FRAME_NONE = 1;
+      LAYER_TREE_FRAME_ACTIVE = 2;
+      LAYER_TREE_FRAME_CREATING = 3;
+      LAYER_TREE_FRAME_WAITING_FOR_FIRST_COMMIT = 4;
+      LAYER_TREE_FRAME_WAITING_FOR_FIRST_ACTIVATION = 5;
+    }
+    enum ForcedRedrawOnTimeoutState {
+      FORCED_REDRAW_UNSPECIFIED = 0;
+      FORCED_REDRAW_IDLE = 1;
+      FORCED_REDRAW_WAITING_FOR_COMMIT = 2;
+      FORCED_REDRAW_WAITING_FOR_ACTIVATION = 3;
+      FORCED_REDRAW_WAITING_FOR_DRAW = 4;
+    }
+    optional ChromeCompositorSchedulerAction next_action = 1;
+    optional BeginImplFrameState begin_impl_frame_state = 2;
+    optional BeginMainFrameState begin_main_frame_state = 3;
+    optional LayerTreeFrameSinkState layer_tree_frame_sink_state = 4;
+    optional ForcedRedrawOnTimeoutState forced_redraw_state = 5;
+  }
+  optional MajorState major_state = 1;
+
+  // Next id: 47
+  message MinorState {
+    enum TreePriority {
+      TREE_PRIORITY_UNSPECIFIED = 0;
+      TREE_PRIORITY_SAME_PRIORITY_FOR_BOTH_TREES = 1;
+      TREE_PRIORITY_SMOOTHNESS_TAKES_PRIORITY = 2;
+      TREE_PRIORITY_NEW_CONTENT_TAKES_PRIORITY = 3;
+    }
+    enum ScrollHandlerState {
+      SCROLL_HANDLER_UNSPECIFIED = 0;
+      SCROLL_AFFECTS_SCROLL_HANDLER = 1;
+      SCROLL_DOES_NOT_AFFECT_SCROLL_HANDLER = 2;
+    }
+    optional int32 commit_count = 1;
+    optional int32 current_frame_number = 2;
+    optional int32 last_frame_number_submit_performed = 3;
+    optional int32 last_frame_number_draw_performed = 4;
+    optional int32 last_frame_number_begin_main_frame_sent = 5;
+    optional bool did_draw = 6;
+    optional bool did_send_begin_main_frame_for_current_frame = 7;
+    optional bool did_notify_begin_main_frame_not_expected_until = 8;
+    optional bool did_notify_begin_main_frame_not_expected_soon = 9;
+    optional bool wants_begin_main_frame_not_expected = 10;
+    optional bool did_commit_during_frame = 11;
+    optional bool did_invalidate_layer_tree_frame_sink = 12;
+    optional bool did_perform_impl_side_invalidaion = 13;
+    optional bool did_prepare_tiles = 14;
+    optional int32 consecutive_checkerboard_animations = 15;
+    optional int32 pending_submit_frames = 16;
+    optional int32 submit_frames_with_current_layer_tree_frame_sink = 17;
+    optional bool needs_redraw = 18;
+    optional bool needs_prepare_tiles = 19;
+    optional bool needs_begin_main_frame = 20;
+    optional bool needs_one_begin_impl_frame = 21;
+    optional bool visible = 22;
+    optional bool begin_frame_source_paused = 23;
+    optional bool can_draw = 24;
+    optional bool resourceless_draw = 25;
+    optional bool has_pending_tree = 26;
+    optional bool pending_tree_is_ready_for_activation = 27;
+    optional bool active_tree_needs_first_draw = 28;
+    optional bool active_tree_is_ready_to_draw = 29;
+    optional bool did_create_and_initialize_first_layer_tree_frame_sink = 30;
+    optional TreePriority tree_priority = 31;
+    optional ScrollHandlerState scroll_handler_state = 32;
+    optional bool critical_begin_main_frame_to_activate_is_fast = 33;
+    optional bool main_thread_missed_last_deadline = 34;
+    optional bool skip_next_begin_main_frame_to_reduce_latency = 35;
+    optional bool video_needs_begin_frames = 36;
+    optional bool defer_begin_main_frame = 37;
+    optional bool last_commit_had_no_updates = 38;
+    optional bool did_draw_in_last_frame = 39;
+    optional bool did_submit_in_last_frame = 40;
+    optional bool needs_impl_side_invalidation = 41;
+    optional bool current_pending_tree_is_impl_side = 42;
+    optional bool previous_pending_tree_was_impl_side = 43;
+    optional bool processing_animation_worklets_for_active_tree = 44;
+    optional bool processing_animation_worklets_for_pending_tree = 45;
+    optional bool processing_paint_worklets_for_pending_tree = 46;
+  }
+  optional MinorState minor_state = 2;
+}
+
+// Next id: 12
+message BeginFrameArgs {
+  // JSON format has a "type" field that was always just "BeginFrameArgs" we
+  // drop this in the proto representation, and instead make the JSON format
+  // "subtype" field become the type field.
+  enum BeginFrameArgsType {
+    BEGIN_FRAME_ARGS_TYPE_UNSPECIFIED = 0;
+    BEGIN_FRAME_ARGS_TYPE_INVALID = 1;
+    BEGIN_FRAME_ARGS_TYPE_NORMAL = 2;
+    BEGIN_FRAME_ARGS_TYPE_MISSED = 3;
+  }
+  optional BeginFrameArgsType type = 1;
+  optional uint64 source_id = 2;
+  optional uint64 sequence_number = 3;
+  optional int64 frame_time_us = 4;
+  optional int64 deadline_us = 5;
+  optional int64 interval_delta_us = 6;
+  optional bool on_critical_path = 7;
+  optional bool animate_only = 8;
+  oneof created_from {
+    // The interned SourceLocation.
+    uint64 source_location_iid = 9;
+    // The SourceLocation that this args was created from.
+    // TODO(nuskos): Eventually we will support interning inside of
+    // TypedArgument TraceEvents and then we shouldn't need this SourceLocation
+    // since we can emit it as part of the InternedData message. When we can
+    // remove this |source_location|.
+    SourceLocation source_location = 10;
+  }
+}
+
+// Next id: 7
+message BeginImplFrameArgs {
+  optional int64 updated_at_us = 1;
+  optional int64 finished_at_us = 2;
+  enum State {
+    BEGIN_FRAME_FINISHED = 0;
+    BEGIN_FRAME_USING = 1;
+  }
+  optional State state = 3;
+  oneof args {
+    // Only set if |state| is BEGIN_FRAME_FINISHED.
+    BeginFrameArgs current_args = 4;
+    // Only set if |state| is BEGIN_FRAME_USING.
+    BeginFrameArgs last_args = 5;
+  }
+  message TimestampsInUs {
+    optional int64 interval_delta = 1;
+    optional int64 now_to_deadline_delta = 2;
+    optional int64 frame_time_to_now_delta = 3;
+    optional int64 frame_time_to_deadline_delta = 4;
+    optional int64 now = 5;
+    optional int64 frame_time = 6;
+    optional int64 deadline = 7;
+  }
+  optional TimestampsInUs timestamps_in_us = 6;
+}
+
+message BeginFrameObserverState {
+  optional int64 dropped_begin_frame_args = 1;
+  optional BeginFrameArgs last_begin_frame_args = 2;
+}
+
+message BeginFrameSourceState {
+  optional uint32 source_id = 1;
+  optional bool paused = 2;
+  optional uint32 num_observers = 3;
+  optional BeginFrameArgs last_begin_frame_args = 4;
+}
+
+message CompositorTimingHistory {
+  optional int64 begin_main_frame_queue_critical_estimate_delta_us = 1;
+  optional int64 begin_main_frame_queue_not_critical_estimate_delta_us = 2;
+  optional int64 begin_main_frame_start_to_ready_to_commit_estimate_delta_us =
+      3;
+  optional int64 commit_to_ready_to_activate_estimate_delta_us = 4;
+  optional int64 prepare_tiles_estimate_delta_us = 5;
+  optional int64 activate_estimate_delta_us = 6;
+  optional int64 draw_estimate_delta_us = 7;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_histogram_sample.proto
+
+// An individual histogram sample logged via Chrome's UMA metrics system.
+message ChromeHistogramSample {
+  // MD5 hash of the metric name. Either |name_hash| or |name| or both
+  // must be present.
+  optional uint64 name_hash = 1;
+  optional string name = 2;
+  optional int64 sample = 3;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_histogram_sample.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_keyed_service.proto
+
+// Details about one of Chrome's keyed services associated with the event.
+message ChromeKeyedService {
+  // Name of the service, e.g. "MediaRouter", "PreviewsService", etc. (in
+  // Chrome, these are static strings known at compile time).
+  optional string name = 1;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_keyed_service.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_legacy_ipc.proto
+
+// Details about a legacy Chrome IPC message that is either sent by the event.
+// TODO(eseckler): Also use this message on the receiving side?
+message ChromeLegacyIpc {
+  enum MessageClass {
+    CLASS_UNSPECIFIED = 0;
+    CLASS_AUTOMATION = 1;
+    CLASS_FRAME = 2;
+    CLASS_PAGE = 3;
+    CLASS_VIEW = 4;
+    CLASS_WIDGET = 5;
+    CLASS_INPUT = 6;
+    CLASS_TEST = 7;
+    CLASS_WORKER = 8;
+    CLASS_NACL = 9;
+    CLASS_GPU_CHANNEL = 10;
+    CLASS_MEDIA = 11;
+    CLASS_PPAPI = 12;
+    CLASS_CHROME = 13;
+    CLASS_DRAG = 14;
+    CLASS_PRINT = 15;
+    CLASS_EXTENSION = 16;
+    CLASS_TEXT_INPUT_CLIENT = 17;
+    CLASS_BLINK_TEST = 18;
+    CLASS_ACCESSIBILITY = 19;
+    CLASS_PRERENDER = 20;
+    CLASS_CHROMOTING = 21;
+    CLASS_BROWSER_PLUGIN = 22;
+    CLASS_ANDROID_WEB_VIEW = 23;
+    CLASS_NACL_HOST = 24;
+    CLASS_ENCRYPTED_MEDIA = 25;
+    CLASS_CAST = 26;
+    CLASS_GIN_JAVA_BRIDGE = 27;
+    CLASS_CHROME_UTILITY_PRINTING = 28;
+    CLASS_OZONE_GPU = 29;
+    CLASS_WEB_TEST = 30;
+    CLASS_NETWORK_HINTS = 31;
+    CLASS_EXTENSIONS_GUEST_VIEW = 32;
+    CLASS_GUEST_VIEW = 33;
+    CLASS_MEDIA_PLAYER_DELEGATE = 34;
+    CLASS_EXTENSION_WORKER = 35;
+    CLASS_SUBRESOURCE_FILTER = 36;
+    CLASS_UNFREEZABLE_FRAME = 37;
+  }
+
+  // Corresponds to the message class type defined in Chrome's IPCMessageStart
+  // enum, e.g. FrameMsgStart,
+  optional MessageClass message_class = 1;
+
+  // Line number of the message definition. See Chrome's IPC_MESSAGE_ID and
+  // IPC_MESSAGE_START macros.
+  optional uint32 message_line = 2;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_legacy_ipc.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_process_descriptor.proto
+
+// Describes the attributes for a Chrome process. Must be paired with a
+// ProcessDescriptor in the same TrackDescriptor.
+//
+// Next id: 4.
+message ChromeProcessDescriptor {
+  // See chromium's content::ProcessType.
+  enum ProcessType {
+    PROCESS_UNSPECIFIED = 0;
+    PROCESS_BROWSER = 1;
+    PROCESS_RENDERER = 2;
+    PROCESS_UTILITY = 3;
+    PROCESS_ZYGOTE = 4;
+    PROCESS_SANDBOX_HELPER = 5;
+    PROCESS_GPU = 6;
+    PROCESS_PPAPI_PLUGIN = 7;
+    PROCESS_PPAPI_BROKER = 8;
+  }
+  optional ProcessType process_type = 1;
+  optional int32 process_priority = 2;
+
+  // To support old UI. New UI should determine default sorting by process_type.
+  optional int32 legacy_sort_index = 3;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_process_descriptor.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_thread_descriptor.proto
+
+// Describes a Chrome thread's attributes. Emitted as part of a TrackDescriptor,
+// usually by the thread's trace writer. Must be paired with a ThreadDescriptor
+// in the same TrackDescriptor.
+//
+// Next id: 3.
+message ChromeThreadDescriptor {
+  enum ThreadType {
+    THREAD_UNSPECIFIED = 0;
+
+    THREAD_MAIN = 1;
+    THREAD_IO = 2;
+
+    // Scheduler:
+    THREAD_POOL_BG_WORKER = 3;
+    THREAD_POOL_FG_WORKER = 4;
+    THREAD_POOL_BG_BLOCKING = 6;
+    THREAD_POOL_FG_BLOCKING = 5;
+    THREAD_POOL_SERVICE = 7;
+
+    // Compositor:
+    THREAD_COMPOSITOR = 8;
+    THREAD_VIZ_COMPOSITOR = 9;
+    THREAD_COMPOSITOR_WORKER = 10;
+
+    // Renderer:
+    THREAD_SERVICE_WORKER = 11;
+
+    // Tracing related threads:
+    THREAD_MEMORY_INFRA = 50;
+    THREAD_SAMPLING_PROFILER = 51;
+  };
+  optional ThreadType thread_type = 1;
+
+  // To support old UI. New UI should determine default sorting by thread_type.
+  optional int32 legacy_sort_index = 2;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_thread_descriptor.proto
+
+// Begin of protos/perfetto/trace/track_event/chrome_user_event.proto
+
+// Details about a UI interaction initiated by the user, such as opening or
+// closing a tab or a context menu.
+message ChromeUserEvent {
+  // Name of the action, e.g. "NewTab", "ShowBookmarkManager", etc. (in
+  // Chrome, these are usually static strings known at compile time, or
+  // concatenations of multiple such static strings).
+  optional string action = 1;
+}
+
+// End of protos/perfetto/trace/track_event/chrome_user_event.proto
+
 // Begin of protos/perfetto/trace/track_event/debug_annotation.proto
 
 // Key/value annotations provided in untyped TRACE_EVENT macros. These
@@ -3817,10 +4234,17 @@ message LogMessageBody {
 // Describes a process's attributes. Emitted as part of a TrackDescriptor,
 // usually by the process's main thread.
 //
-// Next id: 5.
+// Next id: 7.
 message ProcessDescriptor {
   optional int32 pid = 1;
   repeated string cmdline = 2;
+  optional string process_name = 6;
+
+  optional int32 process_priority = 5;
+
+  // ---------------------------------------------------------------------------
+  // Deprecated / legacy fields, which will be removed in the future:
+  // ---------------------------------------------------------------------------
 
   // See chromium's content::ProcessType.
   enum ChromeProcessType {
@@ -3835,7 +4259,6 @@ message ProcessDescriptor {
     PROCESS_PPAPI_BROKER = 8;
   }
   optional ChromeProcessType chrome_process_type = 4;
-  optional int32 process_priority = 5;
 
   // To support old UI. New UI should determine default sorting by process_type.
   optional int32 legacy_sort_index = 3;
@@ -3881,6 +4304,10 @@ message ThreadDescriptor {
 
   optional string thread_name = 5;
 
+  // ---------------------------------------------------------------------------
+  // Deprecated / legacy fields, which will be removed in the future:
+  // ---------------------------------------------------------------------------
+
   enum ChromeThreadType {
     CHROME_THREAD_UNSPECIFIED = 0;
 
@@ -3907,10 +4334,6 @@ message ThreadDescriptor {
     CHROME_THREAD_SAMPLING_PROFILER = 51;
   };
   optional ChromeThreadType chrome_thread_type = 4;
-
-  // ---------------------------------------------------------------------------
-  // Deprecated / legacy fields, which will be removed in the future:
-  // ---------------------------------------------------------------------------
 
   // Deprecated. Use ClockSnapshot in combination with TracePacket's timestamp
   // and timestamp_clock_id fields instead.
@@ -3944,7 +4367,7 @@ message ThreadDescriptor {
 // |TrackEvent::track_uuid|. It is possible but not necessary to emit a
 // TrackDescriptor for this implicit track.
 //
-// Next id: 1.
+// Next id: 8.
 message TrackDescriptor {
   // Unique ID that identifies this track. This ID is global to the whole trace.
   // Producers should ensure that it is unlikely to clash with IDs emitted by
@@ -3954,16 +4377,34 @@ message TrackDescriptor {
   // event id + id_scope, pid, and/or tid to compute this ID.
   optional uint64 uuid = 1;
 
-  // TODO(eseckler): Support track hierarchies.
-  // uint64 parent_uuid = X;
+  // A parent track reference can be used to describe relationships between
+  // tracks. For example, to define an asynchronous track which is scoped to a
+  // specific process, specify the uuid for that process's process track here.
+  optional uint64 parent_uuid = 5;
 
   // Name of the track.
   optional string name = 2;
 
-  // Associate the track with a process or thread - the UI will draw this track
-  // in the context of the process/thread.
+  // Associate the track with a process, making it the process-global track.
+  // There should only be one such track per process (usually for instant
+  // events; trace processor uses this fact to detect pid reuse). If you need
+  // more (e.g. for asynchronous events), create child tracks using parent_uuid.
+  //
+  // Trace processor will merge events on a process track with slice-type events
+  // from other sources (e.g. ftrace) for the same process into a single
+  // timeline view.
   optional ProcessDescriptor process = 3;
+  optional ChromeProcessDescriptor chrome_process = 6;
+
+  // Associate the track with a thread, indicating that the track's events
+  // describe synchronous code execution on the thread. There should only be one
+  // such track per thread (trace processor uses this fact to detect tid reuse).
+  //
+  // Trace processor will merge events on a thread track with slice-type events
+  // from other sources (e.g. ftrace) for the same thread into a single timeline
+  // view.
   optional ThreadDescriptor thread = 4;
+  optional ChromeThreadDescriptor chrome_thread = 7;
 }
 
 // End of protos/perfetto/trace/track_event/track_descriptor.proto
@@ -4029,7 +4470,7 @@ message TrackDescriptor {
 // their default track association) can be emitted as part of a
 // TrackEventDefaults message.
 //
-// Next reserved id: 12 (up to 15). Next id: 24.
+// Next reserved id: 12 (up to 15). Next id: 29.
 message TrackEvent {
   // Names of categories of the event. In the client library, categories are a
   // way to turn groups of individual events on or off.
@@ -4124,6 +4565,11 @@ message TrackEvent {
   // Typed event arguments:
   optional TaskExecution task_execution = 5;
   optional LogMessage log_message = 21;
+  optional ChromeCompositorSchedulerState cc_scheduler_state = 24;
+  optional ChromeUserEvent chrome_user_event = 25;
+  optional ChromeKeyedService chrome_keyed_service = 26;
+  optional ChromeLegacyIpc chrome_legacy_ipc = 27;
+  optional ChromeHistogramSample chrome_histogram_sample = 28;
   // New argument types go here :)
 
   // ---------------------------------------------------------------------------
@@ -4216,7 +4662,7 @@ message TrackEvent {
 // is cleared. It's defined here because field IDs should match those of the
 // corresponding fields in TrackEvent.
 message TrackEventDefaults {
-  optional uint64 track_uuid = 10;
+  optional uint64 track_uuid = 11;
 
   // TODO(eseckler): Support default values for more TrackEvent fields.
 }
@@ -4305,8 +4751,8 @@ message GpuRenderStageEvent {
   // required. Unique ID for the event.
   optional uint64 event_id = 1;
 
-  // optional. Duration of the event.  This should be in the same clock domain as the timestamp of
-  // the packet.  If unset, this is a single time point event.
+  // optional. Duration of the event. This should be in the same clock domain as
+  // the timestamp of the packet. If unset, this is a single time point event.
   optional uint64 duration = 2;
 
   // required. ID to a hardware queue description in the specifications.
@@ -4327,10 +4773,11 @@ message GpuRenderStageEvent {
   // optional. The Vulkan command buffer handle.
   optional uint64 command_buffer_handle = 12;
 
-  // optional. Submission ID generated by the UMD.
+  // optional. Submission ID generated by the UMD. Should map 1:1 with a
+  // vkQueueSubmit.
   optional uint32 submission_id = 10;
 
-  // optional.  Additional data for the user. This may include attribs for
+  // optional. Additional data for the user. This may include attribs for
   // the event like resource ids, shaders etc
   message ExtraData {
     optional string name = 1;
@@ -4339,7 +4786,9 @@ message GpuRenderStageEvent {
   repeated ExtraData extra_data = 6;
 
   // The first trace packet of each session should include a Specifications
-  // to enumerate all IDs that will be used.
+  // to enumerate *all* IDs that will be used. The timestamp of this packet
+  // must be earlier than all other packets. Only one packet with Specifications
+  // is expected.
   message Specifications {
     message ContextSpec {
       optional uint64 context = 1;
@@ -4368,6 +4817,43 @@ message GpuRenderStageEvent {
 }
 
 // End of protos/perfetto/trace/gpu/gpu_render_stage_event.proto
+
+// Begin of protos/perfetto/trace/gpu/vulkan_api_event.proto
+
+// Message for recording the Vulkan call.
+message VulkanApiEvent {
+  oneof event {
+    VkDebugUtilsObjectName vk_debug_utils_object_name = 1;
+    VkQueueSubmit vk_queue_submit = 2;
+  }
+
+  // For recording vkSetDebugUtilsObjectNameEXT and
+  // vkDebugMarkerSetObjectNameEXT
+  message VkDebugUtilsObjectName {
+    optional uint32 pid = 1;
+    optional uint64 vk_device = 2;
+    // VkObjectType.  Value must match
+    // https://www.khronos.org/registry/vulkan/specs/1.1-extensions/man/html/VkObjectType.html.
+    optional int32 object_type = 3;
+    optional uint64 object = 4;
+    optional string object_name = 5;
+  }
+
+  // For recording vkQueueSubmit call.
+  message VkQueueSubmit {
+    optional uint64 duration_ns = 1;
+    optional uint32 pid = 2;
+    optional uint32 tid = 3;
+    optional uint64 vk_queue = 4;
+    repeated uint64 vk_command_buffers = 5;
+    // Submission ID.  An identifier unique to each vkQueueSubmit call.  This
+    // submission_id must match GpuRenderStageEvent.submission_id if the
+    // GpuRenderStageEvent is created due to this vkQueueSubmit.
+    optional uint32 submission_id = 6;
+  }
+}
+
+// End of protos/perfetto/trace/gpu/vulkan_api_event.proto
 
 // Begin of protos/perfetto/config/android/android_log_config.proto
 
@@ -4465,6 +4951,8 @@ message DataSourceConfig {
   optional PackagesListConfig packages_list_config = 109 [lazy = true];
   // Data source name: linux.perf
   optional PerfEventConfig perf_event_config = 111 [lazy = true];
+  // Data source name: vulkan.memory_tracker
+  optional VulkanMemoryConfig vulkan_memory_config = 112 [lazy = true];
 
   // Chrome is special as it doesn't use the perfetto IPC layer. We want to
   // avoid proto serialization and de-serialization there because that would
@@ -5147,6 +5635,18 @@ message GpuCounterConfig {
 }
 
 // End of protos/perfetto/config/gpu/gpu_counter_config.proto
+
+// Begin of protos/perfetto/config/gpu/vulkan_memory_config.proto
+
+message VulkanMemoryConfig {
+  // Tracking driver memory usage events
+  optional bool track_driver_memory_usage = 1;
+
+  // Tracking device memory usage events
+  optional bool track_device_memory_usage = 2;
+}
+
+// End of protos/perfetto/config/gpu/vulkan_memory_config.proto
 
 // Begin of protos/perfetto/config/android/packages_list_config.proto
 

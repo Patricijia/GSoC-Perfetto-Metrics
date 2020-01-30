@@ -26,9 +26,9 @@ namespace trace_processor {
 // Implements the SQLite table interface for db tables.
 class DbSqliteTable : public SqliteTable {
  public:
-  class Cursor final : public SqliteTable::Cursor {
+  class Cursor : public SqliteTable::Cursor {
    public:
-    explicit Cursor(DbSqliteTable* table);
+    Cursor(SqliteTable*, const Table* table);
 
     Cursor(Cursor&&) noexcept = default;
     Cursor& operator=(Cursor&&) = default;
@@ -41,14 +41,41 @@ class DbSqliteTable : public SqliteTable {
     int Eof() override;
     int Column(sqlite3_context*, int N) override;
 
+   protected:
+    // Sets the table this class uses as the reference for all filter
+    // operations. Should be immediately followed by a call to Filter with
+    // |FilterHistory::kDifferent|.
+    void set_table(const Table* table) { initial_db_table_ = table; }
+
    private:
+    enum class Mode {
+      kSingleRow,
+      kTable,
+    };
+
+    // Tries to create a sorted table to cache in |sorted_cache_table_| if the
+    // constraint set matches the requirements.
+    void TryCacheCreateSortedTable(const QueryConstraints&, FilterHistory);
+
+    const Table* SourceTable() const {
+      // Try and use the sorted cache table (if it exists) to speed up the
+      // sorting. Otherwise, just use the original table.
+      return sorted_cache_table_ ? &*sorted_cache_table_ : &*initial_db_table_;
+    }
+
     Cursor(const Cursor&) = delete;
     Cursor& operator=(const Cursor&) = delete;
 
     const Table* initial_db_table_ = nullptr;
 
+    // Only valid for Mode::kSingleRow.
+    base::Optional<uint32_t> single_row_;
+
+    // Only valid for Mode::kTable.
     base::Optional<Table> db_table_;
     base::Optional<Table::Iterator> iterator_;
+
+    bool eof_ = true;
 
     // Stores a sorted version of |db_table_| sorted on a repeated equals
     // constraint. This allows speeding up repeated subqueries in joins
@@ -58,6 +85,8 @@ class DbSqliteTable : public SqliteTable {
     // Stores the count of repeated equality queries to decide whether it is
     // wortwhile to sort |db_table_| to create |sorted_cache_table_|.
     uint32_t repeated_cache_count_ = 0;
+
+    Mode mode_ = Mode::kSingleRow;
 
     std::vector<Constraint> constraints_;
     std::vector<Order> orders_;
@@ -81,6 +110,9 @@ class DbSqliteTable : public SqliteTable {
   std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
   int ModifyConstraints(QueryConstraints*) override;
   int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+
+  static SqliteTable::Schema ComputeSchema(const Table& table,
+                                           const char* table_name);
 
   // static for testing.
   static QueryCost EstimateCost(const Table& table, const QueryConstraints& qc);

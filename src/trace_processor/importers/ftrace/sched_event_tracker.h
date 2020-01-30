@@ -22,21 +22,29 @@
 
 #include "perfetto/ext/base/string_view.h"
 #include "perfetto/ext/base/utils.h"
+#include "src/trace_processor/destructible.h"
+#include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-class TraceProcessorContext;
 class EventTracker;
 
 // Tracks sched events and stores them into the storage as sched slices.
-class SchedEventTracker {
+class SchedEventTracker : public Destructible {
  public:
+  // Declared public for testing only.
   explicit SchedEventTracker(TraceProcessorContext*);
   SchedEventTracker(const SchedEventTracker&) = delete;
   SchedEventTracker& operator=(const SchedEventTracker&) = delete;
-  virtual ~SchedEventTracker();
+  ~SchedEventTracker() override;
+  static SchedEventTracker* GetOrCreate(TraceProcessorContext* context) {
+    if (!context->sched_tracker) {
+      context->sched_tracker.reset(new SchedEventTracker(context));
+    }
+    return static_cast<SchedEventTracker*>(context->sched_tracker.get());
+  }
 
   // This method is called when a sched_switch event is seen in the trace.
   // Virtual for testing.
@@ -103,7 +111,7 @@ class SchedEventTracker {
   void ClosePendingSlice(size_t slice_idx, int64_t ts, int64_t prev_state);
 
   // Infromation retained from the preceding sched_switch seen on a given cpu.
-  std::array<PendingSchedInfo, base::kMaxCpus> pending_sched_per_cpu_{};
+  std::array<PendingSchedInfo, kMaxCpus> pending_sched_per_cpu_{};
 
   static constexpr uint8_t kSchedSwitchMaxFieldId = 7;
   std::array<StringId, kSchedSwitchMaxFieldId + 1> sched_switch_field_ids_;

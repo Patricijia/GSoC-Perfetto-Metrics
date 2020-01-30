@@ -46,6 +46,9 @@ export function handleKey(e: KeyboardEvent, down: boolean) {
       globals.frontendLocalState.setVidTimestamp(Number.MIN_SAFE_INTEGER);
     }
   }
+  if (down && 'b' === key && (e.ctrlKey || e.metaKey)) {
+    globals.frontendLocalState.toggleSidebar();
+  }
   if (down && '?' === key) {
     toggleHelp();
   }
@@ -79,8 +82,12 @@ function findTimeRangeOfSelection() {
 
 function selectSliceSpan() {
   const range = findTimeRangeOfSelection();
-  if (range.startTs !== -1 && range.endTs !== -1) {
-    globals.frontendLocalState.selectTimeRange(range.startTs, range.endTs);
+  if (range.startTs !== -1 && range.endTs !== -1 &&
+      globals.state.currentSelection) {
+    const tracks = globals.state.currentSelection.trackId ?
+        [globals.state.currentSelection.trackId] :
+        [];
+    globals.frontendLocalState.selectArea(range.startTs, range.endTs, tracks);
   }
 }
 

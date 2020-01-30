@@ -45,6 +45,7 @@ if (enable_perfetto_platform_services) {
     "src/traced/probes:unittests",
     "src/traced/probes/filesystem:unittests",
     "src/traced/probes/ftrace:unittests",
+    "src/traced/probes/ftrace/kallsyms:unittests",
     "src/traced/service:unittests",
   ]
 }
@@ -63,7 +64,7 @@ if (enable_perfetto_traced_perf) {
 if (enable_perfetto_trace_processor) {
   perfetto_unittests_targets += [ "src/trace_processor:unittests" ]
 
-  if (enable_perfetto_trace_processor_metrics) {
+  if (enable_perfetto_trace_processor_sqlite) {
     perfetto_unittests_targets += [ "src/trace_processor/metrics:unittests" ]
   }
 }

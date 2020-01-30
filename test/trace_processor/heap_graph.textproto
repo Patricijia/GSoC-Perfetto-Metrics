@@ -52,6 +52,7 @@ packet {
   }
 }
 packet {
+  trusted_packet_sequence_id: 999
   heap_graph {
     pid: 2
     type_names {

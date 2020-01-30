@@ -35,9 +35,9 @@
 #include <new>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/thread_utils.h"
 #include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/utils.h"
 #include "src/profiling/memory/sampler.h"
@@ -248,6 +248,20 @@ Client::Client(base::UnixSocketRaw sock,
       shmem_(std::move(shmem)),
       pid_at_creation_(pid_at_creation) {}
 
+Client::~Client() {
+  // This is work-around for code like the following:
+  // https://android.googlesource.com/platform/libcore/+/4ecb71f94378716f88703b9f7548b5d24839262f/ojluni/src/main/native/UNIXProcess_md.c#427
+  // They fork, close all fds by iterating over /proc/self/fd using opendir.
+  // Unfortunately closedir calls free, which detects the fork, and then tries
+  // to destruct this Client.
+  //
+  // ScopedResource crashes on failure to close, so we explicitly ignore
+  // failures here.
+  int fd = sock_.ReleaseFd().release();
+  if (fd != -1)
+    close(fd);
+}
+
 const char* Client::GetStackBase() {
   if (IsMainThread()) {
     if (!main_thread_stack_base_)
@@ -275,7 +289,8 @@ bool Client::RecordMalloc(uint64_t sample_size,
                           uint64_t alloc_size,
                           uint64_t alloc_address) {
   if (PERFETTO_UNLIKELY(getpid() != pid_at_creation_)) {
-    PERFETTO_LOG("Detected post-fork child situation, stopping profiling.");
+    PERFETTO_LOG(
+        "Detected post-fork child situation. Not profiling the child.");
     return false;
   }
 

@@ -45,6 +45,8 @@ FilterOp SqliteOpToFilterOp(int sqlite_op) {
       return FilterOp::kIsNotNull;
     case SQLITE_INDEX_CONSTRAINT_LIKE:
       return FilterOp::kLike;
+    case SQLITE_INDEX_CONSTRAINT_GLOB:
+      return FilterOp::kGlob;
     default:
       PERFETTO_FATAL("Currently unsupported constraint");
   }
@@ -91,26 +93,31 @@ void DbSqliteTable::RegisterTable(sqlite3* db,
 }
 
 util::Status DbSqliteTable::Init(int, const char* const*, Schema* schema) {
+  *schema = ComputeSchema(*table_, name().c_str());
+  return util::OkStatus();
+}
+
+SqliteTable::Schema DbSqliteTable::ComputeSchema(const Table& table,
+                                                 const char* table_name) {
   std::vector<SqliteTable::Column> schema_cols;
-  for (uint32_t i = 0; i < table_->GetColumnCount(); ++i) {
-    const auto& col = table_->GetColumn(i);
+  for (uint32_t i = 0; i < table.GetColumnCount(); ++i) {
+    const auto& col = table.GetColumn(i);
     schema_cols.emplace_back(i, col.name(), col.type());
   }
+
   // TODO(lalitm): this is hardcoded to be the id column but change this to be
   // more generic in the future.
-  auto opt_idx = table_->FindColumnIdxByName("id");
-  if (!opt_idx) {
+  const auto* col = table.GetColumnByName("id");
+  if (!col) {
     PERFETTO_FATAL(
         "id column not found in %s. Currently all db Tables need to contain an "
         "id column; this constraint will be relaxed in the future.",
-        name().c_str());
+        table_name);
   }
 
   std::vector<size_t> primary_keys;
-  primary_keys.emplace_back(*opt_idx);
-
-  *schema = Schema(std::move(schema_cols), std::move(primary_keys));
-  return util::OkStatus();
+  primary_keys.emplace_back(col->index_in_table());
+  return Schema(std::move(schema_cols), std::move(primary_keys));
 }
 
 int DbSqliteTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
@@ -190,10 +197,13 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
 
   // Setup the variables for estimating the number of rows we will have at the
   // end of filtering. Note that |current_row_count| should always be at least 1
-  // as otherwise SQLite can make some bad choices.
-  uint32_t current_row_count = table.size();
+  // unless we are absolutely certain that we will return no rows as otherwise
+  // SQLite can make some bad choices.
+  uint32_t current_row_count = table.row_count();
 
-  // If the table is empty, any constraint set only pays the fixed cost.
+  // If the table is empty, any constraint set only pays the fixed cost. Also we
+  // can return 0 as the row count as we are certain that we will return no
+  // rows.
   if (current_row_count == 0)
     return QueryCost{kFixedQueryCost, 0};
 
@@ -201,6 +211,8 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
   double filter_cost = 0.0;
   const auto& cs = qc.constraints();
   for (const auto& c : cs) {
+    if (current_row_count < 2)
+      break;
     const auto& col = table.GetColumn(static_cast<uint32_t>(c.column));
     if (sqlite_utils::IsOpEq(c.op) && col.IsId()) {
       // If we have an id equality constraint, it's a bit expensive to find
@@ -210,9 +222,12 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
     } else if (sqlite_utils::IsOpEq(c.op)) {
       // If there is only a single equality constraint, we have special logic
       // to sort by that column and then binary search if we see the constraint
-      // set often. Model this by dividing but the log of the number of rows as
+      // set often. Model this by dividing by the log of the number of rows as
       // a good approximation. Otherwise, we'll need to do a full table scan.
-      filter_cost += cs.size() == 1
+      // Alternatively, if the column is sorted, we can use the same binary
+      // search logic so we have the same low cost (even better because we don't
+      // have to sort at all).
+      filter_cost += cs.size() == 1 || col.IsSorted()
                          ? (2 * current_row_count) / log2(current_row_count)
                          : current_row_count;
 
@@ -245,11 +260,50 @@ DbSqliteTable::QueryCost DbSqliteTable::EstimateCost(
 }
 
 std::unique_ptr<SqliteTable::Cursor> DbSqliteTable::CreateCursor() {
-  return std::unique_ptr<Cursor>(new Cursor(this));
+  return std::unique_ptr<Cursor>(new Cursor(this, table_));
 }
 
-DbSqliteTable::Cursor::Cursor(DbSqliteTable* table)
-    : SqliteTable::Cursor(table), initial_db_table_(table->table_) {}
+DbSqliteTable::Cursor::Cursor(SqliteTable* sqlite_table, const Table* table)
+    : SqliteTable::Cursor(sqlite_table), initial_db_table_(table) {}
+
+void DbSqliteTable::Cursor::TryCacheCreateSortedTable(
+    const QueryConstraints& qc,
+    FilterHistory history) {
+  if (history == FilterHistory::kDifferent) {
+    // Every time we get a new constraint set, reset the state of any caching
+    // structures.
+    sorted_cache_table_ = base::nullopt;
+    repeated_cache_count_ = 0;
+    return;
+  }
+
+  PERFETTO_DCHECK(history == FilterHistory::kSame);
+
+  // Only try and create the cached table on exactly the third time we see this
+  // constraint set.
+  constexpr uint32_t kRepeatedThreshold = 3;
+  if (repeated_cache_count_++ != kRepeatedThreshold)
+    return;
+
+  // If we have more than one constraint, we can't cache the table using
+  // this method.
+  if (qc.constraints().size() != 1)
+    return;
+
+  // If the constraing is not an equality constraint, there's little
+  // benefit to caching
+  const auto& c = qc.constraints().front();
+  if (!sqlite_utils::IsOpEq(c.op))
+    return;
+
+  // If the column is already sorted, we don't need to cache at all.
+  uint32_t col = static_cast<uint32_t>(c.column);
+  if (initial_db_table_->GetColumn(col).IsSorted())
+    return;
+
+  // Create the cached table, sorting on the column which has the constraint.
+  sorted_cache_table_ = initial_db_table_->Sort({Order{col, false}});
+}
 
 int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
                                   sqlite3_value** argv,
@@ -258,23 +312,9 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
   // before the table's destructor.
   iterator_ = base::nullopt;
 
-  if (history == FilterHistory::kSame && qc.constraints().size() == 1 &&
-      sqlite_utils::IsOpEq(qc.constraints().front().op)) {
-    // If we've seen the same constraint set with a single equality constraint
-    // more than |kRepeatedThreshold| times, we assume we will see it more
-    // in the future and thus cache a table sorted on the column. That way,
-    // future equality constraints can binary search for the value instead of
-    // doing a full table scan.
-    constexpr uint32_t kRepeatedThreshold = 3;
-    if (!sorted_cache_table_ && repeated_cache_count_++ > kRepeatedThreshold) {
-      const auto& c = qc.constraints().front();
-      uint32_t col = static_cast<uint32_t>(c.column);
-      sorted_cache_table_ = initial_db_table_->Sort({Order{col, false}});
-    }
-  } else {
-    sorted_cache_table_ = base::nullopt;
-    repeated_cache_count_ = 0;
-  }
+  // Tries to create a sorted cached table which can be used to speed up
+  // filters below.
+  TryCacheCreateSortedTable(qc, history);
 
   // We reuse this vector to reduce memory allocations on nested subqueries.
   constraints_.resize(qc.constraints().size());
@@ -296,28 +336,61 @@ int DbSqliteTable::Cursor::Filter(const QueryConstraints& qc,
     orders_[i] = Order{col, static_cast<bool>(ob.desc)};
   }
 
-  // Try and use the sorted cache table (if it exists) to speed up the sorting.
-  // Otherwise, just use the original table.
-  auto* source =
-      sorted_cache_table_ ? &*sorted_cache_table_ : &*initial_db_table_;
-  db_table_ = source->Filter(constraints_).Sort(orders_);
-  iterator_ = db_table_->IterateRows();
+  // Attempt to filter into a RowMap first - we'll figure out whether to apply
+  // this to the table or we should use the RowMap directly.
+  RowMap filter_map = SourceTable()->FilterToRowMap(constraints_);
+
+  // If we have no order by constraints and it's cheap for us to use the
+  // RowMap, just use the RowMap directoy.
+  if (filter_map.IsRange() && filter_map.size() <= 1) {
+    // Currently, our criteria where we have a special fast path is if it's
+    // a single ranged row. We have tihs fast path for joins on id columns
+    // where we get repeated queries filtering down to a single row. The
+    // other path performs allocations when creating the new table as well
+    // as the iterator on the new table whereas this path only uses a single
+    // number and lives entirely on the stack.
+
+    // TODO(lalitm): investigate some other criteria where it is beneficial
+    // to have a fast path and expand to them.
+    mode_ = Mode::kSingleRow;
+    single_row_ = filter_map.size() == 1
+                      ? base::make_optional(filter_map.Get(0))
+                      : base::nullopt;
+    eof_ = !single_row_.has_value();
+  } else {
+    mode_ = Mode::kTable;
+
+    db_table_ = SourceTable()->Apply(std::move(filter_map));
+    if (!orders_.empty())
+      db_table_ = db_table_->Sort(orders_);
+
+    iterator_ = db_table_->IterateRows();
+
+    eof_ = !*iterator_;
+  }
 
   return SQLITE_OK;
 }
 
 int DbSqliteTable::Cursor::Next() {
-  iterator_->Next();
+  if (mode_ == Mode::kSingleRow) {
+    eof_ = true;
+  } else {
+    iterator_->Next();
+    eof_ = !*iterator_;
+  }
   return SQLITE_OK;
 }
 
 int DbSqliteTable::Cursor::Eof() {
-  return !*iterator_;
+  return eof_;
 }
 
 int DbSqliteTable::Cursor::Column(sqlite3_context* ctx, int raw_col) {
   uint32_t column = static_cast<uint32_t>(raw_col);
-  SqlValue value = iterator_->Get(column);
+  SqlValue value = mode_ == Mode::kSingleRow
+                       ? SourceTable()->GetColumn(column).Get(*single_row_)
+                       : iterator_->Get(column);
   switch (value.type) {
     case SqlValue::Type::kLong:
       sqlite3_result_int64(ctx, value.long_value);

@@ -21,6 +21,7 @@ import * as m from 'mithril';
 import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions} from '../common/actions';
+import {AggregateCpuData} from '../common/aggregation_data';
 import {
   LogBoundsKey,
   LogEntriesKey,
@@ -28,7 +29,6 @@ import {
   LogExistsKey
 } from '../common/logs';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
-import {CallsiteInfo} from '../common/state';
 
 import {maybeShowErrorDialog} from './error_dialog';
 import {
@@ -78,7 +78,7 @@ class FrontendApi {
   // want to keep in the global state. Figure out a more generic and type-safe
   // mechanism to achieve this.
 
-  publishOverviewData(data: {[key: string]: QuantizedLoad | QuantizedLoad[]}) {
+  publishOverviewData(data: {[key: string]: QuantizedLoad|QuantizedLoad[]}) {
     for (const [key, value] of Object.entries(data)) {
       if (!globals.overviewStore.has(key)) {
         globals.overviewStore.set(key, []);
@@ -130,17 +130,6 @@ class FrontendApi {
     this.redraw();
   }
 
-  publishHeapProfileFlamegraph(args: {
-    flamegraph: CallsiteInfo[],
-    expandedCallsite?: CallsiteInfo,
-    viewingOption?: string
-  }) {
-    globals.heapProfileDetails.flamegraph = args.flamegraph;
-    globals.heapProfileDetails.expandedCallsite = args.expandedCallsite;
-    globals.heapProfileDetails.viewingOption = args.viewingOption;
-    this.redraw();
-  }
-
   publishFileDownload(args: {file: File, name?: string}) {
     const url = URL.createObjectURL(args.file);
     const a = document.createElement('a');
@@ -183,6 +172,11 @@ class FrontendApi {
 
   publishRecordingLog(args: {logs: string}) {
     globals.setRecordingLog(args.logs);
+    this.redraw();
+  }
+
+  publishAggregateCpuData(args: AggregateCpuData) {
+    globals.aggregateCpuData = args;
     this.redraw();
   }
 
@@ -257,6 +251,7 @@ function main() {
       dispatch);
   forwardRemoteCalls(frontendChannel.port2, new FrontendApi(router));
   globals.initialize(dispatch, controller);
+  globals.serviceWorkerController.install();
 
   // We proxy messages between the extension and the controller because the
   // controller's worker can't access chrome.runtime.
@@ -283,8 +278,10 @@ function main() {
 
   updateAvailableAdbDevices();
   try {
-    navigator.usb.addEventListener('connect', updateAvailableAdbDevices);
-    navigator.usb.addEventListener('disconnect', updateAvailableAdbDevices);
+    navigator.usb.addEventListener(
+        'connect', () => updateAvailableAdbDevices());
+    navigator.usb.addEventListener(
+        'disconnect', () => updateAvailableAdbDevices());
   } catch (e) {
     console.error('WebUSB API not supported');
   }

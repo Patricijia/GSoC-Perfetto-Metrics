@@ -39,8 +39,7 @@ if (enable_perfetto_platform_services) {
   ]
 }
 
-if (enable_perfetto_trace_processor &&
-    enable_perfetto_trace_processor_metrics) {
+if (enable_perfetto_trace_processor && enable_perfetto_trace_processor_sqlite) {
   all_targets += [ "src/trace_processor:trace_processor_shell" ]
 }
 
@@ -80,6 +79,17 @@ if (enable_perfetto_integration_tests) {
     ":perfetto_integrationtests",
     "test:client_api_example",
   ]
+}
+
+if (enable_perfetto_trace_processor_json) {
+  test("trace_processor_minimal_smoke_tests") {
+    testonly = true
+    deps = [
+      "gn:default_deps",
+      "src/trace_processor:storage_minimal_smoke_tests",
+    ]
+  }
+  all_targets += [ ":trace_processor_minimal_smoke_tests" ]
 }
 
 if (enable_perfetto_benchmarks) {
@@ -125,6 +135,12 @@ if (perfetto_build_standalone) {
   ]
 }
 
+# The CTS code is built (but not ran) also in standalone builds. This is to
+# catch refactoring breakages earlier without having to wait for treehugger.
+if (is_android && (perfetto_build_standalone || perfetto_build_with_android)) {
+  all_targets += [ "test/cts:perfetto_cts_deps" ]
+}
+
 group("all") {
   testonly = true  # allow to build also test targets
   deps = all_targets
@@ -139,9 +155,7 @@ group("all") {
 # depending on other GN files.
 group("default") {
   testonly = true
-  deps = [
-    ":all",
-  ]
+  deps = [ ":all" ]
 }
 
 # +----------------------------------------------------------------------------+
@@ -150,9 +164,7 @@ group("default") {
 
 if (enable_perfetto_ui) {
   group("ui") {
-    deps = [
-      "ui",
-    ]
+    deps = [ "ui" ]
   }
 }
 
@@ -194,15 +206,13 @@ if (!build_with_chromium) {
   # on how to use the Perfetto Client API from the android tree.
   static_library("libperfetto_client_experimental") {
     complete_static_lib = true
-    deps = [
+    public_deps = [
       "gn:default_deps",
       "src/tracing",
       "src/tracing:client_api",
       "src/tracing:platform_posix",
     ]
-    sources = [
-      "include/perfetto/tracing.h",
-    ]
+    sources = [ "include/perfetto/tracing.h" ]
     assert_no_deps = [ "//gn:protobuf_lite" ]
   }
 }
@@ -216,7 +226,7 @@ if (build_with_chromium) {
     public_configs = [ "gn:public_config" ]
     deps = [
       "src/trace_processor:export_json",
-      "src/trace_processor:storage",
+      "src/trace_processor:storage_minimal",
       "src/tracing",
     ]
     configs -= [ "//build/config/compiler:chromium_code" ]
@@ -231,20 +241,17 @@ if (build_with_chromium) {
       "protos/perfetto/trace/interned_data:zero",
       "protos/perfetto/trace/profiling:zero",
       "protos/perfetto/trace/track_event:zero",
-      "src/tracing:sliced_protobuf_input_stream",
     ]
-  }
-  if (enable_perfetto_trace_processor_sqlite) {
-    component("libtrace_processor") {
-      public_configs = [ "gn:public_config" ]
-      deps = [
-        "src/trace_processor:lib",
-      ]
-      configs -= [ "//build/config/compiler:chromium_code" ]
-      configs += [ "//build/config/compiler:no_chromium_code" ]
-      public_deps = [
-        "include/perfetto/trace_processor",
-      ]
+    if (enable_perfetto_ipc) {
+      deps += [ "src/tracing:ipc" ]
+      public_deps += [ "include/perfetto/ext/tracing/ipc:ipc" ]
     }
+  }
+  component("libtrace_processor") {
+    public_configs = [ "gn:public_config" ]
+    deps = [ "src/trace_processor:lib" ]
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
+    public_deps = [ "include/perfetto/trace_processor" ]
   }
 }

@@ -75,10 +75,10 @@ BUILD_DEPS_HOST = [
      'https://github.com/google/googletest/archive/3f05f651ae3621db58468153e32016bc1397800b.zip',
      '86384688f7c533ad325a505efc917e0cdf39a0ce', 'all'),
 
-    # Keep in sync with Android's //external/protobuf/README.version.
+    # Keep in sync with Chromium's //third_party/protobuf.
     ('buildtools/protobuf.zip',
-     'https://github.com/google/protobuf/releases/download/v3.0.0-beta-3/protobuf-cpp-3.0.0-beta-3.zip',
-     '3caec60aa9d8eefc8c3c3201b6b8ca19935edb89', 'all'),
+     'https://github.com/protocolbuffers/protobuf/releases/download/v3.9.0/protobuf-cpp-3.9.0.zip',
+     'c975536dffe9d9a3d362928aef4fb9f199012b98', 'all'),
 
     # libc++, libc++abi and libunwind for Linux where we need to rebuild the C++
     # lib from sources. Keep the SHA1s in sync with Chrome's src/buildtools/DEPS.
@@ -132,7 +132,7 @@ BUILD_DEPS_HOST = [
     # These dependencies are for libunwindstack, which is used by src/profiling.
     ('buildtools/android-core',
      'https://android.googlesource.com/platform/system/core.git',
-     '3f407fcc37b401c91784700c0a691ba8b1f7ef15', 'all'),
+     '860e8682e27eea30cc604b60c9cab83d0b047012', 'all'),
     ('buildtools/lzma',
      'https://android.googlesource.com/platform/external/lzma.git',
      '7851dce6f4ca17f5caa1c93a4e0a45686b1d56c3', 'all'),
@@ -146,8 +146,8 @@ BUILD_DEPS_HOST = [
     # Example traces for regression tests.
     (
         'buildtools/test_data.zip',
-        'https://storage.googleapis.com/perfetto/test-data-20191107-164334.zip',
-        '499f11fbc2b04ef7742662a26b85ef03141e24bd',
+        'https://storage.googleapis.com/perfetto/test-data-20200122-100845.zip',
+        '56ac45b5239fda50d33cf05bfd329dcb3efb0b2a',
         'all',
     ),
 
@@ -195,7 +195,7 @@ TEST_DEPS_ANDROID = [
 # This variable is updated by tools/roll-catapult-trace-viewer.
 CATAPULT_SHA1 = 'ff5d8fd7244680b4d4456c25d5fdc04c76f9ef66'
 
-TYPEFACES_SHA1 = '756b0a015b8f99f5718f7fdf967d052c1ec55ab3'
+TYPEFACES_SHA1 = '4fb455de506f8a2859dc5264b8448c2559b08ab8'
 
 UI_DEPS = [
     ('buildtools/nodejs.tgz',

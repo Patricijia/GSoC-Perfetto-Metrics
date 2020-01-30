@@ -54,10 +54,11 @@ select
   sum(dur * freq)/1e6 as mcycles
 from (
   select
-    ref as cpu,
+    cpu,
     value as freq,
-    lead(ts) over (partition by ref order by ts) - ts as dur
-  from counters
+    lead(ts) over (partition by cpu order by ts) - ts as dur
+  from counter
+  inner join cpu_counter_track on counter.track_id = cpu_counter_track.id
   where name = 'cpufreq'
 ) group by cpu, freq
 order by mcycles desc limit 32;`;
@@ -463,7 +464,7 @@ function downloadTrace(e: Event) {
 }
 
 
-const SidebarFooter: m.Component = {
+const EngineRPCWidget: m.Component = {
   view() {
     let cssClass = '';
     let title = 'Number of pending SQL queries';
@@ -477,7 +478,7 @@ const SidebarFooter: m.Component = {
     for (const engine of engines) {
       mode = engine.mode;
       if (engine.failed !== undefined) {
-        cssClass += '.failed';
+        cssClass += '.red';
         title = 'Query engine crashed\n' + engine.failed;
         failed = true;
       }
@@ -498,7 +499,7 @@ const SidebarFooter: m.Component = {
     }
 
     if (mode === 'HTTP_RPC') {
-      cssClass += '.rpc';
+      cssClass += '.green';
       label = 'RPC';
       title += '\n(Query engine: native accelerator over HTTP+RPC)';
     } else {
@@ -506,6 +507,88 @@ const SidebarFooter: m.Component = {
       title += '\n(Query engine: built-in WASM)';
     }
 
+    return m(
+        `.dbg-info-square${cssClass}`,
+        {title},
+        m('div', label),
+        m('div', `${failed ? 'FAIL' : globals.numQueuedQueries}`));
+  }
+};
+
+const ServiceWorkerWidget: m.Component = {
+  view() {
+    let cssClass = '';
+    let title = 'Service Worker: ';
+    let label = 'N/A';
+    const ctl = globals.serviceWorkerController;
+    if ((!('serviceWorker' in navigator))) {
+      label = 'N/A';
+      title += 'not supported by the browser (requires HTTPS)';
+    } else if (ctl.bypassed) {
+      label = 'OFF';
+      cssClass = '.red';
+      title += 'Bypassed, using live network. Double-click to re-enable';
+    } else if (ctl.installing) {
+      label = 'UPD';
+      cssClass = '.amber';
+      title += 'Installing / updating ...';
+    } else if (!navigator.serviceWorker.controller) {
+      label = 'N/A';
+      title += 'Not available, using network';
+    } else {
+      label = 'ON';
+      cssClass = '.green';
+      title += 'Serving from cache. Ready for offline use';
+    }
+
+    const toggle = async () => {
+      if (globals.serviceWorkerController.bypassed) {
+        globals.serviceWorkerController.setBypass(false);
+        return;
+      }
+      showModal({
+        title: 'Disable service worker?',
+        content: m(
+            'div',
+            m('p', `If you continue the service worker will be disabled until
+                      manually re-enabled.`),
+            m('p', `All future requests will be served from the network and the
+                    UI won't be available offline.`),
+            m('p', `You should do this only if you are debugging the UI
+                    or if you are experiencing caching-related problems.`),
+            m('p', `Disabling will cause a refresh of the UI, the current state
+                    will be lost.`),
+            ),
+        buttons: [
+          {
+            text: 'Disable and reload',
+            primary: true,
+            id: 'sw-bypass-enable',
+            action: () => {
+              globals.serviceWorkerController.setBypass(true).then(
+                  () => location.reload());
+            }
+          },
+          {
+            text: 'Cancel',
+            primary: false,
+            id: 'sw-bypass-cancel',
+            action: () => {}
+          }
+        ]
+      });
+    };
+
+    return m(
+        `.dbg-info-square${cssClass}`,
+        {title, ondblclick: toggle},
+        m('div', 'SW'),
+        m('div', label));
+  }
+};
+
+const SidebarFooter: m.Component = {
+  view() {
     return m(
         '.sidebar-footer',
         m('button',
@@ -515,10 +598,8 @@ const SidebarFooter: m.Component = {
           m('i.material-icons',
             {title: 'Toggle Perf Debug Mode'},
             'assessment')),
-        m(`.num-queued-queries${cssClass}`,
-          {title},
-          m('div', label),
-          m('div', `${failed ? 'FAIL' : globals.numQueuedQueries}`)),
+        m(EngineRPCWidget),
+        m(ServiceWorkerWidget),
     );
   }
 };

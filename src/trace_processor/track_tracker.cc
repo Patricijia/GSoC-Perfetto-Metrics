@@ -17,12 +17,13 @@
 #include "src/trace_processor/track_tracker.h"
 
 #include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/process_tracker.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 // static
-constexpr TrackId TrackTracker::kDefaultDescriptorTrackUuid;
+constexpr uint64_t TrackTracker::kDefaultDescriptorTrackUuid;
 
 TrackTracker::TrackTracker(TraceProcessorContext* context)
     : source_key_(context->storage->InternString("source")),
@@ -50,6 +51,18 @@ TrackId TrackTracker::InternThreadTrack(UniqueTid utid) {
   return id;
 }
 
+TrackId TrackTracker::InternProcessTrack(UniquePid upid) {
+  auto it = process_tracks_.find(upid);
+  if (it != process_tracks_.end())
+    return it->second;
+
+  tables::ProcessTrackTable::Row row;
+  row.upid = upid;
+  auto id = context_->storage->mutable_process_track_table()->Insert(row);
+  process_tracks_[upid] = id;
+  return id;
+}
+
 TrackId TrackTracker::InternFuchsiaAsyncTrack(StringId name,
                                               int64_t correlation_id) {
   auto it = fuchsia_async_tracks_.find(correlation_id);
@@ -60,16 +73,15 @@ TrackId TrackTracker::InternFuchsiaAsyncTrack(StringId name,
   auto id = context_->storage->mutable_track_table()->Insert(row);
   fuchsia_async_tracks_[correlation_id] = id;
 
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(fuchsia_source_));
-  context_->args_tracker->AddArg(row_id, source_id_key_, source_id_key_,
-                                 Variadic::Integer(correlation_id));
+  context_->args_tracker->AddArgsTo(id)
+      .AddArg(source_key_, Variadic::String(fuchsia_source_))
+      .AddArg(source_id_key_, Variadic::Integer(correlation_id));
+
   return id;
 }
 
 TrackId TrackTracker::InternGpuTrack(const tables::GpuTrackTable::Row& row) {
-  GpuTrackTuple tuple{row.name.id, row.scope, row.context_id.value_or(0)};
+  GpuTrackTuple tuple{row.name, row.scope, row.context_id.value_or(0)};
 
   auto it = gpu_tracks_.find(tuple);
   if (it != gpu_tracks_.end())
@@ -103,17 +115,13 @@ TrackId TrackTracker::InternLegacyChromeAsyncTrack(
   TrackId id = context_->storage->mutable_process_track_table()->Insert(track);
   chrome_tracks_[tuple] = id;
 
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(chrome_source_));
-  context_->args_tracker->AddArg(row_id, source_id_key_, source_id_key_,
-                                 Variadic::Integer(source_id));
-  context_->args_tracker->AddArg(
-      row_id, source_id_is_process_scoped_key_,
-      source_id_is_process_scoped_key_,
-      Variadic::Boolean(source_id_is_process_scoped));
-  context_->args_tracker->AddArg(row_id, source_scope_key_, source_scope_key_,
-                                 Variadic::String(source_scope));
+  context_->args_tracker->AddArgsTo(id)
+      .AddArg(source_key_, Variadic::String(chrome_source_))
+      .AddArg(source_id_key_, Variadic::Integer(source_id))
+      .AddArg(source_id_is_process_scoped_key_,
+              Variadic::Boolean(source_id_is_process_scoped))
+      .AddArg(source_scope_key_, Variadic::String(source_scope));
+
   return id;
 }
 
@@ -131,11 +139,10 @@ TrackId TrackTracker::InternAndroidAsyncTrack(StringId name,
   auto id = context_->storage->mutable_process_track_table()->Insert(row);
   android_async_tracks_[tuple] = id;
 
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(android_source_));
-  context_->args_tracker->AddArg(row_id, source_id_key_, source_id_key_,
-                                 Variadic::Integer(cookie));
+  context_->args_tracker->AddArgsTo(id)
+      .AddArg(source_key_, Variadic::String(android_source_))
+      .AddArg(source_id_key_, Variadic::Integer(cookie));
+
   return id;
 }
 
@@ -149,9 +156,9 @@ TrackId TrackTracker::InternLegacyChromeProcessInstantTrack(UniquePid upid) {
   auto id = context_->storage->mutable_process_track_table()->Insert(row);
   chrome_process_instant_tracks_[upid] = id;
 
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(chrome_source_));
+  context_->args_tracker->AddArgsTo(id).AddArg(
+      source_key_, Variadic::String(chrome_source_));
+
   return id;
 }
 
@@ -160,163 +167,227 @@ TrackId TrackTracker::GetOrCreateLegacyChromeGlobalInstantTrack() {
     chrome_global_instant_track_id_ =
         context_->storage->mutable_track_table()->Insert({});
 
-    RowId row_id = TraceStorage::CreateRowId(TableId::kTrack,
-                                             *chrome_global_instant_track_id_);
-    context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                   Variadic::String(chrome_source_));
+    context_->args_tracker->AddArgsTo(*chrome_global_instant_track_id_)
+        .AddArg(source_key_, Variadic::String(chrome_source_));
   }
   return *chrome_global_instant_track_id_;
 }
 
-TrackId TrackTracker::UpdateDescriptorTrack(uint64_t uuid,
-                                            StringId name,
-                                            base::Optional<UniquePid> upid,
-                                            base::Optional<UniqueTid> utid) {
-  auto it = descriptor_tracks_.find(uuid);
-  if (it != descriptor_tracks_.end()) {
-    // Update existing track for |uuid|.
-    TrackId track_id = it->second;
-    if (name != kNullStringId) {
-      context_->storage->mutable_track_table()->mutable_name()->Set(track_id,
-                                                                    name);
-    }
+void TrackTracker::ReserveDescriptorProcessTrack(uint64_t uuid,
+                                                 uint32_t pid,
+                                                 int64_t timestamp) {
+  DescriptorTrackReservation reservation;
+  reservation.min_timestamp = timestamp;
+  reservation.pid = pid;
 
-#if PERFETTO_DLOG_IS_ON()
-    if (upid) {
-      // Verify that upid didn't change.
-      auto process_track_row =
-          context_->storage->process_track_table().id().IndexOf(
-              SqlValue::Long(track_id));
-      if (!process_track_row) {
-        PERFETTO_DLOG("Can't update non-scoped track with uuid %" PRIu64
-                      " to a scoped track.",
-                      uuid);
-      } else {
-        auto old_upid =
-            context_->storage->process_track_table().upid()[*process_track_row];
-        if (old_upid != upid) {
-          PERFETTO_DLOG("Ignoring upid change for track with uuid %" PRIu64
-                        " from %" PRIu32 " to %" PRIu32 ".",
-                        uuid, old_upid, *upid);
-        }
-      }
-    }
+  std::map<uint64_t, DescriptorTrackReservation>::iterator it;
+  bool inserted;
+  std::tie(it, inserted) =
+      reserved_descriptor_tracks_.insert(std::make_pair<>(uuid, reservation));
 
-    if (utid) {
-      // Verify that utid didn't change.
-      auto thread_track_row =
-          context_->storage->thread_track_table().id().IndexOf(
-              SqlValue::Long(track_id));
-      if (!thread_track_row) {
-        PERFETTO_DLOG("Can't update non-thread track with uuid %" PRIu64
-                      " to a thread track.",
-                      uuid);
-      } else {
-        auto old_utid =
-            context_->storage->thread_track_table().utid()[*thread_track_row];
-        if (old_utid != utid) {
-          PERFETTO_DLOG("Ignoring utid change for track with uuid %" PRIu64
-                        " from %" PRIu32 " to %" PRIu32 ".",
-                        uuid, old_utid, *utid);
-        }
-      }
-    }
-#endif  // PERFETTO_DLOG_IS_ON()
+  if (inserted)
+    return;
 
-    return track_id;
+  if (!it->second.IsForSameTrack(reservation)) {
+    // Process tracks should not be reassigned to a different pid later (neither
+    // should the type of the track change).
+    PERFETTO_DLOG("New track reservation for process track with uuid %" PRIu64
+                  " doesn't match earlier one",
+                  uuid);
+    context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
+    return;
   }
 
-  TrackId track_id;
-
-  if (utid) {
-    // Update existing track for the thread if we have previously created one
-    // in GetOrCreateDescriptorTrackForThread().
-    auto utid_it = descriptor_tracks_by_utid_.find(*utid);
-    if (utid_it != descriptor_tracks_by_utid_.end()) {
-      TrackId candidate_track_id = utid_it->second;
-      // Only update this track if it hasn't been associated with a different
-      // UUID already.
-      auto descriptor_it = std::find_if(
-          descriptor_tracks_.begin(), descriptor_tracks_.end(),
-          [candidate_track_id](const std::pair<uint64_t, TrackId>& entry) {
-            return entry.second == candidate_track_id;
-          });
-      if (descriptor_it == descriptor_tracks_.end()) {
-        descriptor_tracks_[uuid] = candidate_track_id;
-
-        RowId row_id =
-            TraceStorage::CreateRowId(TableId::kTrack, candidate_track_id);
-        context_->args_tracker->AddArg(
-            row_id, source_id_key_, source_id_key_,
-            Variadic::Integer(static_cast<int64_t>(uuid)));
-
-        return candidate_track_id;
-      }
-    }
-
-    // New thread track.
-    tables::ThreadTrackTable::Row row(name);
-    row.utid = *utid;
-    track_id = context_->storage->mutable_thread_track_table()->Insert(row);
-    if (descriptor_tracks_by_utid_.find(*utid) ==
-        descriptor_tracks_by_utid_.end()) {
-      descriptor_tracks_by_utid_[*utid] = track_id;
-    }
-  } else if (upid) {
-    // New process-scoped async track.
-    tables::ProcessTrackTable::Row track(name);
-    track.upid = *upid;
-    track_id = context_->storage->mutable_process_track_table()->Insert(track);
-  } else {
-    // New global async track.
-    tables::TrackTable::Row track(name);
-    track_id = context_->storage->mutable_track_table()->Insert(track);
-  }
-
-  descriptor_tracks_[uuid] = track_id;
-
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, track_id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(descriptor_source_));
-  context_->args_tracker->AddArg(row_id, source_id_key_, source_id_key_,
-                                 Variadic::Integer(static_cast<int64_t>(uuid)));
-
-  return track_id;
+  it->second.min_timestamp = std::min(it->second.min_timestamp, timestamp);
 }
 
-base::Optional<TrackId> TrackTracker::GetDescriptorTrack(uint64_t uuid) const {
-  auto it = descriptor_tracks_.find(uuid);
-  if (it == descriptor_tracks_.end())
-    return base::nullopt;
+void TrackTracker::ReserveDescriptorThreadTrack(uint64_t uuid,
+                                                uint64_t parent_uuid,
+                                                uint32_t pid,
+                                                uint32_t tid,
+                                                int64_t timestamp) {
+  DescriptorTrackReservation reservation;
+  reservation.min_timestamp = timestamp;
+  reservation.parent_uuid = parent_uuid;
+  reservation.pid = pid;
+  reservation.tid = tid;
+
+  std::map<uint64_t, DescriptorTrackReservation>::iterator it;
+  bool inserted;
+  std::tie(it, inserted) =
+      reserved_descriptor_tracks_.insert(std::make_pair<>(uuid, reservation));
+
+  if (inserted)
+    return;
+
+  if (!it->second.IsForSameTrack(reservation)) {
+    // Thread tracks should not be reassigned to a different pid/tid later
+    // (neither should the type of the track change).
+    PERFETTO_DLOG("New track reservation for thread track with uuid %" PRIu64
+                  " doesn't match earlier one",
+                  uuid);
+    context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
+    return;
+  }
+
+  it->second.min_timestamp = std::min(it->second.min_timestamp, timestamp);
+}
+
+void TrackTracker::ReserveDescriptorChildTrack(uint64_t uuid,
+                                               uint64_t parent_uuid) {
+  DescriptorTrackReservation reservation;
+  reservation.parent_uuid = parent_uuid;
+
+  std::map<uint64_t, DescriptorTrackReservation>::iterator it;
+  bool inserted;
+  std::tie(it, inserted) =
+      reserved_descriptor_tracks_.insert(std::make_pair<>(uuid, reservation));
+
+  if (inserted || it->second.IsForSameTrack(reservation))
+    return;
+
+  // Child tracks should not be reassigned to a different parent track later
+  // (neither should the type of the track change).
+  PERFETTO_DLOG("New track reservation for child track with uuid %" PRIu64
+                " doesn't match earlier one",
+                uuid);
+  context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
+}
+
+base::Optional<TrackId> TrackTracker::GetDescriptorTrack(uint64_t uuid) {
+  auto it = resolved_descriptor_tracks_.find(uuid);
+  if (it == resolved_descriptor_tracks_.end()) {
+    auto reservation_it = reserved_descriptor_tracks_.find(uuid);
+    if (reservation_it == reserved_descriptor_tracks_.end())
+      return base::nullopt;
+    TrackId track_id = ResolveDescriptorTrack(uuid, reservation_it->second);
+    resolved_descriptor_tracks_[uuid] = track_id;
+    return track_id;
+  }
   return it->second;
 }
 
-TrackId TrackTracker::GetOrCreateDescriptorTrackForThread(UniqueTid utid) {
-  auto it = descriptor_tracks_by_utid_.find(utid);
-  if (it != descriptor_tracks_by_utid_.end()) {
-    return it->second;
+TrackId TrackTracker::ResolveDescriptorTrack(
+    uint64_t uuid,
+    const DescriptorTrackReservation& reservation) {
+  base::Optional<TrackId> parent_track_id;
+  if (reservation.parent_uuid) {
+    // Ensure that parent track is resolved.
+    parent_track_id = GetDescriptorTrack(reservation.parent_uuid);
+    if (!parent_track_id) {
+      PERFETTO_ELOG("Unknown parent track %" PRIu64 " for track %" PRIu64,
+                    reservation.parent_uuid, uuid);
+    }
   }
-  // TODO(eseckler): How should this track receive its name?
-  tables::ThreadTrackTable::Row row(/*name=*/kNullStringId);
-  row.utid = utid;
-  TrackId track_id =
-      context_->storage->mutable_thread_track_table()->Insert(row);
-  descriptor_tracks_by_utid_[utid] = track_id;
 
-  RowId row_id = TraceStorage::CreateRowId(TableId::kTrack, track_id);
-  context_->args_tracker->AddArg(row_id, source_key_, source_key_,
-                                 Variadic::String(descriptor_source_));
-  return track_id;
+  if (reservation.tid) {
+    UniqueTid utid = context_->process_tracker->UpdateThread(*reservation.tid,
+                                                             *reservation.pid);
+    auto it_and_inserted =
+        descriptor_uuids_by_utid_.insert(std::make_pair<>(utid, uuid));
+    if (!it_and_inserted.second) {
+      // We already saw a another track with a different uuid for this thread.
+      // Since there should only be one descriptor track for each thread, we
+      // assume that its tid was reused. So, start a new thread.
+      uint64_t old_uuid = it_and_inserted.first->second;
+      PERFETTO_DCHECK(old_uuid != uuid);  // Every track is only resolved once.
+
+      PERFETTO_DLOG("Detected tid reuse (pid: %" PRIu32 " tid: %" PRIu32
+                    ") from track descriptors (old uuid: %" PRIu64
+                    " new uuid: %" PRIu64 " timestamp: %" PRId64 ")",
+                    *reservation.pid, *reservation.tid, old_uuid, uuid,
+                    reservation.min_timestamp);
+
+      utid = context_->process_tracker->StartNewThread(
+          base::nullopt, *reservation.tid, kNullStringId);
+
+      // Associate the new thread with its process.
+      PERFETTO_CHECK(context_->process_tracker->UpdateThread(
+                         *reservation.tid, *reservation.pid) == utid);
+
+      descriptor_uuids_by_utid_[utid] = uuid;
+    }
+    return InternThreadTrack(utid);
+  }
+
+  if (reservation.pid) {
+    UniquePid upid =
+        context_->process_tracker->GetOrCreateProcess(*reservation.pid);
+    auto it_and_inserted =
+        descriptor_uuids_by_upid_.insert(std::make_pair<>(upid, uuid));
+    if (!it_and_inserted.second) {
+      // We already saw a another track with a different uuid for this process.
+      // Since there should only be one descriptor track for each process, we
+      // assume that its pid was reused. So, start a new process.
+      uint64_t old_uuid = it_and_inserted.first->second;
+      PERFETTO_DCHECK(old_uuid != uuid);  // Every track is only resolved once.
+
+      PERFETTO_DLOG("Detected pid reuse (pid: %" PRIu32
+                    ") from track descriptors (old uuid: %" PRIu64
+                    " new uuid: %" PRIu64 " timestamp: %" PRId64 ")",
+                    *reservation.pid, old_uuid, uuid,
+                    reservation.min_timestamp);
+
+      upid = context_->process_tracker->StartNewProcess(
+          base::nullopt, base::nullopt, *reservation.pid, kNullStringId);
+
+      descriptor_uuids_by_upid_[upid] = uuid;
+    }
+    return InternProcessTrack(upid);
+  }
+
+  base::Optional<TrackId> track_id;
+  if (parent_track_id) {
+    // If parent is a thread track, create another thread-associated track.
+    base::Optional<uint32_t> thread_track_index =
+        context_->storage->thread_track_table().id().IndexOf(*parent_track_id);
+    if (thread_track_index) {
+      auto* thread_tracks = context_->storage->mutable_thread_track_table();
+      tables::ThreadTrackTable::Row row;
+      row.utid = thread_tracks->utid()[*thread_track_index];
+      track_id = thread_tracks->Insert(row);
+    } else {
+      // If parent is a process track, create another process-associated track.
+      base::Optional<uint32_t> process_track_index =
+          context_->storage->process_track_table().id().IndexOf(
+              *parent_track_id);
+      if (process_track_index) {
+        auto* process_tracks = context_->storage->mutable_process_track_table();
+        tables::ProcessTrackTable::Row track;
+        track.upid = process_tracks->upid()[*process_track_index];
+        track_id = process_tracks->Insert(track);
+      }
+    }
+  }
+
+  // Otherwise create a global track.
+  if (!track_id) {
+    tables::TrackTable::Row track;
+    track_id = context_->storage->mutable_track_table()->Insert(track);
+  }
+
+  context_->args_tracker->AddArgsTo(*track_id)
+      .AddArg(source_key_, Variadic::String(descriptor_source_))
+      .AddArg(source_id_key_, Variadic::Integer(static_cast<int64_t>(uuid)));
+  return *track_id;
 }
 
 TrackId TrackTracker::GetOrCreateDefaultDescriptorTrack() {
-  base::Optional<TrackId> opt_track_id =
+  // If the default track was already reserved (e.g. because a producer emitted
+  // a descriptor for it) or created, resolve and return it.
+  base::Optional<TrackId> track_id =
       GetDescriptorTrack(kDefaultDescriptorTrackUuid);
-  if (opt_track_id)
-    return *opt_track_id;
+  if (track_id)
+    return *track_id;
 
-  return UpdateDescriptorTrack(kDefaultDescriptorTrackUuid,
-                               default_descriptor_track_name_);
+  // Otherwise reserve a new track and resolve it.
+  ReserveDescriptorChildTrack(kDefaultDescriptorTrackUuid, /*parent_uuid=*/0);
+  track_id = GetDescriptorTrack(kDefaultDescriptorTrackUuid);
+
+  auto* tracks = context_->storage->mutable_track_table();
+  tracks->mutable_name()->Set(*tracks->id().IndexOf(*track_id),
+                              default_descriptor_track_name_);
+  return *track_id;
 }
 
 TrackId TrackTracker::InternGlobalCounterTrack(StringId name) {
@@ -339,9 +410,6 @@ TrackId TrackTracker::InternCpuCounterTrack(StringId name, uint32_t cpu) {
 
   tables::CpuCounterTrackTable::Row row(name);
   row.cpu = cpu;
-  row.ref = cpu;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefCpuId)]);
 
   TrackId track =
       context_->storage->mutable_cpu_counter_track_table()->Insert(row);
@@ -357,9 +425,6 @@ TrackId TrackTracker::InternThreadCounterTrack(StringId name, UniqueTid utid) {
 
   tables::ThreadCounterTrackTable::Row row(name);
   row.utid = utid;
-  row.ref = utid;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefUtid)]);
 
   TrackId track =
       context_->storage->mutable_thread_counter_track_table()->Insert(row);
@@ -375,9 +440,6 @@ TrackId TrackTracker::InternProcessCounterTrack(StringId name, UniquePid upid) {
 
   tables::ProcessCounterTrackTable::Row row(name);
   row.upid = upid;
-  row.ref = upid;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefUpid)]);
 
   TrackId track =
       context_->storage->mutable_process_counter_track_table()->Insert(row);
@@ -393,9 +455,6 @@ TrackId TrackTracker::InternIrqCounterTrack(StringId name, int32_t irq) {
 
   tables::IrqCounterTrackTable::Row row(name);
   row.irq = irq;
-  row.ref = irq;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefIrq)]);
 
   TrackId track =
       context_->storage->mutable_irq_counter_track_table()->Insert(row);
@@ -412,9 +471,6 @@ TrackId TrackTracker::InternSoftirqCounterTrack(StringId name,
 
   tables::SoftirqCounterTrackTable::Row row(name);
   row.softirq = softirq;
-  row.ref = softirq;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefSoftIrq)]);
 
   TrackId track =
       context_->storage->mutable_softirq_counter_track_table()->Insert(row);
@@ -440,9 +496,6 @@ TrackId TrackTracker::CreateGpuCounterTrack(StringId name,
   row.gpu_id = gpu_id;
   row.description = description;
   row.unit = unit;
-  row.ref = gpu_id;
-  row.ref_type = context_->storage->InternString(
-      GetRefTypeStringMap()[static_cast<size_t>(RefType::kRefGpuId)]);
 
   return context_->storage->mutable_gpu_counter_track_table()->Insert(row);
 }

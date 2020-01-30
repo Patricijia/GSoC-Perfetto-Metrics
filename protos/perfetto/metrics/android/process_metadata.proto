@@ -14,15 +14,35 @@
  * limitations under the License.
  */
 syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
 message AndroidProcessMetadata {
+  // Process name. Usually, cmdline or <package_name>(:<custom_name>)?.
   optional string name = 1;
+
+  // User id under which this process runs.
   optional int64 uid = 2;
-  optional string package_name = 3;
-  optional int64 apk_version_code = 4;
-  optional bool debuggable = 5;
-  optional bool shared_uid = 6;
+
+  // Package metadata from Android package list.
+  message Package {
+    optional string package_name = 1;
+    optional int64 apk_version_code = 2;
+    optional bool debuggable = 3;
+  }
+
+  // Package that this process belongs to.
+  //
+  // If this process shares its uid (see `packages_for_uid` field), the package
+  // is determined based on the process name and package name. If there is no
+  // match this field is empty.
+  optional Package package = 7;
+
+  // All packages using this uid.
+  //
+  // Shared uid documentation:
+  // https://developer.android.com/guide/topics/manifest/manifest-element#uid
+  repeated Package packages_for_uid = 8;
+
+  reserved 3, 4, 5, 6;
 }

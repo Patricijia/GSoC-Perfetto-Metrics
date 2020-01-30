@@ -23,34 +23,24 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
-#include "src/trace_processor/android_logs_table.h"
-#include "src/trace_processor/args_table.h"
-#include "src/trace_processor/counter_values_table.h"
-#include "src/trace_processor/cpu_profile_stack_sample_table.h"
-#include "src/trace_processor/heap_profile_allocation_table.h"
-#include "src/trace_processor/instants_table.h"
-#include "src/trace_processor/metadata_table.h"
-#include "src/trace_processor/process_table.h"
-#include "src/trace_processor/raw_table.h"
+#include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/metadata_tracker.h"
+#include "src/trace_processor/register_additional_modules.h"
 #include "src/trace_processor/sched_slice_table.h"
-#include "src/trace_processor/slice_table.h"
 #include "src/trace_processor/span_join_operator_table.h"
 #include "src/trace_processor/sql_stats_table.h"
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
-#include "src/trace_processor/stack_profile_frame_table.h"
-#include "src/trace_processor/stack_profile_mapping_table.h"
+#include "src/trace_processor/sqlite_experimental_flamegraph_table.h"
+#include "src/trace_processor/sqlite_raw_table.h"
 #include "src/trace_processor/stats_table.h"
-#include "src/trace_processor/thread_table.h"
+#include "src/trace_processor/types/variadic.h"
 #include "src/trace_processor/window_operator_table.h"
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
-#include "src/trace_processor/metrics/descriptors.h"
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql_metrics.h"
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 #include "src/trace_processor/export_json.h"
@@ -180,10 +170,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "SELECT "
                "  *, "
                "  category AS cat, "
-               "  CASE ref_type "
-               "    WHEN 'utid' THEN ref "
-               "    ELSE NULL "
-               "  END AS utid "
+               "  id AS slice_id "
                "FROM internal_slice;",
                0, 0, &error);
   if (error) {
@@ -192,10 +179,11 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 
   sqlite3_exec(db,
-               "CREATE VIEW gpu_slice AS "
+               "CREATE VIEW instants AS "
                "SELECT "
-               "* "
-               "FROM internal_gpu_slice join internal_slice using(slice_id);",
+               "*, "
+               "0.0 as value "
+               "FROM instant;",
                0, 0, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
@@ -207,6 +195,30 @@ void CreateBuiltinViews(sqlite3* db) {
   sqlite3_exec(db,
                "CREATE VIEW slices AS "
                "SELECT * FROM slice;",
+               0, 0, &error);
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+
+  sqlite3_exec(db,
+               "CREATE VIEW thread AS "
+               "SELECT "
+               "id as utid, "
+               "* "
+               "FROM internal_thread;",
+               0, 0, &error);
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+
+  sqlite3_exec(db,
+               "CREATE VIEW process AS "
+               "SELECT "
+               "id as upid, "
+               "* "
+               "FROM internal_process;",
                0, 0, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
@@ -318,7 +330,6 @@ void CreateDemangledNameFunction(sqlite3* db) {
   }
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
                   std::vector<metrics::SqlMetricFile>* sql_metrics) {
@@ -349,12 +360,11 @@ void SetupMetrics(TraceProcessor* tp,
       PERFETTO_ELOG("Error initializing RepeatedField");
   }
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
-
 }  // namespace
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
     : TraceProcessorStorageImpl(cfg) {
+  RegisterAdditionalModules(&context_);
   sqlite3* db = nullptr;
   PERFETTO_CHECK(sqlite3_initialize() == SQLITE_OK);
   PERFETTO_CHECK(sqlite3_open(":memory:", &db) == SQLITE_OK);
@@ -369,33 +379,36 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   CreateHashFunction(db);
   CreateDemangledNameFunction(db);
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
   SetupMetrics(this, *db_, &sql_metrics_);
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
-  ArgsTable::RegisterTable(*db_, context_.storage.get());
-  ProcessTable::RegisterTable(*db_, context_.storage.get());
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-  SchedSliceTable::RegisterTable(*db_, context_.storage.get());
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-  SliceTable::RegisterTable(*db_, context_.storage.get());
-  SqlStatsTable::RegisterTable(*db_, context_.storage.get());
-  ThreadTable::RegisterTable(*db_, context_.storage.get());
-  CounterValuesTable::RegisterTable(*db_, context_.storage.get());
-  SpanJoinOperatorTable::RegisterTable(*db_, context_.storage.get());
-  WindowOperatorTable::RegisterTable(*db_, context_.storage.get());
-  InstantsTable::RegisterTable(*db_, context_.storage.get());
-  StatsTable::RegisterTable(*db_, context_.storage.get());
-  AndroidLogsTable::RegisterTable(*db_, context_.storage.get());
-  RawTable::RegisterTable(*db_, context_.storage.get());
-  HeapProfileAllocationTable::RegisterTable(*db_, context_.storage.get());
-  CpuProfileStackSampleTable::RegisterTable(*db_, context_.storage.get());
-  StackProfileFrameTable::RegisterTable(*db_, context_.storage.get());
-  StackProfileMappingTable::RegisterTable(*db_, context_.storage.get());
-  MetadataTable::RegisterTable(*db_, context_.storage.get());
+  const TraceStorage* storage = context_.storage.get();
+
+  SchedSliceTable::RegisterTable(*db_, storage);
+  SqlStatsTable::RegisterTable(*db_, storage);
+  StatsTable::RegisterTable(*db_, storage);
+
+  // Operator tables.
+  SpanJoinOperatorTable::RegisterTable(*db_, storage);
+  WindowOperatorTable::RegisterTable(*db_, storage);
+
+  // New style tables but with some custom logic.
+  SqliteExperimentalFlamegraphTable::RegisterTable(*db_, &context_);
+  SqliteRawTable::RegisterTable(*db_, context_.storage.get());
 
   // New style db-backed tables.
-  const TraceStorage* storage = context_.storage.get();
+  DbSqliteTable::RegisterTable(*db_, &storage->arg_table(),
+                               storage->arg_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->thread_table(),
+                               storage->thread_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->process_table(),
+                               storage->process_table().table_name());
+
+  DbSqliteTable::RegisterTable(*db_, &storage->slice_table(),
+                               storage->slice_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->instant_table(),
+                               storage->instant_table().table_name());
+  DbSqliteTable::RegisterTable(*db_, &storage->gpu_slice_table(),
+                               storage->gpu_slice_table().table_name());
 
   DbSqliteTable::RegisterTable(*db_, &storage->track_table(),
                                storage->track_table().table_name());
@@ -403,10 +416,11 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
                                storage->thread_track_table().table_name());
   DbSqliteTable::RegisterTable(*db_, &storage->process_track_table(),
                                storage->process_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->gpu_slice_table(),
-                               storage->gpu_slice_table().table_name());
   DbSqliteTable::RegisterTable(*db_, &storage->gpu_track_table(),
                                storage->gpu_track_table().table_name());
+
+  DbSqliteTable::RegisterTable(*db_, &storage->counter_table(),
+                               storage->counter_table().table_name());
 
   DbSqliteTable::RegisterTable(*db_, &storage->counter_track_table(),
                                storage->counter_track_table().table_name());
@@ -435,12 +449,30 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   DbSqliteTable::RegisterTable(*db_, &storage->symbol_table(),
                                storage->symbol_table().table_name());
   DbSqliteTable::RegisterTable(
+      *db_, &storage->heap_profile_allocation_table(),
+      storage->heap_profile_allocation_table().table_name());
+  DbSqliteTable::RegisterTable(
+      *db_, &storage->cpu_profile_stack_sample_table(),
+      storage->cpu_profile_stack_sample_table().table_name());
+  DbSqliteTable::RegisterTable(
       *db_, &storage->stack_profile_callsite_table(),
       storage->stack_profile_callsite_table().table_name());
+  DbSqliteTable::RegisterTable(
+      *db_, &storage->stack_profile_mapping_table(),
+      storage->stack_profile_mapping_table().table_name());
+  DbSqliteTable::RegisterTable(
+      *db_, &storage->stack_profile_frame_table(),
+      storage->stack_profile_frame_table().table_name());
+
+  DbSqliteTable::RegisterTable(*db_, &storage->android_log_table(),
+                               storage->android_log_table().table_name());
 
   DbSqliteTable::RegisterTable(
       *db_, &storage->vulkan_memory_allocations_table(),
       storage->vulkan_memory_allocations_table().table_name());
+
+  DbSqliteTable::RegisterTable(*db_, &storage->metadata_table(),
+                               storage->metadata_table().table_name());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() {
@@ -471,6 +503,10 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 
   TraceProcessorStorageImpl::NotifyEndOfFile();
 
+  SchedEventTracker::GetOrCreate(&context_)->FlushPendingEvents();
+  context_.metadata_tracker->SetMetadata(
+      metadata::trace_size_bytes,
+      Variadic::Integer(static_cast<int64_t>(bytes_parsed_)));
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
 
   // Create a snapshot of all tables and views created so far. This is so later
@@ -504,7 +540,12 @@ size_t TraceProcessorImpl::RestoreInitialTables() {
     auto it = ExecuteQuery(query);
     while (it.Next()) {
     }
-    PERFETTO_CHECK(it.Status().ok());
+    // Index deletion can legitimately fail. If one creates an index "i" on a
+    // table "t" but issues the deletion in the order (t, i), the DROP index i
+    // will fail with "no such index" because deleting the table "t"
+    // automatically deletes all associated indexes.
+    if (!it.Status().ok() && tn.first != "index")
+      PERFETTO_FATAL("%s -> %s", query.c_str(), it.Status().c_message());
   }
   return deletion_list.size();
 }
@@ -541,7 +582,6 @@ void TraceProcessorImpl::InterruptQuery() {
   sqlite3_interrupt(db_.get());
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
                                                 const std::string& sql) {
   std::string stripped_sql;
@@ -621,7 +661,6 @@ util::Status TraceProcessorImpl::ComputeMetric(
   return metrics::ComputeMetrics(this, metric_names, sql_metrics_,
                                  root_descriptor, metrics_proto);
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,
                                            sqlite3* db,
