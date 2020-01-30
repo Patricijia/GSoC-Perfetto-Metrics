@@ -463,17 +463,26 @@ class RowMap {
     }
   }
 
-  template <typename Comparator>
+  template <typename Comparator = bool(uint32_t, uint32_t)>
   void StableSort(std::vector<uint32_t>* out, Comparator c) const {
     switch (mode_) {
       case Mode::kRange:
-        StableSort(out, c, &RowMap::GetRange);
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetRange(a), GetRange(b));
+                         });
         break;
       case Mode::kBitVector:
-        StableSort(out, c, &RowMap::GetBitVector);
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetBitVector(a), GetBitVector(b));
+                         });
         break;
       case Mode::kIndexVector:
-        StableSort(out, c, &RowMap::GetIndexVector);
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetIndexVector(a), GetIndexVector(b));
+                         });
         break;
     }
   }
@@ -609,25 +618,9 @@ class RowMap {
       return;
     }
 
-    // TODO(lalitm): rewrite this to make this a lot more efficient in
-    // future CL.
-    BitVector bv(end_idx_, false);
-
-    // We need the block scoping so the iterator is destroyed before the
-    // BitVector is moved.
-    {
-      auto it = bv.IterateAllBits();
-      if (start_idx_ > 0)
-        it.Skip(start_idx_);
-
-      PERFETTO_DCHECK(it.index() == start_idx_);
-      for (; it; it.Next()) {
-        if (p(it.index())) {
-          it.Set();
-        }
-      }
-    }
-    *this = RowMap(std::move(bv));
+    // Otherwise, create a bitvector which spans the full range using
+    // |p| as the filler for the bits between start and end.
+    *this = RowMap(BitVector::Range(start_idx_, end_idx_, p));
   }
 
   void InsertIntoBitVector(uint32_t row) {
@@ -638,23 +631,15 @@ class RowMap {
     bit_vector_.Set(row);
   }
 
-  template <typename Comparator, typename Indexer>
-  void StableSort(std::vector<uint32_t>* out, Comparator c, Indexer i) const {
-    std::stable_sort(out->begin(), out->end(),
-                     [this, &c, &i](uint32_t a, uint32_t b) {
-                       return c((this->*i)(a), (this->*i)(b));
-                     });
-  }
-
-  uint32_t GetRange(uint32_t idx) const {
+  PERFETTO_ALWAYS_INLINE uint32_t GetRange(uint32_t idx) const {
     PERFETTO_DCHECK(mode_ == Mode::kRange);
     return start_idx_ + idx;
   }
-  uint32_t GetBitVector(uint32_t idx) const {
+  PERFETTO_ALWAYS_INLINE uint32_t GetBitVector(uint32_t idx) const {
     PERFETTO_DCHECK(mode_ == Mode::kBitVector);
     return bit_vector_.IndexOfNthSet(idx);
   }
-  uint32_t GetIndexVector(uint32_t idx) const {
+  PERFETTO_ALWAYS_INLINE uint32_t GetIndexVector(uint32_t idx) const {
     PERFETTO_DCHECK(mode_ == Mode::kIndexVector);
     return index_vector_[idx];
   }
