@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {hex} from 'color-convert';
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
@@ -64,8 +65,9 @@ class TrackShell implements m.ClassComponent<TrackShellAttrs> {
     const dragClass = this.dragging ? `drag` : '';
     const dropClass = this.dropping ? `drop-${this.dropping}` : '';
     const selectedArea = globals.frontendLocalState.selectedArea.area;
-    const markSelectedClass =
-        selectedArea && selectedArea.tracks.includes(attrs.trackState.id) ?
+    const markSelectedClass = selectedArea &&
+            selectedArea.tracks.includes(attrs.trackState.id) &&
+            !globals.frontendLocalState.selectingArea ?
         'selected' :
         '';
     return m(
@@ -253,8 +255,25 @@ export class TrackPanel extends Panel<TrackPanelAttrs> {
     return m(TrackComponent, {trackState: this.trackState, track: this.track});
   }
 
+  highlightIfTrackSelected(ctx: CanvasRenderingContext2D, size: PanelSize) {
+    const localState = globals.frontendLocalState;
+    const area = localState.selectedArea.area;
+    if (area && area.tracks.includes(this.trackState.id)) {
+      const timeScale = localState.timeScale;
+      ctx.fillStyle = '#ebeef9';
+      ctx.fillRect(
+          timeScale.timeToPx(area.startSec) + TRACK_SHELL_WIDTH,
+          0,
+          timeScale.deltaTimeToPx(area.endSec - area.startSec),
+          size.height);
+    }
+  }
+
   renderCanvas(ctx: CanvasRenderingContext2D, size: PanelSize) {
     ctx.save();
+
+    this.highlightIfTrackSelected(ctx, size);
+
     drawGridLines(
         ctx,
         globals.frontendLocalState.timeScale,
@@ -286,7 +305,8 @@ export class TrackPanel extends Panel<TrackPanelAttrs> {
                              size.height,
                              `rgb(52,69,150)`);
     }
-    if (localState.selectedArea.area !== undefined) {
+    if (localState.selectedArea.area !== undefined &&
+        !globals.frontendLocalState.selectingArea) {
       drawVerticalSelection(
           ctx,
           localState.timeScale,
@@ -303,7 +323,16 @@ export class TrackPanel extends Panel<TrackPanelAttrs> {
                                note.timestamp,
                                size.height,
                                note.color);
+        if (note.noteType === 'AREA') {
+          drawVerticalLineAtTime(
+              ctx,
+              localState.timeScale,
+              note.area.endSec,
+              size.height,
+              note.color);
+        }
       }
+
       if (globals.state.currentSelection.kind === 'SLICE' &&
           globals.sliceDetails.wakeupTs !== undefined) {
         drawVerticalLineAtTime(
@@ -312,6 +341,28 @@ export class TrackPanel extends Panel<TrackPanelAttrs> {
             globals.sliceDetails.wakeupTs,
             size.height,
             `black`);
+      }
+    }
+    // All marked areas should have semi-transparent vertical lines
+    // marking the start and end.
+    for (const note of Object.values(globals.state.notes)) {
+      if (note.noteType === 'AREA') {
+        const transparentNoteColor =
+            'rgba(' + hex.rgb(note.color.substr(1)).toString() + ', 0.65)';
+        drawVerticalLineAtTime(
+            ctx,
+            localState.timeScale,
+            note.area.startSec,
+            size.height,
+            transparentNoteColor,
+            1);
+        drawVerticalLineAtTime(
+            ctx,
+            localState.timeScale,
+            note.area.endSec,
+            size.height,
+            transparentNoteColor,
+            1);
       }
     }
   }

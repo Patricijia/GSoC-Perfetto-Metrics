@@ -114,7 +114,7 @@ namespace stats {
   F(heap_graph_invalid_string_id,             kIndexed, kError,    kTrace),    \
   F(heap_graph_non_finalized_graph,           kSingle,  kError,    kTrace),    \
   F(heap_graph_malformed_packet,              kIndexed, kError,    kTrace),    \
-  F(heap_graph_missing_packet,                kIndexed, kDataLoss, kTrace),    \
+  F(heap_graph_missing_packet,                kIndexed, kError,    kTrace),    \
   F(heapprofd_buffer_corrupted,               kIndexed, kError,    kTrace),    \
   F(heapprofd_buffer_overran,                 kIndexed, kDataLoss, kTrace),    \
   F(heapprofd_client_disconnected,            kIndexed, kInfo,     kTrace),    \
@@ -140,7 +140,9 @@ enum Type {
 enum Severity {
   kInfo,      // Diagnostic counters
   kDataLoss,  // Correct operation that still resulted in data loss
-  kError      // If any kError counter is > 0 the UI will raise an error
+  kError      // If any kError counter is > 0 trace_processor_shell will
+              // raise an error. This is *not* surfaced in the web UI.
+              // TODO(b/148587181): Surface these errors in the UI.
 };
 
 enum Source {
