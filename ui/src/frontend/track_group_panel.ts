@@ -37,6 +37,7 @@ import {
 
 interface Attrs {
   trackGroupId: string;
+  selectable: boolean;
 }
 
 export class TrackGroupPanel extends Panel<Attrs> {
@@ -169,14 +170,6 @@ export class TrackGroupPanel extends Panel<Attrs> {
                             localState.hoveredTimestamp,
                             size.height,
                             `#aaa`);
-    }
-    // Draw vertical line when shift is pressed.
-    if (localState.showTimeSelectPreview) {
-      drawVerticalLineAtTime(ctx,
-                            localState.timeScale,
-                            localState.hoveredTimestamp,
-                            size.height,
-                            `rgb(52,69,150)`);
     }
     if (localState.selectedArea.area !== undefined &&
         !globals.frontendLocalState.selectingArea) {

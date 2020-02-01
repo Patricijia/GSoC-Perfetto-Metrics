@@ -73,8 +73,10 @@ void TableSortArgs(benchmark::internal::Benchmark* b) {
 
 using perfetto::trace_processor::ChildTestTable;
 using perfetto::trace_processor::RootTestTable;
+using perfetto::trace_processor::RowMap;
 using perfetto::trace_processor::SqlValue;
 using perfetto::trace_processor::StringPool;
+using perfetto::trace_processor::Table;
 
 static void BM_TableInsert(benchmark::State& state) {
   StringPool pool;
@@ -108,6 +110,30 @@ static void BM_TableIteratorChild(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_TableIteratorChild)->Apply(TableFilterArgs);
+
+static void BM_TableFilterAndSortRoot(benchmark::State& state) {
+  StringPool pool;
+  RootTestTable root(&pool, nullptr);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+  uint32_t partitions = 8;
+
+  std::minstd_rand0 rnd_engine(45);
+  for (uint32_t i = 0; i < size; ++i) {
+    RootTestTable::Row row;
+    row.root_non_null = rnd_engine() % partitions;
+    row.root_non_null_2 = static_cast<uint32_t>(rnd_engine());
+    root.Insert(row);
+  }
+
+  for (auto _ : state) {
+    Table filtered = root.Filter({root.root_non_null().eq(5)},
+                                 RowMap::OptimizeFor::kLookupSpeed);
+    benchmark::DoNotOptimize(
+        filtered.Sort({root.root_non_null_2().ascending()}));
+  }
+}
+BENCHMARK(BM_TableFilterAndSortRoot)->Apply(TableFilterArgs);
 
 static void BM_TableFilterRootId(benchmark::State& state) {
   StringPool pool;

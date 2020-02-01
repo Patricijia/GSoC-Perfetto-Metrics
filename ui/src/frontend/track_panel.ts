@@ -239,6 +239,7 @@ export class TrackButton implements m.ClassComponent<TrackButtonAttrs> {
 
 interface TrackPanelAttrs {
   id: string;
+  selectable: boolean;
 }
 
 export class TrackPanel extends Panel<TrackPanelAttrs> {
@@ -296,14 +297,6 @@ export class TrackPanel extends Panel<TrackPanelAttrs> {
           localState.hoveredTimestamp,
           size.height,
           `#aaa`);
-    }
-    // Draw vertical line when shift is pressed.
-    if (localState.showTimeSelectPreview) {
-      drawVerticalLineAtTime(ctx,
-                             localState.timeScale,
-                             localState.hoveredTimestamp,
-                             size.height,
-                             `rgb(52,69,150)`);
     }
     if (localState.selectedArea.area !== undefined &&
         !globals.frontendLocalState.selectingArea) {
