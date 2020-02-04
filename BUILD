@@ -1215,6 +1215,8 @@ filegroup(
     name = "src_tracing_ipc_common",
     srcs = [
         "src/tracing/ipc/default_socket.cc",
+        "src/tracing/ipc/memfd.cc",
+        "src/tracing/ipc/memfd.h",
         "src/tracing/ipc/posix_shared_memory.cc",
         "src/tracing/ipc/posix_shared_memory.h",
     ],
@@ -1236,6 +1238,7 @@ filegroup(
         "src/tracing/tracing.cc",
         "src/tracing/track.cc",
         "src/tracing/track_event_category_registry.cc",
+        "src/tracing/track_event_legacy.cc",
         "src/tracing/virtual_destructors.cc",
     ],
 )
@@ -2400,6 +2403,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto",
         "protos/perfetto/trace/track_event/chrome_histogram_sample.proto",
         "protos/perfetto/trace/track_event/chrome_keyed_service.proto",
+        "protos/perfetto/trace/track_event/chrome_latency_info.proto",
         "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
         "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
         "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
