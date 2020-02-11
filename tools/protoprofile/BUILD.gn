@@ -26,14 +26,10 @@ source_set("common") {
   testonly = true
   public_deps = [
     "../../gn:default_deps",
-    "../../protos/third_party/pprof:lite",
+    "../../protos/third_party/pprof:zero",
     "../../src/base",
     "../../src/protozero",
   ]
-  sources = [
-    "main.cc",
-  ]
-  deps = [
-    "../../gn:protobuf_full",
-  ]
+  sources = [ "main.cc" ]
+  deps = [ "../../gn:protobuf_full" ]
 }

@@ -15,7 +15,6 @@
  */
 
 syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
@@ -28,7 +27,7 @@ message JavaHprofConfig {
     optional uint32 dump_phase_ms = 1;
     // ms to wait between following dumps.
     optional uint32 dump_interval_ms = 2;
-  };
+  }
 
   // This input is normalized in the following way: if it contains slashes,
   // everything up to the last slash is discarded. If it contains "@",

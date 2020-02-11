@@ -18,11 +18,11 @@ import {assertExists} from '../base/logging';
 import {TimeSpan, timeToString} from '../common/time';
 
 import {hueForCpu} from './colorizer';
+import {TRACK_SHELL_WIDTH} from './css_constants';
 import {DragGestureHandler} from './drag_gesture_handler';
 import {globals} from './globals';
 import {Panel, PanelSize} from './panel';
 import {TimeScale} from './time_scale';
-import {TRACK_SHELL_WIDTH} from './track_constants';
 
 export class OverviewTimelinePanel extends Panel {
   private width = 0;
@@ -64,7 +64,7 @@ export class OverviewTimelinePanel extends Panel {
     const tracksHeight = size.height - headerHeight;
 
     // Draw time labels on the top header.
-    ctx.font = '10px Google Sans';
+    ctx.font = '10px Roboto Condensed';
     ctx.fillStyle = '#999';
     for (let i = 0; i < 100; i++) {
       const xPos =

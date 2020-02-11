@@ -39,7 +39,6 @@ using ::perfetto::protos::pbzero::ProfilePacket;
 
 constexpr char kHeapprofdDataSource[] = "android.heapprofd";
 constexpr size_t kUnwinderThreads = 5;
-constexpr int kHeapprofdSignal = 36;
 
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
@@ -48,6 +47,10 @@ constexpr uint32_t kChildModeWatchdogPeriodMs = 10 * 1000;
 
 constexpr uint64_t kDefaultShmemSize = 8 * 1048576;  // ~8 MB
 constexpr uint64_t kMaxShmemSize = 500 * 1048576;    // ~500 MB
+
+// Constants specified by bionic, hardcoded here for simplicity.
+constexpr int kProfilingSignal = __SIGRTMIN + 4;
+constexpr int kHeapprofdSignalValue = 0;
 
 std::vector<UnwindingWorker> MakeUnwindingWorkers(HeapprofdProducer* delegate,
                                                   size_t n) {
@@ -137,7 +140,7 @@ void HeapprofdProducer::AdoptTargetProcessSocket() {
   PERFETTO_DCHECK(mode_ == HeapprofdMode::kChild);
   auto socket = base::UnixSocket::AdoptConnected(
       std::move(inherited_fd_), &socket_delegate_, task_runner_,
-      base::SockType::kStream);
+      base::SockFamily::kUnix, base::SockType::kStream);
 
   HandleClientConnection(std::move(socket), target_process_);
 }
@@ -296,7 +299,7 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   }
 
   HeapprofdConfig heapprofd_config;
-  heapprofd_config.ParseRawProto(ds_config.heapprofd_config_raw());
+  heapprofd_config.ParseFromString(ds_config.heapprofd_config_raw());
 
   if (heapprofd_config.all() && !heapprofd_config.pid().empty())
     PERFETTO_ELOG("No point setting all and pid");
@@ -351,11 +354,14 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   auto& cli_config = data_source.client_configuration;
   cli_config.interval = heapprofd_config.sampling_interval_bytes();
   cli_config.block_client = heapprofd_config.block_client();
+  cli_config.block_client_timeout_us =
+      heapprofd_config.block_client_timeout_us();
   data_source.config = heapprofd_config;
   data_source.normalized_cmdlines = std::move(normalized_cmdlines);
   data_source.stop_timeout_ms = ds_config.stop_timeout_ms();
 
-  WriteFixedInternings(data_source.trace_writer.get());
+  InterningOutputTracker::WriteFixedInterningsPacket(
+      data_source.trace_writer.get());
   data_sources_.emplace(id, std::move(data_source));
   PERFETTO_DLOG("Set up data source.");
 
@@ -404,9 +410,12 @@ void HeapprofdProducer::SignalRunningProcesses(DataSource* data_source) {
       continue;
     }
 
-    PERFETTO_DLOG("Sending %d to %d", kHeapprofdSignal, pid);
-    if (kill(pid, kHeapprofdSignal) != 0) {
-      PERFETTO_DPLOG("kill");
+    PERFETTO_DLOG("Sending signal: %d (si_value: %d) to pid: %d",
+                  kProfilingSignal, kHeapprofdSignalValue, pid);
+    union sigval signal_value;
+    signal_value.sival_int = kHeapprofdSignalValue;
+    if (sigqueue(pid, kProfilingSignal, signal_value) != 0) {
+      PERFETTO_DPLOG("sigqueue");
     }
     ++pid_it;
   }
@@ -610,7 +619,6 @@ bool HeapprofdProducer::DumpProcessesInDataSource(DataSourceInstanceID id) {
   }
   DataSource& data_source = it->second;
 
-
   for (std::pair<const pid_t, ProcessState>& pid_and_process_state :
        data_source.process_states) {
     pid_t pid = pid_and_process_state.first;
@@ -749,9 +757,13 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     PERFETTO_DLOG("%d: Received FDs.", self->peer_pid());
     int raw_fd = pending_process.shmem.fd();
     // TODO(fmayer): Full buffer could deadlock us here.
-    self->Send(&data_source.client_configuration,
-               sizeof(data_source.client_configuration), &raw_fd, 1,
-               base::UnixSocket::BlockingMode::kBlocking);
+    if (!self->Send(&data_source.client_configuration,
+                    sizeof(data_source.client_configuration), &raw_fd, 1)) {
+      // If Send fails, the socket will have been Shutdown, and the raw socket
+      // closed.
+      producer_->pending_processes_.erase(it);
+      return;
+    }
 
     UnwindingWorker::HandoffData handoff_data;
     handoff_data.data_source_instance_id =

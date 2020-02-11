@@ -14,8 +14,9 @@
  * limitations under the License.
  */
 
+// For bazel build.
 #include "perfetto/base/build_config.h"
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON_IMPORT)
 
 #include "src/trace_processor/importers/json/json_trace_tokenizer.h"
 
@@ -23,7 +24,7 @@
 #include <json/value.h>
 
 #include "src/trace_processor/importers/json/json_trace_utils.h"
-#include "src/trace_processor/stats.h"
+#include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
 
@@ -151,4 +152,4 @@ util::Status JsonTraceTokenizer::Parse(std::unique_ptr<uint8_t[]> data,
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_JSON_IMPORT)

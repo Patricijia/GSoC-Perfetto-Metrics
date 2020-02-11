@@ -21,8 +21,10 @@
 
 #include "src/trace_processor/trace_processor_context.h"
 
+#include "perfetto/base/logging.h"
+#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/string_view.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -126,12 +128,8 @@ inline SystraceParseResult ParseSystraceTracePoint(base::StringView str,
     tgid_length++;
   }
 
-  if (tgid_length == 0) {
-    out->tgid = 0;
-  } else {
-    std::string tgid_str(s + 2, tgid_length);
-    out->tgid = static_cast<uint32_t>(std::stoi(tgid_str.c_str()));
-  }
+  std::string tgid_str(s + 2, tgid_length);
+  out->tgid = base::StringToUInt32(tgid_str).value_or(0);
 
   out->phase = ph;
   switch (ph) {
@@ -165,8 +163,14 @@ inline SystraceParseResult ParseSystraceTracePoint(base::StringView str,
       size_t value_len = len - value_index;
       if (value_len == 0)
         return SystraceParseResult::kFailure;
+      if (*(s + value_index + value_len - 1) == '\n')
+        value_len--;
       std::string value_str(s + value_index, value_len);
-      out->value = std::stod(value_str.c_str());
+      base::Optional<double> maybe_value = base::StringToDouble(value_str);
+      if (!maybe_value.has_value()) {
+        return SystraceParseResult::kFailure;
+      }
+      out->value = maybe_value.value();
       return SystraceParseResult::kSuccess;
     }
     default:
@@ -183,11 +187,25 @@ inline bool operator==(const SystraceTracePoint& x,
 
 }  // namespace systrace_utils
 
-class SystraceParser {
+class SystraceParser : public Destructible {
  public:
-  explicit SystraceParser(TraceProcessorContext*);
+  static SystraceParser* GetOrCreate(TraceProcessorContext* context) {
+    if (!context->systrace_parser) {
+      context->systrace_parser.reset(new SystraceParser(context));
+    }
+    return static_cast<SystraceParser*>(context->systrace_parser.get());
+  }
+  ~SystraceParser() override;
 
   void ParsePrintEvent(int64_t ts, uint32_t pid, base::StringView event);
+
+  void ParseSdeTracingMarkWrite(int64_t ts,
+                                uint32_t pid,
+                                char trace_type,
+                                bool trace_begin,
+                                base::StringView trace_name,
+                                uint32_t tgid,
+                                int64_t value);
 
   void ParseZeroEvent(int64_t ts,
                       uint32_t pid,
@@ -197,6 +215,7 @@ class SystraceParser {
                       int64_t value);
 
  private:
+  explicit SystraceParser(TraceProcessorContext*);
   void ParseSystracePoint(int64_t ts,
                           uint32_t pid,
                           systrace_utils::SystraceTracePoint event);

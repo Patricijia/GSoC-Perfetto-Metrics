@@ -32,8 +32,8 @@ import {
   SummaryData
 } from './common';
 
-const MARGIN_TOP = 5;
-const RECT_HEIGHT = 30;
+const MARGIN_TOP = 3;
+const RECT_HEIGHT = 24;
 const TRACK_HEIGHT = MARGIN_TOP * 2 + RECT_HEIGHT;
 const SUMMARY_HEIGHT = TRACK_HEIGHT - MARGIN_TOP;
 
@@ -112,7 +112,7 @@ class CpuSliceTrack extends Track<Config, Data> {
     assertTrue(data.starts.length === data.utids.length);
 
     ctx.textAlign = 'center';
-    ctx.font = '12px Google Sans';
+    ctx.font = '12px Roboto Condensed';
     const charWidth = ctx.measureText('dbpqaouk').width / 8;
 
     for (let i = 0; i < data.starts.length; i++) {
@@ -171,11 +171,11 @@ class CpuSliceTrack extends Track<Config, Data> {
       subTitle = cropText(subTitle, charWidth, rectWidth);
       const rectXCenter = rectStart + rectWidth / 2;
       ctx.fillStyle = '#fff';
-      ctx.font = '12px Google Sans';
-      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 3);
+      ctx.font = '12px Roboto Condensed';
+      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 1);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-      ctx.font = '10px Google Sans';
-      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 11);
+      ctx.font = '10px Roboto Condensed';
+      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 9);
     }
 
     const selection = globals.state.currentSelection;
@@ -241,27 +241,14 @@ class CpuSliceTrack extends Track<Config, Data> {
     }
 
     const hoveredThread = globals.threads.get(this.utidHoveredInThisTrack);
-    if (hoveredThread !== undefined) {
-      let line1 = '';
-      let line2 = '';
+    if (hoveredThread !== undefined && this.mouseXpos !== undefined) {
+      const tidText = `T: ${hoveredThread.threadName} [${hoveredThread.tid}]`;
       if (hoveredThread.pid) {
-        line1 = `P: ${hoveredThread.procName} [${hoveredThread.pid}]`;
-        line2 = `T: ${hoveredThread.threadName} [${hoveredThread.tid}]`;
+        const pidText = `P: ${hoveredThread.procName} [${hoveredThread.pid}]`;
+        this.drawTrackHoverTooltip(ctx, this.mouseXpos, pidText, tidText);
       } else {
-        line1 = `T: ${hoveredThread.threadName} [${hoveredThread.tid}]`;
+        this.drawTrackHoverTooltip(ctx, this.mouseXpos, tidText);
       }
-
-      ctx.font = '10px Google Sans';
-      const line1Width = ctx.measureText(line1).width;
-      const line2Width = ctx.measureText(line2).width;
-      const width = Math.max(line1Width, line2Width);
-
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.9)';
-      ctx.fillRect(this.mouseXpos!, MARGIN_TOP, width + 16, RECT_HEIGHT);
-      ctx.fillStyle = 'hsl(200, 50%, 40%)';
-      ctx.textAlign = 'left';
-      ctx.fillText(line1, this.mouseXpos! + 8, 18);
-      ctx.fillText(line2, this.mouseXpos! + 8, 28);
     }
   }
 
@@ -307,7 +294,8 @@ class CpuSliceTrack extends Track<Config, Data> {
     const index = search(data.starts, time);
     const id = index === -1 ? undefined : data.ids[index];
     if (!id || this.utidHoveredInThisTrack === -1) return false;
-    globals.makeSelection(Actions.selectSlice({id}));
+    globals.makeSelection(
+        Actions.selectSlice({id, trackId: this.trackState.id}));
     return true;
   }
 }

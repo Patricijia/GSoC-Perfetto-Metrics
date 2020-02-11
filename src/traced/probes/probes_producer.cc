@@ -25,6 +25,7 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/base/watchdog.h"
 #include "perfetto/ext/base/weak_ptr.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
@@ -56,6 +57,9 @@ constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
 
 // Should be larger than FtraceController::kControllerFlushTimeoutMs.
 constexpr uint32_t kFlushTimeoutMs = 1000;
+
+constexpr size_t kTracingSharedMemSizeHintBytes = 1024 * 1024;
+constexpr size_t kTracingSharedMemPageSizeHintBytes = 32 * 1024;
 
 constexpr char kFtraceSourceName[] = "linux.ftrace";
 constexpr char kProcessStatsSourceName[] = "linux.process_stats";
@@ -252,7 +256,7 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateFtraceDataSource(
   PERFETTO_LOG("Ftrace setup (target_buf=%" PRIu32 ")", config.target_buffer());
   const BufferID buffer_id = static_cast<BufferID>(config.target_buffer());
   FtraceConfig ftrace_config;
-  ftrace_config.ParseRawProto(config.ftrace_config_raw());
+  ftrace_config.ParseFromString(config.ftrace_config_raw());
   std::unique_ptr<FtraceDataSource> data_source(new FtraceDataSource(
       ftrace_->GetWeakPtr(), session_id, std::move(ftrace_config),
       endpoint_->CreateTraceWriter(buffer_id)));
@@ -359,7 +363,14 @@ void ProbesProducer::StopDataSource(DataSourceInstanceID id) {
   watchdogs_.erase(id);
 }
 
-void ProbesProducer::OnTracingSetup() {}
+void ProbesProducer::OnTracingSetup() {
+  // shared_memory() can be null in test environments when running in-process.
+  if (endpoint_->shared_memory()) {
+    base::Watchdog::GetInstance()->SetMemoryLimit(
+        endpoint_->shared_memory()->size() + base::kWatchdogDefaultMemorySlack,
+        base::kWatchdogDefaultMemoryWindow);
+  }
+}
 
 void ProbesProducer::Flush(FlushRequestID flush_request_id,
                            const DataSourceInstanceID* data_source_ids,
@@ -521,7 +532,9 @@ void ProbesProducer::Connect() {
   PERFETTO_DCHECK(state_ == kNotConnected);
   state_ = kConnecting;
   endpoint_ = ProducerIPCClient::Connect(
-      socket_name_, this, "perfetto.traced_probes", task_runner_);
+      socket_name_, this, "perfetto.traced_probes", task_runner_,
+      TracingService::ProducerSMBScrapingMode::kDisabled,
+      kTracingSharedMemSizeHintBytes, kTracingSharedMemPageSizeHintBytes);
 }
 
 void ProbesProducer::IncreaseConnectionBackoff() {

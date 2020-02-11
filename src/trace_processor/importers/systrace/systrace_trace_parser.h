@@ -21,8 +21,8 @@
 #include <regex>
 
 #include "src/trace_processor/chunked_trace_reader.h"
+#include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -39,6 +39,7 @@ class SystraceTraceParser : public ChunkedTraceReader {
   enum ParseState {
     kBeforeParse,
     kHtmlBeforeSystrace,
+    kTraceDataSection,
     kSystrace,
     kEndOfSystrace,
   };
@@ -46,8 +47,9 @@ class SystraceTraceParser : public ChunkedTraceReader {
   util::Status ParseSingleSystraceEvent(const std::string& buffer);
 
   TraceProcessorContext* const context_;
-  const StringId sched_wakeup_name_id_ = 0;
-  const StringId cpu_idle_name_id_ = 0;
+  const StringId sched_wakeup_name_id_ = kNullStringId;
+  const StringId cpu_idle_name_id_ = kNullStringId;
+  const std::regex line_matcher_;
 
   ParseState state_ = ParseState::kBeforeParse;
 

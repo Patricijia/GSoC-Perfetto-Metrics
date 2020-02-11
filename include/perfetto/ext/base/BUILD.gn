@@ -28,7 +28,6 @@ source_set("base") {
     "optional.h",
     "paged_memory.h",
     "pipe.h",
-    "proc_utils.h",
     "scoped_file.h",
     "small_set.h",
     "string_splitter.h",
@@ -39,7 +38,6 @@ source_set("base") {
     "thread_annotations.h",
     "thread_checker.h",
     "thread_task_runner.h",
-    "thread_utils.h",
     "unix_task_runner.h",
     "utils.h",
     "uuid.h",
@@ -53,7 +51,5 @@ source_set("base") {
     sources += [ "unix_socket.h" ]
   }
   public_configs = [ "../../../../gn:asan_instrumentation" ]
-  public_deps = [
-    "../../base",
-  ]
+  public_deps = [ "../../base" ]
 }

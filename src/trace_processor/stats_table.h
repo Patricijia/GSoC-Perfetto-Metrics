@@ -21,8 +21,8 @@
 #include <memory>
 
 #include "src/trace_processor/sqlite/sqlite_table.h"
-#include "src/trace_processor/stats.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/stats.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -38,7 +38,9 @@ class StatsTable : public SqliteTable {
     Cursor(StatsTable*);
 
     // Implementation of SqliteTable::Cursor.
-    int Filter(const QueryConstraints&, sqlite3_value**) override;
+    int Filter(const QueryConstraints&,
+               sqlite3_value**,
+               FilterHistory) override;
     int Next() override;
     int Eof() override;
     int Column(sqlite3_context*, int N) override;

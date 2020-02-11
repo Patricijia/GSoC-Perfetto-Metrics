@@ -23,7 +23,7 @@
 #include <numeric>
 
 #include "src/trace_processor/sqlite/sqlite_utils.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -57,7 +57,7 @@ std::unique_ptr<SqliteTable::Cursor> SqlStatsTable::CreateCursor() {
 }
 
 int SqlStatsTable::BestIndex(const QueryConstraints&, BestIndexInfo* info) {
-  info->order_by_consumed = false;  // Delegate sorting to SQLite.
+  info->sqlite_omit_order_by = true;
   return SQLITE_OK;
 }
 
@@ -66,7 +66,9 @@ SqlStatsTable::Cursor::Cursor(SqlStatsTable* table)
 
 SqlStatsTable::Cursor::~Cursor() = default;
 
-int SqlStatsTable::Cursor::Filter(const QueryConstraints&, sqlite3_value**) {
+int SqlStatsTable::Cursor::Filter(const QueryConstraints&,
+                                  sqlite3_value**,
+                                  FilterHistory) {
   *this = Cursor(table_);
   num_rows_ = storage_->sql_stats().size();
   return SQLITE_OK;

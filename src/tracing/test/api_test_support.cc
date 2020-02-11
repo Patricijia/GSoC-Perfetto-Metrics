@@ -16,13 +16,23 @@
 
 #include "src/tracing/test/api_test_support.h"
 
-#include "perfetto/ext/base/proc_utils.h"
+#include "perfetto/base/proc_utils.h"
+#include "perfetto/base/time.h"
 
 namespace perfetto {
 namespace test {
 
 int32_t GetCurrentProcessId() {
   return static_cast<int32_t>(base::GetProcessId());
+}
+
+uint64_t GetTraceTimeNs() {
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  return static_cast<uint64_t>(perfetto::base::GetBootTimeNs().count());
+#else
+  return static_cast<uint64_t>(perfetto::base::GetWallTimeNs().count());
+#endif
 }
 
 }  // namespace test

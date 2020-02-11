@@ -21,7 +21,7 @@
 
 #include <inttypes.h>
 
-#include "src/trace_processor/stats.h"
+#include "src/trace_processor/storage/stats.h"
 
 #include "src/trace_processor/syscalls_aarch32.h"
 #include "src/trace_processor/syscalls_aarch64.h"
@@ -83,7 +83,7 @@ void SyscallTracker::SetArchitecture(Architecture arch) {
   }
 
   for (size_t i = 0; i < kMaxSyscalls; i++) {
-    StringId id = 0;
+    StringId id = kNullStringId;
     if (i < num_syscalls && syscall_table[i] && *syscall_table[i]) {
       const char* name = syscall_table[i];
       id = context_->storage->InternString(name);

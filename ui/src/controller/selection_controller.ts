@@ -14,12 +14,7 @@
 
 import {Engine} from '../common/engine';
 import {fromNs, toNs} from '../common/time';
-import {
-  CounterDetails,
-  HeapProfileDetails,
-  SliceDetails
-} from '../frontend/globals';
-
+import {CounterDetails, SliceDetails} from '../frontend/globals';
 import {Controller} from './controller';
 import {globals} from './globals';
 
@@ -42,7 +37,7 @@ export class SelectionController extends Controller<'main'> {
     // TODO(taylori): Ideally thread_state should not be special cased, it
     // should have some form of id like everything else.
     if (selection.kind === 'THREAD_STATE') {
-      const sqlQuery = `SELECT row_id FROM sched WHERE utid = ${selection.utid}
+      const sqlQuery = `SELECT id FROM sched WHERE utid = ${selection.utid}
                         and ts = ${toNs(selection.ts)}`;
       this.args.engine.query(sqlQuery).then(result => {
         const id = result.columns[0].longValues![0] as number;
@@ -65,18 +60,7 @@ export class SelectionController extends Controller<'main'> {
 
     if (selectedId === undefined) return;
 
-    if (selection.kind === 'HEAP_PROFILE') {
-      const selected: HeapProfileDetails = {};
-      const ts = selection.ts;
-      const upid = selection.upid;
-      this.heapDumpDetails(ts, upid).then(results => {
-        if (results !== undefined && selection &&
-            selection.kind === selectedKind && selection.id === selectedId) {
-          Object.assign(selected, results);
-          globals.publish('HeapDumpDetails', selected);
-        }
-      });
-    } else if (selection.kind === 'COUNTER') {
+    if (selection.kind === 'COUNTER') {
       const selected: CounterDetails = {};
       this.counterDetails(selection.leftTs, selection.rightTs, selection.id)
           .then(results => {
@@ -117,7 +101,7 @@ export class SelectionController extends Controller<'main'> {
 
   async sliceDetails(id: number) {
     const sqlQuery = `SELECT ts, dur, priority, end_state, utid, cpu FROM sched
-    WHERE row_id = ${id}`;
+    WHERE id = ${id}`;
     this.args.engine.query(sqlQuery).then(result => {
       // Check selection is still the same on completion of query.
       const selection = globals.state.currentSelection;
@@ -139,40 +123,16 @@ export class SelectionController extends Controller<'main'> {
     });
   }
 
-  async heapDumpDetails(ts: number, upid: number) {
-    // Collecting data for more information about heap profile, such as:
-    // total memory allocated, memory that is allocated and not freed.
-    const pidValue = await this.args.engine.query(
-        `select pid from process where upid = ${upid}`);
-    const pid = pidValue.columns[0].longValues![0];
-    const allocatedMemory = await this.args.engine.query(
-        `select sum(size) from heap_profile_allocation where ts <= ${
-            ts} and size > 0 and upid = ${upid}`);
-    const allocated = allocatedMemory.columns[0].longValues![0];
-    const allocatedNotFreedMemory = await this.args.engine.query(
-        `select sum(size) from heap_profile_allocation where ts <= ${
-            ts} and upid = ${upid}`);
-    const allocatedNotFreed = allocatedNotFreedMemory.columns[0].longValues![0];
-    const startTime = fromNs(ts) - globals.state.traceTime.startSec;
-    return {
-      ts: startTime,
-      allocated,
-      allocatedNotFreed,
-      tsNs: ts,
-      pid,
-    };
-  }
-
   async counterDetails(ts: number, rightTs: number, id: number) {
     const counter = await this.args.engine.query(
-        `SELECT value FROM counter_values WHERE ts = ${ts} AND counter_id = ${
-            id}`);
+        `SELECT value, track_id FROM counter WHERE id = ${id}`);
     const value = counter.columns[0].doubleValues![0];
+    const trackId = counter.columns[1].longValues![0];
     // Finding previous value. If there isn't previous one, it will return 0 for
     // ts and value.
     const previous = await this.args.engine.query(
-        `SELECT MAX(ts), value FROM counter_values WHERE ts < ${
-            ts} and counter_id = ${id}`);
+        `SELECT MAX(ts), value FROM counter WHERE ts < ${ts} and track_id = ${
+            trackId}`);
     const previousValue = previous.columns[1].doubleValues![0];
     const endTs =
         rightTs !== -1 ? rightTs : toNs(globals.state.traceTime.endSec);

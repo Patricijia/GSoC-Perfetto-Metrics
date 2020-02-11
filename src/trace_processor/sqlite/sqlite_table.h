@@ -55,7 +55,9 @@ class SqliteTable : public sqlite3_vtab {
     size_t index() const { return index_; }
     const std::string& name() const { return name_; }
     SqlValue::Type type() const { return type_; }
+
     bool hidden() const { return hidden_; }
+    void set_hidden(bool hidden) { hidden_ = hidden; }
 
    private:
     size_t index_ = 0;
@@ -74,13 +76,28 @@ class SqliteTable : public sqlite3_vtab {
   // API for subclasses to implement.
   class Cursor : public sqlite3_vtab_cursor {
    public:
+    // Enum for the history of calls to Filter.
+    enum class FilterHistory : uint32_t {
+      // Indicates that constraint set passed is the different to the
+      // previous Filter call.
+      kDifferent = 0,
+
+      // Indicates that the constraint set passed is the same as the previous
+      // Filter call.
+      // This can be useful for subclasses to perform optimizations on repeated
+      // nested subqueries.
+      kSame = 1,
+    };
+
     Cursor(SqliteTable* table);
     virtual ~Cursor();
 
     // Methods to be implemented by derived table classes.
 
     // Called to intialise the cursor with the constraints of the query.
-    virtual int Filter(const QueryConstraints& qc, sqlite3_value**) = 0;
+    virtual int Filter(const QueryConstraints& qc,
+                       sqlite3_value**,
+                       FilterHistory) = 0;
 
     // Called to forward the cursor to the next row in the table.
     virtual int Next() = 0;
@@ -122,6 +139,8 @@ class SqliteTable : public sqlite3_vtab {
     std::string ToCreateTableStmt() const;
 
     const std::vector<Column>& columns() const { return columns_; }
+    std::vector<Column>* mutable_columns() { return &columns_; }
+
     const std::vector<size_t> primary_keys() { return primary_keys_; }
 
    private:
@@ -136,9 +155,26 @@ class SqliteTable : public sqlite3_vtab {
   // Populated by a BestIndex call to allow subclasses to tweak SQLite's
   // handling of sets of constraints.
   struct BestIndexInfo {
-    bool order_by_consumed = false;
-    uint32_t estimated_cost = 0;
-    std::vector<bool> omit;
+    // Contains bools which indicate whether SQLite should omit double checking
+    // the constraint at that index.
+    //
+    // If there are no constraints, SQLite will be told it can omit checking for
+    // the whole query.
+    std::vector<bool> sqlite_omit_constraint;
+
+    // Indicates that SQLite should not double check the result of the order by
+    // clause.
+    //
+    // If there are no order by clauses, this value will be ignored and SQLite
+    // will be told that it can omit double checking (i.e. this value will
+    // implicitly be taken to be true).
+    bool sqlite_omit_order_by = false;
+
+    // Stores the estimated cost of this query.
+    double estimated_cost = 0;
+
+    // Estimated row count.
+    int64_t estimated_rows = 0;
   };
 
   template <typename Context>
@@ -219,11 +255,14 @@ class SqliteTable : public sqlite3_vtab {
     module->xBestIndex = [](sqlite3_vtab* t, sqlite3_index_info* i) {
       return static_cast<TTable*>(t)->BestIndexInternal(i);
     };
-    module->xFilter = [](sqlite3_vtab_cursor* c, int i, const char* s, int a,
+    module->xFilter = [](sqlite3_vtab_cursor* vc, int i, const char* s, int a,
                          sqlite3_value** v) {
-      const auto& qc =
-          static_cast<Cursor*>(c)->table_->ParseConstraints(i, s, a);
-      return static_cast<TCursor*>(c)->Filter(qc, v);
+      auto* c = static_cast<Cursor*>(vc);
+      bool is_cached = c->table_->ReadConstraints(i, s, a);
+
+      auto history = is_cached ? Cursor::FilterHistory::kSame
+                               : Cursor::FilterHistory::kDifferent;
+      return static_cast<TCursor*>(c)->Filter(c->table_->qc_cache_, v, history);
     };
     module->xNext = [](sqlite3_vtab_cursor* c) {
       return static_cast<TCursor*>(c)->Next();
@@ -279,6 +318,7 @@ class SqliteTable : public sqlite3_vtab {
 
   // Optional metods to implement.
   using FindFunctionFn = void (**)(sqlite3_context*, int, sqlite3_value**);
+  virtual int ModifyConstraints(QueryConstraints* qc);
   virtual int FindFunction(const char* name, FindFunctionFn fn, void** args);
 
   // At registration time, the function should also pass true for |read_write|.
@@ -300,9 +340,7 @@ class SqliteTable : public sqlite3_vtab {
     };
   }
 
-  const QueryConstraints& ParseConstraints(int idxNum,
-                                           const char* idxStr,
-                                           int argc);
+  bool ReadConstraints(int idxNum, const char* idxStr, int argc);
 
   // Overriden functions from sqlite3_vtab.
   int OpenInternal(sqlite3_vtab_cursor**);

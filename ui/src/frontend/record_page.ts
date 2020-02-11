@@ -20,10 +20,12 @@ import {Actions} from '../common/actions';
 import {MeminfoCounters, VmstatCounters} from '../common/protos';
 import {
   AdbRecordingTarget,
+  getBuiltinChromeCategoryList,
+  getDefaultRecordingTargets,
+  isAdbTarget,
   isAndroidTarget,
   isChromeTarget,
-  isLinuxTarget,
-  TargetOs
+  RecordingTarget
 } from '../common/state';
 import {MAX_TIME, RecordMode} from '../common/state';
 import {AdbOverWebUsb} from '../controller/adb';
@@ -45,7 +47,7 @@ import {Router} from './router';
 
 
 
-const POLL_RATE_MS = [250, 500, 1000, 2500, 5000, 30000, 60000];
+const POLL_INTERVAL_MS = [250, 500, 1000, 2500, 5000, 30000, 60000];
 
 const ATRACE_CATEGORIES = new Map<string, string>();
 ATRACE_CATEGORIES.set('gfx', 'Graphics');
@@ -189,9 +191,9 @@ function PowerSettings(cssClass: string) {
           isEnabled: (cfg) => cfg.batteryDrain
         } as ProbeAttrs,
         m(Slider, {
-          title: 'Poll rate',
+          title: 'Poll interval',
           cssClass: '.thin',
-          values: POLL_RATE_MS,
+          values: POLL_INTERVAL_MS,
           unit: 'ms',
           set: (cfg, val) => cfg.batteryDrainPollMs = val,
           get: (cfg) => cfg.batteryDrainPollMs
@@ -230,9 +232,9 @@ function CpuSettings(cssClass: string) {
           isEnabled: (cfg) => cfg.cpuCoarse
         } as ProbeAttrs,
         m(Slider, {
-          title: 'Poll rate',
+          title: 'Poll interval',
           cssClass: '.thin',
-          values: POLL_RATE_MS,
+          values: POLL_INTERVAL_MS,
           unit: 'ms',
           set: (cfg, val) => cfg.cpuCoarsePollMs = val,
           get: (cfg) => cfg.cpuCoarsePollMs
@@ -269,6 +271,101 @@ function CpuSettings(cssClass: string) {
       } as ProbeAttrs));
 }
 
+function HeapSettings(cssClass: string) {
+  const valuesForMS = [
+    0,
+    1000,
+    10 * 1000,
+    30 * 1000,
+    60 * 1000,
+    5 * 60 * 1000,
+    10 * 60 * 1000,
+    30 * 60 * 1000,
+    60 * 60 * 1000
+  ];
+  const valuesForShMemBuff = [
+    0,
+    512,
+    1024,
+    2 * 1024,
+    4 * 1024,
+    8 * 1024,
+    16 * 1024,
+    32 * 1024,
+    64 * 1024,
+    128 * 1024,
+    256 * 1024,
+    512 * 1024,
+    1024 * 1024,
+    64 * 1024 * 1024,
+    128 * 1024 * 1024,
+    256 * 1024 * 1024,
+    512 * 1024 * 1024
+  ];
+
+  return m(
+      `.record-section${cssClass}`,
+      m(Textarea, {
+        title: 'Names or pids of the processes to track',
+        placeholder: 'One per line, e.g.:\n' +
+            'system_server\n' +
+            '1503',
+        set: (cfg, val) => cfg.hpProcesses = val,
+        get: (cfg) => cfg.hpProcesses
+      } as TextareaAttrs),
+      m(Slider, {
+        title: 'Sampling interval',
+        cssClass: '.thin',
+        values: [
+          0,     1,     2,      4,      8,      16,     32,   64,
+          128,   256,   512,    1024,   2048,   4096,   8192, 16384,
+          32768, 65536, 131072, 262144, 524288, 1048576
+        ],
+        unit: 'B',
+        min: 0,
+        set: (cfg, val) => cfg.hpSamplingIntervalBytes = val,
+        get: (cfg) => cfg.hpSamplingIntervalBytes
+      } as SliderAttrs),
+      m(Slider, {
+        title: 'Continuous dumps interval ',
+        description: 'Time between following dumps (0 = disabled)',
+        cssClass: '.thin',
+        values: valuesForMS,
+        unit: 'ms',
+        min: 0,
+        set: (cfg, val) => {
+          cfg.hpContinuousDumpsInterval = val;
+        },
+        get: (cfg) => cfg.hpContinuousDumpsInterval
+      } as SliderAttrs),
+      m(Slider, {
+        title: 'Continuous dumps phase',
+        description: 'Time before first dump',
+        cssClass: `.thin${
+            globals.state.recordConfig.hpContinuousDumpsInterval === 0 ?
+                '.greyed-out' :
+                ''}`,
+        values: valuesForMS,
+        unit: 'ms',
+        min: 0,
+        disabled: globals.state.recordConfig.hpContinuousDumpsInterval === 0,
+        set: (cfg, val) => cfg.hpContinuousDumpsPhase = val,
+        get: (cfg) => cfg.hpContinuousDumpsPhase
+      } as SliderAttrs),
+      m(Slider, {
+        title: `Shared memory buffer`,
+        cssClass: '.thin',
+        values: valuesForShMemBuff.filter(
+            value => value === 0 || value >= 8192 && value % 4096 === 0),
+        unit: 'B',
+        min: 0,
+        set: (cfg, val) => cfg.hpSharedMemoryBuffer = val,
+        get: (cfg) => cfg.hpSharedMemoryBuffer
+      } as SliderAttrs)
+      // TODO(taylori): Add advanced options.
+  );
+}
+
 function MemorySettings(cssClass: string) {
   const meminfoOpts = new Map<string, string>();
   for (const x in MeminfoCounters) {
@@ -288,6 +385,16 @@ function MemorySettings(cssClass: string) {
       `.record-section${cssClass}`,
       m(Probe,
         {
+          title: 'Heap profiling',
+          img: 'heap_profiler.png',
+          descr: `Track native heap allocations & deallocations of an Android
+               process. (Available on Android 10+)`,
+          setEnabled: (cfg, val) => cfg.heapProfiling = val,
+          isEnabled: (cfg) => cfg.heapProfiling
+        } as ProbeAttrs,
+        HeapSettings(cssClass)),
+      m(Probe,
+        {
           title: 'Kernel meminfo',
           img: 'rec_meminfo.png',
           descr: 'Polling of /proc/meminfo',
@@ -295,9 +402,9 @@ function MemorySettings(cssClass: string) {
           isEnabled: (cfg) => cfg.meminfo
         } as ProbeAttrs,
         m(Slider, {
-          title: 'Poll rate',
+          title: 'Poll interval',
           cssClass: '.thin',
-          values: POLL_RATE_MS,
+          values: POLL_INTERVAL_MS,
           unit: 'ms',
           set: (cfg, val) => cfg.meminfoPeriodMs = val,
           get: (cfg) => cfg.meminfoPeriodMs
@@ -338,9 +445,9 @@ function MemorySettings(cssClass: string) {
           isEnabled: (cfg) => cfg.procStats
         } as ProbeAttrs,
         m(Slider, {
-          title: 'Poll rate',
+          title: 'Poll interval',
           cssClass: '.thin',
-          values: POLL_RATE_MS,
+          values: POLL_INTERVAL_MS,
           unit: 'ms',
           set: (cfg, val) => cfg.procStatsPeriodMs = val,
           get: (cfg) => cfg.procStatsPeriodMs
@@ -356,9 +463,9 @@ function MemorySettings(cssClass: string) {
           isEnabled: (cfg) => cfg.vmstat
         } as ProbeAttrs,
         m(Slider, {
-          title: 'Poll rate',
+          title: 'Poll interval',
           cssClass: '.thin',
-          values: POLL_RATE_MS,
+          values: POLL_INTERVAL_MS,
           unit: 'ms',
           set: (cfg, val) => cfg.vmstatPeriodMs = val,
           get: (cfg) => cfg.vmstatPeriodMs
@@ -485,11 +592,13 @@ function ChromeSettings(cssClass: string) {
 }
 
 function ChromeCategoriesSelection() {
-  // The categories are displayed only if the extension is installed, because
-  // they come from the chrome.debugging API, not available from normal web
-  // pages.
-  const categories = globals.state.chromeCategories;
-  if (!categories) return [];
+  // If we are attempting to record via the Chrome extension, we receive the
+  // list of actually supported categories via DevTools. Otherwise, we fall back
+  // to an integrated list of categories from a recent version of Chrome.
+  let categories = globals.state.chromeCategories;
+  if (!categories || !isChromeTarget(globals.state.recordingTarget)) {
+    categories = getBuiltinChromeCategoryList();
+  }
 
   // Show "disabled-by-default" categories last.
   const categoriesMap = new Map<string, string>();
@@ -506,9 +615,10 @@ function ChromeCategoriesSelection() {
     categoriesMap.set(
         cat, `${cat.replace(disabledPrefix, '')} (high overhead)`);
   });
+
   return m(Dropdown, {
     title: 'Additional Chrome categories',
-    cssClass: '.multicolumn.two-columns.chrome-categories',
+    cssClass: '.multicolumn.two-columns',
     options: categoriesMap,
     set: (cfg, val) => cfg.chromeCategoriesSelected = val,
     get: (cfg) => cfg.chromeCategoriesSelected
@@ -596,21 +706,20 @@ function RecordHeader() {
 function RecordingPlatformSelection() {
   if (globals.state.recordingInProgress) return [];
 
-  const baseTargets = [
-    m('option', {value: 'Q'}, 'Android Q+'),
-    m('option', {value: 'P'}, 'Android P'),
-    m('option', {value: 'O'}, 'Android O-'),
-    m('option', {value: 'C'}, 'Chrome'),
-    m('option', {value: 'L'}, 'Linux desktop')
-  ];
-  const availableAndroidDevices = globals.state.availableDevices;
-  const selected = globals.state.androidDeviceConnected;
-  const choices: m.Children[] =
-      availableAndroidDevices.map(d => m('option', {value: d.serial}, d.name));
+  const availableAndroidDevices = globals.state.availableAdbDevices;
+  const recordingTarget = globals.state.recordingTarget;
 
-  const selectedIndex = selected ? baseTargets.length +
-          availableAndroidDevices.findIndex(d => d.serial === selected.serial) :
-                                   0;
+  const targets = [];
+  for (const {os, name} of getDefaultRecordingTargets()) {
+    targets.push(m('option', {value: os}, name));
+  }
+  for (const d of availableAndroidDevices) {
+    targets.push(m('option', {value: d.serial}, d.name));
+  }
+
+  const selectedIndex = isAdbTarget(recordingTarget) ?
+      targets.findIndex(node => node.attrs.value === recordingTarget.serial) :
+      targets.findIndex(node => node.attrs.value === recordingTarget.os);
 
   return m(
       '.target',
@@ -618,26 +727,36 @@ function RecordingPlatformSelection() {
           'label',
           'Target platform:',
           m('select',
-            {onchange: m.withAttr('value', onTargetChange), selectedIndex},
-            ...baseTargets,
-            ...choices),
+            {
+              selectedIndex,
+              onchange: m.withAttr('value', onTargetChange),
+              onupdate: (select) => {
+                // Work around mithril bug
+                // (https://github.com/MithrilJS/mithril.js/issues/2107): We may
+                // update the select's options while also changing the
+                // selectedIndex at the same time. The update of selectedIndex
+                // may be applied before the new options are added to the select
+                // element. Because the new selectedIndex may be outside of the
+                // select's options at that time, we have to reselect the
+                // correct index here after any new children were added.
+                (select.dom as HTMLSelectElement).selectedIndex = selectedIndex;
+              }
+            },
+            ...targets),
           ),
       m('.chip',
         {onclick: addAndroidDevice},
-        m('button', 'Add Device'),
+        m('button', 'Add ADB Device'),
         m('i.material-icons', 'add')));
 }
 
-// Target can be the targetOS or the android serial
+// |target| can be the TargetOs or the android serial.
 function onTargetChange(target: string) {
-  const adbDevice =
-      globals.state.availableDevices.find(d => d.serial === target);
-  globals.dispatch(Actions.setAndroidDevice({target: adbDevice}));
-
-  const traceCfg = produce(globals.state.recordConfig, draft => {
-    draft.targetOS = adbDevice ? adbDevice.os as TargetOs : target as TargetOs;
-  });
-  globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
+  const recordingTarget: RecordingTarget =
+      globals.state.availableAdbDevices.find(d => d.serial === target) ||
+      getDefaultRecordingTargets().find(t => t.os === target) ||
+      getDefaultRecordingTargets()[0];
+  globals.dispatch(Actions.setRecordingTarget({target: recordingTarget}));
   globals.rafScheduler.scheduleFullRedraw();
 }
 
@@ -666,7 +785,7 @@ function BufferUsageProgressBar() {
 
 function RecordingNotes() {
   const docUrl = '//docs.perfetto.dev/#/build-instructions?id=get-the-code';
-  const extensionURL = `https://chrome.google.com/webstore/a/google.com/detail/
+  const extensionURL = `https://chrome.google.com/webstore/detail/
       perfetto-ui/lfmkphfpdbjijhpomgecfikhfohaoine`;
 
   const notes: m.Children = [];
@@ -699,7 +818,7 @@ function RecordingNotes() {
       output directory. `,
         doc);
 
-  switch (globals.state.recordConfig.targetOS) {
+  switch (globals.state.recordingTarget.os) {
     case 'Q':
       break;
     case 'P':
@@ -723,10 +842,10 @@ function RecordingNotes() {
 }
 
 function RecordingSnippet() {
-  const targetOs = globals.state.recordConfig.targetOS;
+  const target = globals.state.recordingTarget;
 
   // We don't need commands to start tracing on chrome
-  if (isChromeTarget(targetOs)) {
+  if (isChromeTarget(target)) {
     return globals.state.extensionInstalled ?
         m('div',
           m('label',
@@ -734,11 +853,10 @@ function RecordingSnippet() {
          'Start Recording'.`)) :
         [];
   }
-  return m(
-      CodeSnippet, {text: getRecordCommand(targetOs), hardWhitespace: true});
+  return m(CodeSnippet, {text: getRecordCommand(target)});
 }
 
-function getRecordCommand(targetOs: TargetOs) {
+function getRecordCommand(target: RecordingTarget) {
   const data = globals.trackDataStore.get('config') as
           {commandline: string, pbtxt: string} |
       null;
@@ -758,8 +876,7 @@ function getRecordCommand(targetOs: TargetOs) {
     cmd += `(sleep 0.5 && adb shell screenrecord --time-limit ${time}`;
     cmd += ' "/sdcard/tracescr.mp4") &\\\n';
   }
-  cmd +=
-      isAndroidTarget(targetOs) ? 'adb shell perfetto \\\n' : 'perfetto \\\n';
+  cmd += isAndroidTarget(target) ? 'adb shell perfetto \\\n' : 'perfetto \\\n';
   cmd += '  -c - --txt \\\n';
   cmd += '  -o /data/misc/perfetto-traces/trace \\\n';
   cmd += '<<EOF\n\n';
@@ -771,7 +888,7 @@ function getRecordCommand(targetOs: TargetOs) {
 
 function recordingButtons() {
   const state = globals.state;
-  const realDeviceTarget = state.androidDeviceConnected !== undefined;
+  const target = state.recordingTarget;
   const recInProgress = state.recordingInProgress;
 
   const start =
@@ -781,30 +898,16 @@ function recordingButtons() {
           onclick: onStartRecordingPressed
         },
         'Start Recording');
-  const showCmd =
-      m(`button`,
-        {
-          onclick: () => {
-            location.href = '#!/record?p=instructions';
-            globals.rafScheduler.scheduleFullRedraw();
-          }
-        },
-        'Show Command');
 
   const buttons: m.Children = [];
 
-  const targetOs = state.recordConfig.targetOS;
-  if (isAndroidTarget(targetOs)) {
-    if (!recInProgress) {
-      buttons.push(showCmd);
-      if (realDeviceTarget) buttons.push(start);
+  if (isAndroidTarget(target)) {
+    if (!recInProgress && isAdbTarget(target)) {
+      buttons.push(start);
     }
-  } else if (isChromeTarget(targetOs) && state.extensionInstalled) {
+  } else if (isChromeTarget(target) && state.extensionInstalled) {
     buttons.push(start);
-  } else if (isLinuxTarget(targetOs)) {
-    buttons.push(showCmd);
   }
-
   return m('.button', buttons);
 }
 
@@ -828,8 +931,8 @@ function onStartRecordingPressed() {
   location.href = '#!/record?p=instructions';
   globals.rafScheduler.scheduleFullRedraw();
 
-  const targetOs = globals.state.recordConfig.targetOS;
-  if (isAndroidTarget(targetOs) || isChromeTarget(targetOs)) {
+  const target = globals.state.recordingTarget;
+  if (isAndroidTarget(target) || isChromeTarget(target)) {
     globals.dispatch(Actions.startRecording({}));
   }
 }
@@ -856,21 +959,32 @@ function recordingLog() {
 // be inserted in the state, and the worker will be able to connect to the
 // correct device.
 async function addAndroidDevice() {
-  const device = await new AdbOverWebUsb().findDevice();
+  let device: USBDevice;
+  try {
+    device = await new AdbOverWebUsb().findDevice();
+  } catch (e) {
+    const err = `No device found: ${e.name}: ${e.message}`;
+    console.error(err, e);
+    alert(err);
+    return;
+  }
 
   if (!device.serialNumber) {
     console.error('serial number undefined');
     return;
   }
+
   // After the user has selected a device with the chrome UI, it will be
   // available when listing all the available device from WebUSB. Therefore,
   // we update the list of available devices.
-  await updateAvailableAdbDevices();
-  onTargetChange(device.serialNumber);
+  await updateAvailableAdbDevices(device.serialNumber);
 }
 
-export async function updateAvailableAdbDevices() {
+export async function updateAvailableAdbDevices(
+    preferredDeviceSerial?: string) {
   const devices = await new AdbOverWebUsb().getPairedDevices();
+
+  let recordingTarget: AdbRecordingTarget|undefined = undefined;
 
   const availableAdbDevices: AdbRecordingTarget[] = [];
   devices.forEach(d => {
@@ -881,37 +995,54 @@ export async function updateAvailableAdbDevices() {
       // connection, from adb_record_controller
       availableAdbDevices.push(
           {name: d.productName, serial: d.serialNumber, os: 'Q'});
+      if (preferredDeviceSerial && preferredDeviceSerial === d.serialNumber) {
+        recordingTarget = availableAdbDevices[availableAdbDevices.length - 1];
+      }
     }
   });
 
-  globals.dispatch(Actions.setAvailableDevices({devices: availableAdbDevices}));
-  selectAndroidDeviceIfAvailable(availableAdbDevices);
+  globals.dispatch(
+      Actions.setAvailableAdbDevices({devices: availableAdbDevices}));
+  selectAndroidDeviceIfAvailable(availableAdbDevices, recordingTarget);
   globals.rafScheduler.scheduleFullRedraw();
   return availableAdbDevices;
 }
 
 function selectAndroidDeviceIfAvailable(
-    availableAdbDevices: AdbRecordingTarget[]) {
-  // If there is an android device attached, but not selected, select it by
-  // default.
-  if (!globals.state.androidDeviceConnected && availableAdbDevices.length) {
-    globals.dispatch(
-        Actions.setAndroidDevice({target: availableAdbDevices[0]}));
+    availableAdbDevices: AdbRecordingTarget[],
+    recordingTarget?: RecordingTarget) {
+  if (!recordingTarget) {
+    recordingTarget = globals.state.recordingTarget;
+  }
+  const deviceConnected = isAdbTarget(recordingTarget);
+  const connectedDeviceDisconnected = deviceConnected &&
+      availableAdbDevices.find(
+          e => e.serial === (recordingTarget as AdbRecordingTarget).serial) ===
+          undefined;
+
+  if (availableAdbDevices.length) {
+    // If there's an Android device available and the current selection isn't
+    // one, select the Android device by default. If the current device isn't
+    // available anymore, but another Android device is, select the other
+    // Android device instead.
+    if (!deviceConnected || connectedDeviceDisconnected) {
+      recordingTarget = availableAdbDevices[0];
+    }
+
+    globals.dispatch(Actions.setRecordingTarget({target: recordingTarget}));
     return;
   }
 
-  // If a device was selected, but it's not available anymore, reset the
-  // androidConnectedDevice to null.
-  const deviceConnected = globals.state.androidDeviceConnected;
-  if (deviceConnected &&
-      availableAdbDevices.find(e => e.serial === deviceConnected.serial) ===
-          undefined) {
-    globals.dispatch(Actions.setAndroidDevice({target: undefined}));
+  // If the currently selected device was disconnected, reset the recording
+  // target to the default one.
+  if (connectedDeviceDisconnected) {
+    globals.dispatch(
+        Actions.setRecordingTarget({target: getDefaultRecordingTargets()[0]}));
   }
 }
 
 function recordMenu(routePage: string) {
-  const targetOS = globals.state.recordConfig.targetOS;
+  const target = globals.state.recordingTarget;
   const chromeProbe =
       m('a[href="#!/record?p=chrome"]',
         m(`li${routePage === 'chrome' ? '.active' : ''}`,
@@ -939,7 +1070,7 @@ function recordMenu(routePage: string) {
             m('.title', 'Instructions'),
             m('.sub', 'Generate config and instructions')))),
       m('header', 'Probes'),
-      m('ul', isChromeTarget(targetOS) ? [chromeProbe] : [
+      m('ul', isChromeTarget(target) ? [chromeProbe] : [
         m('a[href="#!/record?p=cpu"]',
           m(`li${routePage === 'cpu' ? '.active' : ''}`,
             m('i.material-icons', 'subtitles'),

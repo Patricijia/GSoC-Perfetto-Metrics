@@ -13,17 +13,25 @@
 // limitations under the License.
 
 import {Actions} from '../common/actions';
+import {HttpRpcState} from '../common/http_rpc_engine';
 import {
   FrontendLocalState as FrontendState,
   OmniboxState,
-  SelectedTimeRange,
   Timestamped,
+  TimestampedAreaSelection,
   VisibleState,
 } from '../common/state';
 import {TimeSpan} from '../common/time';
 
+import {randomColor} from './colorizer';
+import {Tab} from './details_panel';
 import {globals} from './globals';
 import {TimeScale} from './time_scale';
+
+interface Range {
+  start?: number;
+  end?: number;
+}
 
 function chooseLatest<T extends Timestamped<{}>>(current: T, next: T): T {
   if (next !== current && next.lastUpdate > current.lastUpdate) {
@@ -86,17 +94,26 @@ export class FrontendLocalState {
   perfDebug = false;
   hoveredUtid = -1;
   hoveredPid = -1;
-  hoveredTimestamp = -1;
+  hoveredLogsTimestamp = -1;
+  hoveredNoteTimestamp = -1;
   vidTimestamp = -1;
-  showTimeSelectPreview = false;
-  showNotePreview = false;
   localOnlyMode = false;
   sidebarVisible = true;
+  showPanningHint = false;
   visibleTracks = new Set<string>();
   prevVisibleTracks = new Set<string>();
   searchIndex = -1;
-  scrollToTrackId: undefined|string|number = undefined;
-  private scrollBarWidth: undefined|number = undefined;
+  currentTab?: Tab;
+  scrollToTrackId?: string|number;
+  httpRpcState: HttpRpcState = {connected: false};
+  newVersionAvailable = false;
+
+  // This is used to calculate the tracks within a Y range for area selection.
+  areaY: Range = {};
+  // True if the user is in the process of doing an area selection.
+  selectingArea = false;
+
+  private scrollBarWidth?: number;
 
   private _omniboxState: OmniboxState = {
     lastUpdate: 0,
@@ -111,7 +128,7 @@ export class FrontendLocalState {
     resolution: 1,
   };
 
-  private _selectedTimeRange: SelectedTimeRange = {
+  private _selectedArea: TimestampedAreaSelection = {
     lastUpdate: 0,
   };
 
@@ -138,25 +155,21 @@ export class FrontendLocalState {
   }
 
   // Sets the timestamp at which a vertical line will be drawn.
-  setHoveredTimestamp(ts: number) {
-    if (this.hoveredTimestamp === ts) return;
-    this.hoveredTimestamp = ts;
+  setHoveredLogsTimestamp(ts: number) {
+    if (this.hoveredLogsTimestamp === ts) return;
+    this.hoveredLogsTimestamp = ts;
+    globals.rafScheduler.scheduleRedraw();
+  }
+
+  setHoveredNoteTimestamp(ts: number) {
+    if (this.hoveredNoteTimestamp === ts) return;
+    this.hoveredNoteTimestamp = ts;
     globals.rafScheduler.scheduleRedraw();
   }
 
   setVidTimestamp(ts: number) {
     if (this.vidTimestamp === ts) return;
     this.vidTimestamp = ts;
-    globals.rafScheduler.scheduleRedraw();
-  }
-
-  setShowNotePreview(show: boolean) {
-    this.showNotePreview = show;
-    globals.rafScheduler.scheduleRedraw();
-  }
-
-  setShowTimeSelectPreview(show: boolean) {
-    this.showTimeSelectPreview = show;
     globals.rafScheduler.scheduleRedraw();
   }
 
@@ -171,6 +184,11 @@ export class FrontendLocalState {
 
   toggleSidebar() {
     this.sidebarVisible = !this.sidebarVisible;
+    globals.rafScheduler.scheduleFullRedraw();
+  }
+
+  setHttpRpcState(httpRpcState: HttpRpcState) {
+    this.httpRpcState = httpRpcState;
     globals.rafScheduler.scheduleFullRedraw();
   }
 
@@ -193,36 +211,97 @@ export class FrontendLocalState {
   mergeState(state: FrontendState): void {
     this._omniboxState = chooseLatest(this._omniboxState, state.omniboxState);
     this._visibleState = chooseLatest(this._visibleState, state.visibleState);
-    this._selectedTimeRange =
-        chooseLatest(this._selectedTimeRange, state.selectedTimeRange);
+    this._selectedArea = chooseLatest(this._selectedArea, state.selectedArea);
     if (this._visibleState === state.visibleState) {
       this.updateLocalTime(
           new TimeSpan(this._visibleState.startSec, this._visibleState.endSec));
     }
   }
 
-  private selectTimeRangeDebounced = debounce(() => {
-    globals.dispatch(Actions.selectTimeRange(this._selectedTimeRange));
+  private selectAreaDebounced = debounce(() => {
+    globals.dispatch(Actions.selectArea(this._selectedArea));
   }, 20);
 
-  selectTimeRange(startSec: number, endSec: number) {
-    this._selectedTimeRange = {startSec, endSec, lastUpdate: Date.now() / 1000};
-    this.selectTimeRangeDebounced();
-    globals.rafScheduler.scheduleRedraw();
-  }
-
-  removeTimeRange() {
-    this._selectedTimeRange = {
-      startSec: undefined,
-      endSec: undefined,
+  selectArea(
+      startSec: number, endSec: number,
+      tracks = this._selectedArea.area ? this._selectedArea.area.tracks : []) {
+    if (this.currentNoteSelectionEqualToCurrentAreaSelection()) {
+      globals.dispatch(Actions.deselect({}));
+    }
+    this.showPanningHint = true;
+    this._selectedArea = {
+      area: {startSec, endSec, tracks},
       lastUpdate: Date.now() / 1000
     };
-    this.selectTimeRangeDebounced();
-    globals.rafScheduler.scheduleRedraw();
+    this.selectAreaDebounced();
+    globals.frontendLocalState.currentTab = 'cpu_slices';
+    globals.rafScheduler.scheduleFullRedraw();
   }
 
-  get selectedTimeRange(): SelectedTimeRange {
-    return this._selectedTimeRange;
+  toggleTrackSelection(id: string, isTrackGroup = false) {
+    const area = this._selectedArea.area;
+    if (!area) return;
+    const index = area.tracks.indexOf(id);
+    if (index > -1) {
+      area.tracks.splice(index, 1);
+      if (isTrackGroup) {  // Also remove all child tracks.
+        for (const childTrack of globals.state.trackGroups[id].tracks) {
+          const childIndex = area.tracks.indexOf(childTrack);
+          if (childIndex > -1) {
+            area.tracks.splice(childIndex, 1);
+          }
+        }
+      }
+    } else {
+      area.tracks.push(id);
+      if (isTrackGroup) {  // Also add all child tracks.
+        for (const childTrack of globals.state.trackGroups[id].tracks) {
+          if (!area.tracks.includes(childTrack)) {
+            area.tracks.push(childTrack);
+          }
+        }
+      }
+    }
+    this._selectedArea.lastUpdate = Date.now() / 1000;
+    this.selectAreaDebounced();
+    globals.rafScheduler.scheduleFullRedraw();
+  }
+
+  toggleLockArea() {
+    if (!this._selectedArea.area) return;
+    if (this.currentNoteSelectionEqualToCurrentAreaSelection()) {
+      if (globals.state.currentSelection != null &&
+          globals.state.currentSelection.kind === 'NOTE') {
+        globals.dispatch(
+            Actions.removeNote({id: globals.state.currentSelection.id}));
+      }
+    } else {
+      const color = randomColor();
+      globals.dispatch(Actions.addAreaNote({
+        timestamp: this._selectedArea.area.startSec,
+        area: this._selectedArea.area,
+        color
+      }));
+    }
+
+    globals.frontendLocalState.currentTab = 'cpu_slices';
+    globals.rafScheduler.scheduleFullRedraw();
+  }
+
+  deselectArea() {
+    // When an area is deselected (and it is marked) also deselect the current
+    // marked selection if it is for the same area.
+    if (this.currentNoteSelectionEqualToCurrentAreaSelection()) {
+      globals.dispatch(Actions.deselect({}));
+    }
+    this._selectedArea = {lastUpdate: Date.now() / 1000};
+    this.selectAreaDebounced();
+    globals.frontendLocalState.currentTab = undefined;
+    globals.rafScheduler.scheduleFullRedraw();
+  }
+
+  get selectedArea(): TimestampedAreaSelection {
+    return this._selectedArea;
   }
 
   private setOmniboxDebounced = debounce(() => {
@@ -251,11 +330,37 @@ export class FrontendLocalState {
     this.timeScale.setTimeBounds(this.visibleWindowTime);
   }
 
+  // We lock an area selection by adding an area note. When we select the note
+  // it will also select the area but then the user can select other things,
+  // like a slice or different note and the area note will be deselected even
+  // though the area selection remains. So it is useful to know if we currently
+  // have the same area note selected and area selection.
+  private currentNoteSelectionEqualToCurrentAreaSelection() {
+    if (!this._selectedArea.area) return false;
+    if (globals.state.currentSelection != null &&
+        globals.state.currentSelection.kind === 'NOTE') {
+      const curNote = globals.state.notes[globals.state.currentSelection.id];
+      // TODO(taylori): Do the tracks need to be the same too?
+      if (curNote.noteType === 'AREA' &&
+          curNote.area.startSec === this._selectedArea.area.startSec &&
+          curNote.area.endSec === this._selectedArea.area.endSec) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   updateVisibleTime(ts: TimeSpan) {
     this.updateLocalTime(ts);
     this._visibleState.lastUpdate = Date.now() / 1000;
     this._visibleState.startSec = this.visibleWindowTime.start;
     this._visibleState.endSec = this.visibleWindowTime.end;
+    this._visibleState.resolution = globals.getCurResolution();
+    this.ratelimitedUpdateVisible();
+  }
+
+  updateResolution(pxStart: number, pxEnd: number) {
+    this.timeScale.setLimitsPx(pxStart, pxEnd);
     this._visibleState.resolution = globals.getCurResolution();
     this.ratelimitedUpdateVisible();
   }

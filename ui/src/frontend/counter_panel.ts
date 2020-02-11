@@ -29,10 +29,10 @@ export class CounterDetailsPanel extends Panel<CounterDetailsPanelAttrs> {
         counterInfo.duration !== undefined) {
       return m(
           '.details-panel',
-          m('.details-panel-heading', `Counter Details:`),
+          m('.details-panel-heading', m('h2', `Counter Details`)),
           m(
               '.details-table',
-              [m('table',
+              [m('table.half-width',
                  [
                    m('tr',
                      m('th', `Start time`),
@@ -50,7 +50,8 @@ export class CounterDetailsPanel extends Panel<CounterDetailsPanelAttrs> {
               ));
     } else {
       return m(
-          '.details-panel', m('.details-panel-heading', `Counter Details:`));
+          '.details-panel',
+          m('.details-panel-heading', m('h2', `Counter Details`)));
     }
   }
 

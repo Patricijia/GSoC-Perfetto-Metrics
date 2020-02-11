@@ -22,10 +22,12 @@ load("@perfetto//bazel:proto_gen.bzl", "proto_gen")
 def default_cc_args():
     return {
         "deps": PERFETTO_CONFIG.deps.build_config,
-        "copts": [],
+        "copts": [
+            "-Wno-pragma-system-header-outside-header",
+        ],
         "includes": ["include"],
         "linkopts": select({
-            "@perfetto//bazel:os_linux": ["-ldl", "-lrt"],
+            "@perfetto//bazel:os_linux": ["-ldl", "-lrt", "-lpthread"],
             "@perfetto//bazel:os_osx": [],
             "@perfetto//bazel:os_windows": [],
             "//conditions:default": ["-ldl"],
@@ -88,6 +90,7 @@ def perfetto_cc_protozero_library(name, deps, **kwargs):
         deps = deps,
         suffix = "pbzero",
         plugin = PERFETTO_CONFIG.root + ":protozero_plugin",
+        wrapper_namespace = "pbzero",
         protoc = PERFETTO_CONFIG.deps.protoc[0],
         root = PERFETTO_CONFIG.root,
     )
@@ -112,15 +115,24 @@ def perfetto_cc_ipc_library(name, deps, **kwargs):
     if _rule_override("cc_ipc_library", name = name, deps = deps, **kwargs):
         return
 
-    # Takes care of generating .pb.{cc,h}.
-    perfetto_cc_proto_library(name = name + "_pb", deps = deps)
+    # A perfetto_cc_ipc_library has two types of dependencies:
+    # 1. Exactly one dependency on a proto_library target. This defines the
+    #    .proto sources for the target
+    # 2. Zero or more deps on other perfetto_cc_protocpp_library targets. This
+    #    to deal with the case of foo.proto including common.proto from another
+    #    target.
+    _proto_deps = [d for d in deps if d.endswith("_protos")]
+    _cc_deps = [d for d in deps if d not in _proto_deps]
+    if len(_proto_deps) != 1:
+        fail("Too many proto deps for target %s" % name)
 
     # Generates .ipc.{cc,h}.
     proto_gen(
         name = name + "_src",
-        deps = deps,
+        deps = _proto_deps,
         suffix = "ipc",
         plugin = PERFETTO_CONFIG.root + ":ipc_plugin",
+        wrapper_namespace = "gen",
         protoc = PERFETTO_CONFIG.deps.protoc[0],
         root = PERFETTO_CONFIG.root,
     )
@@ -136,13 +148,10 @@ def perfetto_cc_ipc_library(name, deps, **kwargs):
         srcs = [":" + name + "_src"],
         hdrs = [":" + name + "_h"],
         deps = [
-            ":" + name + "_pb",
-
-            # Generated .ipc.{cc,h} depend on this.
+            # Generated .ipc.{cc,h} depend on this and protozero.
             PERFETTO_CONFIG.root + ":perfetto_ipc",
-
-            # Generated .pb.{cc,h} depend on this.
-        ] + PERFETTO_CONFIG.deps.protobuf_lite,
+            PERFETTO_CONFIG.root + ":libprotozero",
+        ] + _cc_deps,
         **kwargs
     )
 
@@ -165,12 +174,15 @@ def perfetto_cc_protocpp_library(name, deps, **kwargs):
     #    target.
     _proto_deps = [d for d in deps if d.endswith("_protos")]
     _cc_deps = [d for d in deps if d not in _proto_deps]
+    if len(_proto_deps) != 1:
+        fail("Too many proto deps for target %s" % name)
 
     proto_gen(
         name = name + "_gen",
         deps = _proto_deps,
         suffix = "gen",
         plugin = PERFETTO_CONFIG.root + ":cppgen_plugin",
+        wrapper_namespace = "gen",
         protoc = PERFETTO_CONFIG.deps.protoc[0],
         root = PERFETTO_CONFIG.root,
     )
@@ -207,7 +219,7 @@ def _merge_dicts(*args):
     res = {}
     for arg in args:
         for k, v in arg.items():
-            if type(v) == "string":
+            if type(v) == "string" or type(v) == "bool":
                 res[k] = v
             elif type(v) == "list" or type(v) == "select":
                 res[k] = res.get(k, []) + v

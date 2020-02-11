@@ -15,19 +15,23 @@
 import {Draft} from 'immer';
 
 import {assertExists} from '../base/logging';
+import {Area, CallsiteInfo} from '../common/state';
 import {ConvertTrace, ConvertTraceToPprof} from '../controller/trace_converter';
 
 import {
   AdbRecordingTarget,
   createEmptyState,
+  EngineMode,
   LogsPagination,
+  NewEngineMode,
   OmniboxState,
   RecordConfig,
+  RecordingTarget,
   SCROLLING_TRACK_GROUP,
-  SelectedTimeRange,
   State,
   Status,
-  TargetOs,
+  TimestampedAreaSelection,
+  TraceSource,
   TraceTime,
   TrackState,
   VisibleState,
@@ -48,19 +52,21 @@ function clearTraceState(state: StateDraft) {
   const nextId = state.nextId;
   const recordConfig = state.recordConfig;
   const route = state.route;
-  const androidDeviceConnected = state.androidDeviceConnected;
+  const recordingTarget = state.recordingTarget;
   const extensionInstalled = state.extensionInstalled;
-  const availableDevices = state.availableDevices;
+  const availableAdbDevices = state.availableAdbDevices;
   const chromeCategories = state.chromeCategories;
+  const newEngineMode = state.newEngineMode;
 
   Object.assign(state, createEmptyState());
   state.nextId = nextId;
   state.recordConfig = recordConfig;
   state.route = route;
-  state.androidDeviceConnected = androidDeviceConnected;
+  state.recordingTarget = recordingTarget;
   state.extensionInstalled = extensionInstalled;
-  state.availableDevices = availableDevices;
+  state.availableAdbDevices = availableAdbDevices;
   state.chromeCategories = chromeCategories;
+  state.newEngineMode = newEngineMode;
 }
 
 export const StateActions = {
@@ -75,7 +81,7 @@ export const StateActions = {
     state.engines[id] = {
       id,
       ready: false,
-      source: args.file,
+      source: {type: 'FILE', file: args.file},
     };
     state.route = `/viewer`;
   },
@@ -86,7 +92,29 @@ export const StateActions = {
     state.engines[id] = {
       id,
       ready: false,
-      source: args.buffer,
+      source: {type: 'ARRAY_BUFFER', buffer: args.buffer},
+    };
+    state.route = `/viewer`;
+  },
+
+  openTraceFromUrl(state: StateDraft, args: {url: string}): void {
+    clearTraceState(state);
+    const id = `${state.nextId++}`;
+    state.engines[id] = {
+      id,
+      ready: false,
+      source: {type: 'URL', url: args.url},
+    };
+    state.route = `/viewer`;
+  },
+
+  openTraceFromHttpRpc(state: StateDraft, _args: {}): void {
+    clearTraceState(state);
+    const id = `${state.nextId++}`;
+    state.engines[id] = {
+      id,
+      ready: false,
+      source: {type: 'HTTP_RPC'},
     };
     state.route = `/viewer`;
   },
@@ -102,24 +130,10 @@ export const StateActions = {
     ConvertTrace(args.file, args.truncate);
   },
 
-  convertTraceToPprof(_: StateDraft, args: {
-    pid: number,
-    src: string|File|ArrayBuffer,
-    ts1: number,
-    ts2?: number
-  }): void {
+  convertTraceToPprof(
+      _: StateDraft,
+      args: {pid: number, src: TraceSource, ts1: number, ts2?: number}): void {
     ConvertTraceToPprof(args.pid, args.src, args.ts1, args.ts2);
-  },
-
-  openTraceFromUrl(state: StateDraft, args: {url: string}): void {
-    clearTraceState(state);
-    const id = `${state.nextId++}`;
-    state.engines[id] = {
-      id,
-      ready: false,
-      source: args.url,
-    };
-    state.route = `/viewer`;
   },
 
   addTracks(state: StateDraft, args: {tracks: AddTrackArgs[]}) {
@@ -244,9 +258,23 @@ export const StateActions = {
         trackGroup.collapsed = !trackGroup.collapsed;
       },
 
-  setEngineReady(state: StateDraft, args: {engineId: string; ready: boolean}):
+  setEngineReady(
+      state: StateDraft,
+      args: {engineId: string; ready: boolean, mode: EngineMode}): void {
+    state.engines[args.engineId].ready = args.ready;
+    state.engines[args.engineId].mode = args.mode;
+  },
+
+  setNewEngineMode(state: StateDraft, args: {mode: NewEngineMode}): void {
+    state.newEngineMode = args.mode;
+  },
+
+  // Marks all engines matching the given |mode| as failed.
+  setEngineFailed(state: StateDraft, args: {mode: EngineMode; failure: string}):
       void {
-        state.engines[args.engineId].ready = args.ready;
+        for (const engine of Object.values(state.engines)) {
+          if (engine.mode === args.mode) engine.failed = args.failure;
+        }
       },
 
   createPermalink(state: StateDraft, _: {}): void {
@@ -309,11 +337,11 @@ export const StateActions = {
       args: {timestamp: number, color: string, isMovie: boolean}): void {
     const id = `${state.nextId++}`;
     state.notes[id] = {
+      noteType: 'DEFAULT',
       id,
       timestamp: args.timestamp,
       color: args.color,
       text: '',
-      isMovie: args.isMovie
     };
     if (args.isMovie) {
       state.videoNoteIds.push(id);
@@ -321,7 +349,22 @@ export const StateActions = {
     this.selectNote(state, {id});
   },
 
-  toggleVideo(state: StateDraft): void {
+  addAreaNote(
+      state: StateDraft, args: {timestamp: number, area: Area, color: string}):
+      void {
+        const id = `${state.nextId++}`;
+        state.notes[id] = {
+          noteType: 'AREA',
+          id,
+          timestamp: args.timestamp,
+          area: args.area,
+          color: args.color,
+          text: '',
+        };
+        this.selectNote(state, {id});
+      },
+
+  toggleVideo(state: StateDraft, _: {}): void {
     state.videoEnabled = !state.videoEnabled;
     if (!state.videoEnabled) {
       state.video = null;
@@ -333,13 +376,13 @@ export const StateActions = {
     }
   },
 
-  toggleFlagPause(state: StateDraft): void {
+  toggleFlagPause(state: StateDraft, _: {}): void {
     if (state.video != null) {
       state.flagPauseEnabled = !state.flagPauseEnabled;
     }
   },
 
-  toggleScrubbing(state: StateDraft): void {
+  toggleScrubbing(state: StateDraft, _: {}): void {
     if (state.video != null) {
       state.scrubbingEnabled = !state.scrubbingEnabled;
     }
@@ -363,7 +406,7 @@ export const StateActions = {
   },
 
   removeNote(state: StateDraft, args: {id: string}): void {
-    if (state.notes[args.id].isMovie) {
+    if (state.notes[args.id].noteType === 'MOVIE') {
       state.videoNoteIds = state.videoNoteIds.filter(id => {
         return id !== args.id;
       });
@@ -376,58 +419,90 @@ export const StateActions = {
     }
   },
 
-  selectSlice(state: StateDraft, args: {id: number}): void {
+  selectSlice(state: StateDraft, args: {id: number, trackId: string}): void {
     state.currentSelection = {
       kind: 'SLICE',
       id: args.id,
+      trackId: args.trackId,
     };
   },
 
   selectCounter(
-      state: StateDraft, args: {leftTs: number, rightTs: number, id: number}):
+      state: StateDraft,
+      args: {leftTs: number, rightTs: number, id: number, trackId: string}):
       void {
         state.currentSelection = {
           kind: 'COUNTER',
           leftTs: args.leftTs,
           rightTs: args.rightTs,
-          id: args.id
+          id: args.id,
+          trackId: args.trackId,
         };
       },
 
   selectHeapProfile(
-      state: StateDraft, args: {id: number, upid: number, ts: number}): void {
-    state.currentSelection =
-        {kind: 'HEAP_PROFILE', id: args.id, upid: args.upid, ts: args.ts};
+      state: StateDraft,
+      args: {id: number, upid: number, ts: number, type: string}): void {
+    state.currentSelection = {
+      kind: 'HEAP_PROFILE',
+      id: args.id,
+      upid: args.upid,
+      ts: args.ts,
+      type: args.type
+    };
   },
 
   showHeapProfileFlamegraph(
-      state: StateDraft, args: {id: number, upid: number, ts: number}): void {
+      state: StateDraft,
+      args: {id: number, upid: number, ts: number, type: string}): void {
     state.currentHeapProfileFlamegraph = {
       kind: 'HEAP_PROFILE_FLAMEGRAPH',
       id: args.id,
       upid: args.upid,
-      ts: args.ts
+      ts: args.ts,
+      type: args.type,
     };
   },
 
-  selectChromeSlice(state: StateDraft, args: {id: number}): void {
-    state.currentSelection = {kind: 'CHROME_SLICE', id: args.id};
+  expandHeapProfileFlamegraph(
+      state: StateDraft, args: {expandedCallsite?: CallsiteInfo}): void {
+    if (state.currentHeapProfileFlamegraph === null) return;
+    state.currentHeapProfileFlamegraph.expandedCallsite = args.expandedCallsite;
   },
 
-  selectThreadState(
-      state: StateDraft,
-      args:
-          {utid: number, ts: number, dur: number, state: string, cpu: number}):
+  changeViewHeapProfileFlamegraph(
+      state: StateDraft, args: {viewingOption: string}): void {
+    if (state.currentHeapProfileFlamegraph === null) return;
+    state.currentHeapProfileFlamegraph.viewingOption = args.viewingOption;
+  },
+
+  selectChromeSlice(state: StateDraft, args: {id: number, trackId: string}):
       void {
         state.currentSelection = {
-          kind: 'THREAD_STATE',
-          utid: args.utid,
-          ts: args.ts,
-          dur: args.dur,
-          state: args.state,
-          cpu: args.cpu
+          kind: 'CHROME_SLICE',
+          id: args.id,
+          trackId: args.trackId
         };
       },
+
+  selectThreadState(state: StateDraft, args: {
+    utid: number,
+    ts: number,
+    dur: number,
+    state: string,
+    cpu: number,
+    trackId: string
+  }): void {
+    state.currentSelection = {
+      kind: 'THREAD_STATE',
+      utid: args.utid,
+      ts: args.ts,
+      dur: args.dur,
+      state: args.state,
+      cpu: args.cpu,
+      trackId: args.trackId,
+    };
+  },
 
   deselect(state: StateDraft, _: {}): void {
     state.currentSelection = null;
@@ -437,17 +512,17 @@ export const StateActions = {
     state.logsPagination = args;
   },
 
-  startRecording(state: StateDraft): void {
+  startRecording(state: StateDraft, _: {}): void {
     state.recordingInProgress = true;
     state.lastRecordingError = undefined;
     state.recordingCancelled = false;
   },
 
-  stopRecording(state: StateDraft): void {
+  stopRecording(state: StateDraft, _: {}): void {
     state.recordingInProgress = false;
   },
 
-  cancelRecording(state: StateDraft): void {
+  cancelRecording(state: StateDraft, _: {}): void {
     state.recordingInProgress = false;
     state.recordingCancelled = true;
   },
@@ -460,24 +535,21 @@ export const StateActions = {
     state.bufferUsage = args.percentage;
   },
 
-  setAndroidDevice(state: StateDraft, args: {target?: AdbRecordingTarget}):
-      void {
-        state.recordConfig.targetOS =
-            args.target ? args.target.os as TargetOs : 'Q';
-        state.androidDeviceConnected = args.target;
-      },
+  setRecordingTarget(state: StateDraft, args: {target: RecordingTarget}): void {
+    state.recordingTarget = args.target;
+  },
 
-  setAvailableDevices(state: StateDraft, args: {devices: AdbRecordingTarget[]}):
-      void {
-        state.availableDevices = args.devices;
-      },
+  setAvailableAdbDevices(
+      state: StateDraft, args: {devices: AdbRecordingTarget[]}): void {
+    state.availableAdbDevices = args.devices;
+  },
 
   setOmnibox(state: StateDraft, args: OmniboxState): void {
     state.frontendLocalState.omniboxState = args;
   },
 
-  selectTimeRange(state: StateDraft, args: SelectedTimeRange): void {
-    state.frontendLocalState.selectedTimeRange = args;
+  selectArea(state: StateDraft, args: TimestampedAreaSelection): void {
+    state.frontendLocalState.selectedArea = args;
   },
 
   setVisibleTraceTime(state: StateDraft, args: VisibleState): void {

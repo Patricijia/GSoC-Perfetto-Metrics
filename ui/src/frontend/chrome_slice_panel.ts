@@ -25,10 +25,10 @@ export class ChromeSliceDetailsPanel extends Panel {
     if (sliceInfo.ts && sliceInfo.dur && sliceInfo.name) {
       return m(
           '.details-panel',
-          m('.details-panel-heading', `Slice Details:`),
+          m('.details-panel-heading', m('h2', `Slice Details`)),
           m(
               '.details-table',
-              [m('table',
+              [m('table.half-width',
                  [
                    m('tr', m('th', `Name`), m('td', `${sliceInfo.name}`)),
                    (sliceInfo.category === '[NULL]') ?
@@ -47,10 +47,11 @@ export class ChromeSliceDetailsPanel extends Panel {
     } else {
       return m(
           '.details-panel',
-          m(
-              '.details-panel-heading',
-              `Slice Details:`,
-              ));
+          m('.details-panel-heading',
+            m(
+                'h2',
+                `Slice Details`,
+                )));
     }
   }
   renderCanvas(_ctx: CanvasRenderingContext2D, _size: PanelSize) {}

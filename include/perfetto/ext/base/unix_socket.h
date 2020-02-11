@@ -37,8 +37,9 @@ class TaskRunner;
 
 // Use arbitrarily high values to avoid that some code accidentally ends up
 // assuming that these enum values match the sysroot's SOCK_xxx defines rather
-// than using GetUnixSockType().
+// than using GetSockType() / GetSockFamily().
 enum class SockType { kStream = 100, kDgram, kSeqPacket };
+enum class SockFamily { kUnix = 200, kInet };
 
 // UnixSocketRaw is a basic wrapper around UNIX sockets. It exposes wrapper
 // methods that take care of most common pitfalls (e.g., marking fd as
@@ -47,17 +48,18 @@ enum class SockType { kStream = 100, kDgram, kSeqPacket };
 class UnixSocketRaw {
  public:
   // Creates a new unconnected unix socket.
-  static UnixSocketRaw CreateMayFail(SockType t) { return UnixSocketRaw(t); }
+  static UnixSocketRaw CreateMayFail(SockFamily family, SockType type);
 
   // Crates a pair of connected sockets.
-  static std::pair<UnixSocketRaw, UnixSocketRaw> CreatePair(SockType);
+  static std::pair<UnixSocketRaw, UnixSocketRaw> CreatePair(SockFamily,
+                                                            SockType);
 
   // Creates an uninitialized unix socket.
   UnixSocketRaw();
 
   // Creates a unix socket adopting an existing file descriptor. This is
   // typically used to inherit fds from init via environment variables.
-  UnixSocketRaw(ScopedFile, SockType);
+  UnixSocketRaw(ScopedFile, SockFamily, SockType);
 
   ~UnixSocketRaw() = default;
   UnixSocketRaw(UnixSocketRaw&&) noexcept = default;
@@ -73,6 +75,7 @@ class UnixSocketRaw {
   bool IsBlocking() const;
   void RetainOnExec();
   SockType type() const { return type_; }
+  SockFamily family() const { return family_; }
   int fd() const { return *fd_; }
   explicit operator bool() const { return !!fd_; }
 
@@ -98,13 +101,14 @@ class UnixSocketRaw {
   static void ShiftMsgHdr(size_t n, struct msghdr* msg);
 
  private:
-  explicit UnixSocketRaw(SockType);
+  UnixSocketRaw(SockFamily, SockType);
 
   UnixSocketRaw(const UnixSocketRaw&) = delete;
   UnixSocketRaw& operator=(const UnixSocketRaw&) = delete;
 
   ScopedFile fd_;
-  SockType type_{SockType::kStream};
+  SockFamily family_ = SockFamily::kUnix;
+  SockType type_ = SockType::kStream;
 };
 
 // A non-blocking UNIX domain socket. Allows also to transfer file descriptors.
@@ -177,24 +181,26 @@ class UnixSocket {
     kListening    // After Listen(), until Shutdown().
   };
 
-  enum class BlockingMode { kNonBlocking, kBlocking };
-
-  // Creates a Unix domain socket and starts listening. If |socket_name|
-  // starts with a '@', an abstract socket will be created (Linux/Android only).
+  // Creates a socket and starts listening. If SockFamily::kUnix and
+  // |socket_name| starts with a '@', an abstract UNIX dmoain socket will be
+  // created instead of a filesystem-linked UNIX socket (Linux/Android only).
+  // If SockFamily::kInet, |socket_name| is host:port (e.g., "1.2.3.4:8000").
   // Returns always an instance. In case of failure (e.g., another socket
   // with the same name is  already listening) the returned socket will have
   // is_listening() == false and last_error() will contain the failure reason.
   static std::unique_ptr<UnixSocket> Listen(const std::string& socket_name,
                                             EventListener*,
                                             TaskRunner*,
-                                            SockType = SockType::kStream);
+                                            SockFamily,
+                                            SockType);
 
   // Attaches to a pre-existing socket. The socket must have been created in
   // SOCK_STREAM mode and the caller must have called bind() on it.
   static std::unique_ptr<UnixSocket> Listen(ScopedFile,
                                             EventListener*,
                                             TaskRunner*,
-                                            SockType = SockType::kStream);
+                                            SockFamily,
+                                            SockType);
 
   // Creates a Unix domain socket and connects to the listening endpoint.
   // Returns always an instance. EventListener::OnConnect(bool success) will
@@ -202,14 +208,15 @@ class UnixSocket {
   static std::unique_ptr<UnixSocket> Connect(const std::string& socket_name,
                                              EventListener*,
                                              TaskRunner*,
-                                             SockType = SockType::kStream);
+                                             SockFamily,
+                                             SockType);
 
   // Constructs a UnixSocket using the given connected socket.
-  static std::unique_ptr<UnixSocket> AdoptConnected(
-      ScopedFile fd,
-      EventListener* event_listener,
-      TaskRunner* task_runner,
-      SockType sock_type);
+  static std::unique_ptr<UnixSocket> AdoptConnected(ScopedFile,
+                                                    EventListener*,
+                                                    TaskRunner*,
+                                                    SockFamily,
+                                                    SockType);
 
   UnixSocket(const UnixSocket&) = delete;
   UnixSocket& operator=(const UnixSocket&) = delete;
@@ -233,26 +240,16 @@ class UnixSocket {
   // EventListener::OnDisconnect() will be called.
   // If the socket is not connected, Send() will just return false.
   // Does not append a null string terminator to msg in any case.
-  //
-  // DO NOT PASS kNonBlocking, it is broken.
-  bool Send(const void* msg,
-            size_t len,
-            const int* send_fds,
-            size_t num_fds,
-            BlockingMode blocking = BlockingMode::kNonBlocking);
+  bool Send(const void* msg, size_t len, const int* send_fds, size_t num_fds);
 
-  inline bool Send(const void* msg,
-                   size_t len,
-                   int send_fd = -1,
-                   BlockingMode blocking = BlockingMode::kNonBlocking) {
+  inline bool Send(const void* msg, size_t len, int send_fd = -1) {
     if (send_fd != -1)
-      return Send(msg, len, &send_fd, 1, blocking);
-    return Send(msg, len, nullptr, 0, blocking);
+      return Send(msg, len, &send_fd, 1);
+    return Send(msg, len, nullptr, 0);
   }
 
-  inline bool Send(const std::string& msg,
-                   BlockingMode blocking = BlockingMode::kNonBlocking) {
-    return Send(msg.c_str(), msg.size() + 1, -1, blocking);
+  inline bool Send(const std::string& msg) {
+    return Send(msg.c_str(), msg.size() + 1, -1);
   }
 
   // Returns the number of bytes (<= |len|) written in |msg| or 0 if there
@@ -283,6 +280,7 @@ class UnixSocket {
   // the last peer.
   uid_t peer_uid() const {
     PERFETTO_DCHECK(!is_listening() && peer_uid_ != kInvalidUid);
+    ignore_result(kInvalidPid);  // Silence warnings in amalgamated builds.
     return peer_uid_;
   }
 
@@ -303,8 +301,13 @@ class UnixSocket {
   UnixSocketRaw ReleaseSocket();
 
  private:
-  UnixSocket(EventListener*, TaskRunner*, SockType);
-  UnixSocket(EventListener*, TaskRunner*, ScopedFile, State, SockType);
+  UnixSocket(EventListener*, TaskRunner*, SockFamily, SockType);
+  UnixSocket(EventListener*,
+             TaskRunner*,
+             ScopedFile,
+             State,
+             SockFamily,
+             SockType);
 
   // Called once by the corresponding public static factory methods.
   void DoConnect(const std::string& socket_name);

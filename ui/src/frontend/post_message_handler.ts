@@ -28,12 +28,14 @@ const VALID_ORIGINS = [
 // ready, so the message handler always replies to a 'PING' message with 'PONG',
 // which indicates it is ready to receive a trace.
 export function postMessageHandler(messageEvent: MessageEvent) {
-  if (!VALID_ORIGINS.includes(messageEvent.origin)) {
-    throw new Error('Invalid origin for postMessage: ' + messageEvent.origin);
+  if (!isOriginAllowed(messageEvent.origin)) {
+    console.error(
+        `Ignoring message - disallowed origin ${messageEvent.origin}`);
+    return;
   }
 
   if (document.readyState !== 'complete') {
-    console.error('Not ready.');
+    console.error('Ignoring message - document not ready yet.');
     return;
   }
 
@@ -68,4 +70,13 @@ export function postMessageHandler(messageEvent: MessageEvent) {
   globals.frontendLocalState.localOnlyMode = true;
 
   globals.dispatch(Actions.openTraceFromBuffer({buffer}));
+}
+
+// Returns whether messages from the origin should be accepted.
+function isOriginAllowed(origin: string): boolean {
+  if (VALID_ORIGINS.includes(origin)) return true;
+
+  if (new URL(origin).hostname.endsWith('corp.google.com')) return true;
+
+  return false;
 }

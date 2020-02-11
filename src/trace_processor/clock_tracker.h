@@ -21,6 +21,7 @@
 
 #include <array>
 #include <map>
+#include <random>
 #include <set>
 #include <vector>
 
@@ -124,16 +125,57 @@ class ClockTracker {
     return (static_cast<uint64_t>(seq_id) << 32) | clock_id;
   }
 
+  // Returns whether |global_clock_id| represents a sequence-scoped clock, i.e.
+  // a ClockId returned by SeqScopedClockIdToGlobal().
+  static bool ClockIsSeqScoped(ClockId global_clock_id) {
+    // If the id is > 2**32, this is a sequence-scoped clock id translated into
+    // the global namespace.
+    return (global_clock_id >> 32) > 0;
+  }
+
   explicit ClockTracker(TraceProcessorContext*);
   virtual ~ClockTracker();
 
+  // Clock description and its value in a snapshot.
+  struct ClockValue {
+    ClockValue(ClockId id, int64_t ts) : clock_id(id), absolute_timestamp(ts) {}
+    ClockValue(ClockId id, int64_t ts, int64_t unit, bool incremental)
+        : clock_id(id),
+          absolute_timestamp(ts),
+          unit_multiplier_ns(unit),
+          is_incremental(incremental) {}
+
+    ClockId clock_id;
+    int64_t absolute_timestamp;
+    int64_t unit_multiplier_ns = 1;
+    bool is_incremental = false;
+  };
+
   // Appends a new snapshot for the given clock domains.
   // This is typically called by the code that reads the ClockSnapshot packet.
-  void AddSnapshot(const std::map<ClockId, int64_t>&);
+  void AddSnapshot(const std::vector<ClockValue>&);
 
+  // Converts a timestamp between two clock domains. Tries to use the cache
+  // first (only for single-path resolutions), then falls back on path finding
+  // as described in the header.
   base::Optional<int64_t> Convert(ClockId src_clock_id,
                                   int64_t src_timestamp,
-                                  ClockId target_clock_id);
+                                  ClockId target_clock_id) {
+    if (PERFETTO_LIKELY(!cache_lookups_disabled_for_testing_)) {
+      for (const auto& ce : cache_) {
+        if (ce.src != src_clock_id || ce.target != target_clock_id)
+          continue;
+        int64_t ns = ce.src_domain->ToNs(src_timestamp);
+        if (ns >= ce.min_ts_ns && ns < ce.max_ts_ns)
+          return ns + ce.translation_ns;
+      }
+    }
+    return ConvertSlowpath(src_clock_id, src_timestamp, target_clock_id);
+  }
+
+  base::Optional<int64_t> ConvertSlowpath(ClockId src_clock_id,
+                                          int64_t src_timestamp,
+                                          ClockId target_clock_id);
 
   base::Optional<int64_t> ToTraceTime(ClockId clock_id, int64_t timestamp) {
     if (clock_id == trace_time_clock_id_)
@@ -144,6 +186,10 @@ class ClockTracker {
   void SetTraceTimeClock(ClockId clock_id) {
     PERFETTO_DCHECK(!IsReservedSeqScopedClockId(clock_id));
     trace_time_clock_id_ = clock_id;
+  }
+
+  void set_cache_lookups_disabled_for_testing(bool v) {
+    cache_lookups_disabled_for_testing_ = v;
   }
 
  private:
@@ -193,8 +239,27 @@ class ClockTracker {
     // One time-series for each hash.
     std::map<SnapshotHash, ClockSnapshots> snapshots;
 
-    // TODO(primiano): support other resolutions.
-    int64_t ToNs(int64_t timestamp) const { return timestamp * 1; }
+    // Multiplier for timestamps given in this domain.
+    int64_t unit_multiplier_ns = 1;
+
+    // Whether this clock domain encodes timestamps as deltas. This is only
+    // supported on sequence-local domains.
+    bool is_incremental = false;
+
+    // If |is_incremental| is true, this stores the most recent absolute
+    // timestamp in nanoseconds.
+    int64_t last_timestamp_ns = 0;
+
+    // Treats |timestamp| as delta timestamp if the clock uses incremental
+    // encoding, and as absolute timestamp otherwise.
+    int64_t ToNs(int64_t timestamp) {
+      if (!is_incremental)
+        return timestamp * unit_multiplier_ns;
+
+      int64_t delta_ns = timestamp * unit_multiplier_ns;
+      last_timestamp_ns += delta_ns;
+      return last_timestamp_ns;
+    }
 
     const ClockSnapshots& GetSnapshot(uint32_t hash) const {
       auto it = snapshots.find(hash);
@@ -203,15 +268,26 @@ class ClockTracker {
     }
   };
 
+  // Holds data for cached entries. At the moment only single-path resolution
+  // are cached.
+  struct CachedClockPath {
+    ClockId src;
+    ClockId target;
+    ClockDomain* src_domain;
+    int64_t min_ts_ns;
+    int64_t max_ts_ns;
+    int64_t translation_ns;
+  };
+
   ClockTracker(const ClockTracker&) = delete;
   ClockTracker& operator=(const ClockTracker&) = delete;
 
   ClockPath FindPath(ClockId src, ClockId target);
 
-  const ClockDomain& GetClock(ClockId clock_id) const {
+  ClockDomain* GetClock(ClockId clock_id) {
     auto it = clocks_.find(clock_id);
     PERFETTO_DCHECK(it != clocks_.end());
-    return it->second;
+    return &it->second;
   }
 
   TraceProcessorContext* const context_;
@@ -219,6 +295,9 @@ class ClockTracker {
   std::map<ClockId, ClockDomain> clocks_;
   std::set<ClockGraphEdge> graph_;
   std::set<ClockId> non_monotonic_clocks_;
+  std::array<CachedClockPath, 2> cache_{};
+  bool cache_lookups_disabled_for_testing_ = false;
+  std::minstd_rand rnd_;  // For cache eviction.
   uint32_t cur_snapshot_id_ = 0;
 };
 

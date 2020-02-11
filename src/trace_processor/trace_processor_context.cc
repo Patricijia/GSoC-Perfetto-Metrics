@@ -20,26 +20,23 @@
 #include "src/trace_processor/chunked_trace_reader.h"
 #include "src/trace_processor/clock_tracker.h"
 #include "src/trace_processor/event_tracker.h"
-#include "src/trace_processor/heap_graph_tracker.h"
+#include "src/trace_processor/global_args_tracker.h"
 #include "src/trace_processor/heap_profile_tracker.h"
+#include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/json/json_trace_parser.h"
-#include "src/trace_processor/importers/proto/ftrace_module.h"
+#include "src/trace_processor/importers/proto/proto_trace_parser.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
-#include "src/trace_processor/importers/systrace/systrace_parser.h"
+#include "src/trace_processor/metadata_tracker.h"
 #include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/proto_trace_parser.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/stack_profile_tracker.h"
-#include "src/trace_processor/syscall_tracker.h"
 #include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/track_tracker.h"
-#include "src/trace_processor/vulkan_memory_tracker.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-TraceProcessorContext::TraceProcessorContext()
-    : ftrace_module(this), track_event_module(this) {}
+TraceProcessorContext::TraceProcessorContext() = default;
 TraceProcessorContext::~TraceProcessorContext() = default;
 
 }  // namespace trace_processor

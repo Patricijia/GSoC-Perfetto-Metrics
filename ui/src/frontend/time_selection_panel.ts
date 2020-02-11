@@ -17,10 +17,10 @@ import * as m from 'mithril';
 import {timeToString} from '../common/time';
 import {TimeSpan} from '../common/time';
 
+import {TRACK_SHELL_WIDTH} from './css_constants';
 import {globals} from './globals';
 import {gridlines} from './gridline_helper';
 import {Panel, PanelSize} from './panel';
-import {TRACK_SHELL_WIDTH} from './track_constants';
 
 export interface BBox {
   x: number;
@@ -43,6 +43,11 @@ function drawHBar(
   const xRight = Math.ceil(target.x + target.width);
   const yMid = Math.floor(target.height / 2 + target.y);
   const xWidth = xRight - xLeft;
+
+  // Don't draw in the track shell.
+  ctx.beginPath();
+  ctx.rect(bounds.x, bounds.y, bounds.width, bounds.height);
+  ctx.clip();
 
   // Draw horizontal bar of the H.
   ctx.fillRect(xLeft, yMid, xWidth, 1);
@@ -76,7 +81,7 @@ function drawHBar(
 
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#222';
-  ctx.font = '10px Google Sans';
+  ctx.font = '10px Roboto Condensed';
   ctx.fillText(label, labelXLeft, yMid);
 }
 
@@ -105,7 +110,7 @@ function drawIBar(
 
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#222';
-  ctx.font = '10px Google Sans';
+  ctx.font = '10px Roboto Condensed';
   ctx.fillText(label, xPosLabel, yMid);
 }
 
@@ -124,16 +129,14 @@ export class TimeSelectionPanel extends Panel {
       ctx.fillRect(xAndTime[0], 0, 1, size.height);
     }
 
-    const selectedTimeRange = globals.frontendLocalState.selectedTimeRange;
-    if (selectedTimeRange.startSec !== undefined &&
-        selectedTimeRange.endSec !== undefined) {
-      const start =
-          Math.min(selectedTimeRange.startSec, selectedTimeRange.endSec);
-      const end =
-          Math.max(selectedTimeRange.startSec, selectedTimeRange.endSec);
+    const selectedArea = globals.frontendLocalState.selectedArea.area;
+    if (selectedArea !== undefined) {
+      const start = Math.min(selectedArea.startSec, selectedArea.endSec);
+      const end = Math.max(selectedArea.startSec, selectedArea.endSec);
       this.renderSpan(ctx, size, new TimeSpan(start, end));
-    } else if (globals.frontendLocalState.showTimeSelectPreview) {
-      this.renderHover(ctx, size, globals.frontendLocalState.hoveredTimestamp);
+    } else if (globals.frontendLocalState.hoveredLogsTimestamp !== -1) {
+      this.renderHover(
+          ctx, size, globals.frontendLocalState.hoveredLogsTimestamp);
     }
   }
 
@@ -164,6 +167,11 @@ export class TimeSelectionPanel extends Panel {
   }
 
   private bounds(size: PanelSize): BBox {
-    return {x: TRACK_SHELL_WIDTH, y: 0, width: size.width, height: size.height};
+    return {
+      x: TRACK_SHELL_WIDTH,
+      y: 0,
+      width: size.width - TRACK_SHELL_WIDTH,
+      height: size.height
+    };
   }
 }

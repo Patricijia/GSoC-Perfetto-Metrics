@@ -15,7 +15,6 @@
  */
 
 syntax = "proto2";
-option optimize_for = LITE_RUNTIME;
 
 import "protos/perfetto/trace/profiling/profile_common.proto";
 
@@ -142,5 +141,19 @@ message ProfilePacket {
 // points in time, rather than aggregated over an interval.
 message StreamingProfilePacket {
   repeated uint64 callstack_iid = 1;  // Index into InternedData.callstacks
+  // TODO(eseckler): ThreadDescriptor-based timestamps are deprecated. Replace
+  // this with ClockSnapshot-based delta encoding instead.
   repeated int64 timestamp_delta_us = 2;
+}
+
+// Individual performance sampling packet payload. Typically corresponds to a
+// stack sample on a configration-dependent counter overflow.
+// Timestamps are within the root packet (in the CLOCK_BOOTTIME domain).
+message PerfSample {
+  optional uint32 cpu = 1;
+
+  optional uint32 pid = 2;
+  optional uint32 tid = 3;
+
+  optional uint64 callstack_iid = 4;
 }

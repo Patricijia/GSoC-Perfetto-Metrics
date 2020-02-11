@@ -28,12 +28,10 @@
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/unix_task_runner.h"
-#include "perfetto/ext/base/uuid.h"
 #include "perfetto/ext/tracing/core/consumer.h"
 #include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
+#include "src/perfetto_cmd/perfetto_atoms.h"
 #include "src/perfetto_cmd/rate_limiter.h"
-
-#include "src/perfetto_cmd/perfetto_cmd_state.pb.h"
 
 namespace perfetto {
 
@@ -82,7 +80,9 @@ class PerfettoCmd : public Consumer {
   void SaveTraceIntoDropboxAndIncidentOrCrash();
   void SaveOutputToDropboxOrCrash();
   void SaveOutputToIncidentTraceOrCrash();
+  void LogUploadEventAndroid(PerfettoStatsdAtom atom);
 #endif
+  void LogUploadEvent(PerfettoStatsdAtom atom);
 
   base::UnixTaskRunner task_runner_;
 
@@ -104,6 +104,7 @@ class PerfettoCmd : public Consumer {
   bool redetach_once_attached_ = false;
   bool query_service_ = false;
   bool query_service_output_raw_ = false;
+  std::string uuid_;
 
   // How long we expect to trace for or 0 if the trace is indefinite.
   uint32_t expected_duration_ms_ = 0;

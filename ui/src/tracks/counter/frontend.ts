@@ -32,8 +32,8 @@ import {
 } from './common';
 
 // 0.5 Makes the horizontal lines sharp.
-const MARGIN_TOP = 4.5;
-const RECT_HEIGHT = 30;
+const MARGIN_TOP = 3.5;
+const RECT_HEIGHT = 24.5;
 
 class CounterTrack extends Track<Config, Data> {
   static readonly kind = COUNTER_TRACK_KIND;
@@ -48,6 +48,10 @@ class CounterTrack extends Track<Config, Data> {
 
   constructor(trackState: TrackState) {
     super(trackState);
+  }
+
+  getHeight() {
+    return MARGIN_TOP + RECT_HEIGHT;
   }
 
   getTrackShellButtons(): Array<m.Vnode<TrackButtonAttrs>> {
@@ -66,7 +70,7 @@ class CounterTrack extends Track<Config, Data> {
       i: 'show_chart',
       tooltip: (this.config.scale === 'RELATIVE') ? 'Use zero-based scale' :
                                                     'Use relative scale',
-      selected: this.config.scale === 'RELATIVE',
+      showButton: this.config.scale === 'RELATIVE',
     }));
     return buttons;
   }
@@ -150,13 +154,12 @@ class CounterTrack extends Track<Config, Data> {
     ctx.stroke();
     ctx.setLineDash([]);
 
-    ctx.font = '10px Google Sans';
+    ctx.font = '10px Roboto Condensed';
 
     if (this.hoveredValue !== undefined && this.hoveredTs !== undefined) {
       // TODO(hjd): Add units.
       let text = (data.isQuantized) ? 'max value: ' : 'value: ';
       text += `${this.hoveredValue.toLocaleString()}`;
-      const width = ctx.measureText(text).width;
 
       ctx.fillStyle = `hsl(${hue}, 45%, 75%)`;
       ctx.strokeStyle = `hsl(${hue}, 45%, 45%)`;
@@ -183,21 +186,29 @@ class CounterTrack extends Track<Config, Data> {
       ctx.stroke();
 
       // Draw the tooltip.
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fillRect(this.mouseXpos + 5, MARGIN_TOP, width + 16, RECT_HEIGHT);
-      ctx.fillStyle = 'hsl(200, 50%, 40%)';
-      ctx.textAlign = 'left';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(text, this.mouseXpos + 8, MARGIN_TOP + RECT_HEIGHT / 2);
+      this.drawTrackHoverTooltip(ctx, this.mouseXpos, text);
     }
 
     // Write the Y scale on the top left corner.
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.fillRect(0, 0, 40, 16);
+    ctx.fillRect(0, 0, 42, 16);
     ctx.fillStyle = '#666';
     ctx.textAlign = 'left';
     ctx.textBaseline = 'alphabetic';
     ctx.fillText(`${yLabel}`, 5, 14);
+
+    // TODO(hjd): Refactor this into checkerboardExcept
+    {
+      const endPx = timeScale.timeToPx(visibleWindowTime.end);
+      const counterEndPx =
+          Math.min(timeScale.timeToPx(this.config.endTs || Infinity), endPx);
+
+      // Grey out RHS.
+      if (counterEndPx < endPx) {
+        ctx.fillStyle = '#0000001f';
+        ctx.fillRect(counterEndPx, 0, endPx - counterEndPx, this.getHeight());
+      }
+    }
 
     // If the cached trace slices don't fully cover the visible time range,
     // show a gray rectangle with a "Loading..." label.
@@ -241,7 +252,8 @@ class CounterTrack extends Track<Config, Data> {
       globals.makeSelection(Actions.selectCounter({
         leftTs: toNs(data.timestamps[left]),
         rightTs: right !== -1 ? toNs(data.timestamps[right]) : -1,
-        id: counterId
+        id: counterId,
+        trackId: this.trackState.id
       }));
       return true;
     }

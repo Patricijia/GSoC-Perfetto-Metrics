@@ -21,12 +21,10 @@
 
 #include "perfetto/ext/base/circular_queue.h"
 #include "perfetto/trace_processor/basic_types.h"
-#include "src/trace_processor/importers/fuchsia/fuchsia_provider_view.h"
-#include "src/trace_processor/proto_incremental_state.h"
+#include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/trace_storage.h"
 
 namespace Json {
 class Value;
@@ -34,6 +32,9 @@ class Value;
 
 namespace perfetto {
 namespace trace_processor {
+
+class FuchsiaProviderView;
+class PacketSequenceState;
 
 // This class takes care of sorting events parsed from the trace stream in
 // arbitrary order and pushing them to the next pipeline stages (parsing) in
@@ -67,12 +68,13 @@ class TraceSorter {
   TraceSorter(TraceProcessorContext*, int64_t window_size_ns);
 
   inline void PushTracePacket(int64_t timestamp,
-                              ProtoIncrementalState::PacketSequenceState* state,
+                              PacketSequenceState* state,
                               TraceBlobView packet) {
     DCHECK_ftrace_batch_cpu(kNoBatch);
     auto* queue = GetQueue(0);
     queue->Append(TimestampedTracePiece(timestamp, packet_idx_++,
-                                        std::move(packet), state));
+                                        std::move(packet),
+                                        state->current_generation()));
     MaybeExtractEvents(queue);
   }
 
@@ -84,14 +86,12 @@ class TraceSorter {
     MaybeExtractEvents(queue);
   }
 
-  inline void PushFuchsiaRecord(
-      int64_t timestamp,
-      TraceBlobView record,
-      std::unique_ptr<FuchsiaProviderView> provider_view) {
+  inline void PushFuchsiaRecord(int64_t timestamp,
+                                std::unique_ptr<FuchsiaRecord> record) {
     DCHECK_ftrace_batch_cpu(kNoBatch);
     auto* queue = GetQueue(0);
-    queue->Append(TimestampedTracePiece(
-        timestamp, packet_idx_++, std::move(record), std::move(provider_view)));
+    queue->Append(
+        TimestampedTracePiece(timestamp, packet_idx_++, std::move(record)));
     MaybeExtractEvents(queue);
   }
 
@@ -117,22 +117,30 @@ class TraceSorter {
   // instead.
   inline void PushInlineFtraceEvent(uint32_t cpu,
                                     int64_t timestamp,
-                                    InlineEvent inline_event) {
+                                    InlineSchedSwitch inline_sched_switch) {
     set_ftrace_batch_cpu_for_DCHECK(cpu);
     GetQueue(cpu + 1)->Append(
-        TimestampedTracePiece(timestamp, packet_idx_++, inline_event));
+        TimestampedTracePiece(timestamp, packet_idx_++, inline_sched_switch));
+  }
+  inline void PushInlineFtraceEvent(uint32_t cpu,
+                                    int64_t timestamp,
+                                    InlineSchedWaking inline_sched_waking) {
+    set_ftrace_batch_cpu_for_DCHECK(cpu);
+    GetQueue(cpu + 1)->Append(
+        TimestampedTracePiece(timestamp, packet_idx_++, inline_sched_waking));
   }
 
-  inline void PushTrackEventPacket(
-      int64_t timestamp,
-      int64_t thread_time,
-      int64_t thread_instruction_count,
-      ProtoIncrementalState::PacketSequenceState* state,
-      TraceBlobView packet) {
+  inline void PushTrackEventPacket(int64_t timestamp,
+                                   int64_t thread_time,
+                                   int64_t thread_instruction_count,
+                                   PacketSequenceState* state,
+                                   TraceBlobView packet) {
     auto* queue = GetQueue(0);
-    queue->Append(TimestampedTracePiece(timestamp, thread_time,
-                                        thread_instruction_count, packet_idx_++,
-                                        std::move(packet), state));
+    std::unique_ptr<TrackEventData> data(
+        new TrackEventData{std::move(packet), state->current_generation(),
+                           thread_time, thread_instruction_count});
+    queue->Append(
+        TimestampedTracePiece(timestamp, packet_idx_++, std::move(data)));
     MaybeExtractEvents(queue);
   }
 
@@ -145,6 +153,7 @@ class TraceSorter {
   // Extract all events ignoring the window.
   void ExtractEventsForced() {
     SortAndExtractEventsBeyondWindow(/*window_size_ns=*/0);
+    queues_.resize(0);
   }
 
   // Sets the window size to be the size specified (which should be lower than
@@ -163,6 +172,8 @@ class TraceSorter {
       return;
     SortAndExtractEventsBeyondWindow(window_size_ns_);
   }
+
+  int64_t max_timestamp() const { return global_max_ts_; }
 
  private:
   static constexpr uint32_t kNoBatch = std::numeric_limits<uint32_t>::max();
