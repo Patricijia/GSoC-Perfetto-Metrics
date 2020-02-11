@@ -36,6 +36,7 @@
 #include "src/profiling/perf/event_reader.h"
 
 #include "protos/perfetto/config/profiling/perf_event_config.pbzero.h"
+#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
@@ -45,7 +46,6 @@ namespace {
 // TODO(rsavitski): for low sampling rates, look into epoll to detect samples.
 constexpr uint32_t kReadTickPeriodMs = 200;
 constexpr uint32_t kUnwindTickPeriodMs = 200;
-constexpr uint32_t kBookkeepTickPeriodMs = 200;
 // TODO(rsavitski): this is better calculated (at setup) from the buffer and
 // sample sizes.
 constexpr size_t kMaxSamplesPerReadTick = 32;
@@ -74,7 +74,7 @@ void PerfProducer::SetupDataSource(DataSourceInstanceID,
 
 void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
                                    const DataSourceConfig& config) {
-  PERFETTO_DLOG("StartDataSource(id=%" PRIu64 ", name=%s)", instance_id,
+  PERFETTO_DLOG("StopDataSource(%zu, %s)", static_cast<size_t>(instance_id),
                 config.name().c_str());
 
   if (config.name() != kDataSourceName)
@@ -86,8 +86,8 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
     return;
   }
 
-  base::Optional<EventReader> event_reader =
-      EventReader::ConfigureEvents(event_config.value());
+  base::Optional<EventReader> event_reader = EventReader::ConfigureEvents(
+      event_config->target_cpu(), event_config.value());
   if (!event_reader.has_value()) {
     PERFETTO_ELOG("Failed to set up perf events.");
     return;
@@ -97,12 +97,17 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
   auto writer = endpoint_->CreateTraceWriter(buffer_id);
 
   // Construct the data source instance.
-  auto it_inserted = data_sources_.emplace(
+  std::map<DataSourceInstanceID, DataSource>::iterator ds_it;
+  bool inserted;
+  std::tie(ds_it, inserted) = data_sources_.emplace(
       std::piecewise_construct, std::forward_as_tuple(instance_id),
       std::forward_as_tuple(std::move(writer),
                             std::move(event_reader.value())));
+  PERFETTO_CHECK(inserted);
 
-  PERFETTO_CHECK(it_inserted.second);
+  // Write out a packet to initialize the incremental state for this sequence.
+  InterningOutputTracker::WriteFixedInterningsPacket(
+      ds_it->second.trace_writer.get());
 
   // Kick off periodic read task.
   auto weak_this = weak_factory_.GetWeakPtr();
@@ -121,51 +126,30 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
           weak_this->TickDataSourceUnwind(instance_id);
       },
       kUnwindTickPeriodMs);
-
-  // Set up bookkeeping queue and kick off a periodic task to process it.
-  bookkeping_queues_.emplace(instance_id,
-                             std::queue<PerfProducer::BookkeepingEntry>{});
-  task_runner_->PostDelayedTask(
-      [weak_this, instance_id] {
-        if (weak_this)
-          weak_this->TickDataSourceBookkeep(instance_id);
-      },
-      kBookkeepTickPeriodMs);
 }
 
-// TODO(rsavitski): stop perf_event, then drain ring buffer and internal
-// queues.
 void PerfProducer::StopDataSource(DataSourceInstanceID instance_id) {
-  PERFETTO_DLOG("StopDataSource(id=%" PRIu64 ")", instance_id);
+  PERFETTO_DLOG("StopDataSource(%zu)", static_cast<size_t>(instance_id));
   auto ds_it = data_sources_.find(instance_id);
   if (ds_it == data_sources_.end())
     return;
 
+  // Start shutting down the reading frontend, which will propagate the stop
+  // further as the intermediate buffers are cleared.
   DataSource& ds = ds_it->second;
-
-  ds.trace_writer->Flush();
-
-  data_sources_.erase(instance_id);
-  unwind_queues_.erase(instance_id);
-  bookkeping_queues_.erase(instance_id);
-
-  // If there are no more data sources, purge internings.
-  if (data_sources_.empty()) {
-    callstack_trie_.ClearTrie();
-  }
+  InitiateReaderStop(&ds);
 }
 
 // TODO(rsavitski): ignoring flushes for now, as it is involved given
 // out-of-order unwinding and proc-fd timeouts. Instead of responding to
 // explicit flushes, we can ensure that we're otherwise well-behaved (do not
-// reorder packets too much). Final flush will be handled separately (on stop).
+// reorder packets too much).
 void PerfProducer::Flush(FlushRequestID flush_id,
                          const DataSourceInstanceID* data_source_ids,
                          size_t num_data_sources) {
   for (size_t i = 0; i < num_data_sources; i++) {
     auto ds_id = data_source_ids[i];
-    PERFETTO_DLOG("Flush(id=%" PRIu64 ")", ds_id);
-
+    PERFETTO_DLOG("Flush(%zu)", static_cast<size_t>(ds_id));
     auto ds_it = data_sources_.find(ds_id);
     if (ds_it != data_sources_.end()) {
       endpoint_->NotifyFlushComplete(flush_id);
@@ -177,7 +161,7 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
   using Status = DataSource::ProcDescriptors::Status;
   auto it = data_sources_.find(ds_id);
   if (it == data_sources_.end()) {
-    PERFETTO_DLOG("Stopping TickDataSourceRead(%zu)",
+    PERFETTO_DLOG("TickDataSourceRead(%zu): source gone",
                   static_cast<size_t>(ds_id));
     return;
   }
@@ -189,18 +173,21 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
                   static_cast<size_t>(ds_id), lost_events);
   };
 
+  bool caught_up = false;
   for (size_t i = 0; i < kMaxSamplesPerReadTick; i++) {
     base::Optional<ParsedSample> sample =
         ds.event_reader.ReadUntilSample(lost_events_callback);
-    if (!sample)
-      break;  // caught up to the writer
+    if (!sample) {
+      caught_up = true;  // caught up to the writer
+      break;
+    }
 
     pid_t pid = sample->pid;
     if (!sample->regs) {
       // TODO(rsavitski): don't discard if/when doing stackless events.
       PERFETTO_DLOG("Dropping event without register data for pid [%d]",
                     static_cast<int>(pid));
-      break;
+      continue;
     }
 
     // Request proc-fds for the process if this is the first time we see it yet.
@@ -223,13 +210,18 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
     unwind_queues_[ds_id].emplace_back(std::move(sample.value()));
   }
 
-  auto weak_this = weak_factory_.GetWeakPtr();
-  task_runner_->PostDelayedTask(
-      [weak_this, ds_id] {
-        if (weak_this)
-          weak_this->TickDataSourceRead(ds_id);
-      },
-      kReadTickPeriodMs);
+  if (PERFETTO_UNLIKELY(ds.reader_stopping) && caught_up) {
+    InitiateUnwindStop(&ds);
+  } else {
+    // otherwise, keep reading
+    auto weak_this = weak_factory_.GetWeakPtr();
+    task_runner_->PostDelayedTask(
+        [weak_this, ds_id] {
+          if (weak_this)
+            weak_this->TickDataSourceRead(ds_id);
+        },
+        kReadTickPeriodMs);
+  }
 }
 
 // TODO(rsavitski): first-fit makes descriptor request fulfillment not true
@@ -264,13 +256,13 @@ void PerfProducer::PostDescriptorLookupTimeout(DataSourceInstanceID ds_id,
   task_runner_->PostDelayedTask(
       [weak_this, ds_id, pid] {
         if (weak_this)
-          weak_this->HandleDescriptorLookupTimeout(ds_id, pid);
+          weak_this->DescriptorLookupTimeout(ds_id, pid);
       },
       timeout_ms);
 }
 
-void PerfProducer::HandleDescriptorLookupTimeout(DataSourceInstanceID ds_id,
-                                                 pid_t pid) {
+void PerfProducer::DescriptorLookupTimeout(DataSourceInstanceID ds_id,
+                                           pid_t pid) {
   using Status = DataSource::ProcDescriptors::Status;
   auto ds_it = data_sources_.find(ds_id);
   if (ds_it == data_sources_.end())
@@ -290,35 +282,45 @@ void PerfProducer::HandleDescriptorLookupTimeout(DataSourceInstanceID ds_id,
 void PerfProducer::TickDataSourceUnwind(DataSourceInstanceID ds_id) {
   auto ds_it = data_sources_.find(ds_id);
   if (ds_it == data_sources_.end()) {
-    PERFETTO_DLOG("Stopping TickDataSourceUnwind(%zu)",
+    PERFETTO_DLOG("TickDataSourceUnwind(%zu): source gone",
                   static_cast<size_t>(ds_id));
     return;
   }
-
   auto unwind_it = unwind_queues_.find(ds_id);
-  auto book_it = bookkeping_queues_.find(ds_id);
   PERFETTO_CHECK(unwind_it != unwind_queues_.end());
-  PERFETTO_CHECK(book_it != bookkeping_queues_.end());
 
-  ProcessUnwindQueue(&unwind_it->second, &book_it->second, &ds_it->second);
+  bool queue_active =
+      ProcessUnwindQueue(ds_id, &unwind_it->second, &ds_it->second);
 
   auto weak_this = weak_factory_.GetWeakPtr();
-  task_runner_->PostDelayedTask(
-      [weak_this, ds_id] {
-        if (weak_this)
-          weak_this->TickDataSourceUnwind(ds_id);
-      },
-      kUnwindTickPeriodMs);
+  if (!queue_active) {
+    // Done with unwindings, push the source teardown to the end of the task
+    // queue (to still process enqueued sampled).
+    // TODO(rsavitski): under a dedicated unwinder thread, teardown of unwinding
+    // state will happen here.
+    task_runner_->PostTask([weak_this, ds_id] {
+      if (weak_this)
+        weak_this->FinishDataSourceStop(ds_id);
+    });
+  } else {
+    // Otherwise, keep unwinding.
+    task_runner_->PostDelayedTask(
+        [weak_this, ds_id] {
+          if (weak_this)
+            weak_this->TickDataSourceUnwind(ds_id);
+        },
+        kUnwindTickPeriodMs);
+  }
 }
 
-// TODO(rsavitski): reader can purge kResolving entries from the start once the
-// queue grows too large.
+// TODO(rsavitski): if we want to put a bound on the queue size (not as a
+// function of proc-fd timeout), then the reader could purge kResolving entries
+// from the start beyond that threshold.
 // TODO(rsavitski): DataSource input won't be needed once fd-tracking in the
 // unwinder is separated from fd-tracking in the reading frontend.
-void PerfProducer::ProcessUnwindQueue(
-    std::deque<UnwindEntry>* input_queue,
-    std::queue<BookkeepingEntry>* output_queue,
-    DataSource* ds_ptr) {
+bool PerfProducer::ProcessUnwindQueue(DataSourceInstanceID ds_id,
+                                      std::deque<UnwindEntry>* input_queue,
+                                      DataSource* ds_ptr) {
   using Status = DataSource::ProcDescriptors::Status;
   auto& queue = *input_queue;
   auto& ds = *ds_ptr;
@@ -355,10 +357,10 @@ void PerfProducer::ProcessUnwindQueue(
 
     // Sample ready - process it.
     if (fd_status == Status::kResolved) {
-      PerfProducer::BookkeepingEntry unwound_sample =
+      PerfProducer::CompletedSample unwound_sample =
           UnwindSample(std::move(sample), &proc_fd_it->second);
 
-      output_queue->push(std::move(unwound_sample));
+      PostEmitSample(ds_id, std::move(unwound_sample));
 
       entry.valid = false;
       continue;
@@ -374,12 +376,19 @@ void PerfProducer::ProcessUnwindQueue(
   }
 
   PERFETTO_DLOG("Unwind queue drain: [%zu]->[%zu]", num_samples, queue.size());
+
+  // Return whether we're done with unwindings for this source.
+  if (PERFETTO_UNLIKELY(ds.unwind_stopping) && queue.empty()) {
+    return false;
+  }
+  return true;
 }
 
-PerfProducer::BookkeepingEntry PerfProducer::UnwindSample(
+PerfProducer::CompletedSample PerfProducer::UnwindSample(
     ParsedSample sample,
     DataSource::ProcDescriptors* process_state) {
-  PerfProducer::BookkeepingEntry ret;
+  PerfProducer::CompletedSample ret;
+  ret.cpu = sample.cpu;
   ret.pid = sample.pid;
   ret.tid = sample.tid;
   ret.timestamp = sample.timestamp;
@@ -415,7 +424,7 @@ PerfProducer::BookkeepingEntry PerfProducer::UnwindSample(
     unwind_state.ReparseMaps();
   }
 
-  PERFETTO_DLOG("Frames:");
+  PERFETTO_DLOG("Frames from unwindstack:");
   std::vector<unwindstack::FrameData> frames = unwinder.ConsumeFrames();
   for (unwindstack::FrameData& frame : frames) {
     PERFETTO_DLOG("%s", unwinder.FormatFrame(frame).c_str());
@@ -430,51 +439,80 @@ PerfProducer::BookkeepingEntry PerfProducer::UnwindSample(
   return ret;
 }
 
-// TODO(rsavitski): reconsider posting bookkeping tasks directly (without a
-// queue). Doesn't allow flushing only a given instance's backlog, but
-// we shouldn't have the main thread so backlogged for it to matter (reading
-// will break before that). On the other hand, the tick approach would let us
-// rate-limit bookkeeping more directly (by bounding the number of events
-// processed).
-void PerfProducer::TickDataSourceBookkeep(DataSourceInstanceID ds_id) {
-  auto q_it = bookkeping_queues_.find(ds_id);
-  if (q_it == bookkeping_queues_.end()) {
+void PerfProducer::PostEmitSample(DataSourceInstanceID ds_id,
+                                  CompletedSample sample) {
+  // hack: c++11 lambdas can't be moved into, so stash the sample on the heap.
+  CompletedSample* raw_sample = new CompletedSample(std::move(sample));
+  auto weak_this = weak_factory_.GetWeakPtr();
+  task_runner_->PostTask([weak_this, ds_id, raw_sample] {
+    if (weak_this)
+      weak_this->EmitSample(ds_id, std::move(*raw_sample));
+    delete raw_sample;
+  });
+}
+
+void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
+                              CompletedSample sample) {
+  auto ds_it = data_sources_.find(ds_id);
+  if (ds_it == data_sources_.end()) {
+    PERFETTO_DLOG("EmitSample(%zu): source gone", static_cast<size_t>(ds_id));
     return;
   }
+  DataSource& ds = ds_it->second;
 
+  // intern callsite
+  GlobalCallstackTrie::Node* callstack_root =
+      callstack_trie_.CreateCallsite(sample.frames);
+  uint64_t callstack_iid = callstack_root->id();
+
+  // start packet
+  auto packet = ds.trace_writer->NewTracePacket();
+  packet->set_timestamp(sample.timestamp);
+
+  // write new interning data (if any)
+  protos::pbzero::InternedData* interned_out = packet->set_interned_data();
+  ds.interning_output.WriteCallstack(callstack_root, &callstack_trie_,
+                                     interned_out);
+
+  // write sample itself
+  auto* perf_sample = packet->set_perf_sample();
+  perf_sample->set_cpu(sample.cpu);
+  perf_sample->set_pid(static_cast<uint32_t>(sample.pid));
+  perf_sample->set_tid(static_cast<uint32_t>(sample.tid));
+  perf_sample->set_callstack_iid(callstack_iid);
+}
+
+void PerfProducer::InitiateReaderStop(DataSource* ds) {
+  PERFETTO_DLOG("InitiateReaderStop");
+  ds->reader_stopping = true;
+  ds->event_reader.PauseEvents();
+}
+
+void PerfProducer::InitiateUnwindStop(DataSource* ds) {
+  PERFETTO_DLOG("InitiateUnwindStop");
+  PERFETTO_CHECK(ds->reader_stopping);
+  ds->unwind_stopping = true;
+}
+
+void PerfProducer::FinishDataSourceStop(DataSourceInstanceID ds_id) {
+  PERFETTO_DLOG("FinishDataSourceStop(%zu)", static_cast<size_t>(ds_id));
   auto ds_it = data_sources_.find(ds_id);
   PERFETTO_CHECK(ds_it != data_sources_.end());
   DataSource& ds = ds_it->second;
 
-  auto& queue = q_it->second;
-  while (!queue.empty()) {
-    BookkeepingEntry& entry = queue.front();
+  PERFETTO_CHECK(ds.reader_stopping);
+  PERFETTO_CHECK(ds.unwind_stopping);
 
-    GlobalCallstackTrie::Node* node =
-        callstack_trie_.CreateCallsite(entry.frames);
-    std::vector<Interned<Frame>> extracted =
-        callstack_trie_.BuildCallstack(node);
+  ds.trace_writer->Flush();
+  data_sources_.erase(ds_id);
+  unwind_queues_.erase(ds_id);
 
-    PERFETTO_DLOG("Extracted from interner:");
-    for (const auto& f : extracted) {
-      PERFETTO_DLOG("%u -> %s", static_cast<unsigned>(f.id()),
-                    f->function_name->c_str());
-    }
+  endpoint_->NotifyDataSourceStopped(ds_id);
 
-    auto packet = ds.trace_writer->NewTracePacket();
-    packet->set_timestamp(entry.timestamp);
-
-    queue.pop();
+  // If there are no more data sources, purge internings.
+  if (data_sources_.empty()) {
+    callstack_trie_.ClearTrie();
   }
-
-  // Repost tick.
-  auto weak_this = weak_factory_.GetWeakPtr();
-  task_runner_->PostDelayedTask(
-      [weak_this, ds_id] {
-        if (weak_this)
-          weak_this->TickDataSourceBookkeep(ds_id);
-      },
-      kBookkeepTickPeriodMs);
 }
 
 void PerfProducer::ConnectWithRetries(const char* socket_name) {
@@ -511,6 +549,7 @@ void PerfProducer::OnConnect() {
 
   DataSourceDescriptor desc;
   desc.set_name(kDataSourceName);
+  desc.set_will_notify_on_stop(true);
   endpoint_->RegisterDataSource(desc);
 }
 
