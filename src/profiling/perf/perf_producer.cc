@@ -20,6 +20,7 @@
 
 #include <unistd.h>
 
+#include <unwindstack/Error.h>
 #include <unwindstack/Unwinder.h>
 
 #include "perfetto/base/logging.h"
@@ -62,22 +63,50 @@ size_t NumberOfCpus() {
   return static_cast<size_t>(sysconf(_SC_NPROCESSORS_CONF));
 }
 
-protos::pbzero::CpuMode ToCpuModeEnum(uint16_t perf_cpu_mode) {
-  using CpuMode = protos::pbzero::CpuMode;
+uint64_t NowMs() {
+  return static_cast<uint64_t>(base::GetWallTimeMs().count());
+}
+
+protos::pbzero::Profiling::CpuMode ToCpuModeEnum(uint16_t perf_cpu_mode) {
+  using Profiling = protos::pbzero::Profiling;
   switch (perf_cpu_mode) {
     case PERF_RECORD_MISC_KERNEL:
-      return CpuMode::MODE_KERNEL;
+      return Profiling::MODE_KERNEL;
     case PERF_RECORD_MISC_USER:
-      return CpuMode::MODE_USER;
+      return Profiling::MODE_USER;
     case PERF_RECORD_MISC_HYPERVISOR:
-      return CpuMode::MODE_HYPERVISOR;
+      return Profiling::MODE_HYPERVISOR;
     case PERF_RECORD_MISC_GUEST_KERNEL:
-      return CpuMode::MODE_GUEST_KERNEL;
+      return Profiling::MODE_GUEST_KERNEL;
     case PERF_RECORD_MISC_GUEST_USER:
-      return CpuMode::MODE_GUEST_USER;
+      return Profiling::MODE_GUEST_USER;
     default:
-      return CpuMode::MODE_UNKNOWN;
+      return Profiling::MODE_UNKNOWN;
   }
+}
+
+protos::pbzero::Profiling::StackUnwindError ToProtoEnum(
+    unwindstack::ErrorCode error_code) {
+  using Profiling = protos::pbzero::Profiling;
+  switch (error_code) {
+    case unwindstack::ERROR_NONE:
+      return Profiling::UNWIND_ERROR_NONE;
+    case unwindstack::ERROR_MEMORY_INVALID:
+      return Profiling::UNWIND_ERROR_MEMORY_INVALID;
+    case unwindstack::ERROR_UNWIND_INFO:
+      return Profiling::UNWIND_ERROR_UNWIND_INFO;
+    case unwindstack::ERROR_UNSUPPORTED:
+      return Profiling::UNWIND_ERROR_UNSUPPORTED;
+    case unwindstack::ERROR_INVALID_MAP:
+      return Profiling::UNWIND_ERROR_INVALID_MAP;
+    case unwindstack::ERROR_MAX_FRAMES_EXCEEDED:
+      return Profiling::UNWIND_ERROR_MAX_FRAMES_EXCEEDED;
+    case unwindstack::ERROR_REPEATED_FRAME:
+      return Profiling::UNWIND_ERROR_REPEATED_FRAME;
+    case unwindstack::ERROR_INVALID_ELF:
+      return Profiling::UNWIND_ERROR_INVALID_ELF;
+  }
+  return Profiling::UNWIND_ERROR_UNKNOWN;
 }
 
 }  // namespace
@@ -149,7 +178,7 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
         if (weak_this)
           weak_this->TickDataSourceRead(instance_id);
       },
-      kReadTickPeriodMs);
+      kReadTickPeriodMs - (NowMs() % kReadTickPeriodMs));
 
   // Set up unwind queue and kick off a periodic task to process it.
   unwind_queues_.emplace(instance_id, std::deque<UnwindEntry>{});
@@ -158,7 +187,7 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
         if (weak_this)
           weak_this->TickDataSourceUnwind(instance_id);
       },
-      kUnwindTickPeriodMs);
+      kUnwindTickPeriodMs - (NowMs() % kUnwindTickPeriodMs));
 }
 
 void PerfProducer::StopDataSource(DataSourceInstanceID instance_id) {
@@ -218,7 +247,7 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
           if (weak_this)
             weak_this->TickDataSourceRead(ds_id);
         },
-        kReadTickPeriodMs);
+        kReadTickPeriodMs - (NowMs() % kReadTickPeriodMs));
   }
 }
 
@@ -228,30 +257,30 @@ bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
                                             DataSource* ds) {
   using Status = DataSource::ProcDescriptors::Status;
 
-  // TODO(rsavitski): record the loss in the trace.
-  auto lost_events_callback = [ds_id](uint64_t lost_events) {
-    PERFETTO_ELOG("DataSource instance [%zu] lost [%" PRIu64 "] events",
-                  static_cast<size_t>(ds_id), lost_events);
+  // If the kernel ring buffer dropped data, record it in the trace.
+  size_t cpu = reader->cpu();
+  auto records_lost_callback = [this, ds_id, cpu](uint64_t records_lost) {
+    auto weak_this = weak_factory_.GetWeakPtr();
+    task_runner_->PostTask([weak_this, ds_id, cpu, records_lost] {
+      if (weak_this)
+        weak_this->EmitRingBufferLoss(ds_id, cpu, records_lost);
+    });
   };
 
   for (size_t i = 0; i < max_samples; i++) {
     base::Optional<ParsedSample> sample =
-        reader->ReadUntilSample(lost_events_callback);
+        reader->ReadUntilSample(records_lost_callback);
     if (!sample) {
       return false;  // caught up to the writer
     }
 
-    pid_t pid = sample->pid;
     if (!sample->regs) {
-      // TODO(rsavitski): don't discard if/when doing stackless events.
-      if (pid) {  // kernel threads not worth logging (never have regs)
-        PERFETTO_DLOG("Dropping sample without register data for pid [%d]",
-                      static_cast<int>(pid));
-      }
+      // skip kernel threads/workers
       continue;
     }
 
     // Request proc-fds for the process if this is the first time we see it yet.
+    pid_t pid = sample->pid;
     auto& fd_entry = ds->proc_fds[pid];  // created if absent
 
     if (fd_entry.status == Status::kInitial) {
@@ -261,6 +290,7 @@ bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
       PostDescriptorLookupTimeout(ds_id, pid, /*timeout_ms=*/1000);
     }
 
+    // TODO(rsavitski): consider recording skipped entries in the trace.
     if (fd_entry.status == Status::kSkip) {
       PERFETTO_DLOG("Skipping sample for previously poisoned pid [%d]",
                     static_cast<int>(pid));
@@ -361,7 +391,7 @@ void PerfProducer::TickDataSourceUnwind(DataSourceInstanceID ds_id) {
           if (weak_this)
             weak_this->TickDataSourceUnwind(ds_id);
         },
-        kUnwindTickPeriodMs);
+        kUnwindTickPeriodMs - (NowMs() % kUnwindTickPeriodMs));
   }
 }
 
@@ -457,7 +487,7 @@ PerfProducer::CompletedSample PerfProducer::UnwindSample(
   // Unwindstack clobbers registers, so make a copy in case we need to retry.
   auto working_regs = std::unique_ptr<unwindstack::Regs>{sample.regs->Clone()};
 
-  uint8_t error_code = unwindstack::ERROR_NONE;
+  unwindstack::ErrorCode error_code = unwindstack::ERROR_NONE;
   unwindstack::Unwinder unwinder(kUnwindingMaxFrames, &unwind_state.fd_maps,
                                  working_regs.get(), overlay_memory);
 
@@ -484,10 +514,17 @@ PerfProducer::CompletedSample PerfProducer::UnwindSample(
     ret.frames.emplace_back(unwind_state.AnnotateFrame(std::move(frame)));
   }
 
-  // TODO(rsavitski): we still get a partially-unwound stack on most errors,
-  // consider adding a synthetic "error frame" like heapprofd.
-  if (error_code != unwindstack::ERROR_NONE)
-    ret.unwind_error = true;
+  // In case of an unwinding error, add a synthetic error frame (which will
+  // appear as a caller of the partially-unwound fragment), for easier
+  // visualization of errors.
+  if (error_code != unwindstack::ERROR_NONE) {
+    PERFETTO_DLOG("Unwinding error %" PRIu8, error_code);
+    unwindstack::FrameData frame_data{};
+    frame_data.function_name = "ERROR " + std::to_string(error_code);
+    frame_data.map_name = "ERROR";
+    ret.frames.emplace_back(std::move(frame_data), /*build_id=*/"");
+    ret.unwind_error = error_code;
+  }
 
   return ret;
 }
@@ -534,6 +571,36 @@ void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
   perf_sample->set_tid(static_cast<uint32_t>(sample.tid));
   perf_sample->set_callstack_iid(callstack_iid);
   perf_sample->set_cpu_mode(ToCpuModeEnum(sample.cpu_mode));
+  if (sample.unwind_error != unwindstack::ERROR_NONE) {
+    perf_sample->set_unwind_error(ToProtoEnum(sample.unwind_error));
+  }
+}
+
+void PerfProducer::EmitRingBufferLoss(DataSourceInstanceID ds_id,
+                                      size_t cpu,
+                                      uint64_t records_lost) {
+  auto ds_it = data_sources_.find(ds_id);
+  if (ds_it == data_sources_.end()) {
+    PERFETTO_DLOG("EmitRingBufferLoss(%zu): source gone",
+                  static_cast<size_t>(ds_id));
+    return;
+  }
+  DataSource& ds = ds_it->second;
+  PERFETTO_DLOG("DataSource(%zu): cpu%zu lost [%" PRIu64 "] records",
+                static_cast<size_t>(ds_id), cpu, records_lost);
+
+  // The data loss record relates to a single ring buffer, and indicates loss
+  // since the last successfully-written record in that buffer. Therefore the
+  // data loss record itself has no timestamp.
+  // We timestamp the packet with the boot clock for packet ordering purposes,
+  // but it no longer has a (precise) interpretation relative to the sample
+  // stream from that per-cpu buffer. See the proto comments for more details.
+  auto packet = ds.trace_writer->NewTracePacket();
+  packet->set_timestamp(static_cast<uint64_t>(base::GetBootTimeNs().count()));
+
+  auto* perf_sample = packet->set_perf_sample();
+  perf_sample->set_cpu(static_cast<uint32_t>(cpu));
+  perf_sample->set_kernel_records_lost(records_lost);
 }
 
 void PerfProducer::InitiateReaderStop(DataSource* ds) {

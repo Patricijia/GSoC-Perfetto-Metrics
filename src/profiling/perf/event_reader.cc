@@ -31,7 +31,7 @@ namespace profiling {
 
 namespace {
 
-constexpr size_t kDataPagesPerRingBuffer = 256;  // 1 MB (256 x 4k pages)
+constexpr size_t kDefaultDataPagesPerRingBuffer = 256;  // 1 MB (256 x 4k pages)
 
 template <typename T>
 const char* ReadValue(T* value_out, const char* ptr) {
@@ -93,7 +93,7 @@ base::Optional<PerfRingBuffer> PerfRingBuffer::Allocate(
     int perf_fd,
     size_t data_page_count) {
   // perf_event_open requires the ring buffer to be a power of two in size.
-  PERFETTO_CHECK(IsPowerOfTwo(data_page_count));
+  PERFETTO_DCHECK(IsPowerOfTwo(data_page_count));
 
   PerfRingBuffer ret;
 
@@ -105,7 +105,7 @@ base::Optional<PerfRingBuffer> PerfRingBuffer::Allocate(
   void* mmap_addr = mmap(nullptr, ret.mmap_sz_, PROT_READ | PROT_WRITE,
                          MAP_SHARED, perf_fd, 0);
   if (mmap_addr == MAP_FAILED) {
-    PERFETTO_PLOG("failed mmap (check perf_event_mlock_kb in procfs)");
+    PERFETTO_PLOG("failed mmap");
     return base::nullopt;
   }
 
@@ -220,8 +220,18 @@ base::Optional<EventReader> EventReader::ConfigureEvents(
     return base::nullopt;
   }
 
-  auto ring_buffer =
-      PerfRingBuffer::Allocate(perf_fd.get(), kDataPagesPerRingBuffer);
+  // choose a reasonable ring buffer size
+  size_t ring_buffer_pages = kDefaultDataPagesPerRingBuffer;
+  size_t config_pages = event_cfg.ring_buffer_pages();
+  if (config_pages) {
+    if (!IsPowerOfTwo(config_pages)) {
+      PERFETTO_ELOG("kernel buffer size must be a power of two pages");
+      return base::nullopt;
+    }
+    ring_buffer_pages = config_pages;
+  }
+
+  auto ring_buffer = PerfRingBuffer::Allocate(perf_fd.get(), ring_buffer_pages);
   if (!ring_buffer.has_value()) {
     return base::nullopt;
   }
@@ -231,7 +241,7 @@ base::Optional<EventReader> EventReader::ConfigureEvents(
 }
 
 base::Optional<ParsedSample> EventReader::ReadUntilSample(
-    std::function<void(uint64_t)> lost_events_callback) {
+    std::function<void(uint64_t)> records_lost_callback) {
   for (;;) {
     char* event = ring_buffer_.ReadRecordNonconsuming();
     if (!event)
@@ -258,23 +268,24 @@ base::Optional<ParsedSample> EventReader::ReadUntilSample(
        *   struct sample_id sample_id;
        * };
        */
-      uint64_t lost_events = *reinterpret_cast<const uint64_t*>(
+      uint64_t records_lost = *reinterpret_cast<const uint64_t*>(
           event + sizeof(perf_event_header) + sizeof(uint64_t));
 
-      lost_events_callback(lost_events);
+      records_lost_callback(records_lost);
       ring_buffer_.Consume(event_hdr->size);
       continue;  // keep looking for a sample
     }
 
     // Kernel had to throttle irqs.
-    // TODO(rsavitski): consider logging a warning.
     if (event_hdr->type == PERF_RECORD_THROTTLE ||
         event_hdr->type == PERF_RECORD_UNTHROTTLE) {
       ring_buffer_.Consume(event_hdr->size);
       continue;  // keep looking for a sample
     }
 
-    PERFETTO_FATAL("Unsupported event type");
+    PERFETTO_DFATAL_OR_ELOG("Unsupported event type [%zu]",
+                            static_cast<size_t>(event_hdr->type));
+    ring_buffer_.Consume(event_hdr->size);
   }
 }
 

@@ -96,6 +96,8 @@ class EventReader {
 
   void PauseEvents();
 
+  uint32_t cpu() const { return cpu_; }
+
   ~EventReader() = default;
 
   // move-only
@@ -114,7 +116,6 @@ class EventReader {
 
   // All events are cpu-bound (thread-scoped events not supported).
   const uint32_t cpu_;
-
   const EventConfig event_cfg_;
   base::ScopedFile perf_fd_;
   PerfRingBuffer ring_buffer_;

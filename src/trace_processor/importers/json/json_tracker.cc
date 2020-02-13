@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,16 +14,13 @@
  * limitations under the License.
  */
 
-syntax = "proto2";
+#include "src/trace_processor/importers/json/json_tracker.h"
 
-package perfetto.protos;
+namespace perfetto {
+namespace trace_processor {
 
-message TrackEventCategory {
-  optional string name = 1;
-  optional string description = 2;
-  repeated string tags = 3;
-}
+JsonTracker::JsonTracker(TraceProcessorContext*) {}
+JsonTracker::~JsonTracker() = default;
 
-message TrackEventDescriptor {
-  repeated TrackEventCategory available_categories = 1;
-}
+}  // namespace trace_processor
+}  // namespace perfetto
