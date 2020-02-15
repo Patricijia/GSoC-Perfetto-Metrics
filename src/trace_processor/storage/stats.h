@@ -14,8 +14,8 @@
  * limitations under the License.
  */
 
-#ifndef SRC_TRACE_PROCESSOR_STATS_H_
-#define SRC_TRACE_PROCESSOR_STATS_H_
+#ifndef SRC_TRACE_PROCESSOR_STORAGE_STATS_H_
+#define SRC_TRACE_PROCESSOR_STORAGE_STATS_H_
 
 #include <stddef.h>
 
@@ -121,6 +121,7 @@ namespace stats {
   F(heapprofd_malformed_packet,               kIndexed, kError,    kTrace),    \
   F(heapprofd_missing_packet,                 kSingle,  kError,    kTrace),    \
   F(heapprofd_rejected_concurrent,            kIndexed, kError,    kTrace),    \
+  F(heapprofd_non_finalized_profile,          kSingle,  kError,    kTrace),    \
   F(metatrace_overruns,                       kSingle,  kError,    kTrace),    \
   F(packages_list_has_parse_errors,           kSingle,  kError,    kTrace),    \
   F(packages_list_has_read_errors,            kSingle,  kError,    kTrace),    \
@@ -129,7 +130,9 @@ namespace stats {
   F(sched_waking_out_of_order,                kSingle,  kError,    kAnalysis), \
   F(compact_sched_switch_skipped,             kSingle,  kInfo,     kAnalysis), \
   F(compact_sched_waking_skipped,             kSingle,  kInfo,     kAnalysis), \
-  F(empty_chrome_metadata,                    kSingle,  kError,    kTrace)
+  F(empty_chrome_metadata,                    kSingle,  kError,    kTrace),    \
+  F(perf_cpu_lost_records,                    kIndexed, kDataLoss, kTrace),    \
+  F(ninja_parse_errors,                       kSingle,  kError,    kTrace)
 // clang-format on
 
 enum Type {
@@ -182,4 +185,4 @@ constexpr Source kSources[] = {PERFETTO_TP_STATS(PERFETTO_TP_STATS_SOURCE)};
 }  // namespace trace_processor
 }  // namespace perfetto
 
-#endif  // SRC_TRACE_PROCESSOR_STATS_H_
+#endif  // SRC_TRACE_PROCESSOR_STORAGE_STATS_H_

@@ -35,11 +35,12 @@
 #include "src/trace_processor/heap_profile_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
-#include "src/trace_processor/metadata.h"
 #include "src/trace_processor/metadata_tracker.h"
+#include "src/trace_processor/perf_sample_tracker.h"
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/stack_profile_tracker.h"
+#include "src/trace_processor/storage/metadata.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/track_tracker.h"
@@ -56,6 +57,7 @@
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "protos/perfetto/trace/trigger.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -229,6 +231,10 @@ void ProtoTraceParser::ParseTracePacketImpl(
                                 packet.streaming_profile_packet());
   }
 
+  if (packet.has_perf_sample()) {
+    ParsePerfSample(ts, data->sequence_state, packet.perf_sample());
+  }
+
   if (packet.has_chrome_benchmark_metadata()) {
     ParseChromeBenchmarkMetadata(packet.chrome_benchmark_metadata());
   }
@@ -247,6 +253,10 @@ void ProtoTraceParser::ParseTracePacketImpl(
 
   if (packet.has_module_symbols()) {
     ParseModuleSymbols(packet.module_symbols());
+  }
+
+  if (packet.has_trigger()) {
+    ParseTrigger(ts, packet.trigger());
   }
 }
 
@@ -467,6 +477,41 @@ void ProtoTraceParser::ParseStreamingProfilePacket(
   }
 }
 
+void ProtoTraceParser::ParsePerfSample(
+    int64_t ts,
+    PacketSequenceStateGeneration* sequence_state,
+    ConstBytes blob) {
+  protos::pbzero::PerfSample::Decoder sample(blob.data, blob.size);
+
+  // Not a sample, but an indication of data loss.
+  if (sample.kernel_records_lost() > 0) {
+    PERFETTO_DCHECK(sample.pid() == 0);
+
+    context_->storage->IncrementIndexedStats(
+        stats::perf_cpu_lost_records, static_cast<int>(sample.cpu()),
+        static_cast<int64_t>(sample.kernel_records_lost()));
+    return;
+  }
+
+  uint64_t callstack_iid = sample.callstack_iid();
+  StackProfileTracker& stack_tracker =
+      sequence_state->state()->stack_profile_tracker();
+  ProfilePacketInternLookup intern_lookup(sequence_state);
+
+  base::Optional<CallsiteId> cs_id =
+      stack_tracker.FindOrInsertCallstack(callstack_iid, &intern_lookup);
+  if (!cs_id) {
+    context_->storage->IncrementStats(stats::stackprofile_parser_error);
+    PERFETTO_ELOG("PerfSample referencing invalid callstack iid [%" PRIu64
+                  "] at timestamp [%" PRIi64 "]",
+                  callstack_iid, ts);
+    return;
+  }
+
+  context_->perf_sample_tracker_->AddStackToSliceTrack(
+      ts, *cs_id, sample.pid(), sample.tid(), sample.cpu());
+}
+
 void ProtoTraceParser::ParseChromeBenchmarkMetadata(ConstBytes blob) {
   TraceStorage* storage = context_->storage.get();
   MetadataTracker* metadata = context_->metadata_tracker.get();
@@ -684,6 +729,27 @@ void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
            line.line_number()});
     }
   }
+}
+
+void ProtoTraceParser::ParseTrigger(int64_t ts, ConstBytes blob) {
+  protos::pbzero::Trigger::Decoder trigger(blob.data, blob.size);
+  StringId cat_id = kNullStringId;
+  TrackId track_id = context_->track_tracker->GetOrCreateTriggerTrack();
+  StringId name_id = context_->storage->InternString(trigger.trigger_name());
+  context_->slice_tracker->Scoped(
+      ts, track_id, cat_id, name_id,
+      /* duration = */ 0,
+      [&trigger, this](ArgsTracker::BoundInserter* args_table) {
+        StringId producer_name_key =
+            context_->storage->InternString("producer_name");
+        args_table->AddArg(producer_name_key,
+                           Variadic::String(context_->storage->InternString(
+                               trigger.producer_name())));
+        StringId trusted_producer_uid_key =
+            context_->storage->InternString("trusted_producer_uid");
+        args_table->AddArg(trusted_producer_uid_key,
+                           Variadic::Integer(trigger.trusted_producer_uid()));
+      });
 }
 
 }  // namespace trace_processor

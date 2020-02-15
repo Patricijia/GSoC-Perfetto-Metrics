@@ -97,9 +97,17 @@ void HeapGraphTracker::AddInternedTypeName(uint32_t seq_id,
 
 void HeapGraphTracker::AddInternedFieldName(uint32_t seq_id,
                                             uint64_t intern_id,
-                                            StringPool::Id strid) {
+                                            base::StringView str) {
   SequenceState& sequence_state = GetOrCreateSequence(seq_id);
-  sequence_state.interned_field_names.emplace(intern_id, strid);
+  size_t space = str.find(' ');
+  base::StringView type_name;
+  if (space != base::StringView::npos) {
+    type_name = str.substr(0, space);
+    str = str.substr(space + 1);
+  }
+  sequence_state.interned_fields.emplace(
+      intern_id, InternedField{context_->storage->InternString(str),
+                               context_->storage->InternString(type_name)});
 }
 
 void HeapGraphTracker::SetPacketIndex(uint32_t seq_id, uint64_t index) {
@@ -183,17 +191,18 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
       if (inserted)
         sequence_state.walker.AddEdge(owner_row, owned_row);
 
-      auto field_name_it =
-          sequence_state.interned_field_names.find(ref.field_name_id);
-      if (field_name_it == sequence_state.interned_field_names.end()) {
+      auto field_it = sequence_state.interned_fields.find(ref.field_name_id);
+      if (field_it == sequence_state.interned_fields.end()) {
         context_->storage->IncrementIndexedStats(
             stats::heap_graph_invalid_string_id,
             static_cast<int>(sequence_state.current_upid));
         continue;
       }
-      StringPool::Id field_name = field_name_it->second;
+      const InternedField& interned_field = field_it->second;
+      StringPool::Id field_name = interned_field.name;
       context_->storage->mutable_heap_graph_reference_table()->Insert(
-          {reference_set_id, owner_row, owned_row, field_name,
+          {reference_set_id, owner_row, owned_row, interned_field.name,
+           interned_field.type_name,
            /*deobfuscated_field_name=*/base::nullopt});
       uint32_t row =
           context_->storage->heap_graph_reference_table().row_count() - 1;
@@ -270,7 +279,7 @@ HeapGraphTracker::BuildFlamegraph(const int64_t current_ts,
     alloc_row.upid = current_upid;
     alloc_row.profile_type = profile_type;
     alloc_row.depth = depth;
-    alloc_row.name = StringId::Raw(node.class_name);
+    alloc_row.name = MaybeDeobfuscate(StringId::Raw(node.class_name));
     alloc_row.map_name = java_mapping;
     alloc_row.count = static_cast<int64_t>(node.count);
     alloc_row.cumulative_count =
@@ -299,6 +308,41 @@ void HeapGraphTracker::SetRetained(int64_t row,
   context_->storage->mutable_heap_graph_object_table()
       ->mutable_unique_retained_size()
       ->Set(static_cast<uint32_t>(row), unique_retained);
+}
+
+void HeapGraphTracker::NotifyEndOfFile() {
+  if (!sequence_state_.empty()) {
+    context_->storage->IncrementStats(stats::heap_graph_non_finalized_graph);
+  }
+}
+
+StringPool::Id HeapGraphTracker::MaybeDeobfuscate(StringPool::Id id) {
+  StringPool::Id normalized_type_id = id;
+  base::StringView type_name = context_->storage->GetString(id);
+  size_t array_count = NumberOfArrays(type_name);
+  if (array_count > 0) {
+    base::StringView normalized_type = NormalizeTypeName(type_name);
+    normalized_type_id = context_->storage->InternString(normalized_type);
+  }
+  auto it = deobfuscation_mapping_.find(normalized_type_id);
+  if (it == deobfuscation_mapping_.end())
+    return id;
+
+  StringPool::Id deobfuscated_name_id = it->second;
+  if (array_count == 0)
+    return deobfuscated_name_id;
+
+  std::string deobfuscated_name =
+      context_->storage->GetString(deobfuscated_name_id).ToStdString();
+  for (size_t i = 0; i < array_count; ++i)
+    deobfuscated_name += "[]";
+  return context_->storage->InternString(base::StringView(deobfuscated_name));
+}
+
+void HeapGraphTracker::AddDeobfuscationMapping(
+    StringPool::Id obfuscated_name,
+    StringPool::Id deobfuscated_name) {
+  deobfuscation_mapping_.emplace(obfuscated_name, deobfuscated_name);
 }
 
 }  // namespace trace_processor

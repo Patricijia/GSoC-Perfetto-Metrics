@@ -17,10 +17,15 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_TRACK_EVENT_PARSER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_TRACK_EVENT_PARSER_H_
 
+#include "perfetto/base/build_config.h"
 #include "perfetto/protozero/field.h"
 #include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
+
+namespace Json {
+class Value;
+}
 
 namespace perfetto {
 
@@ -64,7 +69,15 @@ class TrackEventParser {
   void ParseDebugAnnotationArgs(protozero::ConstBytes debug_annotation,
                                 PacketSequenceStateGeneration*,
                                 ArgsTracker::BoundInserter* inserter);
-  void ParseNestedValueArgs(protozero::ConstBytes nested_value,
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
+  // Returns true if any arguments were inserted underneath |key|.
+  bool ParseJsonValueArgs(const Json::Value& value,
+                          base::StringView flat_key,
+                          base::StringView key,
+                          ArgsTracker::BoundInserter* inserter);
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
+  // Returns true if any arguments were inserted underneath |key|.
+  bool ParseNestedValueArgs(protozero::ConstBytes nested_value,
                             base::StringView flat_key,
                             base::StringView key,
                             ArgsTracker::BoundInserter* inserter);

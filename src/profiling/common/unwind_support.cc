@@ -101,8 +101,9 @@ UnwindingMetadata::UnwindingMetadata(base::ScopedFile maps_fd,
           new unwindstack::DexFiles(fd_mem)))
 #endif
 {
-  bool parsed = fd_maps.Parse();
-  if (!parsed)
+  if (!maps_fd)
+    return;
+  if (!fd_maps.Parse())
     PERFETTO_DLOG("Failed initial maps parse");
 }
 
@@ -120,7 +121,7 @@ void UnwindingMetadata::ReparseMaps() {
 
 FrameData UnwindingMetadata::AnnotateFrame(unwindstack::FrameData frame) {
   std::string build_id;
-  if (frame.map_name != "") {
+  if (!frame.map_name.empty()) {
     unwindstack::MapInfo* map_info = fd_maps.Find(frame.pc);
     if (map_info)
       build_id = map_info->GetBuildID();

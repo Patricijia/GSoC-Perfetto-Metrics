@@ -85,8 +85,6 @@ PERFETTO_TP_TABLE(PERFETTO_TP_SYMBOL_DEF);
 
 PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_PROFILE_ALLOCATION_DEF);
 
-// This will eventually go away, when we also pre-compute the cumulative
-// sizes for native heap profiles.
 #define PERFETTO_TP_EXPERIMENTAL_FLAMEGRAPH_NODES(NAME, PARENT, C)        \
   NAME(ExperimentalFlamegraphNodesTable, "experimental_flamegraph_nodes") \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                                       \
@@ -132,6 +130,7 @@ PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF);
   C(int64_t, owner_id)                                        \
   C(int64_t, owned_id)                                        \
   C(StringPool::Id, field_name)                               \
+  C(StringPool::Id, field_type_name)                          \
   C(base::Optional<StringPool::Id>, deobfuscated_field_name)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_REFERENCE_DEF);

@@ -99,11 +99,13 @@ class DbSqliteTable : public SqliteTable {
   };
   struct Context {
     QueryCache* cache;
+    Table::Schema schema;
     const Table* table;
   };
 
   static void RegisterTable(sqlite3* db,
                             QueryCache* cache,
+                            Table::Schema schema,
                             const Table* table,
                             const std::string& name);
 
@@ -115,17 +117,27 @@ class DbSqliteTable : public SqliteTable {
                     const char* const*,
                     SqliteTable::Schema*) override final;
   std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
-  int ModifyConstraints(QueryConstraints*) override;
-  int BestIndex(const QueryConstraints&, BestIndexInfo*) override;
+  int ModifyConstraints(QueryConstraints*) override final;
+  int BestIndex(const QueryConstraints&, BestIndexInfo*) override final;
 
-  static SqliteTable::Schema ComputeSchema(const Table& table,
+  // These static functions are useful to allow other callers to make use
+  // of them.
+  static SqliteTable::Schema ComputeSchema(const Table::Schema&,
                                            const char* table_name);
+  static void ModifyConstraints(const Table::Schema&, QueryConstraints*);
+  static void BestIndex(const Table::Schema&,
+                        uint32_t row_count,
+                        const QueryConstraints&,
+                        BestIndexInfo*);
 
   // static for testing.
-  static QueryCost EstimateCost(const Table& table, const QueryConstraints& qc);
+  static QueryCost EstimateCost(const Table::Schema&,
+                                uint32_t row_count,
+                                const QueryConstraints& qc);
 
  private:
   QueryCache* cache_ = nullptr;
+  Table::Schema schema_;
   const Table* table_ = nullptr;
 };
 

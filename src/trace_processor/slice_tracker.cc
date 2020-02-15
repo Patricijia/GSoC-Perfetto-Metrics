@@ -20,8 +20,8 @@
 
 #include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/slice_tracker.h"
+#include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/trace_storage.h"
 #include "src/trace_processor/track_tracker.h"
 
 namespace perfetto {
@@ -177,7 +177,7 @@ base::Optional<SliceId> SliceTracker::CompleteSlice(
   slices->mutable_dur()->Set(slice_idx, timestamp - slices->ts()[slice_idx]);
 
   if (args_callback) {
-    ArgsTracker* tracker = &stack.back().second;
+    ArgsTracker* tracker = &stack[stack_idx.value()].second;
     auto bound_inserter = tracker->AddArgsTo(slices->id()[slice_idx]);
     args_callback(&bound_inserter);
   }

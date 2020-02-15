@@ -24,6 +24,7 @@
 #include "perfetto/tracing/track_event_category_registry.h"
 #include "perfetto/tracing/track_event_interned_data_index.h"
 #include "protos/perfetto/common/data_source_descriptor.gen.h"
+#include "protos/perfetto/common/track_event_descriptor.pbzero.h"
 #include "protos/perfetto/trace/clock_snapshot.pbzero.h"
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/trace_packet_defaults.pbzero.h"
@@ -94,33 +95,59 @@ constexpr protos::pbzero::ClockSnapshot::Clock::BuiltinClocks GetClockType() {
 #endif
 }
 
+bool NameMatchesPattern(const std::string& pattern, const std::string& name) {
+  // To avoid pulling in all of std::regex, for now we only support a single "*"
+  // wildcard at the end of the pattern.
+  // TODO(skyostil): Support comma-separated categories.
+  size_t i = pattern.find('*');
+  if (i != std::string::npos) {
+    PERFETTO_DCHECK(i == pattern.size() - 1);
+    return name.substr(0, i) == pattern.substr(0, i);
+  }
+  return name == pattern;
+}
+
+bool NameMatchesPatternList(const std::vector<std::string>& patterns,
+                            const std::string& name) {
+  for (const auto& pattern : patterns) {
+    if (NameMatchesPattern(pattern, name))
+      return true;
+  }
+  return false;
+}
+
 }  // namespace
 
 // static
 bool TrackEventInternal::Initialize(
+    const TrackEventCategoryRegistry& registry,
     bool (*register_data_source)(const DataSourceDescriptor&)) {
   if (!g_main_thread)
     g_main_thread = perfetto::base::GetThreadId();
 
-  perfetto::DataSourceDescriptor dsd;
-  // TODO(skyostil): Advertise the known categories.
+  DataSourceDescriptor dsd;
   dsd.set_name("track_event");
+
+  protozero::HeapBuffered<protos::pbzero::TrackEventDescriptor> ted;
+  for (size_t i = 0; i < registry.category_count(); i++) {
+    auto category = registry.GetCategory(i);
+    auto cat = ted->add_available_categories();
+    cat->set_name(category->name);
+    // TODO(skyostil): Advertise category tags and descriptions.
+  }
+  dsd.set_track_event_descriptor_raw(ted.SerializeAsString());
+
   return register_data_source(dsd);
 }
 
 // static
 void TrackEventInternal::EnableTracing(
     const TrackEventCategoryRegistry& registry,
-    const DataSourceConfig& config,
+    const protos::gen::TrackEventConfig& config,
     uint32_t instance_index) {
   for (size_t i = 0; i < registry.category_count(); i++) {
-    // TODO(skyostil): Support the full category config syntax instead of
-    // just strict matching.
-    // TODO(skyostil): Support comma-separated categories.
-    if (config.legacy_config().empty() ||
-        config.legacy_config() == registry.GetCategory(i)->name) {
+    if (IsCategoryEnabled(config, *registry.GetCategory(i)))
       registry.EnableCategoryForInstance(i, instance_index);
-    }
   }
 }
 
@@ -130,6 +157,16 @@ void TrackEventInternal::DisableTracing(
     uint32_t instance_index) {
   for (size_t i = 0; i < registry.category_count(); i++)
     registry.DisableCategoryForInstance(i, instance_index);
+}
+
+// static
+bool TrackEventInternal::IsCategoryEnabled(
+    const protos::gen::TrackEventConfig& config,
+    const TrackEventCategory& category) {
+  if (NameMatchesPatternList(config.disabled_categories(), category.name))
+    return NameMatchesPatternList(config.enabled_categories(), category.name);
+  // TODO(skyostil): Support tag-based category configs.
+  return true;
 }
 
 // static

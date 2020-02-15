@@ -20,6 +20,7 @@
 
 #include "perfetto/base/compiler.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/ftrace_utils.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/types/gfp_flags.h"
 #include "src/trace_processor/types/variadic.h"
@@ -51,7 +52,9 @@ std::tuple<uint32_t, uint32_t> ParseKernelReleaseVersion(
 }  // namespace
 
 SqliteRawTable::SqliteRawTable(sqlite3* db, Context context)
-    : DbSqliteTable(db, {context.cache, &context.storage->raw_table()}),
+    : DbSqliteTable(db,
+                    {context.cache, tables::RawTable::Schema(),
+                     &context.storage->raw_table()}),
       storage_(context.storage) {
   auto fn = [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     auto* thiz = static_cast<SqliteRawTable*>(sqlite3_user_data(ctx));

@@ -20,6 +20,7 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/event_tracker.h"
+#include "src/trace_processor/ftrace_utils.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
 #include "src/trace_processor/process_tracker.h"
@@ -232,6 +233,8 @@ util::Status SystraceTraceParser::ParseSingleSystraceEvent(
 
   return util::OkStatus();
 }
+
+void SystraceTraceParser::NotifyEndOfFile() {}
 
 }  // namespace trace_processor
 }  // namespace perfetto

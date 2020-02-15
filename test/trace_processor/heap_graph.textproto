@@ -22,6 +22,7 @@ packet {
     roots {
       root_type: ROOT_JAVA_FRAME
       object_ids: 0x01
+      object_ids: 0x05
     }
     objects {
       id: 0x01
@@ -84,7 +85,7 @@ packet {
     }
     field_names {
       iid: 2
-      str: "a.a"
+      str: "int a.a"
     }
     field_names {
       iid: 3

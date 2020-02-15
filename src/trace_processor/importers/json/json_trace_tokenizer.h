@@ -20,7 +20,7 @@
 #include <stdint.h>
 
 #include "src/trace_processor/chunked_trace_reader.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace Json {
 class Value;
@@ -48,6 +48,7 @@ class JsonTraceTokenizer : public ChunkedTraceReader {
 
   // ChunkedTraceReader implementation.
   util::Status Parse(std::unique_ptr<uint8_t[]>, size_t) override;
+  void NotifyEndOfFile() override;
 
  private:
   TraceProcessorContext* const context_;

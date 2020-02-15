@@ -26,17 +26,21 @@
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/track_event/track_event.pbzero.h"
 
-#include <set>
+#include <unordered_map>
 
 namespace perfetto {
 class EventContext;
 namespace protos {
+namespace gen {
+class TrackEventConfig;
+}  // namespace gen
 namespace pbzero {
 class DebugAnnotation;
 }  // namespace pbzero
 }  // namespace protos
 
 namespace internal {
+struct TrackEventCategory;
 class TrackEventCategoryRegistry;
 
 class BaseTrackEventInternedDataIndex {
@@ -77,6 +81,11 @@ struct TrackEventIncrementalState {
   // trace event uses a track which is not in this set, we'll write out a
   // descriptor for it.
   base::FlatSet<uint64_t> seen_tracks;
+
+  // Dynamically registered category names that have been encountered during
+  // this tracing session. The value in the map indicates whether the category
+  // is enabled or disabled.
+  std::unordered_map<std::string, bool> dynamic_categories;
 };
 
 // The backend portion of the track event trace point implemention. Outlined to
@@ -85,13 +94,16 @@ struct TrackEventIncrementalState {
 class TrackEventInternal {
  public:
   static bool Initialize(
+      const TrackEventCategoryRegistry&,
       bool (*register_data_source)(const DataSourceDescriptor&));
 
   static void EnableTracing(const TrackEventCategoryRegistry& registry,
-                            const DataSourceConfig& config,
+                            const protos::gen::TrackEventConfig& config,
                             uint32_t instance_index);
   static void DisableTracing(const TrackEventCategoryRegistry& registry,
                              uint32_t instance_index);
+  static bool IsCategoryEnabled(const protos::gen::TrackEventConfig& config,
+                                const TrackEventCategory& category);
 
   static perfetto::EventContext WriteEvent(
       TraceWriterBase*,
