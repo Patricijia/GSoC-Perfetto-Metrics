@@ -121,6 +121,7 @@ namespace stats {
   F(heapprofd_malformed_packet,               kIndexed, kError,    kTrace),    \
   F(heapprofd_missing_packet,                 kSingle,  kError,    kTrace),    \
   F(heapprofd_rejected_concurrent,            kIndexed, kError,    kTrace),    \
+  F(heapprofd_non_finalized_profile,          kSingle,  kError,    kTrace),    \
   F(metatrace_overruns,                       kSingle,  kError,    kTrace),    \
   F(packages_list_has_parse_errors,           kSingle,  kError,    kTrace),    \
   F(packages_list_has_read_errors,            kSingle,  kError,    kTrace),    \
@@ -130,7 +131,8 @@ namespace stats {
   F(compact_sched_switch_skipped,             kSingle,  kInfo,     kAnalysis), \
   F(compact_sched_waking_skipped,             kSingle,  kInfo,     kAnalysis), \
   F(empty_chrome_metadata,                    kSingle,  kError,    kTrace),    \
-  F(perf_cpu_lost_records,                    kIndexed, kDataLoss, kTrace)
+  F(perf_cpu_lost_records,                    kIndexed, kDataLoss, kTrace),    \
+  F(ninja_parse_errors,                       kSingle,  kError,    kTrace)
 // clang-format on
 
 enum Type {
