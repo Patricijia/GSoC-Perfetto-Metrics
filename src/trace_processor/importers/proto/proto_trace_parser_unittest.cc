@@ -19,17 +19,15 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_view.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
+#include "src/trace_processor/additional_modules.h"
 #include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/clock_tracker.h"
+#include "src/trace_processor/default_modules.h"
 #include "src/trace_processor/event_tracker.h"
-#include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
-#include "src/trace_processor/importers/proto/track_event_module.h"
 #include "src/trace_processor/metadata_tracker.h"
 #include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/register_additional_modules.h"
 #include "src/trace_processor/slice_tracker.h"
 #include "src/trace_processor/stack_profile_tracker.h"
 #include "src/trace_processor/storage/metadata.h"
@@ -219,8 +217,8 @@ class ProtoTraceParserTest : public ::testing::Test {
     context_.clock_tracker.reset(clock_);
     context_.sorter.reset(new TraceSorter(&context_, 0 /*window size*/));
     context_.parser.reset(new ProtoTraceParser(&context_));
-    context_.modules.emplace_back(new TrackEventModule(&context_));
 
+    RegisterDefaultModules(&context_);
     RegisterAdditionalModules(&context_);
   }
 
@@ -1397,7 +1395,8 @@ TEST_F(ProtoTraceParserTest, TrackEventWithoutIncrementalStateReset) {
     thread_desc->set_reference_thread_time_us(2000);
   }
   {
-    // Event should be discarded because incremental state was never cleared.
+    // Event should be discarded because delta timestamps require valid
+    // incremental state + thread descriptor.
     auto* packet = trace_.add_packet();
     packet->set_trusted_packet_sequence_id(1);
     auto* event = packet->set_track_event();
@@ -1408,10 +1407,38 @@ TEST_F(ProtoTraceParserTest, TrackEventWithoutIncrementalStateReset) {
     legacy_event->set_name_iid(1);
     legacy_event->set_phase('B');
   }
+  {
+    // Event should be discarded because it specifies
+    // SEQ_NEEDS_INCREMENTAL_STATE.
+    auto* packet = trace_.add_packet();
+    packet->set_timestamp(2000000);
+    packet->set_trusted_packet_sequence_id(1);
+    packet->set_sequence_flags(
+        protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+    auto* event = packet->set_track_event();
+    event->add_categories("cat");
+    event->set_name("ev1");
+    event->set_type(protos::pbzero::TrackEvent::TYPE_INSTANT);
+  }
+  {
+    // Event should be accepted because it does not specify
+    // SEQ_NEEDS_INCREMENTAL_STATE and uses absolute timestamps.
+    auto* packet = trace_.add_packet();
+    packet->set_timestamp(2100000);
+    packet->set_trusted_packet_sequence_id(1);
+    auto* event = packet->set_track_event();
+    event->add_categories("cat1");
+    event->set_name("ev2");
+    event->set_type(protos::pbzero::TrackEvent::TYPE_INSTANT);
+  }
 
   Tokenize();
 
-  EXPECT_CALL(*slice_, Begin(_, _, _, _, _)).Times(0);
+  StringId cat1 = storage_->InternString("cat1");
+  StringId ev2 = storage_->InternString("ev2");
+
+  EXPECT_CALL(*slice_, Scoped(2100000, TrackId{0}, cat1, ev2, 0, _))
+      .WillOnce(Return(0u));
   context_.sorter->ExtractEventsForced();
 }
 
@@ -1420,7 +1447,8 @@ TEST_F(ProtoTraceParserTest, TrackEventWithoutThreadDescriptor) {
       &context_, std::numeric_limits<int64_t>::max() /*window size*/));
 
   {
-    // Event should be discarded because no thread descriptor was seen yet.
+    // Event should be discarded because it specifies delta timestamps and no
+    // thread descriptor was seen yet.
     auto* packet = trace_.add_packet();
     packet->set_trusted_packet_sequence_id(1);
     packet->set_incremental_state_cleared(true);
@@ -1432,10 +1460,27 @@ TEST_F(ProtoTraceParserTest, TrackEventWithoutThreadDescriptor) {
     legacy_event->set_name_iid(1);
     legacy_event->set_phase('B');
   }
+  {
+    // Events that specify SEQ_NEEDS_INCREMENTAL_STATE should be accepted even
+    // if there's no valid thread descriptor.
+    auto* packet = trace_.add_packet();
+    packet->set_timestamp(2000000);
+    packet->set_trusted_packet_sequence_id(1);
+    packet->set_sequence_flags(
+        protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
+    auto* event = packet->set_track_event();
+    event->add_categories("cat1");
+    event->set_name("ev1");
+    event->set_type(protos::pbzero::TrackEvent::TYPE_INSTANT);
+  }
 
   Tokenize();
 
-  EXPECT_CALL(*slice_, Begin(_, _, _, _, _)).Times(0);
+  StringId cat1 = storage_->InternString("cat1");
+  StringId ev1 = storage_->InternString("ev1");
+
+  EXPECT_CALL(*slice_, Scoped(2000000, TrackId{0}, cat1, ev1, 0, _))
+      .WillOnce(Return(0u));
   context_.sorter->ExtractEventsForced();
 }
 
