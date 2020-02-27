@@ -20,8 +20,8 @@
 #include <tuple>
 
 #include "perfetto/ext/base/string_view.h"
+#include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -124,6 +124,11 @@ class ProcessTracker {
   // the other will be mapped to the same process. The order of the two threads
   // is irrelevant, Associate(A, B) has the same effect of Associate(B, A).
   void AssociateThreads(UniqueTid, UniqueTid);
+
+  // Creates the mapping from tid 0 <-> utid 0 and pid 0 <-> upid 0. This is
+  // done for Linux-based system traces (proto or ftrace format) as for these
+  // traces, we always have the "swapper" (idle) process having tid/pid 0.
+  void SetPidZeroIgnoredForIdleProcess();
 
  private:
   // Returns the utid of a thread having |tid| and |pid| as the parent process.

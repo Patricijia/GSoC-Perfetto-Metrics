@@ -49,7 +49,12 @@ import {
 import {PROCESS_SUMMARY_TRACK} from '../tracks/process_summary/common';
 import {THREAD_STATE_TRACK_KIND} from '../tracks/thread_state/common';
 
-import {AggregationController} from './aggregation_controller';
+import {
+  CpuAggregationController
+} from './aggregation/cpu_aggregation_controller';
+import {
+  ThreadAggregationController
+} from './aggregation/thread_aggregation_controller';
 import {Child, Children, Controller} from './controller';
 import {globals} from './globals';
 import {
@@ -154,8 +159,14 @@ export class TraceController extends Controller<States> {
         const heapProfileArgs: HeapProfileControllerArgs = {engine};
         childControllers.push(
             Child('heapProfile', HeapProfileController, heapProfileArgs));
-        childControllers.push(
-            Child('aggregation', AggregationController, {engine}));
+        childControllers.push(Child(
+            'cpu_aggregation',
+            CpuAggregationController,
+            {engine, kind: 'cpu'}));
+        childControllers.push(Child(
+            'thread_aggregation',
+            ThreadAggregationController,
+            {engine, kind: 'thread_state'}));
         childControllers.push(Child('search', SearchController, {
           engine,
           app: globals,
@@ -502,41 +513,61 @@ export class TraceController extends Controller<States> {
     interface CounterTrack {
       name: string;
       trackId: number;
+      startTs?: number;
+      endTs?: number;
     }
 
     const counterUtids = new Map<number, CounterTrack[]>();
     const threadCounters = await engine.query(`
-      select name, utid, id
-      from thread_counter_track
+      select thread_counter_track.name, utid, thread_counter_track.id,
+      start_ts, end_ts from thread_counter_track join thread using(utid)
     `);
     for (let i = 0; i < threadCounters.numRecords; i++) {
       const name = threadCounters.columns[0].stringValues![i];
       const utid = +threadCounters.columns[1].longValues![i];
       const trackId = +threadCounters.columns[2].longValues![i];
+      let startTs = undefined;
+      let endTs = undefined;
+      if (!threadCounters.columns[3].isNulls![i]) {
+        startTs = +threadCounters.columns[3].longValues![i] / 1e9;
+      }
+      if (!threadCounters.columns[4].isNulls![i]) {
+        endTs = +threadCounters.columns[4].longValues![i] / 1e9;
+      }
 
+      const track: CounterTrack = {name, trackId, startTs, endTs};
       const el = counterUtids.get(utid);
       if (el === undefined) {
-        counterUtids.set(utid, [{name, trackId}]);
+        counterUtids.set(utid, [track]);
       } else {
-        el.push({name, trackId});
+        el.push(track);
       }
     }
 
     const counterUpids = new Map<number, CounterTrack[]>();
     const processCounters = await engine.query(`
-      select name, upid, id
-      from process_counter_track
+      select process_counter_track.name, upid, process_counter_track.id,
+      start_ts, end_ts from process_counter_track join process using(upid)
     `);
     for (let i = 0; i < processCounters.numRecords; i++) {
       const name = processCounters.columns[0].stringValues![i];
       const upid = +processCounters.columns[1].longValues![i];
       const trackId = +processCounters.columns[2].longValues![i];
+      let startTs = undefined;
+      let endTs = undefined;
+      if (!processCounters.columns[3].isNulls![i]) {
+        startTs = +processCounters.columns[3].longValues![i] / 1e9;
+      }
+      if (!processCounters.columns[4].isNulls![i]) {
+        endTs = +processCounters.columns[4].longValues![i] / 1e9;
+      }
 
+      const track: CounterTrack = {name, trackId, startTs, endTs};
       const el = counterUpids.get(upid);
       if (el === undefined) {
-        counterUpids.set(upid, [{name, trackId}]);
+        counterUpids.set(upid, [track]);
       } else {
-        el.push({name, trackId});
+        el.push(track);
       }
     }
 
@@ -642,21 +673,35 @@ export class TraceController extends Controller<States> {
           config: {pidForColor, upid, utid},
         });
 
-        const name = upid === null ?
-            `${threadName} ${tid}` :
-            `${
-                processName === null && heapUpids.has(upid) ?
-                    'Heap Profile for' :
-                    processName} ${pid}`;
-        addTrackGroupActions.push(Actions.addTrackGroup({
+        const name =
+            this.getTrackName(utid, processName, pid, threadName, tid, upid);
+        const addTrackGroup = Actions.addTrackGroup({
           engineId: this.engineId,
           summaryTrackId,
           name,
           id: pUuid,
           collapsed: !(upid !== null && heapUpids.has(upid)),
-        }));
+        });
+
+        // If the track group contains a heap profile, it should be before all
+        // other processes.
+        if (upid !== null && heapUpids.has(upid)) {
+          addTrackGroupActions.unshift(addTrackGroup);
+        } else {
+          addTrackGroupActions.push(addTrackGroup);
+        }
 
         if (upid !== null) {
+          if (heapUpids.has(upid)) {
+            tracksToAdd.push({
+              engineId: this.engineId,
+              kind: HEAP_PROFILE_TRACK_KIND,
+              name: `Heap Profile`,
+              trackGroup: pUuid,
+              config: {upid}
+            });
+          }
+
           const counterNames = counterUpids.get(upid);
           if (counterNames !== undefined) {
             counterNames.forEach(element => {
@@ -665,18 +710,13 @@ export class TraceController extends Controller<States> {
                 kind: 'CounterTrack',
                 name: element.name,
                 trackGroup: pUuid,
-                config: {name: element.name, trackId: element.trackId}
+                config: {
+                  name: element.name,
+                  trackId: element.trackId,
+                  startTs: element.startTs,
+                  endTs: element.endTs,
+                }
               });
-            });
-          }
-
-          if (heapUpids.has(upid)) {
-            tracksToAdd.push({
-              engineId: this.engineId,
-              kind: HEAP_PROFILE_TRACK_KIND,
-              name: `Heap Profile`,
-              trackGroup: pUuid,
-              config: {upid}
             });
           }
 
@@ -698,6 +738,8 @@ export class TraceController extends Controller<States> {
             config: {
               name: element.name,
               trackId: element.trackId,
+              startTs: element.startTs,
+              endTs: element.endTs,
             }
           });
         });
@@ -902,5 +944,20 @@ export class TraceController extends Controller<States> {
       msg,
       timestamp: Date.now() / 1000,
     }));
+  }
+
+  private getTrackName(
+      utid: number, processName: string|null, pid: number|null,
+      threadName: string|null, tid: number|null, upid: number|null) {
+    if (upid !== null && processName !== null && pid !== null) {
+      return `${processName} ${pid}`;
+    } else if (upid !== null && pid !== null) {
+      return `Process ${pid}`;
+    } else if (threadName !== null && tid !== null) {
+      return `${threadName} ${tid}`;
+    } else if (tid !== null) {
+      return `Thread ${tid}`;
+    }
+    return `utid: ${utid}`;
   }
 }

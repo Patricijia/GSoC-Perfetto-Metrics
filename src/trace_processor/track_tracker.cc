@@ -148,6 +148,19 @@ TrackId TrackTracker::InternAndroidAsyncTrack(StringId name,
   return id;
 }
 
+TrackId TrackTracker::InternPerfStackTrack(UniquePid upid) {
+  auto it = perf_stack_tracks_.find(upid);
+  if (it != perf_stack_tracks_.end())
+    return it->second;
+
+  StringId name = context_->storage->InternString("Stack samples");
+  tables::ProcessTrackTable::Row row(name);
+  row.upid = upid;
+  auto id = context_->storage->mutable_process_track_table()->Insert(row).id;
+  perf_stack_tracks_[upid] = id;
+  return id;
+}
+
 TrackId TrackTracker::InternLegacyChromeProcessInstantTrack(UniquePid upid) {
   auto it = chrome_process_instant_tracks_.find(upid);
   if (it != chrome_process_instant_tracks_.end())
@@ -399,6 +412,16 @@ TrackId TrackTracker::GetOrCreateDefaultDescriptorTrack() {
   tracks->mutable_name()->Set(*tracks->id().IndexOf(*track_id),
                               default_descriptor_track_name_);
   return *track_id;
+}
+
+TrackId TrackTracker::GetOrCreateTriggerTrack() {
+  if (trigger_track_id_) {
+    return *trigger_track_id_;
+  }
+  tables::TrackTable::Row row;
+  row.name = context_->storage->InternString("Trace Triggers");
+  trigger_track_id_ = context_->storage->mutable_track_table()->Insert(row).id;
+  return *trigger_track_id_;
 }
 
 TrackId TrackTracker::InternGlobalCounterTrack(StringId name) {

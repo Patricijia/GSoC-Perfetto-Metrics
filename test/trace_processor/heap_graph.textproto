@@ -22,6 +22,7 @@ packet {
     roots {
       root_type: ROOT_JAVA_FRAME
       object_ids: 0x01
+      object_ids: 0x05
     }
     objects {
       id: 0x01
@@ -54,6 +55,11 @@ packet {
       type_id: 4
       self_size: 256
     }
+    objects {
+      id: 0x06
+      type_id: 5
+      self_size: 256
+    }
     continued: true
     index: 0
   }
@@ -78,13 +84,17 @@ packet {
       iid: 4
       str: "a[]"
     }
+    type_names {
+      iid: 5
+      str: "java.lang.Class<a[]>"
+    }
     field_names {
       iid: 1
       str: "FactoryProducerDelegateImplActor.foo"
     }
     field_names {
       iid: 2
-      str: "a.a"
+      str: "int a.a"
     }
     field_names {
       iid: 3

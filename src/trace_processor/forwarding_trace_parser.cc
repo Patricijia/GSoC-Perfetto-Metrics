@@ -19,8 +19,10 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/gzip_trace_parser.h"
+#include "src/trace_processor/importers/ninja/ninja_log_parser.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
+#include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/trace_sorter.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FUCHSIA)
@@ -69,7 +71,7 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
                                           size_t size) {
   // If this is the first Parse() call, guess the trace type and create the
   // appropriate parser.
-
+  static const int64_t kMaxWindowSize = std::numeric_limits<int64_t>::max();
   if (!reader_) {
     TraceType trace_type;
     {
@@ -83,8 +85,7 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON_IMPORT)
         reader_.reset(new JsonTraceTokenizer(context_));
         // JSON traces have no guarantees about the order of events in them.
-        int64_t window_size_ns = std::numeric_limits<int64_t>::max();
-        context_->sorter.reset(new TraceSorter(context_, window_size_ns));
+        context_->sorter.reset(new TraceSorter(context_, kMaxWindowSize));
         context_->parser.reset(new JsonTraceParser(context_));
 #else   // PERFETTO_BUILDFLAG(PERFETTO_TP_JSON_IMPORT)
         PERFETTO_FATAL("JSON traces not supported.");
@@ -95,19 +96,23 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
         PERFETTO_DLOG("Proto trace detected");
         // This will be reduced once we read the trace config and we see flush
         // period being set.
-        int64_t window_size_ns = std::numeric_limits<int64_t>::max();
         reader_.reset(new ProtoTraceTokenizer(context_));
-        context_->sorter.reset(new TraceSorter(context_, window_size_ns));
+        context_->sorter.reset(new TraceSorter(context_, kMaxWindowSize));
         context_->parser.reset(new ProtoTraceParser(context_));
+        context_->process_tracker->SetPidZeroIgnoredForIdleProcess();
+        break;
+      }
+      case kNinjaLogTraceType: {
+        PERFETTO_DLOG("Ninja log detected");
+        reader_.reset(new NinjaLogParser(context_));
         break;
       }
       case kFuchsiaTraceType: {
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_FUCHSIA)
         PERFETTO_DLOG("Fuchsia trace detected");
         // Fuschia traces can have massively out of order events.
-        int64_t window_size_ns = std::numeric_limits<int64_t>::max();
         reader_.reset(new FuchsiaTraceTokenizer(context_));
-        context_->sorter.reset(new TraceSorter(context_, window_size_ns));
+        context_->sorter.reset(new TraceSorter(context_, kMaxWindowSize));
         context_->parser.reset(new FuchsiaTraceParser(context_));
 #else   // PERFETTO_BUILDFLAG(PERFETTO_TP_FUCHSIA)
         PERFETTO_FATAL("Fuchsia traces not supported.");
@@ -116,6 +121,7 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
       }
       case kSystraceTraceType:
         PERFETTO_DLOG("Systrace trace detected");
+        context_->process_tracker->SetPidZeroIgnoredForIdleProcess();
         if (context_->systrace_trace_parser) {
           reader_ = std::move(context_->systrace_trace_parser);
           break;
@@ -146,21 +152,25 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
   return reader_->Parse(std::move(data), size);
 }
 
+void ForwardingTraceParser::NotifyEndOfFile() {
+  reader_->NotifyEndOfFile();
+}
+
 TraceType GuessTraceType(const uint8_t* data, size_t size) {
   if (size == 0)
     return kUnknownTraceType;
   std::string start(reinterpret_cast<const char*>(data),
                     std::min<size_t>(size, 20));
-  std::string start_minus_white_space = RemoveWhitespace(start);
-  if (base::StartsWith(start_minus_white_space, "{\"traceEvents\":["))
-    return kJsonTraceType;
-  if (base::StartsWith(start_minus_white_space, "[{"))
-    return kJsonTraceType;
   if (size >= 8) {
     uint64_t first_word = *reinterpret_cast<const uint64_t*>(data);
     if (first_word == kFuchsiaMagicNumber)
       return kFuchsiaTraceType;
   }
+  std::string start_minus_white_space = RemoveWhitespace(start);
+  if (base::StartsWith(start_minus_white_space, "{"))
+    return kJsonTraceType;
+  if (base::StartsWith(start_minus_white_space, "[{"))
+    return kJsonTraceType;
 
   // Systrace with header but no leading HTML.
   if (base::StartsWith(start, "# tracer"))
@@ -174,6 +184,10 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
   // Ctrace is deflate'ed systrace.
   if (start.find("TRACE:") != std::string::npos)
     return kCtraceTraceType;
+
+  // Ninja's buils log (.ninja_log).
+  if (base::StartsWith(start, "# ninja log"))
+    return kNinjaLogTraceType;
 
   // Systrace with no header or leading HTML.
   if (base::StartsWith(start, " "))

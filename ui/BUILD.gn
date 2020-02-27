@@ -13,6 +13,7 @@
 # limitations under the License.
 
 import("../gn/perfetto.gni")
+import("../gn/perfetto_check_build_deps.gni")
 import("../gn/wasm.gni")
 import("../protos/perfetto/trace_processor/proto_files.gni")
 
@@ -367,7 +368,8 @@ copy("assets_dist") {
   sources = [
               "src/assets/heap_profiler.png",
               "src/assets/logo-3d.png",
-              "src/assets/logo.png",
+              "src/assets/brand.png",
+              "src/assets/favicon.png",
               "src/assets/rec_atrace.png",
               "src/assets/rec_battery_counters.png",
               "src/assets/rec_board_voltage.png",
@@ -392,7 +394,6 @@ copy("assets_dist") {
 copy("chrome_extension_assets_dist") {
   sources = [
     "src/assets/logo-128.png",
-    "src/assets/logo.png",
     "src/chrome_extension/manifest.json",
   ]
   outputs = [ "$chrome_extension_dir/{{source_file_part}}" ]
@@ -493,22 +494,15 @@ copy("catapult_dist") {
 # | Node JS: Creates a symlink in the out directory to node_modules.           |
 # +----------------------------------------------------------------------------+
 
-action("check_node_exists") {
-  script = "../gn/standalone/check_buildtool_exists.py"
-  args = [
-    nodejs_bin,
-    "--touch",
-    rebase_path("$target_out_dir/node_exists", ""),
-  ]
-  inputs = []
-  outputs = [ "$target_out_dir/node_exists" ]
+perfetto_check_build_deps("check_ui_deps") {
+  args = [ "--ui" ]
+  inputs = [ "package-lock.json" ]
 }
 
 # Creates a symlink from out/xxx/ui/node_modules -> ../../../ui/node_modules.
 # This allows to run rollup and other node tools from the out/xxx directory.
 action("node_modules_symlink") {
-  deps = [ ":check_node_exists" ]
-
+  deps = [ ":check_ui_deps" ]
   script = "../gn/standalone/build_tool_wrapper.py"
   stamp_file = "$target_out_dir/.$target_name.stamp"
   args = [

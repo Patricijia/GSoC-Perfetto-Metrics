@@ -96,7 +96,16 @@ class Column {
     // This is used to speed up filters as we can safely index SparseVector
     // directly if this flag is set.
     kNonNull = 1 << 1,
+
+    // Indicates that the data in the column is "hidden". This can by used to
+    // hint to users of Table and Column that this column should not be
+    // displayed to the user as it is part of the internal implementation
+    // details of the table.
+    kHidden = 1 << 2,
   };
+
+  // Flags specified for an id column.
+  static constexpr uint32_t kIdFlags = Flag::kSorted | Flag::kNonNull;
 
   template <typename T>
   Column(const char* name,
@@ -268,20 +277,7 @@ class Column {
   const char* name() const { return name_; }
 
   // Returns the type of this Column in terms of SqlValue::Type.
-  SqlValue::Type type() const {
-    switch (type_) {
-      case ColumnType::kInt32:
-      case ColumnType::kUint32:
-      case ColumnType::kInt64:
-      case ColumnType::kId:
-        return SqlValue::Type::kLong;
-      case ColumnType::kDouble:
-        return SqlValue::Type::kDouble;
-      case ColumnType::kString:
-        return SqlValue::Type::kString;
-    }
-    PERFETTO_FATAL("For GCC");
-  }
+  SqlValue::Type type() const { return ToSqlValueType(type_); }
 
   // Returns the index of the current column in the containing table.
   uint32_t index_in_table() const { return col_idx_in_table_; }
@@ -334,6 +330,12 @@ class Column {
   const SparseVector<T>& sparse_vector() const {
     PERFETTO_DCHECK(ToColumnType<T>() == type_);
     return *static_cast<const SparseVector<T>*>(sparse_vector_);
+  }
+
+  // Returns the type of this Column in terms of SqlValue::Type.
+  template <typename T>
+  static SqlValue::Type ToSqlValueType() {
+    return ToSqlValueType(ToColumnType<T>());
   }
 
   const StringPool& string_pool() const { return *string_pool_; }
@@ -530,6 +532,21 @@ class Column {
     } else {
       PERFETTO_FATAL("Unsupported type of column");
     }
+  }
+
+  static SqlValue::Type ToSqlValueType(ColumnType type) {
+    switch (type) {
+      case ColumnType::kInt32:
+      case ColumnType::kUint32:
+      case ColumnType::kInt64:
+      case ColumnType::kId:
+        return SqlValue::Type::kLong;
+      case ColumnType::kDouble:
+        return SqlValue::Type::kDouble;
+      case ColumnType::kString:
+        return SqlValue::Type::kString;
+    }
+    PERFETTO_FATAL("For GCC");
   }
 
   // Returns the string at the index |idx|.

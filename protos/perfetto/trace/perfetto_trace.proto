@@ -508,8 +508,14 @@ message TracingServiceState {
 
 // Begin of protos/perfetto/common/track_event_descriptor.proto
 
+message TrackEventCategory {
+  optional string name = 1;
+  optional string description = 2;
+  repeated string tags = 3;
+}
+
 message TrackEventDescriptor {
-  repeated string available_categories = 1;
+  repeated TrackEventCategory available_categories = 1;
 }
 
 // End of protos/perfetto/common/track_event_descriptor.proto
@@ -3375,6 +3381,82 @@ message StreamingProfilePacket {
   repeated int64 timestamp_delta_us = 2;
 }
 
+// Namespace for the contained enums.
+message Profiling {
+  enum CpuMode {
+    MODE_UNKNOWN = 0;
+    MODE_KERNEL = 1;
+    MODE_USER = 2;
+    // The following values aren't expected, but included for completeness:
+    MODE_HYPERVISOR = 3;
+    MODE_GUEST_KERNEL = 4;
+    MODE_GUEST_USER = 5;
+  }
+
+  // Enumeration of libunwindstack's error codes.
+  // NB: the integral representations of the two enums are different.
+  enum StackUnwindError {
+    UNWIND_ERROR_UNKNOWN = 0;
+    UNWIND_ERROR_NONE = 1;
+    UNWIND_ERROR_MEMORY_INVALID = 2;
+    UNWIND_ERROR_UNWIND_INFO = 3;
+    UNWIND_ERROR_UNSUPPORTED = 4;
+    UNWIND_ERROR_INVALID_MAP = 5;
+    UNWIND_ERROR_MAX_FRAMES_EXCEEDED = 6;
+    UNWIND_ERROR_REPEATED_FRAME = 7;
+    UNWIND_ERROR_INVALID_ELF = 8;
+  }
+}
+
+// Individual performance sampling packet payload. Typically corresponds to a
+// stack sample on a configration-dependent counter overflow.
+// Timestamps are within the root packet (in the CLOCK_BOOTTIME domain).
+// There are three distinct views of this message:
+// * completely processed sample (callstack_iid set)
+// * indication of kernel buffer data loss (kernel_records_lost set)
+// * indication of skipped samples (sample_skipped_reason set)
+message PerfSample {
+  optional uint32 cpu = 1;
+  optional uint32 pid = 2;
+  optional uint32 tid = 3;
+
+  // Execution state that the process was sampled at.
+  optional Profiling.CpuMode cpu_mode = 5;
+
+  // Unwound callstack. Might be partial, in which case a synthetic "error"
+  // frame is appended, and |unwind_error| is set appropriately.
+  optional uint64 callstack_iid = 4;
+
+  // If set, stack unwinding was incomplete due to an error.
+  // Unset values should be treated as UNWIND_ERROR_NONE.
+  oneof optional_unwind_error { Profiling.StackUnwindError unwind_error = 16; };
+
+  // If set, indicates that this message is not a sample, but rather an
+  // indication of data loss in the ring buffer allocated for |cpu|. Such data
+  // loss occurs when the kernel has insufficient ring buffer capacity to write
+  // a record (which gets discarded). A record in this context is an individual
+  // ring buffer entry, and counts more than just sample records.
+  //
+  // The |timestamp| of the packet corresponds to the time that the producer
+  // wrote the packet for trace-sorting purposes alone, and should not be
+  // interpreted relative to the sample timestamps. This field is sufficient to
+  // detect that *some* kernel data loss happened within the trace, but not the
+  // specific time bounds of that loss (which would require tracking precedessor
+  // & successor timestamps, which is not deemed necessary at the moment).
+  optional uint64 kernel_records_lost = 17;
+
+  // If set, indicates that the profiler encountered a sample that was relevant,
+  // but was skipped as it was considered to be not unwindable (e.g. the process
+  // no longer exists).
+  enum ProfilerStage {
+    PROFILER_STAGE_UNKNOWN = 0;
+    PROFILER_STAGE_READ = 1;
+    PROFILER_STAGE_UNWIND = 2;
+  }
+  oneof optional_sample_skipped_reason {
+    ProfilerStage sample_skipped_reason = 18;
+  };
+}
 // End of protos/perfetto/trace/profiling/profile_packet.proto
 
 // Begin of protos/perfetto/trace/ps/process_stats.proto
@@ -3567,7 +3649,7 @@ message Trace {
 // TracePacket(s).
 //
 // Next reserved id: 13 (up to 15).
-// Next id: 66.
+// Next id: 67.
 message TracePacket {
   // The timestamp of the TracePacket.
   // By default this timestamps refers to the trace clock (CLOCK_BOOTTIME on
@@ -3618,6 +3700,7 @@ message TracePacket {
     // removed field with id 62
     GpuLog gpu_log = 63;
     VulkanApiEvent vulkan_api_event = 65;
+    PerfSample perf_sample = 66;
 
     // Only used in profile packets.
     ProfiledFrameSymbols profiled_frame_symbols = 55;
@@ -3674,7 +3757,6 @@ message TracePacket {
   // it (since the last reset of interning state). It may also be emitted
   // proactively in advance of referring to them in later packets.
   optional InternedData interned_data = 12;
-
 
   enum SequenceFlags {
     SEQ_UNSPECIFIED = 0;
@@ -4084,6 +4166,20 @@ message ChromeLegacyIpc {
 
 message ChromeLatencyInfo {
   optional int64 trace_id = 1;
+
+  enum Step {
+    STEP_UNSPECIFIED = 0;
+    STEP_HANDLE_INPUT_EVENT_MAIN_COMMIT = 1;
+    STEP_MAIN_THREAD_SCROLL_UPDATE = 2;
+    STEP_SEND_INPUT_EVENT_UI = 3;
+    STEP_HANDLE_INPUT_EVENT_MAIN = 4;
+    STEP_HANDLE_INPUT_EVENT_IMPL = 5;
+    STEP_SWAP_BUFFERS = 6;
+    STEP_DRAW_AND_SWAP = 7;
+  };
+
+  optional Step step = 2;
+  optional int32 frame_tree_node_id = 3;
 }
 
 // End of protos/perfetto/trace/track_event/chrome_latency_info.proto
@@ -4973,6 +5069,8 @@ message DataSourceConfig {
   optional PerfEventConfig perf_event_config = 111 [lazy = true];
   // Data source name: vulkan.memory_tracker
   optional VulkanMemoryConfig vulkan_memory_config = 112 [lazy = true];
+  // Data source name: track_event
+  optional TrackEventConfig track_event_config = 113 [lazy = true];
 
   // Chrome is special as it doesn't use the perfetto IPC layer. We want to
   // avoid proto serialization and de-serialization there because that would
@@ -5501,6 +5599,50 @@ message TraceConfig {
 
 // End of protos/perfetto/config/trace_config.proto
 
+// Begin of protos/perfetto/config/track_event/track_event_config.proto
+
+message TrackEventConfig {
+  // The following fields define the set of enabled trace categories. Each list
+  // item is a glob.
+  //
+  // To determine if category is enabled, it is checked against the filters in
+  // the following order:
+  //
+  //   1. Exact matches in enabled categories.
+  //   2. Exact matches in enabled tags.
+  //   3. Exact matches in disabled categories.
+  //   4. Exact matches in disabled tags.
+  //   5. Pattern matches in enabled categories.
+  //   6. Pattern matches in enabled tags.
+  //   7. Pattern matches in disabled categories.
+  //   8. Pattern matches in disabled tags.
+  //
+  // If none of the steps produced a match, the category is enabled by default.
+  //
+  // Examples:
+  //
+  //  - To enable all non-slow/debug categories:
+  //
+  //       No configuration needed, happens by default.
+  //
+  //  - To enable a specific category:
+  //
+  //       disabled_categories = ["*"]
+  //       enabled_categories = ["my_category"]
+  //
+  //  - To enable only categories with a specific tag:
+  //
+  //       disabled_tags = ["*"]
+  //       enabled_tags = ["my_tag"]
+  //
+  repeated string disabled_categories = 1;  // Default: []
+  repeated string enabled_categories = 2;   // Default: []
+  repeated string disabled_tags = 3;  // Default: [“slow”, “debug”]
+  repeated string enabled_tags = 4;   // Default: []
+}
+
+// End of protos/perfetto/config/track_event/track_event_config.proto
+
 // Begin of protos/perfetto/config/profiling/heapprofd_config.proto
 
 // Configuration for go/heapprofd.
@@ -5634,8 +5776,19 @@ message JavaHprofConfig {
 // Begin of protos/perfetto/config/profiling/perf_event_config.proto
 
 // TODO(b/144281346): unstable, do not use. Will change in incompatible ways.
+// At the time of writing, the config options are restricted to the periodic
+// system-wide stack sampling use-case.
 message PerfEventConfig {
-  optional int32 tid = 1;
+  // If true, sample events on all CPUs.
+  optional bool all_cpus = 1;
+  // Per-cpu sampling frequency (requested from the kernel). Not guaranteed to
+  // be honored as the kernel can throttle the sampling rate if it's too high.
+  // If unset, an implementation-defined default is used.
+  optional uint32 sampling_frequency = 2;
+  // Size (in 4k pages) of each per-cpu ring buffer that is filled by the
+  // kernel. If set, must be a power of two.
+  // If unset, an implementation-defined default is used.
+  optional uint32 ring_buffer_pages = 3;
 }
 
 // End of protos/perfetto/config/profiling/perf_event_config.proto

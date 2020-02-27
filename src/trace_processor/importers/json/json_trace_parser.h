@@ -23,9 +23,9 @@
 #include <tuple>
 #include <unordered_map>
 
+#include "src/trace_processor/importers/json/json_tracker.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_parser.h"
-#include "src/trace_processor/trace_storage.h"
 
 namespace Json {
 class Value;
@@ -35,9 +35,6 @@ namespace perfetto {
 namespace trace_processor {
 
 class TraceProcessorContext;
-
-base::Optional<int64_t> CoerceToInt64(const Json::Value& value);
-base::Optional<uint32_t> CoerceToUint32(const Json::Value& value);
 
 // Parses legacy chrome JSON traces. The support for now is extremely rough
 // and supports only explicit TRACE_EVENT_BEGIN/END events.

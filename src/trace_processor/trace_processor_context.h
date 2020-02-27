@@ -37,12 +37,14 @@ class GlobalArgsTracker;
 class HeapGraphTracker;
 class HeapProfileTracker;
 class MetadataTracker;
+class PerfSampleTracker;
 class ProcessTracker;
 class SliceTracker;
 class TraceParser;
 class TraceSorter;
 class TraceStorage;
 class TrackTracker;
+class JsonTracker;
 
 class TraceProcessorContext {
  public:
@@ -62,6 +64,7 @@ class TraceProcessorContext {
   std::unique_ptr<ChunkedTraceReader> chunk_reader;
   std::unique_ptr<HeapProfileTracker> heap_profile_tracker;
   std::unique_ptr<MetadataTracker> metadata_tracker;
+  std::unique_ptr<PerfSampleTracker> perf_sample_tracker_;
 
   // Keep the global tracker before the args tracker as we access the global
   // tracker in the destructor of the args tracker.
@@ -70,13 +73,18 @@ class TraceProcessorContext {
 
   // These fields are stored as pointers to Destructible objects rather than
   // their actual type (a subclass of Destructible), as the concrete subclass
-  // type is only available in the storage_full target. To access these fields,
-  // use the GetOrCreate() method on their subclass type,
-  // e.g. SyscallTracker::GetOrCreate(context).
+  // type is only available in some targets. To access these fields use the
+  // GetOrCreate() method on their subclass type, e.g.
+  // SyscallTracker::GetOrCreate(context)
+
+  // storage_full targets:
   std::unique_ptr<Destructible> syscall_tracker;     // SyscallTracker
   std::unique_ptr<Destructible> sched_tracker;       // SchedEventTracker
   std::unique_ptr<Destructible> systrace_parser;     // SystraceParser
   std::unique_ptr<Destructible> heap_graph_tracker;  // HeapGraphTracker
+
+  // When json importing is enabled:
+  std::unique_ptr<Destructible> json_tracker;  // JsonTracker
 
   // This will be nullptr in the minimal build (storage_minimal target), and
   // a pointer to the instance of SystraceTraceParser class in the full build

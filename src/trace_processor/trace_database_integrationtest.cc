@@ -90,6 +90,21 @@ TEST_F(TraceProcessorIntegrationTest, TraceBounds) {
   ASSERT_FALSE(it.Next());
 }
 
+// Tests that the duration of the last slice is accounted in the computation
+// of the trace boundaries. Linux ftraces tend to hide this problem because
+// after the last sched_switch there's always a "wake" event which causes the
+// raw table to fix the bounds.
+TEST_F(TraceProcessorIntegrationTest, TraceBoundsUserspaceOnly) {
+  ASSERT_TRUE(LoadTrace("sfgate.json").ok());
+  auto it = Query("select start_ts, end_ts from trace_bounds");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).type, SqlValue::kLong);
+  ASSERT_EQ(it.Get(0).long_value, 2213649212614000);
+  ASSERT_EQ(it.Get(1).type, SqlValue::kLong);
+  ASSERT_EQ(it.Get(1).long_value, 2213689745140000);
+  ASSERT_FALSE(it.Next());
+}
+
 TEST_F(TraceProcessorIntegrationTest, Hash) {
   auto it = Query("select HASH()");
   ASSERT_TRUE(it.Next());
@@ -225,6 +240,42 @@ TEST_F(TraceProcessorIntegrationTest, RestoreInitialTables) {
 
     ASSERT_EQ(RestoreInitialTables(), 3u);
   }
+}
+
+// This test checks that a ninja trace is tokenized properly even if read in
+// small chunks of 1KB each. The values used in the test have been cross-checked
+// with opening the same trace with ninjatracing + chrome://tracing.
+TEST_F(TraceProcessorIntegrationTest, NinjaLog) {
+  ASSERT_TRUE(LoadTrace("ninja_log", 1024).ok());
+  auto it = Query("select count(*) from process where name like 'build';");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).long_value, 2);
+
+  it = Query(
+      "select count(*) from thread left join process using(upid) where "
+      "thread.name like 'worker%' and process.pid=1");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).long_value, 14);
+
+  it = Query(
+      "create view slices_1st_build as select slices.* from slices left "
+      "join thread_track on(slices.track_id == thread_track.id) left join "
+      "thread using(utid) left join process using(upid) where pid=2");
+  it.Next();
+  ASSERT_TRUE(it.Status().ok());
+
+  it = Query("select (max(ts) - min(ts)) / 1000000 from slices_1st_build");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).long_value, 12612);
+
+  it = Query("select name from slices_1st_build order by ts desc limit 1");
+  ASSERT_TRUE(it.Next());
+  ASSERT_STREQ(it.Get(0).string_value,
+               "obj/src/trace_processor/unittests.trace_sorter_unittest.o");
+
+  it = Query("select sum(dur) / 1000000 from slices_1st_build");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).long_value, 276174);
 }
 
 }  // namespace

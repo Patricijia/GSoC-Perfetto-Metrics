@@ -101,8 +101,9 @@ UnwindingMetadata::UnwindingMetadata(base::ScopedFile maps_fd,
           new unwindstack::DexFiles(fd_mem)))
 #endif
 {
-  bool parsed = fd_maps.Parse();
-  if (!parsed)
+  if (!maps_fd)
+    return;
+  if (!fd_maps.Parse())
     PERFETTO_DLOG("Failed initial maps parse");
 }
 
@@ -120,13 +121,34 @@ void UnwindingMetadata::ReparseMaps() {
 
 FrameData UnwindingMetadata::AnnotateFrame(unwindstack::FrameData frame) {
   std::string build_id;
-  if (frame.map_name != "") {
+  if (!frame.map_name.empty()) {
     unwindstack::MapInfo* map_info = fd_maps.Find(frame.pc);
     if (map_info)
       build_id = map_info->GetBuildID();
   }
 
   return FrameData{std::move(frame), std::move(build_id)};
+}
+
+std::string StringifyLibUnwindstackError(unwindstack::ErrorCode e) {
+  switch (e) {
+    case unwindstack::ERROR_NONE:
+      return "NONE";
+    case unwindstack::ERROR_MEMORY_INVALID:
+      return "MEMORY_INVALID";
+    case unwindstack::ERROR_UNWIND_INFO:
+      return "UNWIND_INFO";
+    case unwindstack::ERROR_UNSUPPORTED:
+      return "UNSUPPORTED";
+    case unwindstack::ERROR_INVALID_MAP:
+      return "INVALID_MAP";
+    case unwindstack::ERROR_MAX_FRAMES_EXCEEDED:
+      return "MAX_FRAME_EXCEEDED";
+    case unwindstack::ERROR_REPEATED_FRAME:
+      return "REPEATED_FRAME";
+    case unwindstack::ERROR_INVALID_ELF:
+      return "INVALID_ELF";
+  }
 }
 
 }  // namespace profiling

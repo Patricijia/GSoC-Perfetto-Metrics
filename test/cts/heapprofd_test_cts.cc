@@ -44,7 +44,8 @@ constexpr uint64_t kExpectedIndividualAllocSz = 4153;
 static_assert(kExpectedIndividualAllocSz > kTestSamplingInterval,
               "kTestSamplingInterval invalid");
 
-std::vector<protos::gen::TracePacket> ProfileRuntime(std::string app_name) {
+std::vector<protos::gen::TracePacket> ProfileRuntime(
+    const std::string& app_name) {
   base::TestTaskRunner task_runner;
 
   // (re)start the target app's main activity
@@ -52,7 +53,7 @@ std::vector<protos::gen::TracePacket> ProfileRuntime(std::string app_name) {
     StopApp(app_name, "old.app.stopped", &task_runner);
     task_runner.RunUntilCheckpoint("old.app.stopped", 1000 /*ms*/);
   }
-  StartAppActivity(app_name, "target.app.running", &task_runner,
+  StartAppActivity(app_name, "MainActivity", "target.app.running", &task_runner,
                    /*delay_ms=*/100);
   task_runner.RunUntilCheckpoint("target.app.running", 1000 /*ms*/);
 
@@ -85,7 +86,8 @@ std::vector<protos::gen::TracePacket> ProfileRuntime(std::string app_name) {
   return helper.trace();
 }
 
-std::vector<protos::gen::TracePacket> ProfileStartup(std::string app_name) {
+std::vector<protos::gen::TracePacket> ProfileStartup(
+    const std::string& app_name) {
   base::TestTaskRunner task_runner;
 
   if (IsAppRunning(app_name)) {
@@ -117,7 +119,7 @@ std::vector<protos::gen::TracePacket> ProfileStartup(std::string app_name) {
   helper.StartTracing(trace_config);
 
   // start app
-  StartAppActivity(app_name, "target.app.running", &task_runner,
+  StartAppActivity(app_name, "MainActivity", "target.app.running", &task_runner,
                    /*delay_ms=*/100);
   task_runner.RunUntilCheckpoint("target.app.running", 2000 /*ms*/);
 
@@ -129,7 +131,7 @@ std::vector<protos::gen::TracePacket> ProfileStartup(std::string app_name) {
 }
 
 void AssertExpectedAllocationsPresent(
-    std::vector<protos::gen::TracePacket> packets) {
+    const std::vector<protos::gen::TracePacket>& packets) {
   ASSERT_GT(packets.size(), 0u);
 
   // TODO(rsavitski): assert particular stack frames once we clarify the
@@ -137,8 +139,10 @@ void AssertExpectedAllocationsPresent(
   // Until then, look for an allocation that is a multiple of the expected
   // allocation size.
   bool found_alloc = false;
+  bool found_proc_dump = false;
   for (const auto& packet : packets) {
     for (const auto& proc_dump : packet.profile_packet().process_dumps()) {
+      found_proc_dump = true;
       for (const auto& sample : proc_dump.samples()) {
         if (sample.self_allocated() > 0 &&
             sample.self_allocated() % kExpectedIndividualAllocSz == 0) {
@@ -151,45 +155,52 @@ void AssertExpectedAllocationsPresent(
       }
     }
   }
+  ASSERT_TRUE(found_proc_dump);
   ASSERT_TRUE(found_alloc);
 }
 
-void AssertNoProfileContents(std::vector<protos::gen::TracePacket> packets) {
+void AssertNoProfileContents(
+    const std::vector<protos::gen::TracePacket>& packets) {
   // If profile packets are present, they must be empty.
   for (const auto& packet : packets) {
     ASSERT_EQ(packet.profile_packet().process_dumps_size(), 0);
   }
 }
 
-TEST(HeapprofdCtsTest, DebuggableAppRuntime) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, DebuggableAppRuntime) {
   std::string app_name = "android.perfetto.cts.app.debuggable";
   const auto& packets = ProfileRuntime(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, DebuggableAppStartup) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, DebuggableAppStartup) {
   std::string app_name = "android.perfetto.cts.app.debuggable";
   const auto& packets = ProfileStartup(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ProfileableAppRuntime) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, ProfileableAppRuntime) {
   std::string app_name = "android.perfetto.cts.app.profileable";
   const auto& packets = ProfileRuntime(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ProfileableAppStartup) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, ProfileableAppStartup) {
   std::string app_name = "android.perfetto.cts.app.profileable";
   const auto& packets = ProfileStartup(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ReleaseAppRuntime) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, ReleaseAppRuntime) {
   std::string app_name = "android.perfetto.cts.app.release";
   const auto& packets = ProfileRuntime(app_name);
 
@@ -201,7 +212,8 @@ TEST(HeapprofdCtsTest, ReleaseAppRuntime) {
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ReleaseAppStartup) {
+// TODO(b/150085813): Re-enable this once it is fixed.
+TEST(DISABLED_HeapprofdCtsTest, ReleaseAppStartup) {
   std::string app_name = "android.perfetto.cts.app.release";
   const auto& packets = ProfileStartup(app_name);
 
