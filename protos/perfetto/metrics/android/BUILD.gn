@@ -18,9 +18,11 @@ perfetto_proto_library("@TYPE@") {
   sources = [
     "batt_metric.proto",
     "cpu_metric.proto",
+    "display_metrics.proto",
     "heap_profile_callsites.proto",
     "hwui_metric.proto",
     "ion_metric.proto",
+    "java_heap_histogram.proto",
     "java_heap_stats.proto",
     "lmk_metric.proto",
     "lmk_reason_metric.proto",

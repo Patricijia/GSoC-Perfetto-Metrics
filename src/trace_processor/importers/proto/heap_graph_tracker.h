@@ -32,8 +32,17 @@ namespace trace_processor {
 
 class TraceProcessorContext;
 
+struct NormalizedType {
+  base::StringView name;
+  bool is_static_class;
+  size_t number_of_arrays;
+};
+base::Optional<base::StringView> GetStaticClassTypeName(base::StringView type);
 size_t NumberOfArrays(base::StringView type);
+NormalizedType GetNormalizedType(base::StringView type);
 base::StringView NormalizeTypeName(base::StringView type);
+std::string DenormalizeTypeName(NormalizedType normalized,
+                                base::StringView deobfuscated_type_name);
 
 class HeapGraphTracker : public HeapGraphWalker::Delegate, public Destructible {
  public:
@@ -81,6 +90,11 @@ class HeapGraphTracker : public HeapGraphWalker::Delegate, public Destructible {
   void SetRetained(int64_t row,
                    int64_t retained,
                    int64_t unique_retained) override;
+  void NotifyEndOfFile();
+
+  void AddDeobfuscationMapping(StringPool::Id obfuscated_name,
+                               StringPool::Id deobfuscated_name);
+  StringPool::Id MaybeDeobfuscate(StringPool::Id);
 
   const std::vector<int64_t>* RowsForType(StringPool::Id type_name) const {
     auto it = class_to_rows_.find(type_name);
@@ -122,13 +136,14 @@ class HeapGraphTracker : public HeapGraphWalker::Delegate, public Destructible {
   SequenceState& GetOrCreateSequence(uint32_t seq_id);
   bool SetPidAndTimestamp(SequenceState* seq, UniquePid upid, int64_t ts);
 
-
   TraceProcessorContext* const context_;
   std::map<uint32_t, SequenceState> sequence_state_;
   std::map<std::pair<UniquePid, int64_t /* ts */>, HeapGraphWalker> walkers_;
 
   std::map<StringPool::Id, std::vector<int64_t>> class_to_rows_;
   std::map<StringPool::Id, std::vector<int64_t>> field_to_rows_;
+
+  std::map<StringPool::Id, StringPool::Id> deobfuscation_mapping_;
 };
 
 }  // namespace trace_processor

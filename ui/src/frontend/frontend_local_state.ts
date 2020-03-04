@@ -24,8 +24,8 @@ import {
 import {TimeSpan} from '../common/time';
 
 import {randomColor} from './colorizer';
-import {Tab} from './details_panel';
 import {globals} from './globals';
+import {debounce, ratelimit} from './rate_limiters';
 import {TimeScale} from './time_scale';
 
 interface Range {
@@ -38,36 +38,6 @@ function chooseLatest<T extends Timestamped<{}>>(current: T, next: T): T {
     return next;
   }
   return current;
-}
-
-// Returns a wrapper around |f| which calls f at most once every |ms|ms.
-function ratelimit(f: Function, ms: number): Function {
-  let inProgess = false;
-  return () => {
-    if (inProgess) {
-      return;
-    }
-    inProgess = true;
-    window.setTimeout(() => {
-      f();
-      inProgess = false;
-    }, ms);
-  };
-}
-
-// Returns a wrapper around |f| which waits for a |ms|ms pause in calls
-// before calling |f|.
-function debounce(f: Function, ms: number): Function {
-  let timerId: undefined|number;
-  return () => {
-    if (timerId) {
-      window.clearTimeout(timerId);
-    }
-    timerId = window.setTimeout(() => {
-      f();
-      timerId = undefined;
-    }, ms);
-  };
 }
 
 // Calculate the space a scrollbar takes up so that we can subtract it from
@@ -103,7 +73,7 @@ export class FrontendLocalState {
   visibleTracks = new Set<string>();
   prevVisibleTracks = new Set<string>();
   searchIndex = -1;
-  currentTab?: Tab;
+  currentTab?: string;
   scrollToTrackId?: string|number;
   httpRpcState: HttpRpcState = {connected: false};
   newVersionAvailable = false;
@@ -234,7 +204,6 @@ export class FrontendLocalState {
       lastUpdate: Date.now() / 1000
     };
     this.selectAreaDebounced();
-    globals.frontendLocalState.currentTab = 'cpu_slices';
     globals.rafScheduler.scheduleFullRedraw();
   }
 
@@ -284,7 +253,6 @@ export class FrontendLocalState {
       }));
     }
 
-    globals.frontendLocalState.currentTab = 'cpu_slices';
     globals.rafScheduler.scheduleFullRedraw();
   }
 
@@ -328,6 +296,7 @@ export class FrontendLocalState {
     const endSec = Math.min(ts.end, globals.state.traceTime.endSec);
     this.visibleWindowTime = new TimeSpan(startSec, endSec);
     this.timeScale.setTimeBounds(this.visibleWindowTime);
+    this.updateResolution(this.timeScale.startPx, this.timeScale.endPx);
   }
 
   // We lock an area selection by adding an area note. When we select the note
@@ -361,6 +330,7 @@ export class FrontendLocalState {
 
   updateResolution(pxStart: number, pxEnd: number) {
     this.timeScale.setLimitsPx(pxStart, pxEnd);
+    this._visibleState.lastUpdate = Date.now() / 1000;
     this._visibleState.resolution = globals.getCurResolution();
     this.ratelimitedUpdateVisible();
   }

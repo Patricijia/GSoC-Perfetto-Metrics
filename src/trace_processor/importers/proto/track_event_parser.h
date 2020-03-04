@@ -70,12 +70,14 @@ class TrackEventParser {
                                 PacketSequenceStateGeneration*,
                                 ArgsTracker::BoundInserter* inserter);
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
-  void ParseJsonValueArgs(const Json::Value& value,
+  // Returns true if any arguments were inserted underneath |key|.
+  bool ParseJsonValueArgs(const Json::Value& value,
                           base::StringView flat_key,
                           base::StringView key,
                           ArgsTracker::BoundInserter* inserter);
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
-  void ParseNestedValueArgs(protozero::ConstBytes nested_value,
+  // Returns true if any arguments were inserted underneath |key|.
+  bool ParseNestedValueArgs(protozero::ConstBytes nested_value,
                             base::StringView flat_key,
                             base::StringView key,
                             ArgsTracker::BoundInserter* inserter);
@@ -93,6 +95,7 @@ class TrackEventParser {
   void ParseChromeUserEvent(protozero::ConstBytes chrome_user_event,
                             ArgsTracker::BoundInserter* inserter);
   void ParseChromeLatencyInfo(protozero::ConstBytes chrome_latency_info,
+                              PacketSequenceStateGeneration* sequence_state,
                               ArgsTracker::BoundInserter* inserter);
   void ParseChromeLegacyIpc(protozero::ConstBytes chrome_legacy_ipc,
                             ArgsTracker::BoundInserter* inserter);
@@ -129,6 +132,7 @@ class TrackEventParser {
   const StringId flow_direction_value_out_id_;
   const StringId flow_direction_value_inout_id_;
   const StringId chrome_user_event_action_args_key_id_;
+  const StringId chrome_user_event_action_hash_args_key_id_;
   const StringId chrome_legacy_ipc_class_args_key_id_;
   const StringId chrome_legacy_ipc_line_args_key_id_;
   const StringId chrome_keyed_service_name_args_key_id_;
@@ -136,7 +140,10 @@ class TrackEventParser {
   const StringId chrome_histogram_sample_name_args_key_id_;
   const StringId chrome_histogram_sample_sample_args_key_id_;
   const StringId chrome_latency_info_trace_id_key_id_;
+  const StringId chrome_latency_info_step_key_id_;
+  const StringId chrome_latency_info_frame_tree_node_id_key_id_;
 
+  std::array<StringId, 8> chrome_latency_info_step_ids_;
   std::array<StringId, 38> chrome_legacy_ipc_class_ids_;
   std::array<StringId, 9> chrome_process_name_ids_;
   std::array<StringId, 14> chrome_thread_name_ids_;

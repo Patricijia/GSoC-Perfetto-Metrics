@@ -52,6 +52,9 @@ class TrackTracker {
                                   UniquePid upid,
                                   int64_t cookie);
 
+  // Interns a track for perf event stack samples, with process-wide grouping.
+  TrackId InternPerfStackTrack(UniquePid upid);
+
   // Interns a track for legacy Chrome process-scoped instant events into the
   // storage.
   TrackId InternLegacyChromeProcessInstantTrack(UniquePid upid);
@@ -106,6 +109,10 @@ class TrackTracker {
 
   // Returns the ID of the implicit trace-global default TrackDescriptor track.
   TrackId GetOrCreateDefaultDescriptorTrack();
+
+  // Returns the ID of the implicit trace-global default track for triggers
+  // received by the service.
+  TrackId GetOrCreateTriggerTrack();
 
   // Interns a global counter track into the storage.
   TrackId InternGlobalCounterTrack(StringId name);
@@ -198,6 +205,7 @@ class TrackTracker {
   std::map<uint64_t /* uuid */, DescriptorTrackReservation>
       reserved_descriptor_tracks_;
   std::map<uint64_t /* uuid */, TrackId> resolved_descriptor_tracks_;
+  std::map<UniquePid, TrackId> perf_stack_tracks_;
 
   std::map<StringId, TrackId> global_counter_tracks_by_name_;
   std::map<std::pair<StringId, uint32_t>, TrackId> cpu_counter_tracks_;
@@ -211,6 +219,8 @@ class TrackTracker {
   // for the given upid / utid. Used for pid/tid reuse detection.
   std::map<UniquePid, uint64_t /*uuid*/> descriptor_uuids_by_upid_;
   std::map<UniqueTid, uint64_t /*uuid*/> descriptor_uuids_by_utid_;
+
+  base::Optional<TrackId> trigger_track_id_;
 
   const StringId source_key_ = kNullStringId;
   const StringId source_id_key_ = kNullStringId;

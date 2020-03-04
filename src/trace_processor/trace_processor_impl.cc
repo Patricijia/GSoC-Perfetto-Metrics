@@ -23,17 +23,23 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/additional_modules.h"
+#include "src/trace_processor/experimental_counter_dur_generator.h"
+#include "src/trace_processor/experimental_flamegraph_generator.h"
+#include "src/trace_processor/gzip_trace_parser.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.h"
+#include "src/trace_processor/importers/fuchsia/fuchsia_trace_tokenizer.h"
+#include "src/trace_processor/importers/json/json_trace_parser.h"
+#include "src/trace_processor/importers/json/json_trace_tokenizer.h"
+#include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/metadata_tracker.h"
-#include "src/trace_processor/register_additional_modules.h"
 #include "src/trace_processor/sql_stats_table.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/sqlite/window_operator_table.h"
-#include "src/trace_processor/sqlite_experimental_counter_dur_table.h"
-#include "src/trace_processor/sqlite_experimental_flamegraph_table.h"
 #include "src/trace_processor/sqlite_raw_table.h"
 #include "src/trace_processor/stats_table.h"
 #include "src/trace_processor/types/variadic.h"
@@ -387,7 +393,22 @@ void EnsureSqliteInitialized() {
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
     : TraceProcessorStorageImpl(cfg) {
+  context_.fuchsia_trace_tokenizer.reset(new FuchsiaTraceTokenizer(&context_));
+  context_.fuchsia_trace_parser.reset(new FuchsiaTraceParser(&context_));
+
+  context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
+  context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
+#endif
+
+#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
+  context_.json_trace_tokenizer.reset(new JsonTraceTokenizer(&context_));
+  context_.json_trace_parser.reset(new JsonTraceParser(&context_));
+#endif
+
   RegisterAdditionalModules(&context_);
+
   sqlite3* db = nullptr;
   EnsureSqliteInitialized();
   PERFETTO_CHECK(sqlite3_open(":memory:", &db) == SQLITE_OK);
@@ -417,11 +438,14 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   WindowOperatorTable::RegisterTable(*db_, storage);
 
   // New style tables but with some custom logic.
-  SqliteExperimentalFlamegraphTable::RegisterTable(*db_, &context_);
   SqliteRawTable::RegisterTable(*db_, query_cache_.get(),
                                 context_.storage.get());
-  SqliteExperimentalCounterDurTable::RegisterTable(*db_, query_cache_.get(),
-                                                   storage->counter_table());
+
+  // Tables dynamically generated at query time.
+  RegisterDynamicTable(std::unique_ptr<ExperimentalFlamegraphGenerator>(
+      new ExperimentalFlamegraphGenerator(&context_)));
+  RegisterDynamicTable(std::unique_ptr<ExperimentalCounterDurGenerator>(
+      new ExperimentalCounterDurGenerator(storage->counter_table())));
 
   // New style db-backed tables.
   RegisterDbTable(storage->arg_table());

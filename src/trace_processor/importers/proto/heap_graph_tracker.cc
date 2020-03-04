@@ -19,6 +19,16 @@
 namespace perfetto {
 namespace trace_processor {
 
+base::Optional<base::StringView> GetStaticClassTypeName(base::StringView type) {
+  static const base::StringView kJavaClassTemplate("java.lang.Class<");
+  if (!type.empty() && type.at(type.size() - 1) == '>' &&
+      type.substr(0, kJavaClassTemplate.size()) == kJavaClassTemplate) {
+    return type.substr(kJavaClassTemplate.size(),
+                       type.size() - kJavaClassTemplate.size() - 1);
+  }
+  return {};
+}
+
 size_t NumberOfArrays(base::StringView type) {
   if (type.size() < 2)
     return 0;
@@ -32,8 +42,30 @@ size_t NumberOfArrays(base::StringView type) {
   return arrays;
 }
 
+NormalizedType GetNormalizedType(base::StringView type) {
+  auto static_class_type_name = GetStaticClassTypeName(type);
+  if (static_class_type_name.has_value()) {
+    type = static_class_type_name.value();
+  }
+  size_t number_of_arrays = NumberOfArrays(type);
+  return {base::StringView(type.data(), type.size() - number_of_arrays * 2),
+          static_class_type_name.has_value(), number_of_arrays};
+}
+
 base::StringView NormalizeTypeName(base::StringView type) {
-  return base::StringView(type.data(), type.size() - NumberOfArrays(type) * 2);
+  return GetNormalizedType(type).name;
+}
+
+std::string DenormalizeTypeName(NormalizedType normalized,
+                                base::StringView deobfuscated_type_name) {
+  std::string result = deobfuscated_type_name.ToStdString();
+  for (size_t i = 0; i < normalized.number_of_arrays; ++i) {
+    result += "[]";
+  }
+  if (normalized.is_static_class) {
+    result = "java.lang.Class<" + result + ">";
+  }
+  return result;
 }
 
 HeapGraphTracker::HeapGraphTracker(TraceProcessorContext* context)
@@ -279,7 +311,7 @@ HeapGraphTracker::BuildFlamegraph(const int64_t current_ts,
     alloc_row.upid = current_upid;
     alloc_row.profile_type = profile_type;
     alloc_row.depth = depth;
-    alloc_row.name = StringId::Raw(node.class_name);
+    alloc_row.name = MaybeDeobfuscate(StringId::Raw(node.class_name));
     alloc_row.map_name = java_mapping;
     alloc_row.count = static_cast<int64_t>(node.count);
     alloc_row.cumulative_count =
@@ -308,6 +340,33 @@ void HeapGraphTracker::SetRetained(int64_t row,
   context_->storage->mutable_heap_graph_object_table()
       ->mutable_unique_retained_size()
       ->Set(static_cast<uint32_t>(row), unique_retained);
+}
+
+void HeapGraphTracker::NotifyEndOfFile() {
+  if (!sequence_state_.empty()) {
+    context_->storage->IncrementStats(stats::heap_graph_non_finalized_graph);
+  }
+}
+
+StringPool::Id HeapGraphTracker::MaybeDeobfuscate(StringPool::Id id) {
+  base::StringView type_name = context_->storage->GetString(id);
+  auto normalized_type = GetNormalizedType(type_name);
+  auto it = deobfuscation_mapping_.find(
+      context_->storage->InternString(normalized_type.name));
+  if (it == deobfuscation_mapping_.end())
+    return id;
+
+  base::StringView normalized_deobfuscated_name =
+      context_->storage->GetString(it->second);
+  std::string result =
+      DenormalizeTypeName(normalized_type, normalized_deobfuscated_name);
+  return context_->storage->InternString(base::StringView(result));
+}
+
+void HeapGraphTracker::AddDeobfuscationMapping(
+    StringPool::Id obfuscated_name,
+    StringPool::Id deobfuscated_name) {
+  deobfuscation_mapping_.emplace(obfuscated_name, deobfuscated_name);
 }
 
 }  // namespace trace_processor

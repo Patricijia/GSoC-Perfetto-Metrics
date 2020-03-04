@@ -31,7 +31,7 @@ namespace profiling {
 
 namespace {
 
-constexpr size_t kDataPagesPerRingBuffer = 256;  // 1 MB (256 x 4k pages)
+constexpr size_t kDefaultDataPagesPerRingBuffer = 256;  // 1 MB (256 x 4k pages)
 
 template <typename T>
 const char* ReadValue(T* value_out, const char* ptr) {
@@ -93,7 +93,7 @@ base::Optional<PerfRingBuffer> PerfRingBuffer::Allocate(
     int perf_fd,
     size_t data_page_count) {
   // perf_event_open requires the ring buffer to be a power of two in size.
-  PERFETTO_CHECK(IsPowerOfTwo(data_page_count));
+  PERFETTO_DCHECK(IsPowerOfTwo(data_page_count));
 
   PerfRingBuffer ret;
 
@@ -105,7 +105,7 @@ base::Optional<PerfRingBuffer> PerfRingBuffer::Allocate(
   void* mmap_addr = mmap(nullptr, ret.mmap_sz_, PROT_READ | PROT_WRITE,
                          MAP_SHARED, perf_fd, 0);
   if (mmap_addr == MAP_FAILED) {
-    PERFETTO_PLOG("failed mmap (check perf_event_mlock_kb in procfs)");
+    PERFETTO_PLOG("failed mmap");
     return base::nullopt;
   }
 
@@ -188,17 +188,17 @@ void PerfRingBuffer::Consume(size_t bytes) {
 }
 
 EventReader::EventReader(uint32_t cpu,
-                         const EventConfig& event_cfg,
+                         perf_event_attr event_attr,
                          base::ScopedFile perf_fd,
                          PerfRingBuffer ring_buffer)
     : cpu_(cpu),
-      event_cfg_(event_cfg),
+      event_attr_(event_attr),
       perf_fd_(std::move(perf_fd)),
       ring_buffer_(std::move(ring_buffer)) {}
 
 EventReader::EventReader(EventReader&& other) noexcept
     : cpu_(other.cpu_),
-      event_cfg_(other.event_cfg_),
+      event_attr_(other.event_attr_),
       perf_fd_(std::move(other.perf_fd_)),
       ring_buffer_(std::move(other.ring_buffer_)) {}
 
@@ -220,18 +220,29 @@ base::Optional<EventReader> EventReader::ConfigureEvents(
     return base::nullopt;
   }
 
-  auto ring_buffer =
-      PerfRingBuffer::Allocate(perf_fd.get(), kDataPagesPerRingBuffer);
+  // choose a reasonable ring buffer size
+  size_t ring_buffer_pages = kDefaultDataPagesPerRingBuffer;
+  size_t config_pages = event_cfg.ring_buffer_pages();
+  if (config_pages) {
+    if (!IsPowerOfTwo(config_pages)) {
+      PERFETTO_ELOG("kernel buffer size must be a power of two pages");
+      return base::nullopt;
+    }
+    ring_buffer_pages = config_pages;
+  }
+
+  auto ring_buffer = PerfRingBuffer::Allocate(perf_fd.get(), ring_buffer_pages);
   if (!ring_buffer.has_value()) {
     return base::nullopt;
   }
 
-  return base::make_optional<EventReader>(cpu, event_cfg, std::move(perf_fd),
+  return base::make_optional<EventReader>(cpu, *event_cfg.perf_attr(),
+                                          std::move(perf_fd),
                                           std::move(ring_buffer.value()));
 }
 
 base::Optional<ParsedSample> EventReader::ReadUntilSample(
-    std::function<void(uint64_t)> lost_events_callback) {
+    std::function<void(uint64_t)> records_lost_callback) {
   for (;;) {
     char* event = ring_buffer_.ReadRecordNonconsuming();
     if (!event)
@@ -244,22 +255,38 @@ base::Optional<ParsedSample> EventReader::ReadUntilSample(
                   static_cast<size_t>(event_hdr->size));
 
     if (event_hdr->type == PERF_RECORD_SAMPLE) {
-      ParsedSample sample = ParseSampleRecord(cpu_, event, event_hdr->size);
+      ParsedSample sample = ParseSampleRecord(cpu_, event);
       ring_buffer_.Consume(event_hdr->size);
       return base::make_optional(std::move(sample));
     }
 
     if (event_hdr->type == PERF_RECORD_LOST) {
-      uint64_t lost_events = *reinterpret_cast<const uint64_t*>(
+      /*
+       * struct {
+       *   struct perf_event_header header;
+       *   u64 id;
+       *   u64 lost;
+       *   struct sample_id sample_id;
+       * };
+       */
+      uint64_t records_lost = *reinterpret_cast<const uint64_t*>(
           event + sizeof(perf_event_header) + sizeof(uint64_t));
 
-      lost_events_callback(lost_events);
-      // advance ring buffer position and keep looking for a sample
+      records_lost_callback(records_lost);
       ring_buffer_.Consume(event_hdr->size);
-      continue;
+      continue;  // keep looking for a sample
     }
 
-    PERFETTO_FATAL("Unsupported event type");
+    // Kernel had to throttle irqs.
+    if (event_hdr->type == PERF_RECORD_THROTTLE ||
+        event_hdr->type == PERF_RECORD_UNTHROTTLE) {
+      ring_buffer_.Consume(event_hdr->size);
+      continue;  // keep looking for a sample
+    }
+
+    PERFETTO_DFATAL_OR_ELOG("Unsupported event type [%zu]",
+                            static_cast<size_t>(event_hdr->type));
+    ring_buffer_.Consume(event_hdr->size);
   }
 }
 
@@ -267,23 +294,25 @@ base::Optional<ParsedSample> EventReader::ReadUntilSample(
 // PERF_SAMPLE_CPU). However, this producer uses only cpu-scoped events,
 // therefore it is already known.
 ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
-                                            const char* sample_start,
-                                            size_t sample_size) {
-  const perf_event_attr* cfg = event_cfg_.perf_attr();
-
-  if (cfg->sample_type &
+                                            const char* record_start) {
+  if (event_attr_.sample_type &
       (~uint64_t(PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_STACK_USER |
                  PERF_SAMPLE_REGS_USER))) {
     PERFETTO_FATAL("Unsupported sampling option");
   }
 
-  // Parse the payload, which consists of concatenated data for each
-  // |attr.sample_type| flag.
+  auto* event_hdr = reinterpret_cast<const perf_event_header*>(record_start);
+  size_t sample_size = event_hdr->size;
+
   ParsedSample sample = {};
   sample.cpu = cpu;
-  const char* parse_pos = sample_start + sizeof(perf_event_header);
+  sample.cpu_mode = event_hdr->misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
-  if (cfg->sample_type & PERF_SAMPLE_TID) {
+  // Parse the payload, which consists of concatenated data for each
+  // |attr.sample_type| flag.
+  const char* parse_pos = record_start + sizeof(perf_event_header);
+
+  if (event_attr_.sample_type & PERF_SAMPLE_TID) {
     uint32_t pid = 0;
     uint32_t tid = 0;
     parse_pos = ReadValue(&pid, parse_pos);
@@ -292,16 +321,16 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
     sample.tid = static_cast<pid_t>(tid);
   }
 
-  if (cfg->sample_type & PERF_SAMPLE_TIME) {
+  if (event_attr_.sample_type & PERF_SAMPLE_TIME) {
     parse_pos = ReadValue(&sample.timestamp, parse_pos);
   }
 
-  if (cfg->sample_type & PERF_SAMPLE_REGS_USER) {
+  if (event_attr_.sample_type & PERF_SAMPLE_REGS_USER) {
     // Can be empty, e.g. if we sampled a kernel thread.
     sample.regs = ReadPerfUserRegsData(&parse_pos);
   }
 
-  if (cfg->sample_type & PERF_SAMPLE_STACK_USER) {
+  if (event_attr_.sample_type & PERF_SAMPLE_STACK_USER) {
     uint64_t max_stack_size;  // the requested size
     parse_pos = ReadValue(&max_stack_size, parse_pos);
     PERFETTO_DLOG("max_stack_size: %" PRIu64 "", max_stack_size);
@@ -309,7 +338,8 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
     const char* stack_start = parse_pos;
     parse_pos += max_stack_size;  // skip to dyn_size
 
-    // written only if requested stack sampling size is nonzero
+    // Payload written conditionally, e.g. kernel threads don't have a
+    // user stack.
     if (max_stack_size > 0) {
       uint64_t filled_stack_size;
       parse_pos = ReadValue(&filled_stack_size, parse_pos);
@@ -322,7 +352,7 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
     }
   }
 
-  PERFETTO_CHECK(parse_pos == sample_start + sample_size);
+  PERFETTO_CHECK(parse_pos == record_start + sample_size);
   return sample;
 }
 

@@ -22,7 +22,7 @@
 
 namespace perfetto {
 namespace trace_processor {
-namespace json_trace_utils {
+namespace json {
 namespace {
 
 TEST(JsonTraceUtilsTest, CoerceToUint32) {
@@ -37,17 +37,24 @@ TEST(JsonTraceUtilsTest, CoerceToInt64) {
   ASSERT_EQ(CoerceToInt64(Json::Value(42.1)).value_or(-1), 42);
   ASSERT_FALSE(CoerceToInt64(Json::Value("foo")).has_value());
   ASSERT_FALSE(CoerceToInt64(Json::Value("1234!")).has_value());
+
+  Json::UInt64 n = 18446744073709551615UL;
+  ASSERT_EQ(CoerceToInt64(Json::Value{n}).value_or(0), -1);
 }
 
-TEST(JsonTraceUtilsTest, CoerceToNs) {
-  ASSERT_EQ(CoerceToNs(Json::Value(42)).value_or(-1), 42000);
-  ASSERT_EQ(CoerceToNs(Json::Value("42")).value_or(-1), 42000);
-  ASSERT_EQ(CoerceToNs(Json::Value(42.1)).value_or(-1), 42100);
-  ASSERT_FALSE(CoerceToNs(Json::Value("foo")).has_value());
-  ASSERT_FALSE(CoerceToNs(Json::Value("1234!")).has_value());
+TEST(JsonTraceUtilsTest, CoerceToTs) {
+  ASSERT_EQ(CoerceToTs(TimeUnit::kUs, Json::Value(42)).value_or(-1), 42000);
+  ASSERT_EQ(CoerceToTs(TimeUnit::kUs, Json::Value("42")).value_or(-1), 42000);
+  ASSERT_EQ(CoerceToTs(TimeUnit::kUs, Json::Value(42.1)).value_or(-1), 42100);
+  ASSERT_EQ(CoerceToTs(TimeUnit::kNs, Json::Value(42)).value_or(-1), 42);
+  ASSERT_EQ(CoerceToTs(TimeUnit::kMs, Json::Value(42)).value_or(-1), 42000000);
+  ASSERT_FALSE(CoerceToTs(TimeUnit::kNs, Json::Value("foo")).has_value());
+  ASSERT_FALSE(CoerceToTs(TimeUnit::kNs, Json::Value("1234!")).has_value());
+  ASSERT_FALSE(CoerceToTs(TimeUnit::kUs, Json::Value("1234!")).has_value());
+  ASSERT_FALSE(CoerceToTs(TimeUnit::kMs, Json::Value("1234!")).has_value());
 }
 
 }  // namespace
-}  // namespace json_trace_utils
+}  // namespace json
 }  // namespace trace_processor
 }  // namespace perfetto

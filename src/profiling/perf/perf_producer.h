@@ -23,6 +23,7 @@
 
 #include <unistd.h>
 
+#include <unwindstack/Error.h>
 #include <unwindstack/Regs.h>
 
 #include "perfetto/base/task_runner.h"
@@ -40,6 +41,7 @@
 #include "src/profiling/perf/event_config.h"
 #include "src/profiling/perf/event_reader.h"
 #include "src/profiling/perf/proc_descriptors.h"
+#include "src/tracing/core/metatrace_writer.h"
 
 namespace perfetto {
 namespace profiling {
@@ -89,15 +91,23 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
   };
 
   struct DataSource {
-    DataSource(std::unique_ptr<TraceWriter> _trace_writer,
-               EventReader _event_reader)
-        : trace_writer(std::move(_trace_writer)),
-          event_reader(std::move(_event_reader)) {}
+    DataSource(EventConfig _event_cfg,
+               std::unique_ptr<TraceWriter> _trace_writer,
+               std::vector<EventReader> _per_cpu_readers)
+        : event_cfg(std::move(_event_cfg)),
+          trace_writer(std::move(_trace_writer)),
+          per_cpu_readers(std::move(_per_cpu_readers)) {}
+
+    const EventConfig event_cfg;
 
     std::unique_ptr<TraceWriter> trace_writer;
+    // Indexed by cpu, vector never resized.
+    std::vector<EventReader> per_cpu_readers;
+    // Tracks the incremental state for interned entries.
+    InterningOutputTracker interning_output;
 
-    // TODO(rsavitski): event reader per kernel buffer.
-    EventReader event_reader;
+    bool reader_stopping = false;
+    bool unwind_stopping = false;
 
     // TODO(rsavitski): under a single-threaded model, directly shared between
     // the reader and the "unwinder". If/when lifting unwinding into a separate
@@ -107,19 +117,19 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
     // ready/poisoned).
     // TODO(rsavitski): find a more descriptive name.
     struct ProcDescriptors {
-      enum class Status { kInitial, kResolving, kResolved, kSkip };
+      enum class Status {
+        kInitial,
+        kResolving,
+        kResolved,
+        kExpired,
+        kRejected
+      };
 
       Status status = Status::kInitial;
       UnwindingMetadata unwind_state{/*maps_fd=*/base::ScopedFile{},
                                      /*mem_fd=*/base::ScopedFile{}};
     };
     std::map<pid_t, ProcDescriptors> proc_fds;  // keyed by pid
-
-    // Tracks the incremental state for interned entries.
-    InterningOutputTracker interning_output;
-
-    bool reader_stopping = false;
-    bool unwind_stopping = false;
   };
 
   // Entry in an unwinding queue. Either a sample that requires unwinding, or a
@@ -145,8 +155,14 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
     pid_t pid = 0;
     pid_t tid = 0;
     uint64_t timestamp = 0;
+    uint16_t cpu_mode = PERF_RECORD_MISC_CPUMODE_UNKNOWN;
     std::vector<FrameData> frames;
-    bool unwind_error = false;
+    unwindstack::ErrorCode unwind_error = unwindstack::ERROR_NONE;
+  };
+
+  enum class ProfilerStage {
+    kRead = 0,
+    kUnwind,
   };
 
   void ConnectService();
@@ -155,6 +171,15 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
   void IncreaseConnectionBackoff();
 
   void TickDataSourceRead(DataSourceInstanceID ds_id);
+  // Returns *false* if the reader has caught up with the writer position, true
+  // otherwise. Return value is only useful if the underlying perf_event has
+  // been paused (to identify when the buffer is empty). |max_samples| is a cap
+  // on the amount of samples that will be parsed, which might be more than the
+  // number of underlying records (as there might be non-sample records).
+  bool ReadAndParsePerCpuBuffer(EventReader* reader,
+                                size_t max_samples,
+                                DataSourceInstanceID ds_id,
+                                DataSource* ds);
 
   void PostDescriptorLookupTimeout(DataSourceInstanceID ds_id,
                                    pid_t pid,
@@ -172,6 +197,17 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
 
   void PostEmitSample(DataSourceInstanceID ds_id, CompletedSample sample);
   void EmitSample(DataSourceInstanceID ds_id, CompletedSample sample);
+  void EmitRingBufferLoss(DataSourceInstanceID ds_id,
+                          size_t cpu,
+                          uint64_t records_lost);
+  // Emit a packet indicating that a sample was relevant, but skipped as it was
+  // considered to be not unwindable (e.g. the process no longer exists).
+  void PostEmitSkippedSample(DataSourceInstanceID ds_id,
+                             ProfilerStage stage,
+                             ParsedSample sample);
+  void EmitSkippedSample(DataSourceInstanceID ds_id,
+                         ProfilerStage stage,
+                         ParsedSample sample);
 
   // Starts the shutdown of the given data source instance, starting with the
   // reader frontend.
@@ -182,6 +218,8 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
   // Destroys the state belonging to this instance, and notifies the tracing
   // service of the stop.
   void FinishDataSourceStop(DataSourceInstanceID ds_id);
+
+  void StartMetatraceSource(DataSourceInstanceID ds_id, BufferID target_buffer);
 
   // Task runner owned by the main thread.
   base::TaskRunner* const task_runner_;
@@ -194,6 +232,10 @@ class PerfProducer : public Producer, public ProcDescriptorDelegate {
 
   // Owns shared memory, must outlive trace writing.
   std::unique_ptr<TracingService::ProducerEndpoint> endpoint_;
+
+  // If multiple metatrace sources are enabled concurrently,
+  // only the first one becomes active.
+  std::map<DataSourceInstanceID, MetatraceWriter> metatrace_writers_;
 
   // Interns callstacks across all data sources.
   // TODO(rsavitski): for long profiling sessions, consider purging trie when it

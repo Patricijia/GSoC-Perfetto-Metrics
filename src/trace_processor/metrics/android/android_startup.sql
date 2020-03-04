@@ -17,7 +17,6 @@
 -- Create the base tables and views containing the launch spans.
 SELECT RUN_METRIC('android/android_startup_launches.sql');
 SELECT RUN_METRIC('android/android_task_state.sql');
-SELECT RUN_METRIC('android/android_startup_cpu.sql');
 
 -- Slices for forked processes. Never present in hot starts.
 -- Prefer this over process start_ts, since the process might have
@@ -74,6 +73,7 @@ JOIN slice ON (
   slice.track_id = thread_track.id
   AND slice.ts BETWEEN launches.ts AND launches.ts + launches.dur)
 WHERE slice.name IN (
+  'PostFork',
   'ActivityThreadMain',
   'bindApplication',
   'activityStart',
@@ -123,6 +123,33 @@ SELECT
             WHERE launch_id = launches.id AND state = 'interruptible'
             ), 0)
       ),
+      'to_post_fork', (
+        SELECT slice.ts - l.ts
+        FROM launch_main_threads l
+        JOIN thread_track USING (utid)
+        JOIN slice ON (
+          slice.track_id = thread_track.id
+          AND slice.ts BETWEEN l.ts AND l.ts + l.dur)
+        WHERE launch_id = launches.id AND slice.name = 'PostFork'
+      ),
+      'to_activity_thread_main', (
+        SELECT slice.ts - l.ts
+        FROM launch_main_threads l
+        JOIN thread_track USING (utid)
+        JOIN slice ON (
+          slice.track_id = thread_track.id
+          AND slice.ts BETWEEN l.ts AND l.ts + l.dur)
+        WHERE launch_id = launches.id AND slice.name = 'ActivityThreadMain'
+      ),
+      'to_bind_application', (
+        SELECT slice.ts - l.ts
+        FROM launch_main_threads l
+        JOIN thread_track USING (utid)
+        JOIN slice ON (
+          slice.track_id = thread_track.id
+          AND slice.ts BETWEEN l.ts AND l.ts + l.dur)
+        WHERE launch_id = launches.id AND slice.name = 'bindApplication'
+      ),
       'other_processes_spawned_count', (
         SELECT COUNT(1) FROM process
         WHERE (process.name IS NULL OR process.name != launches.package)
@@ -131,9 +158,12 @@ SELECT
       'time_activity_manager', AndroidStartupMetric_Slice(
         'dur_ns', (
           SELECT launching_events.ts - launches.ts FROM launching_events
-          WHERE launching_events.launch_type = 'S'
-          AND launching_events.ts BETWEEN launches.ts AND launches.ts + launches.dur
+          WHERE launching_events.ts BETWEEN launches.ts AND launches.ts + launches.dur
         )
+      ),
+      'time_post_fork', (
+        SELECT slice_proto FROM main_process_slice
+        WHERE launch_id = launches.id AND name = 'PostFork'
       ),
       'time_activity_thread_main', (
         SELECT slice_proto FROM main_process_slice
@@ -162,9 +192,6 @@ SELECT
       'time_during_start_process', (
         SELECT AndroidStartupMetric_Slice('dur_ns', dur)
         FROM zygote_forks_by_id WHERE id = launches.id
-      ),
-      'other_process_to_activity_cpu_ratio', (
-        SELECT cpu_ratio FROM launch_cpu WHERE launch_id = launches.id
       )
     )
   ) as startup

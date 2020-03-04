@@ -20,6 +20,7 @@
 #include <sys/system_properties.h>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "test/gtest_and_gmock.h"
 
 namespace perfetto {
@@ -48,15 +49,12 @@ bool IsDebuggableBuild() {
   char buf[PROP_VALUE_MAX + 1] = {};
   int ret = __system_property_get("ro.debuggable", buf);
   PERFETTO_CHECK(ret >= 0);
-  std::string debuggable(buf);
-  if (debuggable == "1")
-    return true;
-  return false;
+  return std::string(buf) == "1";
 }
 
 // note: cannot use gtest macros due to return type
 bool IsAppRunning(const std::string& name) {
-  std::string cmd = "pgrep -f " + name;
+  std::string cmd = "pgrep -f ^" + name + "$";
   int retcode = system(cmd.c_str());
   PERFETTO_CHECK(retcode >= 0);
   int exit_status = WEXITSTATUS(retcode);
@@ -65,6 +63,23 @@ bool IsAppRunning(const std::string& name) {
   if (exit_status == 1)
     return false;
   PERFETTO_FATAL("unexpected exit status from system(pgrep): %d", exit_status);
+}
+
+int PidForProcessName(const std::string& name) {
+  std::string cmd = "pgrep -f ^" + name + "$";
+  FILE* fp = popen(cmd.c_str(), "re");
+  if (!fp)
+    return -1;
+
+  std::string out;
+  base::ReadFileStream(fp, &out);
+  pclose(fp);
+
+  char* endptr = nullptr;
+  int pid = static_cast<int>(strtol(out.c_str(), &endptr, 10));
+  if (*endptr != '\0' && *endptr != '\n')
+    return -1;
+  return pid;
 }
 
 void WaitForProcess(const std::string& process,
@@ -107,7 +122,7 @@ void StopApp(const std::string& app_name,
   });
 }
 
-void StopApp(std::string app_name) {
+void StopApp(const std::string& app_name) {
   std::string stop_cmd = "am force-stop " + app_name;
   system(stop_cmd.c_str());
 }

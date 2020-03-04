@@ -177,7 +177,7 @@ base::Optional<SliceId> SliceTracker::CompleteSlice(
   slices->mutable_dur()->Set(slice_idx, timestamp - slices->ts()[slice_idx]);
 
   if (args_callback) {
-    ArgsTracker* tracker = &stack.back().second;
+    ArgsTracker* tracker = &stack[stack_idx.value()].second;
     auto bound_inserter = tracker->AddArgsTo(slices->id()[slice_idx]);
     args_callback(&bound_inserter);
   }
@@ -201,8 +201,8 @@ base::Optional<uint32_t> SliceTracker::MatchingIncompleteSliceIndex(
     if (slices->dur()[slice_idx] != kPendingDuration)
       continue;
     const StringId& other_category = slices->category()[slice_idx];
-    if (!category.is_null() && !other_category.is_null() &&
-        category != other_category)
+    if (!category.is_null() &&
+        (other_category.is_null() || category != other_category))
       continue;
     const StringId& other_name = slices->name()[slice_idx];
     if (!name.is_null() && !other_name.is_null() && name != other_name)

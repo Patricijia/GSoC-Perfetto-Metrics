@@ -51,7 +51,6 @@ class PerfRingBuffer {
 
   bool valid() const { return metadata_page_ != nullptr; }
 
-  // TODO(rsavitski): volatile?
   // Points at the start of the mmap'd region.
   perf_event_mmap_page* metadata_page_ = nullptr;
 
@@ -74,6 +73,7 @@ struct ParsedSample {
   pid_t pid = 0;
   pid_t tid = 0;
   uint64_t timestamp = 0;
+  uint16_t cpu_mode = PERF_RECORD_MISC_CPUMODE_UNKNOWN;
   std::unique_ptr<unwindstack::Regs> regs;
   std::vector<char> stack;
 };
@@ -96,6 +96,8 @@ class EventReader {
 
   void PauseEvents();
 
+  uint32_t cpu() const { return cpu_; }
+
   ~EventReader() = default;
 
   // move-only
@@ -106,18 +108,15 @@ class EventReader {
 
  private:
   EventReader(uint32_t cpu,
-              const EventConfig& event_cfg,
+              perf_event_attr event_attr,
               base::ScopedFile perf_fd,
               PerfRingBuffer ring_buffer);
 
-  ParsedSample ParseSampleRecord(uint32_t cpu,
-                                 const char* sample_payload,
-                                 size_t sample_size);
+  ParsedSample ParseSampleRecord(uint32_t cpu, const char* record_start);
 
   // All events are cpu-bound (thread-scoped events not supported).
   const uint32_t cpu_;
-
-  const EventConfig event_cfg_;
+  const perf_event_attr event_attr_;
   base::ScopedFile perf_fd_;
   PerfRingBuffer ring_buffer_;
 };

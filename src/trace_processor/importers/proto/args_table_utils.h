@@ -27,8 +27,8 @@
 namespace perfetto {
 namespace trace_processor {
 
-// ProtoToArgsTable encapsulates the process of taking an arbitary proto and
-// assocating each field as a column in an args set. This is done by traversing
+// ProtoToArgsTable encapsulates the process of taking an arbitrary proto and
+// associating each field as a column in an args set. This is done by traversing
 // the proto using reflection (with descriptors provided by
 // AddProtoFileDescriptor()) and creating column names equal to this traversal.
 //
@@ -106,7 +106,7 @@ class ProtoToArgsTable {
   // size needed.
   ProtoToArgsTable(PacketSequenceStateGeneration* sequence_state,
                    TraceProcessorContext* context,
-                   std::string starting_prefix = "",
+                   const std::string& starting_prefix = "",
                    size_t prefix_size_hint = 64);
 
   // Adds a compile time reflection of a set of proto files. You must provide
@@ -132,9 +132,7 @@ class ProtoToArgsTable {
   // beginning. I.E. ".perfetto.protos.TrackEvent". And must match one of the
   // descriptors already added through |AddProtoFileDescriptor|.
   //
-  // IMPORTANT: currently bytes fields are not supported and repeated fields do
-  // not properly use key/flat_key in the args table (they will be equal in
-  // value).
+  // IMPORTANT: currently bytes fields are not supported.
   //
   // TODO(b/145578432): Add support for repeated fields and byte fields.
   util::Status InternProtoIntoArgsTable(const protozero::ConstBytes& cb,
@@ -170,7 +168,8 @@ class ProtoToArgsTable {
       const protozero::ConstBytes& cb,
       const std::string& type,
       ArgsTracker::BoundInserter* inserter,
-      std::string* prefix);
+      std::string* key_prefix,
+      std::string* flat_key_prefix);
 
   using OverrideIterator =
       std::vector<std::pair<std::string, ParsingOverride>>::iterator;
@@ -182,7 +181,8 @@ class ProtoToArgsTable {
   ParsingOverrideState state_;
   std::vector<std::pair<std::string, ParsingOverride>> overrides_;
   DescriptorPool pool_;
-  std::string prefix_;
+  std::string key_prefix_;
+  std::string flat_key_prefix_;
 };
 
 }  // namespace trace_processor

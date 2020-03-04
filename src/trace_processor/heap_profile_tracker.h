@@ -17,14 +17,10 @@
 #ifndef SRC_TRACE_PROCESSOR_HEAP_PROFILE_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_HEAP_PROFILE_TRACKER_H_
 
-#include <deque>
 #include <set>
 #include <unordered_map>
 
 #include "perfetto/ext/base/optional.h"
-
-#include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
-#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "src/trace_processor/stack_profile_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
@@ -70,6 +66,8 @@ class HeapProfileTracker {
   void CommitAllocations(uint32_t seq_id,
                          StackProfileTracker* stack_profile_tracker,
                          const StackProfileTracker::InternLookup* lookup);
+
+  void NotifyEndOfFile();
 
   ~HeapProfileTracker();
 

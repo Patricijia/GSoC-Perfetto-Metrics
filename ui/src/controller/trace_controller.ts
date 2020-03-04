@@ -49,7 +49,12 @@ import {
 import {PROCESS_SUMMARY_TRACK} from '../tracks/process_summary/common';
 import {THREAD_STATE_TRACK_KIND} from '../tracks/thread_state/common';
 
-import {AggregationController} from './aggregation_controller';
+import {
+  CpuAggregationController
+} from './aggregation/cpu_aggregation_controller';
+import {
+  ThreadAggregationController
+} from './aggregation/thread_aggregation_controller';
 import {Child, Children, Controller} from './controller';
 import {globals} from './globals';
 import {
@@ -154,8 +159,14 @@ export class TraceController extends Controller<States> {
         const heapProfileArgs: HeapProfileControllerArgs = {engine};
         childControllers.push(
             Child('heapProfile', HeapProfileController, heapProfileArgs));
-        childControllers.push(
-            Child('aggregation', AggregationController, {engine}));
+        childControllers.push(Child(
+            'cpu_aggregation',
+            CpuAggregationController,
+            {engine, kind: 'cpu'}));
+        childControllers.push(Child(
+            'thread_aggregation',
+            ThreadAggregationController,
+            {engine, kind: 'thread_state'}));
         childControllers.push(Child('search', SearchController, {
           engine,
           app: globals,
@@ -662,21 +673,35 @@ export class TraceController extends Controller<States> {
           config: {pidForColor, upid, utid},
         });
 
-        const name = upid === null ?
-            `${threadName} ${tid}` :
-            `${
-                processName === null && heapUpids.has(upid) ?
-                    'Heap Profile for' :
-                    processName} ${pid}`;
-        addTrackGroupActions.push(Actions.addTrackGroup({
+        const name =
+            this.getTrackName(utid, processName, pid, threadName, tid, upid);
+        const addTrackGroup = Actions.addTrackGroup({
           engineId: this.engineId,
           summaryTrackId,
           name,
           id: pUuid,
           collapsed: !(upid !== null && heapUpids.has(upid)),
-        }));
+        });
+
+        // If the track group contains a heap profile, it should be before all
+        // other processes.
+        if (upid !== null && heapUpids.has(upid)) {
+          addTrackGroupActions.unshift(addTrackGroup);
+        } else {
+          addTrackGroupActions.push(addTrackGroup);
+        }
 
         if (upid !== null) {
+          if (heapUpids.has(upid)) {
+            tracksToAdd.push({
+              engineId: this.engineId,
+              kind: HEAP_PROFILE_TRACK_KIND,
+              name: `Heap Profile`,
+              trackGroup: pUuid,
+              config: {upid}
+            });
+          }
+
           const counterNames = counterUpids.get(upid);
           if (counterNames !== undefined) {
             counterNames.forEach(element => {
@@ -692,16 +717,6 @@ export class TraceController extends Controller<States> {
                   endTs: element.endTs,
                 }
               });
-            });
-          }
-
-          if (heapUpids.has(upid)) {
-            tracksToAdd.push({
-              engineId: this.engineId,
-              kind: HEAP_PROFILE_TRACK_KIND,
-              name: `Heap Profile`,
-              trackGroup: pUuid,
-              config: {upid}
             });
           }
 
@@ -929,5 +944,20 @@ export class TraceController extends Controller<States> {
       msg,
       timestamp: Date.now() / 1000,
     }));
+  }
+
+  private getTrackName(
+      utid: number, processName: string|null, pid: number|null,
+      threadName: string|null, tid: number|null, upid: number|null) {
+    if (upid !== null && processName !== null && pid !== null) {
+      return `${processName} ${pid}`;
+    } else if (upid !== null && pid !== null) {
+      return `Process ${pid}`;
+    } else if (threadName !== null && tid !== null) {
+      return `${threadName} ${tid}`;
+    } else if (tid !== null) {
+      return `Thread ${tid}`;
+    }
+    return `utid: ${utid}`;
   }
 }
