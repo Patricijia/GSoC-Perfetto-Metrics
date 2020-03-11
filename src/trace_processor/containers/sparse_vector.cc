@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2018 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,14 +14,12 @@
  * limitations under the License.
  */
 
-#include "src/traced/probes/probes_data_source.h"
+#include "src/trace_processor/containers/sparse_vector.h"
 
 namespace perfetto {
+namespace trace_processor {
 
-ProbesDataSource::ProbesDataSource(TracingSessionID session_id,
-                                   const Descriptor* desc)
-    : tracing_session_id(session_id), descriptor(desc) {}
+SparseVectorBase::~SparseVectorBase() = default;
 
-ProbesDataSource::~ProbesDataSource() = default;
-
+}  // namespace trace_processor
 }  // namespace perfetto
