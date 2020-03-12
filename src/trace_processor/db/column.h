@@ -120,7 +120,8 @@ class Column {
                table,
                col_idx_in_table,
                row_map_idx,
-               storage) {}
+               storage,
+               nullptr) {}
 
   // Create a Column has the same name and is backed by the same data as
   // |column| but is associated to a different table.
@@ -132,6 +133,18 @@ class Column {
   // Columns are movable but not copyable.
   Column(Column&&) noexcept = default;
   Column& operator=(Column&&) = default;
+
+  template <typename T>
+  static Column WithOwnedStorage(const char* name,
+                                 std::unique_ptr<SparseVector<T>> storage,
+                                 /* Flag */ uint32_t flags,
+                                 Table* table,
+                                 uint32_t col_idx_in_table,
+                                 uint32_t row_map_idx) {
+    SparseVector<T>* ptr = storage.get();
+    return Column(name, ToColumnType<T>(), flags, table, col_idx_in_table,
+                  row_map_idx, ptr, std::move(storage));
+  }
 
   // Creates a Column which returns the index as the value of the row.
   static Column IdColumn(Table* table,
@@ -405,7 +418,8 @@ class Column {
          Table* table,
          uint32_t col_idx_in_table,
          uint32_t row_map_idx,
-         void* sparse_vector);
+         SparseVectorBase* sparse_vector,
+         std::unique_ptr<SparseVectorBase> owned_sparse_vector);
 
   Column(const Column&) = delete;
   Column& operator=(const Column&) = delete;
@@ -556,9 +570,14 @@ class Column {
     return string_pool_->Get(sparse_vector<StringPool::Id>().GetNonNull(idx));
   }
 
+  // Only filled for columns which own the data inside them. Generally this is
+  // only true for columns which are dynamically generated at runtime.
+  // Keep this before |sparse_vector_|.
+  std::unique_ptr<SparseVectorBase> owned_sparse_vector_;
+
   // type_ is used to cast sparse_vector_ to the correct type.
   ColumnType type_ = ColumnType::kInt64;
-  void* sparse_vector_ = nullptr;
+  SparseVectorBase* sparse_vector_ = nullptr;
 
   const char* name_ = nullptr;
   uint32_t flags_ = Flag::kNoFlag;

@@ -34,6 +34,7 @@ namespace trace_processor {
 
 class FuchsiaProviderView;
 class PacketSequenceState;
+struct SystraceLine;
 
 // This class takes care of sorting events parsed from the trace stream in
 // arbitrary order and pushing them to the next pipeline stages (parsing) in
@@ -94,6 +95,15 @@ class TraceSorter {
     MaybeExtractEvents(queue);
   }
 
+  inline void PushSystraceLine(std::unique_ptr<SystraceLine> systrace_line) {
+    DCHECK_ftrace_batch_cpu(kNoBatch);
+    auto* queue = GetQueue(0);
+    int64_t timestamp = systrace_line->ts;
+    queue->Append(TimestampedTracePiece(timestamp, packet_idx_++,
+                                        std::move(systrace_line)));
+    MaybeExtractEvents(queue);
+  }
+
   inline void PushFtraceEvent(uint32_t cpu,
                               int64_t timestamp,
                               TraceBlobView event) {
@@ -130,14 +140,8 @@ class TraceSorter {
   }
 
   inline void PushTrackEventPacket(int64_t timestamp,
-                                   int64_t thread_time,
-                                   int64_t thread_instruction_count,
-                                   PacketSequenceState* state,
-                                   TraceBlobView packet) {
+                                   std::unique_ptr<TrackEventData> data) {
     auto* queue = GetQueue(0);
-    std::unique_ptr<TrackEventData> data(
-        new TrackEventData{std::move(packet), state->current_generation(),
-                           thread_time, thread_instruction_count});
     queue->Append(
         TimestampedTracePiece(timestamp, packet_idx_++, std::move(data)));
     MaybeExtractEvents(queue);
