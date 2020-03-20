@@ -33,6 +33,12 @@ These can be viewed using pprof. Googlers: head to pprof/ and upload them.
 
 This will create a pprof-compatible heap dump when Ctrl+C is pressed.
 
+If you are having problems, run the following command and try again:
+
+```
+$ adb shell setprop persist.traced.enable 1
+```
+
 You can also use the [Perfetto UI](https://ui.perfetto.dev/#!/record?p=memory)
 to record heapprofd profiles. Tick "Heap profiling" in the trace configuration,
 enter the processes you want to target, click "Add Device" to pair your phone,
@@ -275,7 +281,7 @@ INTERVAL=4096
 
 echo '
 buffers {
-  size_kb: 100024
+  size_kb: 102400
 }
 
 data_sources {

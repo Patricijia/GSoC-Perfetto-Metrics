@@ -52,12 +52,12 @@ void GraphicsEventModule::ParsePacket(const TracePacket::Decoder& decoder,
                                       decoder.graphics_frame_event());
       return;
     case TracePacket::kVulkanMemoryEventFieldNumber:
-      parser_.ParseVulkanMemoryEvent(ttp.packet_sequence_state,
-                                     ttp.packet_sequence_state_generation,
+      PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTracePacket);
+      parser_.ParseVulkanMemoryEvent(ttp.packet_data.sequence_state,
                                      decoder.vulkan_memory_event());
       return;
     case TracePacket::kVulkanApiEventFieldNumber:
-      parser_.ParseVulkanApiEvent(decoder.vulkan_api_event());
+      parser_.ParseVulkanApiEvent(ttp.timestamp, decoder.vulkan_api_event());
       return;
   }
 }

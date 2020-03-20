@@ -26,17 +26,18 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/pipe.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/subprocess.h"
 #include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "src/base/test/test_task_runner.h"
+#include "src/base/test/utils.h"
 #include "src/traced/probes/ftrace/ftrace_controller.h"
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
 #include "test/gtest_and_gmock.h"
-#include "test/task_runner_thread.h"
-#include "test/task_runner_thread_delegates.h"
 #include "test/test_helper.h"
 
 #include "protos/perfetto/config/power/android_power_config.pbzero.h"
@@ -84,181 +85,90 @@ std::string RandomTraceFileName() {
 // any necessary threads) in the parent process is complete.
 class Exec {
  public:
-  // Starts the forked process that was created. If not null then |stderr_out
-  // will contain the std::cerr output of the process.
+  // Starts the forked process that was created. If not null then |stderr_out|
+  // will contain the stderr of the process.
   int Run(std::string* stderr_out = nullptr) {
     // We can't be the child process.
-    PERFETTO_CHECK(pid_ != 0);
+    PERFETTO_CHECK(getpid() != subprocess_.pid());
+    // Will cause the entrypoint to continue.
+    PERFETTO_CHECK(write(*sync_pipe_.wr, "1", 1) == 1);
+    sync_pipe_.wr.reset();
+    subprocess_.Wait();
 
-    // Send some random bytes so the child process knows the service is up and
-    // it can connect and execute.
-    PERFETTO_CHECK(PERFETTO_EINTR(write(*start_pipe_.wr, "42", 2)) ==
-                   static_cast<ssize_t>(2));
-    start_pipe_.wr.reset();
-
-    // Setup a large enough buffer and read all of stderr (until the process
-    // closes the err_pipe on process exit).
-    std::string stderr_str = std::string(1024 * 1024, '\0');
-    ssize_t rsize = 0;
-    size_t stderr_pos = 0;
-    while (stderr_pos < stderr_str.size()) {
-      rsize = PERFETTO_EINTR(read(*err_pipe_.rd, &stderr_str[stderr_pos],
-                                  stderr_str.size() - stderr_pos - 1));
-      if (rsize <= 0)
-        break;
-      stderr_pos += static_cast<size_t>(rsize);
-    }
-    stderr_str.resize(stderr_pos);
-
-    // Either output the stderr_out to the provided variable or for the record
-    // it into the info logs.
     if (stderr_out) {
-      *stderr_out = stderr_str;
+      *stderr_out = std::move(subprocess_.output());
     } else {
-      PERFETTO_LOG("Child proc %d exited with stderr: \"%s\"", pid_,
-                   stderr_str.c_str());
+      PERFETTO_LOG("Child proc %d exited with stderr: \"%s\"",
+                   subprocess_.pid(), subprocess_.output().c_str());
     }
-
-    int status = 1;
-    PERFETTO_CHECK(PERFETTO_EINTR(waitpid(pid_, &status, 0)) == pid_);
-    int exit_code;
-    if (WIFEXITED(status)) {
-      exit_code = WEXITSTATUS(status);
-    } else if (WIFSIGNALED(status)) {
-      exit_code = -(WTERMSIG(status));
-      PERFETTO_CHECK(exit_code < 0);
-    } else {
-      PERFETTO_FATAL("Unexpected exit status: %d", status);
-    }
-    return exit_code;
+    return subprocess_.returncode();
   }
 
  private:
-  Exec(pid_t pid, base::Pipe err, base::Pipe start)
-      : pid_(pid), err_pipe_(std::move(err)), start_pipe_(std::move(start)) {}
+  Exec(const std::string& argv0,
+       std::initializer_list<std::string> args,
+       std::string input = "") {
+    subprocess_.args.stderr_mode = base::Subprocess::kBuffer;
+    subprocess_.args.stdout_mode = base::Subprocess::kDevNull;
+    subprocess_.args.input = input;
 
-  static Exec Create(const std::string& argv0,
-                     std::initializer_list<std::string> args,
-                     std::string input = "") {
-    if (argv0 != "perfetto" && argv0 != "trigger_perfetto") {
-      PERFETTO_FATAL(
-          "Received argv0: \"%s\" which isn't supported. Supported binaries "
-          "are \"perfetto\" or \"trigger_perfetto\".",
-          argv0.c_str());
-    }
-
-    // |in_pipe| == std::cin, |err_pipe| == std::cerr for the process we're
-    // about to fork. |start_pipe| is used to block the process so we can hold
-    // it until we're ready (the service has started up).
-    base::Pipe in_pipe = base::Pipe::Create();
-    base::Pipe err_pipe = base::Pipe::Create();
-    base::Pipe start_pipe = base::Pipe::Create();
-
-    pid_t pid = fork();
-    PERFETTO_CHECK(pid >= 0);
-    if (pid == 0) {
-      // Child process, we need to block the child process until we've been
-      // signaled on the |start_pipe|.
-      std::string junk = std::string(4, '\0');
-      start_pipe.wr.reset();
-      ssize_t rsize = 0;
-      rsize = PERFETTO_EINTR(read(*start_pipe.rd, &junk[0], junk.size() - 1));
-      PERFETTO_CHECK(rsize >= 0);
-      start_pipe.rd.reset();
-
-      // We've been signalled to start so execute in a sub function.
-      _exit(RunChild(argv0, std::move(args), std::move(in_pipe),
-                     std::move(err_pipe)));
-    } else {
-      // Parent, we don't need to write to the childs std::cerr nor do we need
-      // to read the start_pipe.
-      err_pipe.wr.reset();
-      start_pipe.rd.reset();
-
-      // This is generally an unsafe pattern because the child process might
-      // be blocked on stdout and stall the stdin reads. It's pragmatically
-      // okay for our test cases because stdin is not expected to exceed the
-      // pipe buffer.
-      //
-      // We need to write this now up front (rather than in Run(), because in
-      // some tests we create multiple Exec classes, and if we don't close the
-      // input pipe up front then future Exec's will have a reference and the
-      // pipe won't close properly.
-      PERFETTO_CHECK(input.size() <= base::kPageSize);
-      PERFETTO_CHECK(
-          PERFETTO_EINTR(write(*in_pipe.wr, input.data(), input.size())) ==
-          static_cast<ssize_t>(input.size()));
-      in_pipe.wr.reset();
-      // Close the input pipe only after the write so we don't get an EPIPE
-      // signal in the cases when the child process earlies out without
-      // reading stdin.
-      in_pipe.rd.reset();
-
-      return Exec(pid, std::move(err_pipe), std::move(start_pipe));
-    }
-  }
-
-  // Wrapper to contain all the work the child process needs to do.
-  static int RunChild(const std::string& argv0,
-                      std::initializer_list<std::string> args,
-                      base::Pipe in_pipe,
-                      base::Pipe err_pipe) {
-    // This sets up the char** argv buffer we're going to provide to the main
-    // function for |argv0| binary.
-    std::vector<char> argv_buffer;
-    std::vector<size_t> argv_offsets;
-    std::vector<char*> argv;
-    argv_offsets.push_back(0);
-
-    argv_buffer.insert(argv_buffer.end(), argv0.begin(), argv0.end());
-    argv_buffer.push_back('\0');
-
-    for (const std::string& arg : args) {
-      argv_offsets.push_back(argv_buffer.size());
-      argv_buffer.insert(argv_buffer.end(), arg.begin(), arg.end());
-      argv_buffer.push_back('\0');
-    }
-
-    for (size_t off : argv_offsets)
-      argv.push_back(&argv_buffer[off]);
-    argv.push_back(nullptr);
-
-    // We aren't reading std::cerr nor writing to std::cin.
-    err_pipe.rd.reset();
-    in_pipe.wr.reset();
-
-    // This makes it so the binaries below will correctly write their std::cin
-    // and std::cerr to the right pipes.
-    int devnull = open("/dev/null", O_RDWR);
-    PERFETTO_CHECK(devnull >= 0);
-    PERFETTO_CHECK(dup2(*in_pipe.rd, STDIN_FILENO) != -1);
-    PERFETTO_CHECK(dup2(devnull, STDOUT_FILENO) != -1);
-    PERFETTO_CHECK(dup2(*err_pipe.wr, STDERR_FILENO) != -1);
 #if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
-    setenv("PERFETTO_CONSUMER_SOCK_NAME", TestHelper::GetConsumerSocketName(),
-           1);
-    setenv("PERFETTO_PRODUCER_SOCK_NAME", TestHelper::GetProducerSocketName(),
-           1);
-    if (argv0 == "perfetto") {
-      return PerfettoCmdMain(static_cast<int>(argv.size() - 1), argv.data());
-    } else if (argv0 == "trigger_perfetto") {
-      return TriggerPerfettoMain(static_cast<int>(argv.size() - 1),
-                                 argv.data());
-    } else {
-      PERFETTO_FATAL("Unknown binary: %s", argv0.c_str());
-      return 4;
-    }
+    constexpr bool kUseSystemBinaries = false;
 #else
-    execv((std::string("/system/bin/") + argv0).c_str(), &argv[0]);
-    return 3;
+    constexpr bool kUseSystemBinaries = true;
 #endif
+
+    std::vector<std::string>& cmd = subprocess_.args.exec_cmd;
+    if (kUseSystemBinaries) {
+      cmd.push_back("/system/bin/" + argv0);
+      cmd.insert(cmd.end(), args.begin(), args.end());
+    } else {
+      subprocess_.args.env.push_back(
+          std::string("PERFETTO_PRODUCER_SOCK_NAME=") +
+          TestHelper::GetProducerSocketName());
+      subprocess_.args.env.push_back(
+          std::string("PERFETTO_CONSUMER_SOCK_NAME=") +
+          TestHelper::GetConsumerSocketName());
+      cmd.push_back(base::GetCurExecutableDir() + "/" + argv0);
+      cmd.insert(cmd.end(), args.begin(), args.end());
+    }
+
+    if (access(cmd[0].c_str(), F_OK)) {
+      PERFETTO_FATAL(
+          "Cannot find %s. Make sure that the target has been built and, on "
+          "Android, pushed to the device.",
+          cmd[0].c_str());
+    }
+
+    // This pipe blocks the execution of the child process until the main test
+    // process calls Run(). There are two conflicting problems here:
+    // 1) We can't fork() subprocesses too late, because the test spawns threads
+    //    for hosting the service. fork+threads = bad (see aosp/1089744).
+    // 2) We can't run the subprocess too early, because we need to wait that
+    //    the service threads are ready before trying to connect from the child
+    //    process.
+    sync_pipe_ = base::Pipe::Create();
+    int sync_pipe_rd = *sync_pipe_.rd;
+    subprocess_.args.preserve_fds.push_back(sync_pipe_rd);
+
+    // This lambda will be called on the forked child process after having
+    // setup pipe redirection and closed all FDs, right before the exec().
+    // The Subprocesss harness will take care of closing also |sync_pipe_.wr|.
+    subprocess_.args.entrypoint_for_testing = [sync_pipe_rd] {
+      // Don't add any logging here, all file descriptors are closed and trying
+      // to log will likely cause undefined behaviors.
+      char ignored = 0;
+      PERFETTO_CHECK(PERFETTO_EINTR(read(sync_pipe_rd, &ignored, 1)) > 0);
+      PERFETTO_CHECK(PERFETTO_EINTR(close(sync_pipe_rd)) == 0);
+    };
+
+    subprocess_.Start();
+    sync_pipe_.rd.reset();
   }
 
   friend class PerfettoCmdlineTest;
-
-  pid_t pid_;
-  base::Pipe err_pipe_;
-  base::Pipe start_pipe_;
+  base::Subprocess subprocess_;
+  base::Pipe sync_pipe_;
 };
 
 class PerfettoTest : public ::testing::Test {
@@ -270,14 +180,6 @@ class PerfettoTest : public ::testing::Test {
     while (!ftrace_procfs_ && kTracingPaths[index]) {
       ftrace_procfs_ = FtraceProcfs::Create(kTracingPaths[index++]);
     }
-    if (!ftrace_procfs_)
-      return;
-    ftrace_procfs_->SetTracingOn(false);
-  }
-
-  void TearDown() override {
-    if (ftrace_procfs_)
-      ftrace_procfs_->SetTracingOn(false);
   }
 
   std::unique_ptr<FtraceProcfs> ftrace_procfs_;
@@ -314,7 +216,7 @@ class PerfettoCmdlineTest : public ::testing::Test {
     // You can not fork after you've started the service due to risk of
     // deadlocks.
     PERFETTO_CHECK(exec_allowed_);
-    return Exec::Create("perfetto", std::move(args), std::move(std_in));
+    return Exec("perfetto", std::move(args), std::move(std_in));
   }
 
   // Creates a process that represents the trigger_perfetto binary that will
@@ -325,7 +227,7 @@ class PerfettoCmdlineTest : public ::testing::Test {
     // You can not fork after you've started the service due to risk of
     // deadlocks.
     PERFETTO_CHECK(exec_allowed_);
-    return Exec::Create("trigger_perfetto", std::move(args), std::move(std_in));
+    return Exec("trigger_perfetto", std::move(args), std::move(std_in));
   }
 
   // Tests are allowed to freely use these variables.
@@ -348,13 +250,13 @@ class PerfettoCmdlineTest : public ::testing::Test {
 #define TEST_PRODUCER_SOCK_NAME ::perfetto::GetProducerSocket()
 #endif
 
-// TODO(b/73453011): reenable on more platforms (including standalone Android).
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
 #define TreeHuggerOnly(x) x
 #else
 #define TreeHuggerOnly(x) DISABLED_##x
 #endif
 
+// TODO(b/73453011): reenable on more platforms (including standalone Android).
 TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceProducer)) {
   base::TestTaskRunner task_runner;
 
@@ -362,9 +264,8 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceProducer)) {
   helper.StartServiceIfRequired();
 
 #if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
-  TaskRunnerThread producer_thread("perfetto.prd");
-  producer_thread.Start(std::unique_ptr<ProbesProducerDelegate>(
-      new ProbesProducerDelegate(TEST_PRODUCER_SOCK_NAME)));
+  ProbesProducerThread probes(TEST_PRODUCER_SOCK_NAME);
+  probes.Connect();
 #endif
 
   helper.ConnectConsumer();
@@ -401,6 +302,7 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceProducer)) {
   }
 }
 
+// TODO(b/73453011): reenable on more platforms (including standalone Android).
 TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
   base::TestTaskRunner task_runner;
 
@@ -408,9 +310,8 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
   helper.StartServiceIfRequired();
 
 #if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
-  TaskRunnerThread producer_thread("perfetto.prd");
-  producer_thread.Start(std::unique_ptr<ProbesProducerDelegate>(
-      new ProbesProducerDelegate(TEST_PRODUCER_SOCK_NAME)));
+  ProbesProducerThread probes(TEST_PRODUCER_SOCK_NAME);
+  probes.Connect();
 #endif
 
   helper.ConnectConsumer();
@@ -418,7 +319,7 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
 
   const uint32_t kTestTimeoutMs = 30000;
   TraceConfig trace_config;
-  trace_config.add_buffers()->set_size_kb(16);
+  trace_config.add_buffers()->set_size_kb(32);
   trace_config.set_duration_ms(kTestTimeoutMs);
 
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
@@ -460,6 +361,7 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
   ASSERT_EQ(marker_found, 1);
 }
 
+// TODO(b/73453011): reenable on more platforms (including standalone Android).
 TEST_F(PerfettoTest, TreeHuggerOnly(TestBatteryTracing)) {
   base::TestTaskRunner task_runner;
 
@@ -467,9 +369,8 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestBatteryTracing)) {
   helper.StartServiceIfRequired();
 
 #if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
-  TaskRunnerThread producer_thread("perfetto.prd");
-  producer_thread.Start(std::unique_ptr<ProbesProducerDelegate>(
-      new ProbesProducerDelegate(TEST_PRODUCER_SOCK_NAME)));
+  ProbesProducerThread probes(TEST_PRODUCER_SOCK_NAME);
+  probes.Connect();
 #else
   base::ignore_result(TEST_PRODUCER_SOCK_NAME);
 #endif
@@ -587,7 +488,7 @@ TEST_F(PerfettoTest, VeryLargePackets) {
   helper.WaitForTracingDisabled();
 
   helper.ReadData();
-  helper.WaitForReadData();
+  helper.WaitForReadData(/* read_count */ 0, /* timeout_ms */ 10000);
 
   const auto& packets = helper.trace();
   ASSERT_EQ(packets.size(), kNumPackets);
@@ -688,6 +589,53 @@ TEST_F(PerfettoTest, ReattachFailsAfterTimeout) {
   helper.ConnectConsumer();
   helper.WaitForConsumerConnect();
   EXPECT_FALSE(helper.AttachConsumer("key"));
+}
+
+TEST_F(PerfettoTest, TestProducerProvidedSMB) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.CreateProducerProvidedSmb();
+
+  protos::gen::TestConfig test_config;
+  test_config.set_seed(42);
+  test_config.set_message_count(1);
+  test_config.set_message_size(1024);
+  test_config.set_send_batch_on_register(true);
+
+  // Write a first batch before connection.
+  helper.ProduceStartupEventBatch(test_config);
+
+  helper.StartServiceIfRequired();
+  helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(1024);
+  trace_config.set_duration_ms(200);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+  ds_config->set_target_buffer(0);
+  *ds_config->mutable_for_testing() = test_config;
+
+  // The data source is configured to emit another batch when it is started via
+  // send_batch_on_register in the TestConfig.
+  helper.StartTracing(trace_config);
+  helper.WaitForTracingDisabled();
+
+  EXPECT_TRUE(helper.IsShmemProvidedByProducer());
+
+  helper.ReadData();
+  helper.WaitForReadData();
+
+  const auto& packets = helper.trace();
+  // We should have produced two batches, one before the producer connected and
+  // another one when the data source was started.
+  ASSERT_EQ(packets.size(), 2u);
+  ASSERT_TRUE(packets[0].has_for_testing());
+  ASSERT_TRUE(packets[1].has_for_testing());
 }
 
 // Disable cmdline tests on sanitizets because they use fork() and that messes

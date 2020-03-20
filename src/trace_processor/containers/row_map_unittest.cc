@@ -195,6 +195,15 @@ TEST(RowMapUnittest, SelectRangeWithBitVector) {
   ASSERT_EQ(res.Get(1u), 30u);
 }
 
+TEST(RowMapUnittest, SelectRangeWithSmallBitVector) {
+  RowMap rm(27, 31);
+  RowMap picker(BitVector{false, true});
+  auto res = rm.SelectRows(picker);
+
+  ASSERT_EQ(res.size(), 1u);
+  ASSERT_EQ(res.Get(0u), 28u);
+}
+
 TEST(RowMapUnittest, SelectBitVectorWithBitVector) {
   RowMap rm(BitVector{true, false, true, true, false, true});
   RowMap picker(BitVector{true, false, false, true});
@@ -203,6 +212,15 @@ TEST(RowMapUnittest, SelectBitVectorWithBitVector) {
   ASSERT_EQ(res.size(), 2u);
   ASSERT_EQ(res.Get(0u), 0u);
   ASSERT_EQ(res.Get(1u), 5u);
+}
+
+TEST(RowMapUnittest, SelectBitVectorWithSmallBitVector) {
+  RowMap rm(BitVector{true, false, true, true, false, true});
+  RowMap picker(BitVector{false, true});
+  auto res = rm.SelectRows(picker);
+
+  ASSERT_EQ(res.size(), 1u);
+  ASSERT_EQ(res.Get(0u), 2u);
 }
 
 TEST(RowMapUnittest, SelectIndexVectorWithBitVector) {
@@ -328,6 +346,26 @@ TEST(RowMapUnittest, FilterIntoRangeWithRange) {
   ASSERT_EQ(filter.size(), 2u);
   ASSERT_EQ(filter.Get(0u), 4u);
   ASSERT_EQ(filter.Get(1u), 5u);
+}
+
+TEST(RowMapUnittest, FilterIntoOffsetRangeWithRange) {
+  RowMap rm(100000, 100010);
+  RowMap filter(4, 7);
+  rm.FilterInto(&filter, [](uint32_t row) { return row == 100004u; });
+
+  ASSERT_EQ(filter.size(), 1u);
+  ASSERT_EQ(filter.Get(0u), 4u);
+}
+
+TEST(RowMapUnittest, FilterIntoLargeRangeWithRange) {
+  RowMap rm(0, 100000);
+  RowMap filter(0, 100000);
+  rm.FilterInto(&filter, [](uint32_t row) { return row % 2 == 0; });
+
+  ASSERT_EQ(filter.size(), 100000u / 2);
+  for (uint32_t i = 0; i < 100000 / 2; ++i) {
+    ASSERT_EQ(filter.Get(i), i * 2);
+  }
 }
 
 TEST(RowMapUnittest, FilterIntoBitVectorWithRange) {

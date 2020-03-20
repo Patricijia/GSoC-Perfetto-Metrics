@@ -87,10 +87,11 @@ void SystraceParser::ParseSdeTracingMarkWrite(int64_t ts,
   point.name = trace_name;
   point.tgid = tgid;
   point.value = value;
-
+  // Some versions of this trace point fill trace_type with one of (B/E/C),
+  // others use the trace_begin boolean and only support begin/end events:
   if (trace_type == 0) {
     point.phase = trace_begin ? 'B' : 'E';
-  } else if (trace_type == 'B' && trace_type == 'E' && trace_type == 'C') {
+  } else if (trace_type == 'B' || trace_type == 'E' || trace_type == 'C') {
     point.phase = trace_type;
   } else {
     context_->storage->IncrementStats(stats::systrace_parse_failure);
@@ -109,7 +110,8 @@ void SystraceParser::ParseSystracePoint(
       StringId name_id = context_->storage->InternString(point.name);
       UniqueTid utid = context_->process_tracker->UpdateThread(pid, point.tgid);
       TrackId track_id = context_->track_tracker->InternThreadTrack(utid);
-      context_->slice_tracker->Begin(ts, track_id, 0 /* cat */, name_id);
+      context_->slice_tracker->Begin(ts, track_id, kNullStringId /* cat */,
+                                     name_id);
       break;
     }
 
@@ -142,7 +144,7 @@ void SystraceParser::ParseSystracePoint(
       TrackId track_id = context_->track_tracker->InternAndroidAsyncTrack(
           name_id, upid, cookie);
       if (point.phase == 'S') {
-        context_->slice_tracker->Begin(ts, track_id, 0, name_id);
+        context_->slice_tracker->Begin(ts, track_id, kNullStringId, name_id);
       } else {
         context_->slice_tracker->End(ts, track_id);
       }
@@ -160,7 +162,7 @@ void SystraceParser::ParseSystracePoint(
         if (killed_pid != 0) {
           UniquePid killed_upid =
               context_->process_tracker->GetOrCreateProcess(killed_pid);
-          context_->event_tracker->PushInstant(ts, lmk_id_, 0, killed_upid,
+          context_->event_tracker->PushInstant(ts, lmk_id_, killed_upid,
                                                RefType::kRefUpid);
         }
         // TODO(lalitm): we should not add LMK events to the counters table

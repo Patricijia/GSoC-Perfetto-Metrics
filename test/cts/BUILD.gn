@@ -20,6 +20,7 @@ static_library("perfetto_cts_deps") {
   complete_static_lib = true
   testonly = true
   deps = [
+    "..:end_to_end_integrationtests",
     "../..:libperfetto_client_experimental",
     "../../gn:default_deps",
     "../../gn:gtest_and_gmock",
@@ -36,6 +37,17 @@ static_library("perfetto_cts_deps") {
     "end_to_end_integrationtest_cts.cc",
     "heapprofd_java_test_cts.cc",
     "heapprofd_test_cts.cc",
+    "traced_perf_test_cts.cc",
     "utils.cc",
+  ]
+}
+
+static_library("perfetto_cts_jni_deps") {
+  complete_static_lib = true
+  testonly = true
+  deps = [
+    "..:test_helper",
+    "../../gn:default_deps",
+    "../../src/base:test_support",
   ]
 }

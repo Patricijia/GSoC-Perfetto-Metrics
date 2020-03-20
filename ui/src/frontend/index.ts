@@ -21,7 +21,7 @@ import * as m from 'mithril';
 import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions} from '../common/actions';
-import {AggregateCpuData} from '../common/aggregation_data';
+import {AggregateData} from '../common/aggregation_data';
 import {
   LogBoundsKey,
   LogEntriesKey,
@@ -78,7 +78,7 @@ class FrontendApi {
   // want to keep in the global state. Figure out a more generic and type-safe
   // mechanism to achieve this.
 
-  publishOverviewData(data: {[key: string]: QuantizedLoad | QuantizedLoad[]}) {
+  publishOverviewData(data: {[key: string]: QuantizedLoad|QuantizedLoad[]}) {
     for (const [key, value] of Object.entries(data)) {
       if (!globals.overviewStore.has(key)) {
         globals.overviewStore.set(key, []);
@@ -175,8 +175,8 @@ class FrontendApi {
     this.redraw();
   }
 
-  publishAggregateCpuData(args: AggregateCpuData) {
-    globals.aggregateCpuData = args;
+  publishAggregateData(args: {data: AggregateData, kind: string}) {
+    globals.setAggregateData(args.kind, args.data);
     this.redraw();
   }
 
@@ -251,6 +251,7 @@ function main() {
       dispatch);
   forwardRemoteCalls(frontendChannel.port2, new FrontendApi(router));
   globals.initialize(dispatch, controller);
+  globals.serviceWorkerController.install();
 
   // We proxy messages between the extension and the controller because the
   // controller's worker can't access chrome.runtime.

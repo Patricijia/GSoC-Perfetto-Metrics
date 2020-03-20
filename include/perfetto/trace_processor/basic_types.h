@@ -40,9 +40,15 @@ struct PERFETTO_EXPORT Config {
   // sort ignoring any internal heureustics to skip sorting parts of the data.
   bool force_full_sort = false;
 
-  // When set to a non-zero value, this overrides the default block size used
-  // by the StringPool. For defaults, see kDefaultBlockSize in string_pool.h.
-  size_t string_pool_block_size_bytes = 0;
+  // When set to false, this option makes the trace processor not include ftrace
+  // events in the raw table; this makes converting events back to the systrace
+  // text format impossible. On the other hand, it also saves ~50% of memory
+  // usage of trace processor. For reference, Studio intends to use this option.
+  //
+  // Note: "generic" ftrace events will be parsed into the raw table even if
+  // this flag is false and all other events which parse into the raw table are
+  // unaffected by this flag.
+  bool ingest_ftrace_in_raw_table = true;
 };
 
 // Represents a dynamically typed value returned by SQL.
@@ -79,9 +85,21 @@ struct PERFETTO_EXPORT SqlValue {
     return value;
   }
 
-  double AsDouble() {
-    assert(type == kDouble);
+  double AsDouble() const {
+    PERFETTO_CHECK(type == kDouble);
     return double_value;
+  }
+  int64_t AsLong() const {
+    PERFETTO_CHECK(type == kLong);
+    return long_value;
+  }
+  const char* AsString() const {
+    PERFETTO_CHECK(type == kString);
+    return string_value;
+  }
+  const void* AsBytes() const {
+    PERFETTO_CHECK(type == kBytes);
+    return bytes_value;
   }
 
   bool is_null() const { return type == Type::kNull; }

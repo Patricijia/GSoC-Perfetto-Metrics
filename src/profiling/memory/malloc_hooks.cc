@@ -35,8 +35,8 @@
 #include "perfetto/ext/base/no_destructor.h"
 #include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/utils.h"
+#include "src/profiling/common/proc_utils.h"
 #include "src/profiling/memory/client.h"
-#include "src/profiling/memory/proc_utils.h"
 #include "src/profiling/memory/scoped_spinlock.h"
 #include "src/profiling/memory/unhooked_allocator.h"
 #include "src/profiling/memory/wire_protocol.h"
@@ -620,13 +620,14 @@ int HEAPPROFD_ADD_PREFIX(_malloc_info)(int options, FILE* fp) {
   return dispatch->malloc_info(options, fp);
 }
 
-int HEAPPROFD_ADD_PREFIX(_malloc_iterate)(uintptr_t,
-                                          size_t,
-                                          void (*)(uintptr_t base,
+int HEAPPROFD_ADD_PREFIX(_malloc_iterate)(uintptr_t base,
+                                          size_t size,
+                                          void (*callback)(uintptr_t base,
                                                    size_t size,
                                                    void* arg),
-                                          void*) {
-  return 0;
+                                          void* arg) {
+  const MallocDispatch* dispatch = GetDispatch();
+  return dispatch->malloc_iterate(base, size, callback, arg);
 }
 
 void HEAPPROFD_ADD_PREFIX(_malloc_disable)() {

@@ -19,10 +19,14 @@
 
 #include <vector>
 
+#include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/string_writer.h"
 #include "perfetto/protozero/field.h"
+#include "protos/perfetto/trace/gpu/gpu_render_stage_event.pbzero.h"
+#include "src/trace_processor/args_tracker.h"
 #include "src/trace_processor/importers/proto/proto_incremental_state.h"
 #include "src/trace_processor/importers/proto/vulkan_memory_tracker.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 #include "protos/perfetto/trace/gpu/vulkan_memory_event.pbzero.h"
 
@@ -60,17 +64,20 @@ class GraphicsEventParser {
   void ParseGraphicsFrameEvent(int64_t timestamp, ConstBytes);
   void ParseGpuLog(int64_t ts, ConstBytes);
 
-  void ParseVulkanMemoryEvent(PacketSequenceState*,
-                              size_t sequence_state_generation,
-                              ConstBytes);
+  void ParseVulkanMemoryEvent(PacketSequenceStateGeneration*, ConstBytes);
   void UpdateVulkanMemoryAllocationCounters(UniquePid,
                                             const VulkanMemoryEvent::Decoder&);
 
-  void ParseVulkanApiEvent(ConstBytes);
+  void ParseVulkanApiEvent(int64_t, ConstBytes);
 
  private:
   const StringId GetFullStageName(
-      const protos::pbzero::GpuRenderStageEvent_Decoder& event);
+      const protos::pbzero::GpuRenderStageEvent_Decoder& event) const;
+  void InsertGpuTrack(
+      const protos::pbzero::
+          GpuRenderStageEvent_Specifications_Description_Decoder& hw_queue);
+  base::Optional<std::string> FindDebugName(int32_t vk_object_type,
+                                            uint64_t vk_handle) const;
 
   TraceProcessorContext* const context_;
   VulkanMemoryTracker vulkan_memory_tracker_;
@@ -79,7 +86,8 @@ class GraphicsEventParser {
   // For GpuRenderStageEvent
   const StringId description_id_;
   const StringId gpu_render_stage_scope_id_;
-  std::vector<TrackId> gpu_hw_queue_ids_;
+  std::vector<perfetto::base::Optional<TrackId>> gpu_hw_queue_ids_;
+  size_t gpu_hw_queue_counter_ = 0;
   // Map of stage ID -> pair(stage name, stage description)
   std::vector<std::pair<StringId, StringId>> gpu_render_stage_ids_;
   // For GraphicsFrameEvent
@@ -111,10 +119,15 @@ class GraphicsEventParser {
   const StringId log_message_id_;
   std::array<StringId, 7> log_severity_ids_;
   // For Vulkan events.
+  // For VulkanApiEvent.VkDebugUtilsObjectName.
   // Map of vk handle -> vk object name.
   using DebugMarkerMap = std::unordered_map<uint64_t, std::string>;
   // Map of VkObjectType -> DebugMarkerMap.
   std::unordered_map<int32_t, DebugMarkerMap> debug_marker_names_;
+  // For VulkanApiEvent.VkQueueSubmit.
+  StringId vk_event_track_id_;
+  StringId vk_event_scope_id_;
+  StringId vk_queue_submit_id_;
 };
 }  // namespace trace_processor
 }  // namespace perfetto

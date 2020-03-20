@@ -17,18 +17,20 @@
 #ifndef SRC_TRACE_PROCESSOR_HEAP_PROFILE_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_HEAP_PROFILE_TRACKER_H_
 
-#include <deque>
+#include <set>
 #include <unordered_map>
 
 #include "perfetto/ext/base/optional.h"
-
-#include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
-#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "src/trace_processor/stack_profile_tracker.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
+
+std::unique_ptr<tables::ExperimentalFlamegraphNodesTable> BuildNativeFlamegraph(
+    TraceStorage* storage,
+    UniquePid upid,
+    int64_t timestamp);
 
 class TraceProcessorContext;
 
@@ -65,6 +67,8 @@ class HeapProfileTracker {
                          StackProfileTracker* stack_profile_tracker,
                          const StackProfileTracker::InternLookup* lookup);
 
+  void NotifyEndOfFile();
+
   ~HeapProfileTracker();
 
  private:
@@ -77,14 +81,34 @@ class HeapProfileTracker {
   struct SequenceState {
     std::vector<SourceAllocation> pending_allocs;
 
-    std::unordered_map<std::pair<UniquePid, int64_t>,
+    std::unordered_map<std::pair<UniquePid, CallsiteId>,
                        tables::HeapProfileAllocationTable::Row>
         prev_alloc;
-    std::unordered_map<std::pair<UniquePid, int64_t>,
+    std::unordered_map<std::pair<UniquePid, CallsiteId>,
                        tables::HeapProfileAllocationTable::Row>
         prev_free;
 
-    uint64_t last_profile_packet_index = 0;
+    // For continuous dumps, we only store the delta in the data-base. To do
+    // this, we subtract the previous dump's value. Sometimes, we should not
+    // do that subtraction, because heapprofd garbage collects stacks that
+    // have no unfreed allocations. If the application then allocations again
+    // at that stack, it gets recreated and initialized to zero.
+    //
+    // To correct for this, we add the previous' stacks value to the current
+    // one, and then handle it as normal. If it is the first time we see a
+    // SourceCallstackId for a CallsiteId, we put the previous value into
+    // the correction maps below.
+    std::map<std::pair<UniquePid, StackProfileTracker::SourceCallstackId>,
+             std::set<CallsiteId>>
+        seen_callstacks;
+    std::map<StackProfileTracker::SourceCallstackId,
+             tables::HeapProfileAllocationTable::Row>
+        alloc_correction;
+    std::map<StackProfileTracker::SourceCallstackId,
+             tables::HeapProfileAllocationTable::Row>
+        free_correction;
+
+    base::Optional<uint64_t> prev_index;
   };
   std::map<uint32_t, SequenceState> sequence_state_;
   TraceProcessorContext* const context_;

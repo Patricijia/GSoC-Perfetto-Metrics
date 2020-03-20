@@ -25,7 +25,8 @@
 #include <regex>
 #include <unordered_set>
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 #include <sys/uio.h>
 #include <sys/utsname.h>
 #include <unistd.h>
@@ -44,6 +45,7 @@
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/watchdog.h"
 #include "perfetto/ext/tracing/core/consumer.h"
+#include "perfetto/ext/tracing/core/observable_events.h"
 #include "perfetto/ext/tracing/core/producer.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
 #include "perfetto/ext/tracing/core/shared_memory_abi.h"
@@ -76,6 +78,7 @@ constexpr int kMaxBuffersPerConsumer = 128;
 constexpr base::TimeMillis kSnapshotsInterval(10 * 1000);
 constexpr int kDefaultWriteIntoFilePeriodMs = 5000;
 constexpr int kMaxConcurrentTracingSessions = 15;
+constexpr int kMaxConcurrentTracingSessionsPerUid = 5;
 constexpr int64_t kMinSecondsBetweenTracesGuardrail = 5 * 60;
 
 constexpr uint32_t kMillisPerHour = 3600000;
@@ -85,7 +88,7 @@ constexpr uint32_t kMaxTracingDurationMillis = 7 * 24 * kMillisPerHour;
 constexpr uint32_t kGuardrailsMaxTracingBufferSizeKb = 128 * 1024;
 constexpr uint32_t kGuardrailsMaxTracingDurationMillis = 24 * kMillisPerHour;
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) || PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 struct iovec {
   void* iov_base;  // Address
   size_t iov_len;  // Block size
@@ -114,7 +117,8 @@ uid_t getuid() {
 uid_t geteuid() {
   return 0;
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) ||
+        // PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
 
 // Partially encodes a CommitDataRequest in an int32 for the purposes of
 // metatracing. Note that it encodes only the bottom 10 bits of the producer id
@@ -144,6 +148,42 @@ void SerializeAndAppendPacket(std::vector<TracePacket>* packets,
   memcpy(slice.own_data(), packet.data(), packet.size());
   packets->emplace_back();
   packets->back().AddSlice(std::move(slice));
+}
+
+std::tuple<size_t /*shm_size*/, size_t /*page_size*/> EnsureValidShmSizes(
+    size_t shm_size,
+    size_t page_size) {
+  // Theoretically the max page size supported by the ABI is 64KB.
+  // However, the current implementation of TraceBuffer (the non-shared
+  // userspace buffer where the service copies data) supports at most
+  // 32K. Setting 64K "works" from the producer<>consumer viewpoint
+  // but then causes the data to be discarded when copying it into
+  // TraceBuffer.
+  constexpr size_t kMaxPageSize = 32 * 1024;
+  static_assert(kMaxPageSize <= SharedMemoryABI::kMaxPageSize, "");
+
+  if (page_size == 0)
+    page_size = TracingServiceImpl::kDefaultShmPageSize;
+  if (shm_size == 0)
+    shm_size = TracingServiceImpl::kDefaultShmSize;
+
+  page_size = std::min<size_t>(page_size, kMaxPageSize);
+  shm_size = std::min<size_t>(shm_size, TracingServiceImpl::kMaxShmSize);
+
+  // Page size has to be multiple of system's page size.
+  bool page_size_is_valid = page_size >= base::kPageSize;
+  page_size_is_valid &= page_size % base::kPageSize == 0;
+
+  // Only allow power of two numbers of pages, i.e. 1, 2, 4, 8 pages.
+  size_t num_pages = page_size / base::kPageSize;
+  page_size_is_valid &= (num_pages & (num_pages - 1)) == 0;
+
+  if (!page_size_is_valid || shm_size < page_size ||
+      shm_size % page_size != 0) {
+    return std::make_tuple(TracingServiceImpl::kDefaultShmSize,
+                           TracingServiceImpl::kDefaultShmPageSize);
+  }
+  return std::make_tuple(shm_size, page_size);
 }
 
 }  // namespace
@@ -186,7 +226,8 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
                                     size_t shared_memory_size_hint_bytes,
                                     bool in_process,
                                     ProducerSMBScrapingMode smb_scraping_mode,
-                                    size_t shared_memory_page_size_hint_bytes) {
+                                    size_t shared_memory_page_size_hint_bytes,
+                                    std::unique_ptr<SharedMemory> shm) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
 
   if (lockdown_mode_ && uid != geteuid()) {
@@ -221,7 +262,38 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
   PERFETTO_DCHECK(it_and_inserted.second);
   endpoint->shmem_size_hint_bytes_ = shared_memory_size_hint_bytes;
   endpoint->shmem_page_size_hint_bytes_ = shared_memory_page_size_hint_bytes;
+
+  // Producer::OnConnect() should run before Producer::OnTracingSetup(). The
+  // latter may be posted by SetupSharedMemory() below, so post OnConnect() now.
   task_runner_->PostTask(std::bind(&Producer::OnConnect, endpoint->producer_));
+
+  if (shm) {
+    // The producer supplied an SMB. This is used only by Chrome; in the most
+    // common cases the SMB is created by the service and passed via
+    // OnTracingSetup(). Verify that it is correctly sized before we attempt to
+    // use it. The transport layer has to verify the integrity of the SMB (e.g.
+    // ensure that the producer can't resize if after the fact).
+    size_t shm_size, page_size;
+    std::tie(shm_size, page_size) =
+        EnsureValidShmSizes(shm->size(), endpoint->shmem_page_size_hint_bytes_);
+    if (shm_size == shm->size() &&
+        page_size == endpoint->shmem_page_size_hint_bytes_) {
+      PERFETTO_DLOG(
+          "Adopting producer-provided SMB of %zu kB for producer \"%s\"",
+          shm_size / 1024, endpoint->name_.c_str());
+      endpoint->SetupSharedMemory(std::move(shm), page_size,
+                                  /*provided_by_producer=*/true);
+    } else {
+      PERFETTO_LOG(
+          "Discarding incorrectly sized producer-provided SMB for producer "
+          "\"%s\", falling back to service-provided SMB. Requested sizes: %zu "
+          "B total, %zu B page size; suggested corrected sizes: %zu B total, "
+          "%zu B page size",
+          endpoint->name_.c_str(), shm->size(),
+          endpoint->shmem_page_size_hint_bytes_, shm_size, page_size);
+      shm.reset();
+    }
+  }
 
   return std::unique_ptr<ProducerEndpoint>(std::move(endpoint));
 }
@@ -466,6 +538,17 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     }
   }
 
+  const long sessions_for_uid = std::count_if(
+      tracing_sessions_.begin(), tracing_sessions_.end(),
+      [consumer](const decltype(tracing_sessions_)::value_type& s) {
+        return s.second.consumer_uid == consumer->uid_;
+      });
+  if (sessions_for_uid >= kMaxConcurrentTracingSessionsPerUid) {
+    PERFETTO_ELOG("Too many concurrent tracing sesions (%ld) for uid %d",
+                  sessions_for_uid, static_cast<int>(consumer->uid_));
+    return false;
+  }
+
   // TODO(primiano): This is a workaround to prevent that a producer gets stuck
   // in a state where it stalls by design by having more TraceWriterImpl
   // instances than free pages in the buffer. This is really a bug in
@@ -601,10 +684,12 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
 
   tracing_session->state = TracingSession::CONFIGURED;
   PERFETTO_LOG(
-      "Configured tracing, #sources:%zu, duration:%d ms, #buffers:%d, total "
-      "buffer size:%zu KB, total sessions:%zu session name: %s",
-      cfg.data_sources().size(), tracing_session->config.duration_ms(),
+      "Configured tracing session %" PRIu64
+      ", #sources:%zu, duration:%d ms, #buffers:%d, total "
+      "buffer size:%zu KB, total sessions:%zu, uid:%d session name: \"%s\"",
+      tsid, cfg.data_sources().size(), tracing_session->config.duration_ms(),
       cfg.buffers_size(), total_buf_size_kb, tracing_sessions_.size(),
+      static_cast<unsigned int>(consumer->uid_),
       cfg.unique_session_name().c_str());
 
   // Start the data sources, unless this is a case of early setup + fast
@@ -1947,15 +2032,9 @@ TracingServiceImpl::DataSourceInstance* TracingServiceImpl::SetupDataSource(
     // 1. Give priority to what is defined in the trace config.
     // 2. If unset give priority to the hint passed by the producer.
     // 3. Keep within bounds and ensure it's a multiple of 4k.
-    size_t page_size = std::min<size_t>(producer_config.page_size_kb() * 1024,
-                                        SharedMemoryABI::kMaxPageSize);
-    if (page_size == 0) {
-      page_size = std::min<size_t>(producer->shmem_page_size_hint_bytes_,
-                                   SharedMemoryABI::kMaxPageSize);
-    }
-    if (page_size < base::kPageSize || page_size % base::kPageSize != 0)
-      page_size = kDefaultShmPageSize;
-    producer->shared_buffer_page_size_kb_ = page_size / 1024;
+    size_t page_size = producer_config.page_size_kb() * 1024;
+    if (page_size == 0)
+      page_size = producer->shmem_page_size_hint_bytes_;
 
     // Determine the SMB size. Must be an integer multiple of the SMB page size.
     // The decision tree is as follows:
@@ -1965,9 +2044,16 @@ TracingServiceImpl::DataSourceInstance* TracingServiceImpl::SetupDataSource(
     size_t shm_size = producer_config.shm_size_kb() * 1024;
     if (shm_size == 0)
       shm_size = producer->shmem_size_hint_bytes_;
-    shm_size = std::min<size_t>(shm_size, kMaxShmSize);
-    if (shm_size < page_size || shm_size % page_size)
-      shm_size = kDefaultShmSize;
+
+    auto valid_sizes = EnsureValidShmSizes(shm_size, page_size);
+    if (valid_sizes != std::tie(shm_size, page_size)) {
+      PERFETTO_DLOG(
+          "Invalid configured SMB sizes: shm_size %zu page_size %zu. Falling "
+          "back to shm_size %zu page_size %zu.",
+          shm_size, page_size, std::get<0>(valid_sizes),
+          std::get<1>(valid_sizes));
+    }
+    std::tie(shm_size, page_size) = valid_sizes;
 
     // TODO(primiano): right now Create() will suicide in case of OOM if the
     // mmap fails. We should instead gracefully fail the request and tell the
@@ -1975,9 +2061,8 @@ TracingServiceImpl::DataSourceInstance* TracingServiceImpl::SetupDataSource(
     PERFETTO_DLOG("Creating SMB of %zu KB for producer \"%s\"", shm_size / 1024,
                   producer->name_.c_str());
     auto shared_memory = shm_factory_->CreateSharedMemory(shm_size);
-    producer->SetSharedMemory(std::move(shared_memory));
-    producer->OnTracingSetup();
-    UpdateMemoryGuardrail();
+    producer->SetupSharedMemory(std::move(shared_memory), page_size,
+                                /*provided_by_producer=*/false);
   }
   producer->SetupDataSource(inst_id, ds_config);
   return ds_instance;
@@ -2223,7 +2308,8 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
   auto* clock_snapshot = packet->set_clock_snapshot();
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) &&    \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct {
     clockid_t id;
     protos::pbzero::ClockSnapshot::Clock::BuiltinClocks type;
@@ -2266,8 +2352,9 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
     c->set_timestamp(
         static_cast<uint64_t>(base::FromPosixTimespec(clock.ts).count()));
   }
-#else   // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
-        // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#else  // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
+       // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) &&
+       // !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   auto wall_time_ns = static_cast<uint64_t>(base::GetWallTimeNs().count());
   if (set_root_timestamp)
     root_timestamp_ns = wall_time_ns;
@@ -2347,7 +2434,8 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
   protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
   auto* info = packet->set_system_info();
   base::ignore_result(info);  // For PERFETTO_OS_WIN.
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
+    !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct utsname uname_info;
   if (uname(&uname_info) == 0) {
     auto* utsname_info = info->set_utsname();
@@ -2535,33 +2623,28 @@ void TracingServiceImpl::ConsumerEndpointImpl::GetTraceStats() {
 }
 
 void TracingServiceImpl::ConsumerEndpointImpl::ObserveEvents(
-    uint32_t enabled_event_types) {
+    uint32_t events_mask) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  enabled_observable_event_types_ = enabled_event_types;
-
-  if (enabled_observable_event_types_ == ObservableEventType::kNone)
-    return;
-
-  PERFETTO_DCHECK(enabled_observable_event_types_ ==
-                  ObservableEventType::kDataSourceInstances);
-
+  observable_events_mask_ = events_mask;
   TracingSession* session = service_->GetTracingSession(tracing_session_id_);
   if (!session)
     return;
 
-  // Issue initial states
-  for (const auto& kv : session->data_source_instances) {
-    ProducerEndpointImpl* producer = service_->GetProducer(kv.first);
-    PERFETTO_DCHECK(producer);
-    OnDataSourceInstanceStateChange(*producer, kv.second);
+  if (observable_events_mask_ & ObservableEvents::TYPE_DATA_SOURCES_INSTANCES) {
+    // Issue initial states.
+    for (const auto& kv : session->data_source_instances) {
+      ProducerEndpointImpl* producer = service_->GetProducer(kv.first);
+      PERFETTO_DCHECK(producer);
+      OnDataSourceInstanceStateChange(*producer, kv.second);
+    }
   }
 }
 
 void TracingServiceImpl::ConsumerEndpointImpl::OnDataSourceInstanceStateChange(
     const ProducerEndpointImpl& producer,
     const DataSourceInstance& instance) {
-  if (!(enabled_observable_event_types_ &
-        ObservableEventType::kDataSourceInstances)) {
+  if (!(observable_events_mask_ &
+        ObservableEvents::TYPE_DATA_SOURCES_INSTANCES)) {
     return;
   }
 
@@ -2760,10 +2843,17 @@ void TracingServiceImpl::ProducerEndpointImpl::CommitData(
     callback();
 }
 
-void TracingServiceImpl::ProducerEndpointImpl::SetSharedMemory(
-    std::unique_ptr<SharedMemory> shared_memory) {
+void TracingServiceImpl::ProducerEndpointImpl::SetupSharedMemory(
+    std::unique_ptr<SharedMemory> shared_memory,
+    size_t page_size_bytes,
+    bool provided_by_producer) {
   PERFETTO_DCHECK(!shared_memory_ && !shmem_abi_.is_valid());
+  PERFETTO_DCHECK(page_size_bytes % 1024 == 0);
+
   shared_memory_ = std::move(shared_memory);
+  shared_buffer_page_size_kb_ = page_size_bytes / 1024;
+  is_shmem_provided_by_producer_ = provided_by_producer;
+
   shmem_abi_.Initialize(reinterpret_cast<uint8_t*>(shared_memory_->start()),
                         shared_memory_->size(),
                         shared_buffer_page_size_kb() * 1024);
@@ -2772,6 +2862,9 @@ void TracingServiceImpl::ProducerEndpointImpl::SetSharedMemory(
         shared_memory_->start(), shared_memory_->size(),
         shared_buffer_page_size_kb_ * 1024, this, task_runner_));
   }
+
+  OnTracingSetup();
+  service_->UpdateMemoryGuardrail();
 }
 
 SharedMemory* TracingServiceImpl::ProducerEndpointImpl::shared_memory() const {
@@ -2803,7 +2896,7 @@ void TracingServiceImpl::ProducerEndpointImpl::StopDataSource(
 }
 
 SharedMemoryArbiter*
-TracingServiceImpl::ProducerEndpointImpl::GetInProcessShmemArbiter() {
+TracingServiceImpl::ProducerEndpointImpl::MaybeSharedMemoryArbiter() {
   if (!inproc_shmem_arbiter_) {
     PERFETTO_FATAL(
         "The in-process SharedMemoryArbiter can only be used when "
@@ -2815,19 +2908,26 @@ TracingServiceImpl::ProducerEndpointImpl::GetInProcessShmemArbiter() {
   return inproc_shmem_arbiter_.get();
 }
 
+bool TracingServiceImpl::ProducerEndpointImpl::IsShmemProvidedByProducer()
+    const {
+  return is_shmem_provided_by_producer_;
+}
+
 // Can be called on any thread.
 std::unique_ptr<TraceWriter>
 TracingServiceImpl::ProducerEndpointImpl::CreateTraceWriter(
     BufferID buf_id,
     BufferExhaustedPolicy buffer_exhausted_policy) {
-  return GetInProcessShmemArbiter()->CreateTraceWriter(buf_id,
+  PERFETTO_DCHECK(MaybeSharedMemoryArbiter());
+  return MaybeSharedMemoryArbiter()->CreateTraceWriter(buf_id,
                                                        buffer_exhausted_policy);
 }
 
 void TracingServiceImpl::ProducerEndpointImpl::NotifyFlushComplete(
     FlushRequestID id) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  return GetInProcessShmemArbiter()->NotifyFlushComplete(id);
+  PERFETTO_DCHECK(MaybeSharedMemoryArbiter());
+  return MaybeSharedMemoryArbiter()->NotifyFlushComplete(id);
 }
 
 void TracingServiceImpl::ProducerEndpointImpl::OnTracingSetup() {

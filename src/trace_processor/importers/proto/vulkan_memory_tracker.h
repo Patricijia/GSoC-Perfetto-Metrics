@@ -18,7 +18,7 @@
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_VULKAN_MEMORY_TRACKER_H_
 
 #include "src/trace_processor/importers/proto/proto_incremental_state.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 #include "protos/perfetto/trace/gpu/vulkan_memory_event.pbzero.h"
 
@@ -40,12 +40,11 @@ class VulkanMemoryTracker {
   ~VulkanMemoryTracker() = default;
 
   template <int32_t FieldId>
-  StringId GetInternedString(PacketSequenceState* state,
-                             size_t generation,
+  StringId GetInternedString(PacketSequenceStateGeneration* state,
                              uint64_t iid) {
     auto* decoder =
         state->LookupInternedMessage<FieldId, protos::pbzero::InternedString>(
-            generation, iid);
+            iid);
     if (!decoder)
       return kNullStringId;
     return context_->storage->InternString(

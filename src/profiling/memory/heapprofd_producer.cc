@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/thread_task_runner.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
@@ -39,7 +40,6 @@ using ::perfetto::protos::pbzero::ProfilePacket;
 
 constexpr char kHeapprofdDataSource[] = "android.heapprofd";
 constexpr size_t kUnwinderThreads = 5;
-constexpr int kHeapprofdSignal = 36;
 
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
@@ -48,6 +48,10 @@ constexpr uint32_t kChildModeWatchdogPeriodMs = 10 * 1000;
 
 constexpr uint64_t kDefaultShmemSize = 8 * 1048576;  // ~8 MB
 constexpr uint64_t kMaxShmemSize = 500 * 1048576;    // ~500 MB
+
+// Constants specified by bionic, hardcoded here for simplicity.
+constexpr int kProfilingSignal = __SIGRTMIN + 4;
+constexpr int kHeapprofdSignalValue = 0;
 
 std::vector<UnwindingWorker> MakeUnwindingWorkers(HeapprofdProducer* delegate,
                                                   size_t n) {
@@ -314,14 +318,18 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
     return;
   }
 
-  std::vector<std::string> normalized_cmdlines =
+  base::Optional<std::vector<std::string>> normalized_cmdlines =
       NormalizeCmdlines(heapprofd_config.process_cmdline());
+  if (!normalized_cmdlines.has_value()) {
+    PERFETTO_ELOG("Rejecting data source due to invalid cmdline in config.");
+    return;
+  }
 
   // Child mode is only interested in the first data source matching the
   // already-connected process.
   if (mode_ == HeapprofdMode::kChild) {
     if (!ConfigTargetsProcess(heapprofd_config, target_process_,
-                              normalized_cmdlines)) {
+                              normalized_cmdlines.value())) {
       PERFETTO_DLOG("Child mode skipping setup of unrelated data source.");
       return;
     }
@@ -354,10 +362,11 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   cli_config.block_client_timeout_us =
       heapprofd_config.block_client_timeout_us();
   data_source.config = heapprofd_config;
-  data_source.normalized_cmdlines = std::move(normalized_cmdlines);
+  data_source.normalized_cmdlines = std::move(normalized_cmdlines.value());
   data_source.stop_timeout_ms = ds_config.stop_timeout_ms();
 
-  WriteFixedInternings(data_source.trace_writer.get());
+  InterningOutputTracker::WriteFixedInterningsPacket(
+      data_source.trace_writer.get());
   data_sources_.emplace(id, std::move(data_source));
   PERFETTO_DLOG("Set up data source.");
 
@@ -406,9 +415,12 @@ void HeapprofdProducer::SignalRunningProcesses(DataSource* data_source) {
       continue;
     }
 
-    PERFETTO_DLOG("Sending %d to %d", kHeapprofdSignal, pid);
-    if (kill(pid, kHeapprofdSignal) != 0) {
-      PERFETTO_DPLOG("kill");
+    PERFETTO_DLOG("Sending signal: %d (si_value: %d) to pid: %d",
+                  kProfilingSignal, kHeapprofdSignalValue, pid);
+    union sigval signal_value;
+    signal_value.sival_int = kHeapprofdSignalValue;
+    if (sigqueue(pid, kProfilingSignal, signal_value) != 0) {
+      PERFETTO_DPLOG("sigqueue");
     }
     ++pid_it;
   }
@@ -751,8 +763,7 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     int raw_fd = pending_process.shmem.fd();
     // TODO(fmayer): Full buffer could deadlock us here.
     if (!self->Send(&data_source.client_configuration,
-                    sizeof(data_source.client_configuration), &raw_fd, 1,
-                    base::UnixSocket::BlockingMode::kBlocking)) {
+                    sizeof(data_source.client_configuration), &raw_fd, 1)) {
       // If Send fails, the socket will have been Shutdown, and the raw socket
       // closed.
       producer_->pending_processes_.erase(it);

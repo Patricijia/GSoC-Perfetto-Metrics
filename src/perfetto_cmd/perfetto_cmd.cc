@@ -479,6 +479,10 @@ int PerfettoCmd::Main(int argc, char** argv) {
   if (trace_config_->trace_uuid_lsb() == 0 &&
       trace_config_->trace_uuid_msb() == 0) {
     base::Uuid uuid = base::Uuidv4();
+    if (trace_config_->statsd_metadata().triggering_subscription_id()) {
+      uuid.set_lsb(
+          trace_config_->statsd_metadata().triggering_subscription_id());
+    }
     uuid_ = uuid.ToString();
     trace_config_->set_trace_uuid_msb(uuid.msb());
     trace_config_->set_trace_uuid_lsb(uuid.lsb());
@@ -599,7 +603,11 @@ int PerfettoCmd::Main(int argc, char** argv) {
   if (trace_config_->compression_type() ==
       TraceConfig::COMPRESSION_TYPE_DEFLATE) {
     if (packet_writer_) {
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
       packet_writer_ = CreateZipPacketWriter(std::move(packet_writer_));
+#else
+      PERFETTO_ELOG("Cannot compress. Zlib not enabled in the build config");
+#endif
     } else {
       PERFETTO_ELOG("Cannot compress when tracing directly to file.");
     }

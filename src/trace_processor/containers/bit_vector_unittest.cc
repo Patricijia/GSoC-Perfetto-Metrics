@@ -237,6 +237,22 @@ TEST(BitVectorUnittest, UpdateSetBits) {
   ASSERT_TRUE(bv.IsSet(4));
 }
 
+TEST(BitVectorUnittest, UpdateSetBitsSmallerPicker) {
+  BitVector bv(6, false);
+  bv.Set(1);
+  bv.Set(2);
+  bv.Set(4);
+
+  BitVector picker(2u, true);
+  picker.Clear(1);
+
+  bv.UpdateSetBits(picker);
+
+  ASSERT_TRUE(bv.IsSet(1));
+  ASSERT_FALSE(bv.IsSet(2));
+  ASSERT_FALSE(bv.IsSet(4));
+}
+
 TEST(BitVectorUnittest, IterateAllBitsConst) {
   BitVector bv;
   for (uint32_t i = 0; i < 12345; ++i) {
@@ -381,6 +397,18 @@ TEST(BitVectorUnittest, IterateSetBitsStartsCorrectly) {
 
   it.Next();
   ASSERT_FALSE(it);
+}
+
+TEST(BitVectorUnittest, Range) {
+  BitVector bv =
+      BitVector::Range(1, 1025, [](uint32_t t) { return t % 3 == 0; });
+
+  ASSERT_FALSE(bv.IsSet(0));
+  for (uint32_t i = 1; i < 1025; ++i) {
+    ASSERT_EQ(i % 3 == 0, bv.IsSet(i));
+  }
+  ASSERT_EQ(bv.size(), 1025u);
+  ASSERT_EQ(bv.GetNumBitsSet(), 341u);
 }
 
 TEST(BitVectorUnittest, QueryStressTest) {

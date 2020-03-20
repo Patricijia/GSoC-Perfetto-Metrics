@@ -17,16 +17,17 @@ import * as m from 'mithril';
 import {Actions} from '../common/actions';
 import {
   ALLOC_SPACE_MEMORY_ALLOCATED_KEY,
-  DEFAULT_VIEWING_OPTION,
   OBJECTS_ALLOCATED_KEY,
   OBJECTS_ALLOCATED_NOT_FREED_KEY,
-  SPACE_MEMORY_ALLOCATED_NOT_FREED_KEY
+  SPACE_MEMORY_ALLOCATED_NOT_FREED_KEY,
 } from '../common/flamegraph_util';
+import {HeapProfileFlamegraphViewingOption} from '../common/state';
 import {timeToCode} from '../common/time';
 
 import {Flamegraph} from './flamegraph';
 import {globals} from './globals';
 import {Panel, PanelSize} from './panel';
+import {debounce} from './rate_limiters';
 
 interface HeapProfileDetailsPanelAttrs {}
 
@@ -37,7 +38,11 @@ export class HeapProfileDetailsPanel extends
   private ts = 0;
   private pid = 0;
   private flamegraph: Flamegraph = new Flamegraph([]);
-  private currentViewingOption = DEFAULT_VIEWING_OPTION;
+  private focusRegex = '';
+  private updateFocusRegexDebounced = debounce(() => {
+    this.updateFocusRegex();
+  }, 20);
+
 
   view() {
     const heapDumpInfo = globals.heapProfileDetails;
@@ -77,6 +82,7 @@ export class HeapProfileDetailsPanel extends
             }
           },
           m('.details-panel-heading.heap-profile',
+            {onclick: (e: MouseEvent) => e.stopPropagation()},
             [
               m('div.options',
                 [
@@ -87,6 +93,15 @@ export class HeapProfileDetailsPanel extends
                 [
                   m('div.time',
                     `Snapshot time: ${timeToCode(heapDumpInfo.ts)}`),
+                  m('input[type=text][placeholder=Focus]', {
+                    oninput: (e: Event) => {
+                      const target = (e.target as HTMLInputElement);
+                      this.focusRegex = target.value;
+                      this.updateFocusRegexDebounced();
+                    },
+                    // Required to stop hot-key handling:
+                    onkeydown: (e: Event) => e.stopPropagation(),
+                  }),
                   m('button.download',
                     {
                       onclick: () => {
@@ -106,8 +121,17 @@ export class HeapProfileDetailsPanel extends
     }
   }
 
-  getButtonsClass(viewingOption = DEFAULT_VIEWING_OPTION): string {
-    return this.currentViewingOption === viewingOption ? '.chosen' : '';
+  private updateFocusRegex() {
+    globals.dispatch(Actions.changeFocusHeapProfileFlamegraph({
+      focusRegex: this.focusRegex,
+    }));
+  }
+
+  getButtonsClass(button: HeapProfileFlamegraphViewingOption): string {
+    if (globals.state.currentHeapProfileFlamegraph === null) return '';
+    return globals.state.currentHeapProfileFlamegraph.viewingOption === button ?
+        '.chosen' :
+        '';
   }
 
   getViewingOptionButtons(): m.Children {
@@ -126,7 +150,7 @@ export class HeapProfileDetailsPanel extends
               this.changeViewingOption(ALLOC_SPACE_MEMORY_ALLOCATED_KEY);
             }
           },
-          'alloc_space'),
+          'alloc space'),
         m(`button${this.getButtonsClass(OBJECTS_ALLOCATED_NOT_FREED_KEY)}`,
           {
             onclick: () => {
@@ -140,11 +164,10 @@ export class HeapProfileDetailsPanel extends
               this.changeViewingOption(OBJECTS_ALLOCATED_KEY);
             }
           },
-          'alloc_objects'));
+          'alloc objects'));
   }
 
-  changeViewingOption(viewingOption: string) {
-    this.currentViewingOption = viewingOption;
+  changeViewingOption(viewingOption: HeapProfileFlamegraphViewingOption) {
     globals.dispatch(Actions.changeViewHeapProfileFlamegraph({viewingOption}));
   }
 
@@ -164,9 +187,11 @@ export class HeapProfileDetailsPanel extends
 
   renderCanvas(ctx: CanvasRenderingContext2D, size: PanelSize) {
     this.changeFlamegraphData();
+    const current = globals.state.currentHeapProfileFlamegraph;
+    if (current === null) return;
     const unit =
-        this.currentViewingOption === SPACE_MEMORY_ALLOCATED_NOT_FREED_KEY ||
-            this.currentViewingOption === ALLOC_SPACE_MEMORY_ALLOCATED_KEY ?
+        current.viewingOption === SPACE_MEMORY_ALLOCATED_NOT_FREED_KEY ||
+            current.viewingOption === ALLOC_SPACE_MEMORY_ALLOCATED_KEY ?
         'B' :
         '';
     this.flamegraph.draw(ctx, size.width, size.height, 0, HEADER_HEIGHT, unit);

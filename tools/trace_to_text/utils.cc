@@ -39,8 +39,9 @@ namespace {
 
 using Iterator = trace_processor::TraceProcessor::Iterator;
 
-
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
 constexpr size_t kCompressionBufferSize = 500 * 1024;
+#endif
 
 std::map<std::string, std::set<std::string>> GetHeapGraphClasses(
     trace_processor::TraceProcessor* tp) {
@@ -179,7 +180,6 @@ bool ReadTrace(trace_processor::TraceProcessor* tp, std::istream* input) {
   return true;
 }
 
-
 void DeobfuscateDatabase(
     trace_processor::TraceProcessor* tp,
     const std::map<std::string, profiling::ObfuscatedClass>& mapping,
@@ -191,7 +191,12 @@ void DeobfuscateDatabase(
   // can support multiple dumps in the same trace.
   auto* proto_mapping = packet->set_deobfuscation_mapping();
   for (const auto& p : classes) {
-    const std::string& obfuscated_class_name = p.first;
+    std::string obfuscated_class_name = p.first;
+    while (obfuscated_class_name.size() > 2 &&
+           obfuscated_class_name.substr(obfuscated_class_name.size() - 2) ==
+               "[]") {
+      obfuscated_class_name.resize(obfuscated_class_name.size() - 2);
+    }
     const std::set<std::string>& obfuscated_field_names = p.second;
     auto it = mapping.find(obfuscated_class_name);
     if (it == mapping.end()) {
@@ -221,13 +226,15 @@ TraceWriter::TraceWriter(std::ostream* output) : output_(output) {}
 
 TraceWriter::~TraceWriter() = default;
 
-void TraceWriter::Write(std::string s) {
+void TraceWriter::Write(const std::string& s) {
   Write(s.data(), s.size());
 }
 
 void TraceWriter::Write(const char* data, size_t sz) {
   output_->write(data, static_cast<std::streamsize>(sz));
 }
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
 
 DeflateTraceWriter::DeflateTraceWriter(std::ostream* output)
     : TraceWriter(output),
@@ -240,9 +247,15 @@ DeflateTraceWriter::DeflateTraceWriter(std::ostream* output)
 }
 
 DeflateTraceWriter::~DeflateTraceWriter() {
+  // Drain compressor until it has no more input, and has flushed its internal
+  // buffers.
   while (deflate(&stream_, Z_FINISH) != Z_STREAM_END) {
     Flush();
   }
+  // Flush any outstanding output bytes to the backing TraceWriter.
+  Flush();
+  PERFETTO_CHECK(stream_.avail_out == static_cast<size_t>(end_ - start_));
+
   CheckEq(deflateEnd(&stream_), Z_OK);
 }
 
@@ -270,6 +283,15 @@ void DeflateTraceWriter::CheckEq(int actual_code, int expected_code) {
   PERFETTO_FATAL("Expected %d got %d: %s", actual_code, expected_code,
                  stream_.msg);
 }
+#else
+
+DeflateTraceWriter::DeflateTraceWriter(std::ostream* output)
+    : TraceWriter(output) {
+  PERFETTO_ELOG("Cannot compress. Zlib is not enabled in the build config");
+}
+DeflateTraceWriter::~DeflateTraceWriter() = default;
+
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
 
 }  // namespace trace_to_text
 }  // namespace perfetto

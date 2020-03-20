@@ -20,6 +20,7 @@
 #include <sqlite3.h>
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -55,7 +56,9 @@ class SqliteTable : public sqlite3_vtab {
     size_t index() const { return index_; }
     const std::string& name() const { return name_; }
     SqlValue::Type type() const { return type_; }
+
     bool hidden() const { return hidden_; }
+    void set_hidden(bool hidden) { hidden_ = hidden; }
 
    private:
     size_t index_ = 0;
@@ -137,6 +140,8 @@ class SqliteTable : public sqlite3_vtab {
     std::string ToCreateTableStmt() const;
 
     const std::vector<Column>& columns() const { return columns_; }
+    std::vector<Column>* mutable_columns() { return &columns_; }
+
     const std::vector<size_t> primary_keys() { return primary_keys_; }
 
    private:
@@ -208,7 +213,7 @@ class SqliteTable : public sqlite3_vtab {
     auto create_fn = [](sqlite3* xdb, void* arg, int argc,
                         const char* const* argv, sqlite3_vtab** tab,
                         char** pzErr) {
-      const auto* xdesc = static_cast<const TableDescriptor<Context>*>(arg);
+      auto* xdesc = static_cast<TableDescriptor<Context>*>(arg);
       auto table = xdesc->factory(xdb, std::move(xdesc->context));
       table->name_ = xdesc->name;
 

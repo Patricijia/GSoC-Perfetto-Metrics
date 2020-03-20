@@ -54,9 +54,7 @@ ON (
     OR proc_uid.name LIKE plist.package_name || '%')
   );
 
-DROP VIEW IF EXISTS process_metadata;
-
-CREATE VIEW process_metadata AS
+CREATE VIEW IF NOT EXISTS process_metadata AS
 WITH upid_packages AS (
   SELECT
   upid,
