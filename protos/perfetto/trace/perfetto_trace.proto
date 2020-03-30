@@ -3088,6 +3088,14 @@ message HeapGraphRoot {
   optional Type root_type = 2;
 }
 
+message HeapGraphType {
+  // TODO(fmayer): Consider removing this and using the index in the repeaed
+  // field to save space.
+  optional uint64 id = 1;
+  optional uint64 location_id = 2;
+  optional string class_name = 3;
+}
+
 message HeapGraphObject {
   optional uint64 id = 1;
 
@@ -3121,11 +3129,21 @@ message HeapGraph {
   // garbage.
   repeated HeapGraphRoot roots = 7;
 
-  // Type names used in managed heap graph.
+  // Types used in HeapGraphObjects.
+  repeated HeapGraphType types = 9;
+
+  // Legacy way to encode types. Names here are emitted by old perfetto_hprof,
+  // which do not include the class_name. Handle like a HeapGraphType with
+  // no location_id.
+  // TODO(fmayer): Remove this. This was was not used in any publicly available
+  // release.
   repeated InternedString type_names = 3;
 
   // Field names for references in managed heap graph.
   repeated InternedString field_names = 4;
+
+  // Paths of files used in managed heap graph.
+  repeated InternedString location_names = 8;
 
   optional bool continued = 5;
   optional uint64 index = 6;
@@ -5488,14 +5506,16 @@ message TraceConfig {
     optional protos.DataSourceConfig config = 1;
 
     // Optional. If multiple producers (~processes) expose the same data source
-    // and |producer_name_filter| != "", the data source is enabled only for
-    // producers whose names match any of the producer_name_filter below.
-    // The |producer_name_filter| has to be an exact match. (TODO(primiano):
-    // support wildcards or regex).
+    // and either |producer_name_filter| or |producer_name_regex_filter| is set,
+    // the data source is enabled only for producers whose names match any of
+    // the filters.
+    // |producer_name_filter| has to be an exact match, while
+    // |producer_name_regex_filter| is a regular expression.
     // This allows to enable a data source only for specific processes.
-    // The "repeated" field has OR sematics: specifying a filter ["foo", "bar"]
-    // will enable data source on both "foo" and "bar" (if existent).
+    // The "repeated" fields have OR semantics: specifying a filter ["foo",
+    // "bar"] will enable data sources on both "foo" and "bar" (if they exist).
     repeated string producer_name_filter = 2;
+    repeated string producer_name_regex_filter = 3;
   }
   repeated DataSource data_sources = 2;
 
