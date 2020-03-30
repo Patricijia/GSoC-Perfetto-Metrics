@@ -25,6 +25,7 @@
 #include <unistd.h>
 
 #include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/thread_task_runner.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
@@ -293,6 +294,10 @@ void HeapprofdProducer::OnTracingSetup() {}
 void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
                                         const DataSourceConfig& ds_config) {
   PERFETTO_DLOG("Setting up data source.");
+  if (mode_ == HeapprofdMode::kChild && ds_config.enable_extra_guardrails()) {
+    PERFETTO_ELOG("enable_extra_guardrails is not supported on user.");
+    return;
+  }
 
   HeapprofdConfig heapprofd_config;
   heapprofd_config.ParseFromString(ds_config.heapprofd_config_raw());
@@ -313,14 +318,18 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
     return;
   }
 
-  std::vector<std::string> normalized_cmdlines =
+  base::Optional<std::vector<std::string>> normalized_cmdlines =
       NormalizeCmdlines(heapprofd_config.process_cmdline());
+  if (!normalized_cmdlines.has_value()) {
+    PERFETTO_ELOG("Rejecting data source due to invalid cmdline in config.");
+    return;
+  }
 
   // Child mode is only interested in the first data source matching the
   // already-connected process.
   if (mode_ == HeapprofdMode::kChild) {
     if (!ConfigTargetsProcess(heapprofd_config, target_process_,
-                              normalized_cmdlines)) {
+                              normalized_cmdlines.value())) {
       PERFETTO_DLOG("Child mode skipping setup of unrelated data source.");
       return;
     }
@@ -352,9 +361,8 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   cli_config.block_client = heapprofd_config.block_client();
   cli_config.block_client_timeout_us =
       heapprofd_config.block_client_timeout_us();
-  cli_config.enable_extra_guardrails = ds_config.enable_extra_guardrails();
   data_source.config = heapprofd_config;
-  data_source.normalized_cmdlines = std::move(normalized_cmdlines);
+  data_source.normalized_cmdlines = std::move(normalized_cmdlines.value());
   data_source.stop_timeout_ms = ds_config.stop_timeout_ms();
 
   InterningOutputTracker::WriteFixedInterningsPacket(
@@ -474,6 +482,7 @@ UnwindingWorker& HeapprofdProducer::UnwinderForPID(pid_t pid) {
 void HeapprofdProducer::StopDataSource(DataSourceInstanceID id) {
   auto it = data_sources_.find(id);
   if (it == data_sources_.end()) {
+    endpoint_->NotifyDataSourceStopped(id);
     if (mode_ == HeapprofdMode::kCentral)
       PERFETTO_DFATAL_OR_ELOG(
           "Trying to stop non existing data source: %" PRIu64, id);
@@ -544,10 +553,6 @@ void HeapprofdProducer::DoContinuousDump(DataSourceInstanceID id,
 void HeapprofdProducer::DumpProcessState(DataSource* data_source,
                                          pid_t pid,
                                          ProcessState* process_state) {
-  if (!process_state->has_samples) {
-    return;
-  }
-
   HeapTracker& heap_tracker = process_state->heap_tracker;
 
   bool from_startup =
@@ -640,9 +645,6 @@ void HeapprofdProducer::DumpAll() {
 void HeapprofdProducer::Flush(FlushRequestID flush_id,
                               const DataSourceInstanceID* ids,
                               size_t num_ids) {
-  if (num_ids == 0)
-    return;
-
   size_t& flush_in_progress = flushes_in_progress_[flush_id];
   PERFETTO_DCHECK(flush_in_progress == 0);
   flush_in_progress = num_ids;
@@ -651,6 +653,7 @@ void HeapprofdProducer::Flush(FlushRequestID flush_id,
     if (it == data_sources_.end()) {
       PERFETTO_DFATAL_OR_ELOG("Trying to flush unknown data-source %" PRIu64,
                               ids[i]);
+      flush_in_progress--;
       continue;
     }
     DataSource& data_source = it->second;
@@ -666,6 +669,10 @@ void HeapprofdProducer::Flush(FlushRequestID flush_id,
         });
     };
     data_source.trace_writer->Flush(std::move(callback));
+  }
+  if (flush_in_progress == 0) {
+    endpoint_->NotifyFlushComplete(flush_id);
+    flushes_in_progress_.erase(flush_id);
   }
 }
 
@@ -903,7 +910,6 @@ void HeapprofdProducer::HandleAllocRecord(AllocRecord alloc_rec) {
   }
 
   ProcessState& process_state = process_state_it->second;
-  process_state.has_samples = true;
   HeapTracker& heap_tracker = process_state.heap_tracker;
 
   if (alloc_rec.error)
@@ -992,7 +998,6 @@ void HeapprofdProducer::HandleSocketDisconnected(
   if (process_state_it == ds.process_states.end())
     return;
   ProcessState& process_state = process_state_it->second;
-
   process_state.disconnected = !ds.shutting_down;
   process_state.buffer_overran =
       stats.num_writes_overflow > 0 && !ds.config.block_client();

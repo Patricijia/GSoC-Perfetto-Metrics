@@ -253,8 +253,8 @@ std::shared_ptr<perfetto::profiling::Client> CreateClientForCentralDaemon(
                   perfetto::profiling::kHeapprofdSocketFile);
     return nullptr;
   }
-  return Client::CreateAndHandshake(std::move(sock.value()), unhooked_allocator,
-                                    /*allow_extra_guardrails=*/true);
+  return Client::CreateAndHandshake(std::move(sock.value()),
+                                    unhooked_allocator);
 }
 
 std::shared_ptr<perfetto::profiling::Client> CreateClientAndPrivateDaemon(
@@ -333,9 +333,8 @@ std::shared_ptr<perfetto::profiling::Client> CreateClientAndPrivateDaemon(
     return nullptr;
   }
 
-  return perfetto::profiling::Client::CreateAndHandshake(
-      std::move(parent_sock), unhooked_allocator,
-      /*allow_extra_guardrails=*/false);
+  return perfetto::profiling::Client::CreateAndHandshake(std::move(parent_sock),
+                                                         unhooked_allocator);
 }
 
 // Note: android_mallopt(M_RESET_HOOKS) is mutually exclusive with
@@ -389,7 +388,8 @@ bool HEAPPROFD_ADD_PREFIX(_initialize)(const MallocDispatch* malloc_dispatch,
       AbortOnSpinlockTimeout();
 
     if (g_client.ref()) {
-      PERFETTO_LOG("Rejecting concurrent profiling initialization.");
+      PERFETTO_LOG("%s: Rejecting concurrent profiling initialization.",
+                   getprogname());
       return true;  // success as we're in a valid state
     }
     old_client = g_client.ref();
@@ -411,10 +411,11 @@ bool HEAPPROFD_ADD_PREFIX(_initialize)(const MallocDispatch* malloc_dispatch,
           : CreateClientForCentralDaemon(unhooked_allocator);
 
   if (!client) {
-    PERFETTO_LOG("heapprofd_client not initialized, not installing hooks.");
+    PERFETTO_LOG("%s: heapprofd_client not initialized, not installing hooks.",
+                 getprogname());
     return false;
   }
-  PERFETTO_LOG("heapprofd_client initialized.");
+  PERFETTO_LOG("%s: heapprofd_client initialized.", getprogname());
   {
     ScopedSpinlock s(&g_client_lock, ScopedSpinlock::Mode::Try);
     if (PERFETTO_UNLIKELY(!s.locked()))
