@@ -528,6 +528,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   RegisterDbTable(storage->heap_graph_object_table());
   RegisterDbTable(storage->heap_graph_reference_table());
+  RegisterDbTable(storage->heap_graph_class_table());
 
   RegisterDbTable(storage->symbol_table());
   RegisterDbTable(storage->heap_profile_allocation_table());
@@ -535,6 +536,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->stack_profile_callsite_table());
   RegisterDbTable(storage->stack_profile_mapping_table());
   RegisterDbTable(storage->stack_profile_frame_table());
+  RegisterDbTable(storage->package_list_table());
 
   RegisterDbTable(storage->android_log_table());
 

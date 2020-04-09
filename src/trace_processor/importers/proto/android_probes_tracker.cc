@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2017 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,15 +14,14 @@
  * limitations under the License.
  */
 
-syntax = "proto2";
+#include "src/trace_processor/importers/proto/android_probes_tracker.h"
 
-package perfetto.protos;
+namespace perfetto {
+namespace trace_processor {
 
-// Event used by testing code.
-message TestEvent {
-  // Arbitrary string used in tests.
-  optional string str = 1;
+AndroidProbesTracker::AndroidProbesTracker(TraceProcessorContext*) {}
 
-  // The current value of the random number sequence used in tests.
-  optional uint32 seq_value = 2;
-}
+AndroidProbesTracker::~AndroidProbesTracker() = default;
+
+}  // namespace trace_processor
+}  // namespace perfetto

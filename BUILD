@@ -172,6 +172,7 @@ perfetto_cc_library(
         ":src_perfetto_cmd_perfetto_atoms",
         ":src_protozero_protozero",
         ":src_traced_probes_android_log_android_log",
+        ":src_traced_probes_common_common",
         ":src_traced_probes_data_source",
         ":src_traced_probes_filesystem_filesystem",
         ":src_traced_probes_ftrace_format_parser",
@@ -923,6 +924,8 @@ filegroup(
         "src/trace_processor/importers/proto/android_probes_module.h",
         "src/trace_processor/importers/proto/android_probes_parser.cc",
         "src/trace_processor/importers/proto/android_probes_parser.h",
+        "src/trace_processor/importers/proto/android_probes_tracker.cc",
+        "src/trace_processor/importers/proto/android_probes_tracker.h",
         "src/trace_processor/importers/proto/graphics_event_module.cc",
         "src/trace_processor/importers/proto/graphics_event_module.h",
         "src/trace_processor/importers/proto/graphics_event_parser.cc",
@@ -1052,6 +1055,15 @@ filegroup(
     srcs = [
         "src/traced/probes/android_log/android_log_data_source.cc",
         "src/traced/probes/android_log/android_log_data_source.h",
+    ],
+)
+
+# GN target: //src/traced/probes/common:common
+filegroup(
+    name = "src_traced_probes_common_common",
+    srcs = [
+        "src/traced/probes/common/cpu_freq_info.cc",
+        "src/traced/probes/common/cpu_freq_info.h",
     ],
 )
 
@@ -2342,6 +2354,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_perfetto_protos",
     srcs = [
         "protos/perfetto/trace/perfetto/perfetto_metatrace.proto",
+        "protos/perfetto/trace/perfetto/tracing_service_event.proto",
     ],
     visibility = [
         PERFETTO_CONFIG.proto_library_visibility,
