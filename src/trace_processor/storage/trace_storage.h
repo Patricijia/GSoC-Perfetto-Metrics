@@ -515,6 +515,13 @@ class TraceStorage {
     return &package_list_table_;
   }
 
+  const tables::ProfilerSmapsTable& profiler_smaps_table() const {
+    return profiler_smaps_table_;
+  }
+  tables::ProfilerSmapsTable* mutable_profiler_smaps_table() {
+    return &profiler_smaps_table_;
+  }
+
   const tables::CpuProfileStackSampleTable& cpu_profile_stack_sample_table()
       const {
     return cpu_profile_stack_sample_table_;
@@ -775,6 +782,7 @@ class TraceStorage {
   tables::CpuProfileStackSampleTable cpu_profile_stack_sample_table_{
       &string_pool_, nullptr};
   tables::PackageListTable package_list_table_{&string_pool_, nullptr};
+  tables::ProfilerSmapsTable profiler_smaps_table_{&string_pool_, nullptr};
 
   // Symbol tables (mappings from frames to symbol names)
   tables::SymbolTable symbol_table_{&string_pool_, nullptr};
