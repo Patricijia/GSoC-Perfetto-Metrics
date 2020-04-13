@@ -20,10 +20,10 @@
 
 #include "perfetto/base/compiler.h"
 #include "perfetto/ext/base/string_utils.h"
-#include "src/trace_processor/ftrace_utils.h"
 #include "src/trace_processor/importers/ftrace/ftrace_descriptors.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/types/gfp_flags.h"
+#include "src/trace_processor/types/task_state.h"
 #include "src/trace_processor/types/variadic.h"
 
 #include "protos/perfetto/trace/ftrace/binder.pbzero.h"
@@ -445,13 +445,12 @@ bool ArgsSerializer::ParseGfpFlags(Variadic value) {
   if (!opt_name_idx || !opt_release_idx)
     return false;
 
-  StringId name = metadata_table.str_value()[*opt_name_idx];
-  base::StringView system_name = storage_->GetString(name);
+  const auto& str_value = metadata_table.str_value();
+  base::StringView system_name = str_value.GetString(*opt_name_idx);
   if (system_name != "Linux")
     return false;
 
-  StringId release = metadata_table.str_value()[*opt_release_idx];
-  base::StringView system_release = storage_->GetString(release);
+  base::StringView system_release = str_value.GetString(*opt_release_idx);
   auto version = ParseKernelReleaseVersion(system_release);
 
   WriteGfpFlag(value.uint_value, version, writer_);
