@@ -34,7 +34,7 @@ GlobalCallstackTrie::Node* GlobalCallstackTrie::GetOrCreateChild(
   return child;
 }
 
-std::vector<Interned<Frame>> GlobalCallstackTrie::BuildCallstack(
+std::vector<Interned<Frame>> GlobalCallstackTrie::BuildInverseCallstack(
     const Node* node) const {
   std::vector<Interned<Frame>> res;
   while (node != &root_) {
@@ -47,8 +47,23 @@ std::vector<Interned<Frame>> GlobalCallstackTrie::BuildCallstack(
 GlobalCallstackTrie::Node* GlobalCallstackTrie::CreateCallsite(
     const std::vector<FrameData>& callstack) {
   Node* node = &root_;
-  for (const FrameData& loc : callstack) {
+  // libunwindstack gives the frames top-first, but we want to bookkeep and
+  // emit as bottom first.
+  for (auto it = callstack.crbegin(); it != callstack.crend(); ++it) {
+    const FrameData& loc = *it;
     node = GetOrCreateChild(node, InternCodeLocation(loc));
+  }
+  return node;
+}
+
+GlobalCallstackTrie::Node* GlobalCallstackTrie::CreateCallsite(
+    const std::vector<Interned<Frame>>& callstack) {
+  Node* node = &root_;
+  // libunwindstack gives the frames top-first, but we want to bookkeep and
+  // emit as bottom first.
+  for (auto it = callstack.crbegin(); it != callstack.crend(); ++it) {
+    const Interned<Frame>& loc = *it;
+    node = GetOrCreateChild(node, loc);
   }
   return node;
 }

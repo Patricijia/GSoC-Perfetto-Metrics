@@ -21,15 +21,15 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_writer.h"
 #include "perfetto/trace_processor/status.h"
-#include "src/trace_processor/args_tracker.h"
-#include "src/trace_processor/event_tracker.h"
+#include "src/trace_processor/importers/common/args_tracker.h"
+#include "src/trace_processor/importers/common/event_tracker.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
+#include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/json/json_utils.h"
 #include "src/trace_processor/importers/proto/args_table_utils.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/track_event.descriptor.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/status_macros.h"
-#include "src/trace_processor/track_tracker.h"
+#include "src/trace_processor/util/status_macros.h"
 
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.pbzero.h"
@@ -147,9 +147,13 @@ class TrackEventParser::EventImporter {
       return util::OkStatus();
     }
 
+    // If we have legacy thread time / instruction count fields, also parse them
+    // into the counters tables.
+    ParseLegacyThreadTimeAndInstructionsAsCounters();
+
     // Parse extra counter values before parsing the actual event. This way, we
     // can update the slice's thread time / instruction count fields based on
-    // these counter values.
+    // these counter values and also parse them as slice attributes / arguments.
     ParseExtraCounterValues();
 
     // TODO(eseckler): Replace phase with type and remove handling of
@@ -282,8 +286,9 @@ class TrackEventParser::EventImporter {
       base::Optional<TrackId> opt_track_id =
           track_tracker->GetDescriptorTrack(track_uuid_);
       if (!opt_track_id) {
-        return util::ErrStatus("TrackEvent with unknown track_uuid %" PRIu64,
-                               track_uuid_);
+        track_tracker->ReserveDescriptorChildTrack(track_uuid_,
+                                                   /*parent_uuid=*/0);
+        opt_track_id = track_tracker->GetDescriptorTrack(track_uuid_);
       }
       track_id_ = *opt_track_id;
 
@@ -305,6 +310,22 @@ class TrackEventParser::EventImporter {
             UniqueTid utid_candidate = procs->UpdateThread(tid, pid);
             if (storage_->thread_table().upid()[utid_candidate] == upid_)
               legacy_passthrough_utid_ = utid_candidate;
+          }
+        } else {
+          auto* tracks = context_->storage->mutable_track_table();
+          auto track_index = tracks->id().IndexOf(track_id_);
+          if (track_index) {
+            const StringPool::Id& id = tracks->name()[*track_index];
+            if (id.is_null())
+              tracks->mutable_name()->Set(*track_index, name_id_);
+          }
+
+          if (sequence_state_->state()->pid_and_tid_valid()) {
+            uint32_t pid =
+                static_cast<uint32_t>(sequence_state_->state()->pid());
+            uint32_t tid =
+                static_cast<uint32_t>(sequence_state_->state()->tid());
+            legacy_passthrough_utid_ = procs->UpdateThread(tid, pid);
           }
         }
       }
@@ -455,6 +476,42 @@ class TrackEventParser::EventImporter {
 
     context_->event_tracker->PushCounter(ts_, event_data_->counter_value,
                                          track_id_);
+  }
+
+  void ParseLegacyThreadTimeAndInstructionsAsCounters() {
+    if (!utid_)
+      return;
+    // When these fields are set, we don't expect TrackDescriptor-based counters
+    // for thread time or instruction count for this thread in the trace, so we
+    // intern separate counter tracks based on name + utid.
+    if (event_data_->thread_timestamp) {
+      TrackId track_id = context_->track_tracker->InternThreadCounterTrack(
+          parser_->counter_name_thread_time_id_, *utid_);
+      context_->event_tracker->PushCounter(ts_, event_data_->thread_timestamp,
+                                           track_id);
+      if (legacy_event_.duration_us() &&
+          legacy_event_.has_thread_duration_us()) {
+        context_->event_tracker->PushCounter(
+            ts_ + (legacy_event_.duration_us() * 1000),
+            event_data_->thread_timestamp +
+                (legacy_event_.thread_duration_us() * 1000),
+            track_id);
+      }
+    }
+    if (event_data_->thread_instruction_count) {
+      TrackId track_id = context_->track_tracker->InternThreadCounterTrack(
+          parser_->counter_name_thread_instruction_count_id_, *utid_);
+      context_->event_tracker->PushCounter(
+          ts_, event_data_->thread_instruction_count, track_id);
+      if (legacy_event_.duration_us() &&
+          legacy_event_.has_thread_instruction_delta()) {
+        context_->event_tracker->PushCounter(
+            ts_ + (legacy_event_.duration_us() * 1000),
+            event_data_->thread_instruction_count +
+                legacy_event_.thread_instruction_delta(),
+            track_id);
+      }
+    }
   }
 
   void ParseExtraCounterValues() {

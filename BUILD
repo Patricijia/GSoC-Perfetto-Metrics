@@ -153,6 +153,7 @@ perfetto_cc_binary(
         ":protos_perfetto_trace_profiling_zero",
         ":protos_perfetto_trace_ps_zero",
         ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_system_info_zero",
         ":protos_perfetto_trace_track_event_zero",
     ],
 )
@@ -171,10 +172,12 @@ perfetto_cc_library(
         ":src_perfetto_cmd_perfetto_atoms",
         ":src_protozero_protozero",
         ":src_traced_probes_android_log_android_log",
+        ":src_traced_probes_common_common",
         ":src_traced_probes_data_source",
         ":src_traced_probes_filesystem_filesystem",
         ":src_traced_probes_ftrace_format_parser",
         ":src_traced_probes_ftrace_ftrace",
+        ":src_traced_probes_initial_display_state_initial_display_state",
         ":src_traced_probes_metatrace_metatrace",
         ":src_traced_probes_packages_list_packages_list",
         ":src_traced_probes_power_power",
@@ -182,6 +185,7 @@ perfetto_cc_library(
         ":src_traced_probes_probes_src",
         ":src_traced_probes_ps_ps",
         ":src_traced_probes_sys_stats_sys_stats",
+        ":src_traced_probes_system_info_system_info",
         ":src_traced_service_service",
         ":src_tracing_common",
         ":src_tracing_consumer_api_deprecated_consumer_api_deprecated",
@@ -245,6 +249,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_profiling_zero",
         ":protos_perfetto_trace_ps_zero",
         ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_system_info_zero",
         ":protos_perfetto_trace_track_event_zero",
     ],
     linkstatic = True,
@@ -293,6 +298,7 @@ filegroup(
         "include/perfetto/ext/base/thread_annotations.h",
         "include/perfetto/ext/base/thread_checker.h",
         "include/perfetto/ext/base/thread_task_runner.h",
+        "include/perfetto/ext/base/thread_utils.h",
         "include/perfetto/ext/base/unix_socket.h",
         "include/perfetto/ext/base/unix_task_runner.h",
         "include/perfetto/ext/base/utils.h",
@@ -458,6 +464,7 @@ filegroup(
         "include/perfetto/tracing/core/data_source_config.h",
         "include/perfetto/tracing/core/data_source_descriptor.h",
         "include/perfetto/tracing/core/trace_config.h",
+        "include/perfetto/tracing/core/tracing_service_capabilities.h",
         "include/perfetto/tracing/core/tracing_service_state.h",
     ],
 )
@@ -666,6 +673,15 @@ filegroup(
     ],
 )
 
+# GN target: //src/trace_processor/analysis:analysis
+filegroup(
+    name = "src_trace_processor_analysis_analysis",
+    srcs = [
+        "src/trace_processor/analysis/describe_slice.cc",
+        "src/trace_processor/analysis/describe_slice.h",
+    ],
+)
+
 # GN target: //src/trace_processor/containers:containers
 filegroup(
     name = "src_trace_processor_containers_containers",
@@ -695,6 +711,27 @@ filegroup(
         "src/trace_processor/db/table.h",
         "src/trace_processor/db/typed_column.h",
         "src/trace_processor/db/typed_column_internal.h",
+    ],
+)
+
+# GN target: //src/trace_processor/importers:common
+filegroup(
+    name = "src_trace_processor_importers_common",
+    srcs = [
+        "src/trace_processor/importers/common/args_tracker.cc",
+        "src/trace_processor/importers/common/args_tracker.h",
+        "src/trace_processor/importers/common/clock_tracker.cc",
+        "src/trace_processor/importers/common/clock_tracker.h",
+        "src/trace_processor/importers/common/event_tracker.cc",
+        "src/trace_processor/importers/common/event_tracker.h",
+        "src/trace_processor/importers/common/global_args_tracker.cc",
+        "src/trace_processor/importers/common/global_args_tracker.h",
+        "src/trace_processor/importers/common/process_tracker.cc",
+        "src/trace_processor/importers/common/process_tracker.h",
+        "src/trace_processor/importers/common/slice_tracker.cc",
+        "src/trace_processor/importers/common/slice_tracker.h",
+        "src/trace_processor/importers/common/track_tracker.cc",
+        "src/trace_processor/importers/common/track_tracker.h",
     ],
 )
 
@@ -781,11 +818,17 @@ filegroup(
         "src/trace_processor/sqlite/scoped_db.h",
         "src/trace_processor/sqlite/span_join_operator_table.cc",
         "src/trace_processor/sqlite/span_join_operator_table.h",
+        "src/trace_processor/sqlite/sql_stats_table.cc",
+        "src/trace_processor/sqlite/sql_stats_table.h",
         "src/trace_processor/sqlite/sqlite3_str_split.cc",
         "src/trace_processor/sqlite/sqlite3_str_split.h",
+        "src/trace_processor/sqlite/sqlite_raw_table.cc",
+        "src/trace_processor/sqlite/sqlite_raw_table.h",
         "src/trace_processor/sqlite/sqlite_table.cc",
         "src/trace_processor/sqlite/sqlite_table.h",
         "src/trace_processor/sqlite/sqlite_utils.h",
+        "src/trace_processor/sqlite/stats_table.cc",
+        "src/trace_processor/sqlite/stats_table.h",
         "src/trace_processor/sqlite/window_operator_table.cc",
         "src/trace_processor/sqlite/window_operator_table.h",
     ],
@@ -822,19 +865,32 @@ filegroup(
 filegroup(
     name = "src_trace_processor_types_types",
     srcs = [
+        "src/trace_processor/types/destructible.cc",
+        "src/trace_processor/types/destructible.h",
         "src/trace_processor/types/gfp_flags.cc",
         "src/trace_processor/types/gfp_flags.h",
+        "src/trace_processor/types/task_state.cc",
+        "src/trace_processor/types/task_state.h",
+        "src/trace_processor/types/trace_processor_context.h",
         "src/trace_processor/types/variadic.cc",
         "src/trace_processor/types/variadic.h",
     ],
 )
 
-# GN target: //src/trace_processor:descriptors
+# GN target: //src/trace_processor/util:descriptors
 filegroup(
-    name = "src_trace_processor_descriptors",
+    name = "src_trace_processor_util_descriptors",
     srcs = [
-        "src/trace_processor/descriptors.cc",
-        "src/trace_processor/descriptors.h",
+        "src/trace_processor/util/descriptors.cc",
+        "src/trace_processor/util/descriptors.h",
+    ],
+)
+
+# GN target: //src/trace_processor/util:util
+filegroup(
+    name = "src_trace_processor_util_util",
+    srcs = [
+        "src/trace_processor/util/status_macros.h",
     ],
 )
 
@@ -847,21 +903,28 @@ filegroup(
     ],
 )
 
+# GN target: //src/trace_processor:ftrace_descriptors
+filegroup(
+    name = "src_trace_processor_ftrace_descriptors",
+    srcs = [
+        "src/trace_processor/importers/ftrace/ftrace_descriptors.cc",
+        "src/trace_processor/importers/ftrace/ftrace_descriptors.h",
+    ],
+)
+
 # GN target: //src/trace_processor:lib
 filegroup(
     name = "src_trace_processor_lib",
     srcs = [
-        "src/trace_processor/experimental_counter_dur_generator.cc",
-        "src/trace_processor/experimental_counter_dur_generator.h",
-        "src/trace_processor/experimental_flamegraph_generator.cc",
-        "src/trace_processor/experimental_flamegraph_generator.h",
+        "src/trace_processor/dynamic/describe_slice_generator.cc",
+        "src/trace_processor/dynamic/describe_slice_generator.h",
+        "src/trace_processor/dynamic/experimental_counter_dur_generator.cc",
+        "src/trace_processor/dynamic/experimental_counter_dur_generator.h",
+        "src/trace_processor/dynamic/experimental_flamegraph_generator.cc",
+        "src/trace_processor/dynamic/experimental_flamegraph_generator.h",
+        "src/trace_processor/dynamic/experimental_slice_layout_generator.cc",
+        "src/trace_processor/dynamic/experimental_slice_layout_generator.h",
         "src/trace_processor/read_trace.cc",
-        "src/trace_processor/sql_stats_table.cc",
-        "src/trace_processor/sql_stats_table.h",
-        "src/trace_processor/sqlite_raw_table.cc",
-        "src/trace_processor/sqlite_raw_table.h",
-        "src/trace_processor/stats_table.cc",
-        "src/trace_processor/stats_table.h",
         "src/trace_processor/trace_processor.cc",
         "src/trace_processor/trace_processor_impl.cc",
         "src/trace_processor/trace_processor_impl.h",
@@ -872,13 +935,10 @@ filegroup(
 filegroup(
     name = "src_trace_processor_storage_full",
     srcs = [
-        "src/trace_processor/additional_modules.cc",
-        "src/trace_processor/additional_modules.h",
-        "src/trace_processor/ftrace_utils.cc",
+        "src/trace_processor/importers/additional_modules.cc",
+        "src/trace_processor/importers/additional_modules.h",
         "src/trace_processor/importers/ftrace/binder_tracker.cc",
         "src/trace_processor/importers/ftrace/binder_tracker.h",
-        "src/trace_processor/importers/ftrace/ftrace_descriptors.cc",
-        "src/trace_processor/importers/ftrace/ftrace_descriptors.h",
         "src/trace_processor/importers/ftrace/ftrace_module_impl.cc",
         "src/trace_processor/importers/ftrace/ftrace_module_impl.h",
         "src/trace_processor/importers/ftrace/ftrace_parser.cc",
@@ -907,6 +967,8 @@ filegroup(
         "src/trace_processor/importers/proto/android_probes_module.h",
         "src/trace_processor/importers/proto/android_probes_parser.cc",
         "src/trace_processor/importers/proto/android_probes_parser.h",
+        "src/trace_processor/importers/proto/android_probes_tracker.cc",
+        "src/trace_processor/importers/proto/android_probes_tracker.h",
         "src/trace_processor/importers/proto/graphics_event_module.cc",
         "src/trace_processor/importers/proto/graphics_event_module.h",
         "src/trace_processor/importers/proto/graphics_event_parser.cc",
@@ -923,6 +985,12 @@ filegroup(
         "src/trace_processor/importers/proto/system_probes_parser.h",
         "src/trace_processor/importers/proto/vulkan_memory_tracker.cc",
         "src/trace_processor/importers/proto/vulkan_memory_tracker.h",
+        "src/trace_processor/importers/syscalls/syscall_tracker.cc",
+        "src/trace_processor/importers/syscalls/syscalls_aarch32.h",
+        "src/trace_processor/importers/syscalls/syscalls_aarch64.h",
+        "src/trace_processor/importers/syscalls/syscalls_armeabi.h",
+        "src/trace_processor/importers/syscalls/syscalls_x86.h",
+        "src/trace_processor/importers/syscalls/syscalls_x86_64.h",
         "src/trace_processor/importers/systrace/systrace_line_parser.cc",
         "src/trace_processor/importers/systrace/systrace_line_parser.h",
         "src/trace_processor/importers/systrace/systrace_line_tokenizer.cc",
@@ -931,12 +999,6 @@ filegroup(
         "src/trace_processor/importers/systrace/systrace_parser.h",
         "src/trace_processor/importers/systrace/systrace_trace_parser.cc",
         "src/trace_processor/importers/systrace/systrace_trace_parser.h",
-        "src/trace_processor/syscall_tracker.cc",
-        "src/trace_processor/syscalls_aarch32.h",
-        "src/trace_processor/syscalls_aarch64.h",
-        "src/trace_processor/syscalls_armeabi.h",
-        "src/trace_processor/syscalls_x86.h",
-        "src/trace_processor/syscalls_x86_64.h",
     ],
 )
 
@@ -944,24 +1006,11 @@ filegroup(
 filegroup(
     name = "src_trace_processor_storage_minimal",
     srcs = [
-        "src/trace_processor/args_tracker.cc",
-        "src/trace_processor/args_tracker.h",
         "src/trace_processor/chunked_trace_reader.h",
-        "src/trace_processor/clock_tracker.cc",
-        "src/trace_processor/clock_tracker.h",
-        "src/trace_processor/default_modules.cc",
-        "src/trace_processor/default_modules.h",
-        "src/trace_processor/destructible.cc",
-        "src/trace_processor/destructible.h",
-        "src/trace_processor/event_tracker.cc",
-        "src/trace_processor/event_tracker.h",
         "src/trace_processor/forwarding_trace_parser.cc",
         "src/trace_processor/forwarding_trace_parser.h",
-        "src/trace_processor/ftrace_utils.h",
-        "src/trace_processor/global_args_tracker.cc",
-        "src/trace_processor/global_args_tracker.h",
-        "src/trace_processor/heap_profile_tracker.cc",
-        "src/trace_processor/heap_profile_tracker.h",
+        "src/trace_processor/importers/default_modules.cc",
+        "src/trace_processor/importers/default_modules.h",
         "src/trace_processor/importers/ftrace/ftrace_module.cc",
         "src/trace_processor/importers/ftrace/ftrace_module.h",
         "src/trace_processor/importers/fuchsia/fuchsia_record.h",
@@ -974,8 +1023,14 @@ filegroup(
         "src/trace_processor/importers/ninja/ninja_log_parser.h",
         "src/trace_processor/importers/proto/args_table_utils.cc",
         "src/trace_processor/importers/proto/args_table_utils.h",
+        "src/trace_processor/importers/proto/heap_profile_tracker.cc",
+        "src/trace_processor/importers/proto/heap_profile_tracker.h",
+        "src/trace_processor/importers/proto/metadata_tracker.cc",
+        "src/trace_processor/importers/proto/metadata_tracker.h",
         "src/trace_processor/importers/proto/packet_sequence_state.cc",
         "src/trace_processor/importers/proto/packet_sequence_state.h",
+        "src/trace_processor/importers/proto/perf_sample_tracker.cc",
+        "src/trace_processor/importers/proto/perf_sample_tracker.h",
         "src/trace_processor/importers/proto/profile_module.cc",
         "src/trace_processor/importers/proto/profile_module.h",
         "src/trace_processor/importers/proto/profile_packet_utils.cc",
@@ -987,37 +1042,25 @@ filegroup(
         "src/trace_processor/importers/proto/proto_trace_parser.h",
         "src/trace_processor/importers/proto/proto_trace_tokenizer.cc",
         "src/trace_processor/importers/proto/proto_trace_tokenizer.h",
+        "src/trace_processor/importers/proto/stack_profile_tracker.cc",
+        "src/trace_processor/importers/proto/stack_profile_tracker.h",
         "src/trace_processor/importers/proto/track_event_module.cc",
         "src/trace_processor/importers/proto/track_event_module.h",
         "src/trace_processor/importers/proto/track_event_parser.cc",
         "src/trace_processor/importers/proto/track_event_parser.h",
         "src/trace_processor/importers/proto/track_event_tokenizer.cc",
         "src/trace_processor/importers/proto/track_event_tokenizer.h",
+        "src/trace_processor/importers/syscalls/syscall_tracker.h",
         "src/trace_processor/importers/systrace/systrace_line.h",
-        "src/trace_processor/metadata_tracker.cc",
-        "src/trace_processor/metadata_tracker.h",
-        "src/trace_processor/perf_sample_tracker.cc",
-        "src/trace_processor/perf_sample_tracker.h",
-        "src/trace_processor/process_tracker.cc",
-        "src/trace_processor/process_tracker.h",
-        "src/trace_processor/slice_tracker.cc",
-        "src/trace_processor/slice_tracker.h",
-        "src/trace_processor/stack_profile_tracker.cc",
-        "src/trace_processor/stack_profile_tracker.h",
-        "src/trace_processor/status_macros.h",
-        "src/trace_processor/syscall_tracker.h",
         "src/trace_processor/timestamped_trace_piece.h",
         "src/trace_processor/trace_blob_view.h",
         "src/trace_processor/trace_parser.h",
         "src/trace_processor/trace_processor_context.cc",
-        "src/trace_processor/trace_processor_context.h",
         "src/trace_processor/trace_processor_storage.cc",
         "src/trace_processor/trace_processor_storage_impl.cc",
         "src/trace_processor/trace_processor_storage_impl.h",
         "src/trace_processor/trace_sorter.cc",
         "src/trace_processor/trace_sorter.h",
-        "src/trace_processor/track_tracker.cc",
-        "src/trace_processor/track_tracker.h",
         "src/trace_processor/virtual_destructors.cc",
     ],
 )
@@ -1036,6 +1079,15 @@ filegroup(
     srcs = [
         "src/traced/probes/android_log/android_log_data_source.cc",
         "src/traced/probes/android_log/android_log_data_source.h",
+    ],
+)
+
+# GN target: //src/traced/probes/common:common
+filegroup(
+    name = "src_traced_probes_common_common",
+    srcs = [
+        "src/traced/probes/common/cpu_freq_info.cc",
+        "src/traced/probes/common/cpu_freq_info.h",
     ],
 )
 
@@ -1105,6 +1157,15 @@ filegroup(
     ],
 )
 
+# GN target: //src/traced/probes/initial_display_state:initial_display_state
+filegroup(
+    name = "src_traced_probes_initial_display_state_initial_display_state",
+    srcs = [
+        "src/traced/probes/initial_display_state/initial_display_state_data_source.cc",
+        "src/traced/probes/initial_display_state/initial_display_state_data_source.h",
+    ],
+)
+
 # GN target: //src/traced/probes/metatrace:metatrace
 filegroup(
     name = "src_traced_probes_metatrace_metatrace",
@@ -1147,6 +1208,15 @@ filegroup(
     srcs = [
         "src/traced/probes/sys_stats/sys_stats_data_source.cc",
         "src/traced/probes/sys_stats/sys_stats_data_source.h",
+    ],
+)
+
+# GN target: //src/traced/probes/system_info:system_info
+filegroup(
+    name = "src_traced_probes_system_info_system_info",
+    srcs = [
+        "src/traced/probes/system_info/system_info_data_source.cc",
+        "src/traced/probes/system_info/system_info_data_source.h",
     ],
 )
 
@@ -1402,6 +1472,7 @@ perfetto_proto_library(
         "protos/perfetto/common/observable_events.proto",
         "protos/perfetto/common/sys_stats_counters.proto",
         "protos/perfetto/common/trace_stats.proto",
+        "protos/perfetto/common/tracing_service_capabilities.proto",
         "protos/perfetto/common/tracing_service_state.proto",
         "protos/perfetto/common/track_event_descriptor.proto",
     ],
@@ -1990,6 +2061,7 @@ perfetto_proto_library(
     srcs = [
         "protos/perfetto/trace/android/android_log.proto",
         "protos/perfetto/trace/android/graphics_frame_event.proto",
+        "protos/perfetto/trace/android/initial_display_state.proto",
         "protos/perfetto/trace/android/packages_list.proto",
     ],
     visibility = [
@@ -2290,6 +2362,7 @@ perfetto_proto_library(
         ":protos_perfetto_trace_profiling_protos",
         ":protos_perfetto_trace_ps_protos",
         ":protos_perfetto_trace_sys_stats_protos",
+        ":protos_perfetto_trace_system_info_protos",
         ":protos_perfetto_trace_track_event_protos",
     ],
 )
@@ -2315,6 +2388,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_perfetto_protos",
     srcs = [
         "protos/perfetto/trace/perfetto/perfetto_metatrace.proto",
+        "protos/perfetto/trace/perfetto/tracing_service_event.proto",
     ],
     visibility = [
         PERFETTO_CONFIG.proto_library_visibility,
@@ -2385,6 +2459,10 @@ perfetto_proto_library(
     visibility = [
         PERFETTO_CONFIG.proto_library_visibility,
     ],
+    deps = [
+        ":protos_perfetto_metrics_android_protos",
+        ":protos_perfetto_metrics_protos",
+    ],
 )
 
 # GN target: //protos/perfetto/trace_processor:zero
@@ -2410,6 +2488,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/profiling/heap_graph.proto",
         "protos/perfetto/trace/profiling/profile_common.proto",
         "protos/perfetto/trace/profiling/profile_packet.proto",
+        "protos/perfetto/trace/profiling/smaps.proto",
     ],
     visibility = [
         PERFETTO_CONFIG.proto_library_visibility,
@@ -2479,6 +2558,33 @@ perfetto_cc_protozero_library(
     name = "protos_perfetto_trace_sys_stats_zero",
     deps = [
         ":protos_perfetto_trace_sys_stats_protos",
+    ],
+)
+
+# GN target: //protos/perfetto/trace/system_info:lite
+perfetto_cc_proto_library(
+    name = "protos_perfetto_trace_system_info_lite",
+    deps = [
+        ":protos_perfetto_trace_system_info_protos",
+    ],
+)
+
+# GN target: //protos/perfetto/trace/system_info:zero
+perfetto_proto_library(
+    name = "protos_perfetto_trace_system_info_protos",
+    srcs = [
+        "protos/perfetto/trace/system_info/cpu_info.proto",
+    ],
+    visibility = [
+        PERFETTO_CONFIG.proto_library_visibility,
+    ],
+)
+
+# GN target: //protos/perfetto/trace/system_info:zero
+perfetto_cc_protozero_library(
+    name = "protos_perfetto_trace_system_info_zero",
+    deps = [
+        ":protos_perfetto_trace_system_info_protos",
     ],
 )
 
@@ -2643,6 +2749,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_profiling_zero",
         ":protos_perfetto_trace_ps_zero",
         ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_system_info_zero",
         ":protos_perfetto_trace_track_event_zero",
     ],
     linkstatic = True,
@@ -2721,6 +2828,7 @@ perfetto_cc_binary(
         ":protos_perfetto_trace_profiling_zero",
         ":protos_perfetto_trace_ps_zero",
         ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_system_info_zero",
         ":protos_perfetto_trace_track_event_zero",
         ":src_perfetto_cmd_protos",
     ] + PERFETTO_CONFIG.deps.zlib,
@@ -2732,10 +2840,12 @@ perfetto_cc_library(
     srcs = [
         ":src_base_base",
         ":src_protozero_protozero",
+        ":src_trace_processor_analysis_analysis",
         ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
-        ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",
+        ":src_trace_processor_ftrace_descriptors",
+        ":src_trace_processor_importers_common",
         ":src_trace_processor_lib",
         ":src_trace_processor_metrics_lib",
         ":src_trace_processor_sqlite_sqlite",
@@ -2745,6 +2855,8 @@ perfetto_cc_library(
         ":src_trace_processor_tables_tables",
         ":src_trace_processor_track_event_descriptor",
         ":src_trace_processor_types_types",
+        ":src_trace_processor_util_descriptors",
+        ":src_trace_processor_util_util",
     ],
     hdrs = [
         ":include_perfetto_base_base",
@@ -2787,6 +2899,7 @@ perfetto_cc_library(
                ":protos_perfetto_trace_profiling_zero",
                ":protos_perfetto_trace_ps_zero",
                ":protos_perfetto_trace_sys_stats_zero",
+               ":protos_perfetto_trace_system_info_zero",
                ":protos_perfetto_trace_track_event_zero",
            ] + PERFETTO_CONFIG.deps.jsoncpp +
            PERFETTO_CONFIG.deps.sqlite +
@@ -2801,9 +2914,9 @@ perfetto_cc_library(
 perfetto_cc_binary(
     name = "trace_processor_shell",
     srcs = [
-        "src/trace_processor/proto_to_json.cc",
-        "src/trace_processor/proto_to_json.h",
         "src/trace_processor/trace_processor_shell.cc",
+        "src/trace_processor/util/proto_to_json.cc",
+        "src/trace_processor/util/proto_to_json.h",
         ":include_perfetto_base_base",
         ":include_perfetto_ext_base_base",
         ":include_perfetto_ext_trace_processor_export_json",
@@ -2817,10 +2930,12 @@ perfetto_cc_binary(
         ":src_profiling_symbolizer_symbolize_database",
         ":src_profiling_symbolizer_symbolizer",
         ":src_protozero_protozero",
+        ":src_trace_processor_analysis_analysis",
         ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
-        ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",
+        ":src_trace_processor_ftrace_descriptors",
+        ":src_trace_processor_importers_common",
         ":src_trace_processor_lib",
         ":src_trace_processor_metrics_lib",
         ":src_trace_processor_rpc_httpd",
@@ -2832,6 +2947,8 @@ perfetto_cc_binary(
         ":src_trace_processor_tables_tables",
         ":src_trace_processor_track_event_descriptor",
         ":src_trace_processor_types_types",
+        ":src_trace_processor_util_descriptors",
+        ":src_trace_processor_util_util",
     ],
     visibility = [
         "//visibility:public",
@@ -2865,6 +2982,7 @@ perfetto_cc_binary(
                ":protos_perfetto_trace_profiling_zero",
                ":protos_perfetto_trace_ps_zero",
                ":protos_perfetto_trace_sys_stats_zero",
+               ":protos_perfetto_trace_system_info_zero",
                ":protos_perfetto_trace_track_event_zero",
            ] + PERFETTO_CONFIG.deps.jsoncpp +
            PERFETTO_CONFIG.deps.linenoise +
@@ -2954,6 +3072,7 @@ perfetto_cc_library(
         ":protos_perfetto_trace_profiling_zero",
         ":protos_perfetto_trace_ps_zero",
         ":protos_perfetto_trace_sys_stats_zero",
+        ":protos_perfetto_trace_system_info_zero",
         ":protos_perfetto_trace_track_event_zero",
         ":protos_third_party_pprof_zero",
     ] + PERFETTO_CONFIG.deps.zlib,
@@ -2979,10 +3098,12 @@ perfetto_cc_binary(
         ":src_profiling_symbolizer_symbolize_database",
         ":src_profiling_symbolizer_symbolizer",
         ":src_protozero_protozero",
+        ":src_trace_processor_analysis_analysis",
         ":src_trace_processor_containers_containers",
         ":src_trace_processor_db_lib",
-        ":src_trace_processor_descriptors",
         ":src_trace_processor_export_json",
+        ":src_trace_processor_ftrace_descriptors",
+        ":src_trace_processor_importers_common",
         ":src_trace_processor_lib",
         ":src_trace_processor_metrics_lib",
         ":src_trace_processor_sqlite_sqlite",
@@ -2992,6 +3113,8 @@ perfetto_cc_binary(
         ":src_trace_processor_tables_tables",
         ":src_trace_processor_track_event_descriptor",
         ":src_trace_processor_types_types",
+        ":src_trace_processor_util_descriptors",
+        ":src_trace_processor_util_util",
         ":tools_trace_to_text_common",
         ":tools_trace_to_text_full",
         ":tools_trace_to_text_pprofbuilder",
@@ -3028,6 +3151,7 @@ perfetto_cc_binary(
                ":protos_perfetto_trace_profiling_zero",
                ":protos_perfetto_trace_ps_zero",
                ":protos_perfetto_trace_sys_stats_zero",
+               ":protos_perfetto_trace_system_info_zero",
                ":protos_perfetto_trace_track_event_zero",
                ":protos_third_party_pprof_zero",
            ] + PERFETTO_CONFIG.deps.jsoncpp +

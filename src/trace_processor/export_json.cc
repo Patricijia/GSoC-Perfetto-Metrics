@@ -21,6 +21,7 @@
 #include <stdio.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <deque>
 #include <limits>
@@ -31,8 +32,8 @@
 #include "src/trace_processor/importers/json/json_utils.h"
 #include "src/trace_processor/storage/metadata.h"
 #include "src/trace_processor/storage/trace_storage.h"
-#include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_processor_storage_impl.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 #include <json/reader.h>
@@ -527,7 +528,7 @@ class JsonExporter {
 
       for (uint32_t i = 0; i < count; ++i) {
         ArgSetId set_id = arg_table.arg_set_id()[i];
-        const char* key = GetNonNullString(storage_, arg_table.key()[i]);
+        const char* key = arg_table.key().GetString(i).c_str();
         Variadic value = storage_->GetArgValue(i);
         AppendArg(set_id, key, VariadicToJson(value));
       }
@@ -907,6 +908,12 @@ class JsonExporter {
                                       : exported_pid);
             event["id2"]["local"] = PrintUint64(track_id.value);
           } else {
+            if (legacy_utid) {
+              auto pid_and_tid = UtidToPidAndTid(*legacy_utid);
+              event["pid"] = Json::Int(pid_and_tid.first);
+              event["tid"] = Json::Int(pid_and_tid.second);
+            }
+
             // Some legacy importers don't understand "id2" fields, so we use
             // the "usually" global "id" field instead. This works as long as
             // the event phase is not in {'N', 'D', 'O', '(', ')'}, see
@@ -1200,17 +1207,15 @@ class JsonExporter {
       switch (static_cast<size_t>(key)) {
         case metadata::benchmark_description:
           writer_.AppendTelemetryMetadataString(
-              "benchmarkDescriptions",
-              GetNonNullString(storage_, str_values[pos]));
+              "benchmarkDescriptions", str_values.GetString(pos).c_str());
           break;
 
         case metadata::benchmark_name:
           writer_.AppendTelemetryMetadataString(
-              "benchmarks", GetNonNullString(storage_, str_values[pos]));
+              "benchmarks", str_values.GetString(pos).c_str());
           break;
 
         case metadata::benchmark_start_time_us:
-
           writer_.SetTelemetryMetadataTimestamp("benchmarkStart",
                                                 *int_values[pos]);
           break;
@@ -1221,12 +1226,12 @@ class JsonExporter {
 
         case metadata::benchmark_label:
           writer_.AppendTelemetryMetadataString(
-              "labels", GetNonNullString(storage_, str_values[pos]));
+              "labels", str_values.GetString(pos).c_str());
           break;
 
         case metadata::benchmark_story_name:
           writer_.AppendTelemetryMetadataString(
-              "stories", GetNonNullString(storage_, str_values[pos]));
+              "stories", str_values.GetString(pos).c_str());
           break;
 
         case metadata::benchmark_story_run_index:
@@ -1240,7 +1245,7 @@ class JsonExporter {
 
         case metadata::benchmark_story_tags:  // repeated
           writer_.AppendTelemetryMetadataString(
-              "storyTags", GetNonNullString(storage_, str_values[pos]));
+              "storyTags", str_values.GetString(pos).c_str());
           break;
 
         default:

@@ -84,23 +84,15 @@ struct Frame {
 //  * libc_init -> main -> foo -> alloc_buf
 //  * libc_init -> main -> bar -> alloc_buf
 // The tree looks as following:
-//
-//             libc_init   libc_init
-//                   |      |
-//                  main   main
+//             alloc_buf  alloc_buf
 //                   |      |
 //                  foo    bar
 //                    \    /
-//                   alloc_buf
+//                      main
+//                       |
+//                   libc_init
 //                       |
 //                    [root_]
-//
-// TODO(fmayer): we currently insert starting with the leafmost frame. So the
-// root_ frame has all distinct leaf nodes as its immediate children, and
-// |CreateCallsite| returns a pointer to the "outermost" function node (so
-// there's a distinct libc_init node per callstack). Most likely less efficient
-// than interning in the "intuitive" way, but not guaranteed (consider a deeply
-// nested callchain fragment at the leaf, which is called from many places).
 class GlobalCallstackTrie {
  public:
   // Optionally, Nodes can be externally refcounted via |IncrementNode| and
@@ -143,11 +135,15 @@ class GlobalCallstackTrie {
   GlobalCallstackTrie(GlobalCallstackTrie&&) = delete;
   GlobalCallstackTrie& operator=(GlobalCallstackTrie&&) = delete;
 
+  Interned<Frame> InternCodeLocation(const FrameData& loc);
+
   Node* CreateCallsite(const std::vector<FrameData>& callstack);
+  Node* CreateCallsite(const std::vector<Interned<Frame>>& callstack);
+
   static void IncrementNode(Node* node);
   static void DecrementNode(Node* node);
 
-  std::vector<Interned<Frame>> BuildCallstack(const Node* node) const;
+  std::vector<Interned<Frame>> BuildInverseCallstack(const Node* node) const;
 
   // Purges all interned callstacks (and the associated internings), without
   // restarting any interning sequences. Incompatible with external refcounting
@@ -160,7 +156,6 @@ class GlobalCallstackTrie {
  private:
   Node* GetOrCreateChild(Node* self, const Interned<Frame>& loc);
 
-  Interned<Frame> InternCodeLocation(const FrameData& loc);
   Interned<Frame> MakeRootFrame();
 
   Interner<std::string> string_interner_;

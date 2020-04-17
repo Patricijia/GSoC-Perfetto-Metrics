@@ -16,9 +16,9 @@
 
 #include "src/trace_processor/importers/ftrace/rss_stat_tracker.h"
 
-#include "src/trace_processor/event_tracker.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/importers/common/event_tracker.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 #include "protos/perfetto/trace/ftrace/kmem.pbzero.h"
 
@@ -89,6 +89,14 @@ base::Optional<UniqueTid> RssStatTracker::FindUtidForMmId(int64_t mm_id,
   // of this vm struct with this thread.
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
   if (it->second == utid) {
+    mm_id_to_utid_.erase(it);
+    return base::nullopt;
+  }
+
+  // Verify that the utid in the map is still alive. This can happen if an mm
+  // struct we saw in the past is about to be reused after thread but we don't
+  // know the new process that struct will be associated with.
+  if (!context_->process_tracker->IsThreadAlive(it->second)) {
     mm_id_to_utid_.erase(it);
     return base::nullopt;
   }

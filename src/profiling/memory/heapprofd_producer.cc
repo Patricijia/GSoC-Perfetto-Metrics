@@ -28,6 +28,7 @@
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/thread_task_runner.h"
+#include "perfetto/ext/base/watchdog_posix.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_config.h"
@@ -43,6 +44,7 @@ constexpr size_t kUnwinderThreads = 5;
 
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
+constexpr uint32_t kGuardrailIntervalMs = 30 * 1000;
 
 constexpr uint32_t kChildModeWatchdogPeriodMs = 10 * 1000;
 
@@ -125,7 +127,17 @@ HeapprofdProducer::HeapprofdProducer(HeapprofdMode mode,
       mode_(mode),
       unwinding_workers_(MakeUnwindingWorkers(this, kUnwinderThreads)),
       socket_delegate_(this),
-      weak_factory_(this) {}
+      weak_factory_(this) {
+  CheckDataSourceMemory();  // Kick off guardrail task.
+  stat_fd_.reset(open("/proc/self/stat", O_RDONLY));
+  if (!stat_fd_) {
+    PERFETTO_ELOG(
+        "Failed to open /proc/self/stat. Cannot accept profiles "
+        "with CPU guardrails.");
+  } else {
+    CheckDataSourceCpu();  // Kick off guardrail task.
+  }
+}
 
 HeapprofdProducer::~HeapprofdProducer() = default;
 
@@ -353,6 +365,16 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
     }
   }
 
+  base::Optional<uint64_t> start_cputime_sec;
+  if (heapprofd_config.max_heapprofd_cpu_secs() > 0) {
+    start_cputime_sec = GetCputimeSec();
+
+    if (!start_cputime_sec) {
+      PERFETTO_ELOG("Failed to enforce CPU guardrail. Rejecting config.");
+      return;
+    }
+  }
+
   auto buffer_id = static_cast<BufferID>(ds_config.target_buffer());
   DataSource data_source(endpoint_->CreateTraceWriter(buffer_id));
   data_source.id = id;
@@ -364,6 +386,7 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   data_source.config = heapprofd_config;
   data_source.normalized_cmdlines = std::move(normalized_cmdlines.value());
   data_source.stop_timeout_ms = ds_config.stop_timeout_ms();
+  data_source.start_cputime_sec = start_cputime_sec;
 
   InterningOutputTracker::WriteFixedInterningsPacket(
       data_source.trace_writer.get());
@@ -381,6 +404,20 @@ bool HeapprofdProducer::IsPidProfiled(pid_t pid) {
       return true;
   }
   return false;
+}
+
+base::Optional<uint64_t> HeapprofdProducer::GetCputimeSec() {
+  if (!stat_fd_) {
+    return base::nullopt;
+  }
+  lseek(stat_fd_.get(), 0, SEEK_SET);
+  base::ProcStat stat;
+  if (!ReadProcStat(stat_fd_.get(), &stat)) {
+    PERFETTO_ELOG("Failed to read stat file to enforce guardrails.");
+    return base::nullopt;
+  }
+  return (stat.utime + stat.stime) /
+         static_cast<unsigned long>(sysconf(_SC_CLK_TCK));
 }
 
 void HeapprofdProducer::SetStartupProperties(DataSource* data_source) {
@@ -404,6 +441,9 @@ void HeapprofdProducer::SignalRunningProcesses(DataSource* data_source) {
 
   if (!data_source->normalized_cmdlines.empty())
     FindPidsForCmdlines(data_source->normalized_cmdlines, &pids);
+
+  if (heapprofd_config.min_anonymous_memory_kb() > 0)
+    RemoveUnderAnonThreshold(heapprofd_config.min_anonymous_memory_kb(), &pids);
 
   for (auto pid_it = pids.cbegin(); pid_it != pids.cend();) {
     pid_t pid = *pid_it;
@@ -490,33 +530,39 @@ void HeapprofdProducer::StopDataSource(DataSourceInstanceID id) {
   }
 
   DataSource& data_source = it->second;
-  data_source.shutting_down = true;
+  data_source.was_stopped = true;
+  ShutdownDataSource(&data_source);
+}
 
+void HeapprofdProducer::ShutdownDataSource(DataSource* data_source) {
+  data_source->shutting_down = true;
   // If no processes connected, or all of them have already disconnected
   // (and have been dumped) and no PIDs have been rejected,
   // MaybeFinishDataSource can tear down the data source.
-  if (MaybeFinishDataSource(&data_source))
+  if (MaybeFinishDataSource(data_source))
     return;
 
-  if (!data_source.rejected_pids.empty()) {
-    auto trace_packet = data_source.trace_writer->NewTracePacket();
+  if (!data_source->rejected_pids.empty()) {
+    auto trace_packet = data_source->trace_writer->NewTracePacket();
     ProfilePacket* profile_packet = trace_packet->set_profile_packet();
-    for (pid_t rejected_pid : data_source.rejected_pids) {
+    for (pid_t rejected_pid : data_source->rejected_pids) {
       ProfilePacket::ProcessHeapSamples* proto =
           profile_packet->add_process_dumps();
       proto->set_pid(static_cast<uint64_t>(rejected_pid));
       proto->set_rejected_concurrent(true);
     }
     trace_packet->Finalize();
-    data_source.rejected_pids.clear();
-    if (MaybeFinishDataSource(&data_source))
+    data_source->rejected_pids.clear();
+    if (MaybeFinishDataSource(data_source))
       return;
   }
 
-  for (const auto& pid_and_process_state : data_source.process_states) {
+  for (const auto& pid_and_process_state : data_source->process_states) {
     pid_t pid = pid_and_process_state.first;
     UnwinderForPID(pid).PostDisconnectSocket(pid);
   }
+
+  auto id = data_source->id;
   auto weak_producer = weak_factory_.GetWeakPtr();
   task_runner_->PostDelayedTask(
       [weak_producer, id] {
@@ -533,7 +579,7 @@ void HeapprofdProducer::StopDataSource(DataSourceInstanceID id) {
           PERFETTO_CHECK(weak_producer->MaybeFinishDataSource(&ds));
         }
       },
-      data_source.stop_timeout_ms);
+      data_source->stop_timeout_ms);
 }
 
 void HeapprofdProducer::DoContinuousDump(DataSourceInstanceID id,
@@ -562,7 +608,8 @@ void HeapprofdProducer::DumpProcessState(DataSource* data_source,
     dump_timestamp = heap_tracker.max_timestamp();
   else
     dump_timestamp = heap_tracker.committed_timestamp();
-  auto new_heapsamples = [pid, from_startup, dump_timestamp, process_state](
+  auto new_heapsamples = [pid, from_startup, dump_timestamp, process_state,
+                          data_source](
                              ProfilePacket::ProcessHeapSamples* proto) {
     proto->set_pid(static_cast<uint64_t>(pid));
     proto->set_timestamp(dump_timestamp);
@@ -570,6 +617,7 @@ void HeapprofdProducer::DumpProcessState(DataSource* data_source,
     proto->set_disconnected(process_state->disconnected);
     proto->set_buffer_overran(process_state->buffer_overran);
     proto->set_buffer_corrupted(process_state->buffer_corrupted);
+    proto->set_hit_guardrail(data_source->hit_guardrail);
     auto* stats = proto->set_stats();
     stats->set_unwinding_errors(process_state->unwinding_errors);
     stats->set_heap_samples(process_state->heap_samples);
@@ -920,6 +968,11 @@ void HeapprofdProducer::HandleAllocRecord(AllocRecord alloc_rec) {
   process_state.unwinding_time_us.Add(alloc_rec.unwinding_time_us);
   process_state.total_unwinding_time_us += alloc_rec.unwinding_time_us;
 
+  // abspc may no longer refer to the same functions, as we had to reparse
+  // maps. Reset the cache.
+  if (alloc_rec.reparsed_map)
+    heap_tracker.ClearFrameCache();
+
   heap_tracker.RecordMalloc(alloc_rec.frames, alloc_metadata.alloc_address,
                             alloc_metadata.sample_size,
                             alloc_metadata.alloc_size,
@@ -963,13 +1016,16 @@ bool HeapprofdProducer::MaybeFinishDataSource(DataSource* ds) {
       !ds->shutting_down) {
     return false;
   }
+
+  bool was_stopped = ds->was_stopped;
   DataSourceInstanceID ds_id = ds->id;
   auto weak_producer = weak_factory_.GetWeakPtr();
-  ds->trace_writer->Flush([weak_producer, ds_id] {
+  ds->trace_writer->Flush([weak_producer, ds_id, was_stopped] {
     if (!weak_producer)
       return;
 
-    weak_producer->endpoint_->NotifyDataSourceStopped(ds_id);
+    if (was_stopped)
+      weak_producer->endpoint_->NotifyDataSourceStopped(ds_id);
     weak_producer->data_sources_.erase(ds_id);
 
     if (weak_producer->mode_ == HeapprofdMode::kChild) {
@@ -1007,6 +1063,91 @@ void HeapprofdProducer::HandleSocketDisconnected(
   DumpProcessState(&ds, pid, &process_state);
   ds.process_states.erase(pid);
   MaybeFinishDataSource(&ds);
+}
+
+void HeapprofdProducer::CheckDataSourceCpu() {
+  auto weak_producer = weak_factory_.GetWeakPtr();
+  task_runner_->PostDelayedTask(
+      [weak_producer] {
+        if (!weak_producer)
+          return;
+        weak_producer->CheckDataSourceCpu();
+      },
+      kGuardrailIntervalMs);
+
+  bool any_guardrail = false;
+  for (auto& id_and_ds : data_sources_) {
+    DataSource& ds = id_and_ds.second;
+    if (ds.config.max_heapprofd_cpu_secs() > 0)
+      any_guardrail = true;
+  }
+
+  if (!any_guardrail)
+    return;
+
+  base::Optional<uint64_t> cputime_sec = GetCputimeSec();
+  if (!cputime_sec) {
+    PERFETTO_ELOG("Failed to get CPU time.");
+    return;
+  }
+
+  for (auto& id_and_ds : data_sources_) {
+    DataSource& ds = id_and_ds.second;
+    uint64_t ds_max_cpu = ds.config.max_heapprofd_cpu_secs();
+    if (ds_max_cpu > 0) {
+      // We reject data-sources with CPU guardrails if we cannot read the
+      // initial value.
+      PERFETTO_CHECK(ds.start_cputime_sec);
+      uint64_t cpu_diff = *cputime_sec - *ds.start_cputime_sec;
+      if (*cputime_sec > *ds.start_cputime_sec && cpu_diff > ds_max_cpu) {
+        PERFETTO_ELOG(
+            "Exceeded data-source CPU guardrail "
+            "(%" PRIu64 " > %" PRIu64 "). Shutting down.",
+            cpu_diff, ds_max_cpu);
+        ds.hit_guardrail = true;
+        ShutdownDataSource(&ds);
+      }
+    }
+  }
+}
+
+void HeapprofdProducer::CheckDataSourceMemory() {
+  auto weak_producer = weak_factory_.GetWeakPtr();
+  task_runner_->PostDelayedTask(
+      [weak_producer] {
+        if (!weak_producer)
+          return;
+        weak_producer->CheckDataSourceMemory();
+      },
+      kGuardrailIntervalMs);
+
+  bool any_guardrail = false;
+  for (auto& id_and_ds : data_sources_) {
+    DataSource& ds = id_and_ds.second;
+    if (ds.config.max_heapprofd_memory_kb() > 0)
+      any_guardrail = true;
+  }
+
+  if (!any_guardrail)
+    return;
+
+  base::Optional<uint32_t> anon_and_swap = GetRssAnonAndSwap(getpid());
+  if (!anon_and_swap) {
+    PERFETTO_ELOG("Failed to read heapprofd memory.");
+    return;
+  }
+
+  for (auto& id_and_ds : data_sources_) {
+    DataSource& ds = id_and_ds.second;
+    uint32_t ds_max_mem = ds.config.max_heapprofd_memory_kb();
+    if (ds_max_mem > 0 && *anon_and_swap > ds_max_mem) {
+      PERFETTO_ELOG("Exceeded data-source memory guardrail (%" PRIu32
+                    " > %" PRIu32 "). Shutting down.",
+                    *anon_and_swap, ds_max_mem);
+      ds.hit_guardrail = true;
+      ShutdownDataSource(&ds);
+    }
+  }
 }
 
 }  // namespace profiling
