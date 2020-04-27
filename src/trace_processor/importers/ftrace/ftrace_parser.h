@@ -64,6 +64,7 @@ class FtraceParser {
                                 uint32_t pid,
                                 protozero::ConstBytes,
                                 bool grow);
+  void ParseIonStat(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseSignalGenerate(int64_t ts, protozero::ConstBytes);
   void ParseSignalDeliver(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseLowmemoryKill(int64_t ts, protozero::ConstBytes);
@@ -78,9 +79,24 @@ class FtraceParser {
                         uint32_t source_tid,
                         protozero::ConstBytes);
   void ParseTaskRename(protozero::ConstBytes);
+  void ParseBinderTransaction(int64_t timestamp,
+                              uint32_t pid,
+                              protozero::ConstBytes);
+  void ParseBinderTransactionReceived(int64_t timestamp,
+                                      uint32_t pid,
+                                      protozero::ConstBytes);
+  void ParseBinderTransactionAllocBuf(int64_t timestamp,
+                                      uint32_t pid,
+                                      protozero::ConstBytes);
+  void ParseBinderLocked(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
+  void ParseBinderLock(int64_t timestamp, uint32_t pid, protozero::ConstBytes);
+  void ParseBinderUnlock(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
 
   TraceProcessorContext* context_;
-  BinderTracker binder_tracker_;
   RssStatTracker rss_stat_tracker_;
 
   const StringId sched_wakeup_name_id_;
@@ -88,6 +104,8 @@ class FtraceParser {
   const StringId cpu_freq_name_id_;
   const StringId gpu_freq_name_id_;
   const StringId cpu_idle_name_id_;
+  const StringId ion_total_id_;
+  const StringId ion_change_id_;
   const StringId ion_total_unknown_id_;
   const StringId ion_change_unknown_id_;
   const StringId signal_generate_id_;
