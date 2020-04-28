@@ -17,8 +17,9 @@
 
 #include <vector>
 
-#include "perfetto/ext/base/no_destructor.h"
-#include "test/gtest_and_gmock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "perfetto/base/no_destructor.h"
 
 namespace perfetto {
 namespace base {

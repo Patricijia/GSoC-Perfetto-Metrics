@@ -16,16 +16,16 @@
 
 #include "src/traced/probes/packages_list/packages_list_data_source.h"
 
+#include <gtest/gtest.h>
 #include <stdio.h>
 
 #include <set>
 #include <string>
 
-#include "perfetto/ext/base/pipe.h"
+#include "perfetto/base/pipe.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
-#include "protos/perfetto/trace/android/packages_list.pb.h"
-#include "protos/perfetto/trace/android/packages_list.pbzero.h"
-#include "test/gtest_and_gmock.h"
+#include "perfetto/trace/android/packages_list.pb.h"
+#include "perfetto/trace/android/packages_list.pbzero.h"
 
 namespace perfetto {
 namespace {

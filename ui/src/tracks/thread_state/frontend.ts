@@ -30,7 +30,7 @@ import {
   THREAD_STATE_TRACK_KIND,
 } from './common';
 
-const MARGIN_TOP = 4;
+const MARGIN_TOP = 5;
 const RECT_HEIGHT = 12;
 
 class ThreadStateTrack extends Track<Config, Data> {
@@ -44,7 +44,7 @@ class ThreadStateTrack extends Track<Config, Data> {
   }
 
   getHeight(): number {
-    return 2 * MARGIN_TOP + RECT_HEIGHT;
+    return 22;
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D): void {
@@ -52,6 +52,15 @@ class ThreadStateTrack extends Track<Config, Data> {
     const data = this.data();
     const charWidth = ctx.measureText('dbpqaouk').width / 8;
 
+    // If there aren't enough cached slices data in |data| request more to
+    // the controller.
+    const inRange = data !== undefined &&
+        (visibleWindowTime.start >= data.start &&
+         visibleWindowTime.end <= data.end);
+    if (!inRange || data === undefined ||
+        data.resolution !== globals.getCurResolution()) {
+      globals.requestTrackData(this.trackState.id);
+    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     for (let i = 0; i < data.starts.length; i++) {
@@ -115,17 +124,10 @@ class ThreadStateTrack extends Track<Config, Data> {
     const ts = index === -1 ? undefined : data.starts[index];
     const tsEnd = index === -1 ? undefined : data.ends[index];
     const state = index === -1 ? undefined : data.strings[data.state[index]];
-    const cpu = index === -1 ? undefined : data.cpu[index];
     const utid = this.config.utid;
-    if (ts && state && tsEnd && cpu !== undefined) {
-      globals.makeSelection(Actions.selectThreadState({
-        utid,
-        ts,
-        dur: tsEnd - ts,
-        state,
-        cpu,
-        trackId: this.trackState.id
-      }));
+    if (ts && state && tsEnd) {
+      globals.dispatch(
+          Actions.selectThreadState({utid, ts, dur: tsEnd - ts, state}));
       return true;
     }
     return false;

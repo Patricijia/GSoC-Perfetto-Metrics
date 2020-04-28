@@ -1,5 +1,7 @@
 select
+  utid,
   tid,
+  upid,
   pid,
   thread.name as threadName,
   process.name as processName,
@@ -10,6 +12,5 @@ from
   left join (select upid, sum(dur) as total_dur
       from sched join thread using(utid)
       group by upid
-    ) using(upid)
-group by utid, upid
-order by total_dur desc, pid, tid
+    ) using(upid) group by utid, upid
+order by total_dur desc, upid, utid

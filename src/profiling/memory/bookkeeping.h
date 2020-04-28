@@ -17,13 +17,17 @@
 #ifndef SRC_PROFILING_MEMORY_BOOKKEEPING_H_
 #define SRC_PROFILING_MEMORY_BOOKKEEPING_H_
 
+#include <functional>
 #include <map>
 #include <string>
 #include <vector>
 
+#include "perfetto/base/lookup_set.h"
+#include "perfetto/base/string_splitter.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/base/lookup_set.h"
-#include "perfetto/ext/base/string_splitter.h"
+#include "perfetto/trace/profiling/profile_packet.pbzero.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/tracing/core/trace_writer.h"
 #include "src/profiling/memory/interner.h"
 #include "src/profiling/memory/unwound_messages.h"
 
@@ -97,26 +101,21 @@ struct Mapping {
   Mapping(Interned<std::string> b) : build_id(std::move(b)) {}
 
   Interned<std::string> build_id;
-  uint64_t exact_offset = 0;
-  uint64_t start_offset = 0;
+  uint64_t offset = 0;
   uint64_t start = 0;
   uint64_t end = 0;
   uint64_t load_bias = 0;
   std::vector<Interned<std::string>> path_components{};
 
   bool operator<(const Mapping& other) const {
-    return std::tie(build_id, exact_offset, start_offset, start, end, load_bias,
-                    path_components) <
-           std::tie(other.build_id, other.exact_offset, other.start_offset,
-                    other.start, other.end, other.load_bias,
-                    other.path_components);
+    return std::tie(build_id, offset, start, end, load_bias, path_components) <
+           std::tie(other.build_id, other.offset, other.start, other.end,
+                    other.load_bias, other.path_components);
   }
   bool operator==(const Mapping& other) const {
-    return std::tie(build_id, exact_offset, start_offset, start, end, load_bias,
-                    path_components) ==
-           std::tie(other.build_id, other.exact_offset, other.start_offset,
-                    other.start, other.end, other.load_bias,
-                    other.path_components);
+    return std::tie(build_id, offset, start, end, load_bias, path_components) ==
+           std::tie(other.build_id, other.offset, other.start, other.end,
+                    other.load_bias, other.path_components);
   }
 };
 
@@ -167,19 +166,16 @@ class GlobalCallstackTrie {
     // This is opaque except to GlobalCallstackTrie.
     friend class GlobalCallstackTrie;
 
-    Node(Interned<Frame> frame) : Node(std::move(frame), 0, nullptr) {}
-    Node(Interned<Frame> frame, uint64_t id)
-        : Node(std::move(frame), id, nullptr) {}
-    Node(Interned<Frame> frame, uint64_t id, Node* parent)
-        : id_(id), parent_(parent), location_(std::move(frame)) {}
+    Node(Interned<Frame> frame) : Node(std::move(frame), nullptr) {}
+    Node(Interned<Frame> frame, Node* parent)
+        : parent_(parent), location_(std::move(frame)) {}
 
-    uint64_t id() const { return id_; }
+    uintptr_t id() const { return reinterpret_cast<uintptr_t>(this); }
 
    private:
     Node* GetOrCreateChild(const Interned<Frame>& loc);
 
     uint64_t ref_count_ = 0;
-    uint64_t id_;
     Node* const parent_;
     const Interned<Frame> location_;
     base::LookupSet<Node, const Interned<Frame>, &Node::location_> children_;
@@ -189,10 +185,6 @@ class GlobalCallstackTrie {
   GlobalCallstackTrie(const GlobalCallstackTrie&) = delete;
   GlobalCallstackTrie& operator=(const GlobalCallstackTrie&) = delete;
 
-  // Moving this would invalidate the back pointers to the root_ node.
-  GlobalCallstackTrie(GlobalCallstackTrie&&) = delete;
-  GlobalCallstackTrie& operator=(GlobalCallstackTrie&&) = delete;
-
   Node* CreateCallsite(const std::vector<FrameData>& locs);
   static void DecrementNode(Node* node);
   static void IncrementNode(Node* node);
@@ -200,8 +192,6 @@ class GlobalCallstackTrie {
   std::vector<Interned<Frame>> BuildCallstack(const Node* node) const;
 
  private:
-  Node* GetOrCreateChild(Node* self, const Interned<Frame>& loc);
-
   Interned<Frame> InternCodeLocation(const FrameData& loc);
   Interned<Frame> MakeRootFrame();
 
@@ -209,35 +199,101 @@ class GlobalCallstackTrie {
   Interner<Mapping> mapping_interner_;
   Interner<Frame> frame_interner_;
 
-  uint64_t next_callstack_id_ = 0;
+  Node root_{MakeRootFrame()};
+};
 
-  Node root_{MakeRootFrame(), ++next_callstack_id_};
+struct DumpState {
+  DumpState(TraceWriter* tw, uint64_t* ni) : trace_writer(tw), next_index(ni) {
+    last_written = trace_writer->written();
+
+    current_trace_packet = trace_writer->NewTracePacket();
+    current_trace_packet->set_timestamp(
+        static_cast<uint64_t>(base::GetBootTimeNs().count()));
+    current_profile_packet = current_trace_packet->set_profile_packet();
+    current_profile_packet->set_index((*next_index)++);
+
+    // Explicitly reserve intern ID 0 for the empty string, so unset string
+    // fields get mapped to this.
+    auto interned_string = current_profile_packet->add_strings();
+    constexpr const uint8_t kEmptyString[] = "";
+    interned_string->set_id(0);
+    interned_string->set_str(kEmptyString, 0);
+  }
+
+  void WriteMap(const Interned<Mapping> map);
+  void WriteFrame(const Interned<Frame> frame);
+  void WriteString(const Interned<std::string>& str);
+
+  std::set<InternID> dumped_strings;
+  std::set<InternID> dumped_frames;
+  std::set<InternID> dumped_mappings;
+
+  std::set<GlobalCallstackTrie::Node*> callstacks_to_dump;
+
+  TraceWriter* trace_writer;
+  protos::pbzero::ProfilePacket* current_profile_packet;
+  TraceWriter::TracePacketHandle current_trace_packet;
+  uint64_t* next_index;
+  uint64_t last_written = 0;
+
+  void NewProfilePacket() {
+    PERFETTO_DLOG("New profile packet after %" PRIu64 " bytes. Total: %" PRIu64
+                  ", before %" PRIu64,
+                  trace_writer->written() - last_written,
+                  trace_writer->written(), last_written);
+    current_profile_packet->set_continued(true);
+    last_written = trace_writer->written();
+
+    current_trace_packet->Finalize();
+    current_trace_packet = trace_writer->NewTracePacket();
+    current_trace_packet->set_timestamp(
+        static_cast<uint64_t>(base::GetBootTimeNs().count()));
+    current_profile_packet = current_trace_packet->set_profile_packet();
+    current_profile_packet->set_index((*next_index)++);
+  }
+
+  uint64_t currently_written() {
+    return trace_writer->written() - last_written;
+  }
 };
 
 // Snapshot for memory allocations of a particular process. Shares callsites
 // with other processes.
 class HeapTracker {
  public:
-  struct CallstackMaxAllocations {
-    uint64_t max;
-    uint64_t cur;
-  };
-  struct CallstackTotalAllocations {
-    uint64_t allocated;
-    uint64_t freed;
-  };
+  // Caller needs to ensure that callsites outlives the HeapTracker.
+  explicit HeapTracker(GlobalCallstackTrie* callsites)
+      : callsites_(callsites) {}
 
+  void RecordMalloc(const std::vector<FrameData>& stack,
+                    uint64_t address,
+                    uint64_t size,
+                    uint64_t sequence_number,
+                    uint64_t timestamp);
+  void Dump(
+      std::function<void(protos::pbzero::ProfilePacket::ProcessHeapSamples*)>
+          fill_process_header,
+      DumpState* dump_state);
+  void RecordFree(uint64_t address,
+                  uint64_t sequence_number,
+                  uint64_t timestamp) {
+    RecordOperation(sequence_number, {address, timestamp});
+  }
+
+  uint64_t GetSizeForTesting(const std::vector<FrameData>& stack);
+  uint64_t GetTimestampForTesting() { return committed_timestamp_; }
+
+ private:
   // Sum of all the allocations for a given callstack.
   struct CallstackAllocations {
     CallstackAllocations(GlobalCallstackTrie::Node* n) : node(n) {}
 
     uint64_t allocs = 0;
+
+    uint64_t allocated = 0;
+    uint64_t freed = 0;
     uint64_t allocation_count = 0;
     uint64_t free_count = 0;
-    union {
-      CallstackMaxAllocations retain_max;
-      CallstackTotalAllocations totals;
-    } value = {};
 
     GlobalCallstackTrie::Node* const node;
 
@@ -248,83 +304,29 @@ class HeapTracker {
     }
   };
 
-  // Caller needs to ensure that callsites outlives the HeapTracker.
-  explicit HeapTracker(GlobalCallstackTrie* callsites, bool dump_at_max_mode)
-      : callsites_(callsites), dump_at_max_mode_(dump_at_max_mode) {}
-
-  void RecordMalloc(const std::vector<FrameData>& stack,
-                    uint64_t address,
-                    uint64_t sample_size,
-                    uint64_t alloc_size,
-                    uint64_t sequence_number,
-                    uint64_t timestamp);
-
-  template <typename F>
-  void GetCallstackAllocations(F fn) {
-    // There are two reasons we remove the unused callstack allocations on the
-    // next iteration of Dump:
-    // * We need to remove them after the callstacks were dumped, which
-    //   currently happens after the allocations are dumped.
-    // * This way, we do not destroy and recreate callstacks as frequently.
-    for (auto it_and_alloc : dead_callstack_allocations_) {
-      auto& it = it_and_alloc.first;
-      uint64_t allocated = it_and_alloc.second;
-      const CallstackAllocations& alloc = it->second;
-      if (alloc.allocs == 0 && alloc.allocation_count == allocated)
-        callstack_allocations_.erase(it);
-    }
-    dead_callstack_allocations_.clear();
-
-    for (auto it = callstack_allocations_.begin();
-         it != callstack_allocations_.end(); ++it) {
-      const CallstackAllocations& alloc = it->second;
-      fn(alloc);
-
-      if (alloc.allocs == 0)
-        dead_callstack_allocations_.emplace_back(it, alloc.allocation_count);
-    }
-  }
-
-  template <typename F>
-  void GetAllocations(F fn) {
-    for (const auto& addr_and_allocation : allocations_) {
-      const Allocation& alloc = addr_and_allocation.second;
-      fn(addr_and_allocation.first, alloc.sample_size, alloc.alloc_size,
-         alloc.callstack_allocations()->node->id());
-    }
-  }
-
-  void RecordFree(uint64_t address,
-                  uint64_t sequence_number,
-                  uint64_t timestamp) {
-    RecordOperation(sequence_number, {address, timestamp});
-  }
-
-  uint64_t committed_timestamp() { return committed_timestamp_; }
-  uint64_t max_timestamp() { return max_timestamp_; }
-
-  uint64_t GetSizeForTesting(const std::vector<FrameData>& stack);
-  uint64_t GetMaxForTesting(const std::vector<FrameData>& stack);
-  uint64_t GetTimestampForTesting() { return committed_timestamp_; }
-
- private:
   struct Allocation {
-    Allocation(uint64_t size,
-               uint64_t asize,
-               uint64_t seq,
-               CallstackAllocations* csa)
-        : sample_size(size), alloc_size(asize), sequence_number(seq) {
+    Allocation(uint64_t size, uint64_t seq, CallstackAllocations* csa)
+        : total_size(size), sequence_number(seq) {
       SetCallstackAllocations(csa);
     }
 
     Allocation() = default;
     Allocation(const Allocation&) = delete;
     Allocation(Allocation&& other) noexcept {
-      sample_size = other.sample_size;
-      alloc_size = other.alloc_size;
+      total_size = other.total_size;
       sequence_number = other.sequence_number;
       callstack_allocations_ = other.callstack_allocations_;
       other.callstack_allocations_ = nullptr;
+    }
+
+    void AddToCallstackAllocations() {
+      callstack_allocations_->allocation_count++;
+      callstack_allocations_->allocated += total_size;
+    }
+
+    void SubtractFromCallstackAllocations() {
+      callstack_allocations_->free_count++;
+      callstack_allocations_->freed += total_size;
     }
 
     ~Allocation() { SetCallstackAllocations(nullptr); }
@@ -341,8 +343,7 @@ class HeapTracker {
       return callstack_allocations_;
     }
 
-    uint64_t sample_size;
-    uint64_t alloc_size;
+    uint64_t total_size;
     uint64_t sequence_number;
 
    private:
@@ -381,48 +382,6 @@ class HeapTracker {
   void CommitOperation(uint64_t sequence_number,
                        const PendingOperation& operation);
 
-  void AddToCallstackAllocations(uint64_t ts, const Allocation& alloc) {
-    alloc.callstack_allocations()->allocation_count++;
-    if (dump_at_max_mode_) {
-      current_unfreed_ += alloc.sample_size;
-      alloc.callstack_allocations()->value.retain_max.cur += alloc.sample_size;
-
-      if (current_unfreed_ <= max_unfreed_)
-        return;
-
-      if (max_sequence_number_ == alloc.sequence_number - 1) {
-        alloc.callstack_allocations()->value.retain_max.max =
-            // We know the only CallstackAllocation that has max != cur is the
-            // one we just updated.
-            alloc.callstack_allocations()->value.retain_max.cur;
-      } else {
-        for (auto& p : callstack_allocations_) {
-          // We need to reset max = cur for every CallstackAllocation, as we
-          // do not know which ones have changed since the last max.
-          // TODO(fmayer): Add an index to speed this up
-          CallstackAllocations& csa = p.second;
-          csa.value.retain_max.max = csa.value.retain_max.cur;
-        }
-      }
-      max_sequence_number_ = alloc.sequence_number;
-      max_unfreed_ = current_unfreed_;
-      max_timestamp_ = ts;
-    } else {
-      alloc.callstack_allocations()->value.totals.allocated +=
-          alloc.sample_size;
-    }
-  }
-
-  void SubtractFromCallstackAllocations(const Allocation& alloc) {
-    alloc.callstack_allocations()->free_count++;
-    if (dump_at_max_mode_) {
-      current_unfreed_ -= alloc.sample_size;
-      alloc.callstack_allocations()->value.retain_max.cur -= alloc.sample_size;
-    } else {
-      alloc.callstack_allocations()->value.totals.freed += alloc.sample_size;
-    }
-  }
-
   // We cannot use an interner here, because after the last allocation goes
   // away, we still need to keep the CallstackAllocations around until the next
   // dump.
@@ -448,13 +407,6 @@ class HeapTracker {
   // The sequence number all mallocs and frees have been handled up to.
   uint64_t committed_sequence_number_ = 0;
   GlobalCallstackTrie* callsites_;
-
-  const bool dump_at_max_mode_ = false;
-  // The following members are only used if dump_at_max_mode_ == true.
-  uint64_t max_sequence_number_ = 0;
-  uint64_t current_unfreed_ = 0;
-  uint64_t max_unfreed_ = 0;
-  uint64_t max_timestamp_ = 0;
 };
 
 }  // namespace profiling
@@ -468,8 +420,7 @@ struct hash<::perfetto::profiling::Mapping> {
   result_type operator()(const argument_type& mapping) {
     size_t h =
         std::hash<::perfetto::profiling::InternID>{}(mapping.build_id.id());
-    h ^= std::hash<uint64_t>{}(mapping.exact_offset);
-    h ^= std::hash<uint64_t>{}(mapping.start_offset);
+    h ^= std::hash<uint64_t>{}(mapping.offset);
     h ^= std::hash<uint64_t>{}(mapping.start);
     h ^= std::hash<uint64_t>{}(mapping.end);
     h ^= std::hash<uint64_t>{}(mapping.load_bias);

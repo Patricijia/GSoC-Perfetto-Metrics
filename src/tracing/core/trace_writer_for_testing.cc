@@ -17,12 +17,12 @@
 #include "src/tracing/core/trace_writer_for_testing.h"
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/utils.h"
 #include "perfetto/protozero/message.h"
-#include "protos/perfetto/trace/trace.pb.h"
-#include "protos/perfetto/trace/trace.pbzero.h"
-#include "protos/perfetto/trace/trace_packet.pb.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/trace.pb.h"
+#include "perfetto/trace/trace.pbzero.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 
@@ -60,10 +60,14 @@ std::vector<protos::TracePacket> TraceWriterForTesting::GetAllTracePackets() {
   return ret;
 }
 
-protos::TracePacket TraceWriterForTesting::GetOnlyTracePacket() {
-  auto packets = GetAllTracePackets();
-  PERFETTO_CHECK(packets.size() == 1);
-  return packets[0];
+std::unique_ptr<protos::TracePacket> TraceWriterForTesting::ParseProto() {
+  PERFETTO_CHECK(cur_packet_->is_finalized());
+
+  auto trace = GetAllTracePackets();
+  PERFETTO_CHECK(!trace.empty());
+  auto packet =
+      std::unique_ptr<protos::TracePacket>(new protos::TracePacket(trace[0]));
+  return packet;
 }
 
 TraceWriterForTesting::TracePacketHandle

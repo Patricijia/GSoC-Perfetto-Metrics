@@ -21,12 +21,12 @@
 #include <memory>
 #include <string>
 
-#include "perfetto/ext/base/weak_ptr.h"
-#include "perfetto/ext/ipc/basic_types.h"
-#include "perfetto/ext/tracing/core/producer.h"
-#include "perfetto/ext/tracing/core/tracing_service.h"
+#include "perfetto/base/weak_ptr.h"
+#include "perfetto/ipc/basic_types.h"
+#include "perfetto/tracing/core/producer.h"
+#include "perfetto/tracing/core/tracing_service.h"
 
-#include "protos/perfetto/ipc/producer_port.ipc.h"
+#include "perfetto/ipc/producer_port.ipc.h"
 
 namespace perfetto {
 

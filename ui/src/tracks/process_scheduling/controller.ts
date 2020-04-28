@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {fromNs, toNs} from '../../common/time';
-import {LIMIT} from '../../common/track_data';
-
+import {fromNs} from '../../common/time';
 import {
   TrackController,
   trackControllerRegistry
@@ -28,23 +26,29 @@ import {
   SummaryData
 } from './common';
 
-// This summary is displayed for any processes that have CPU scheduling activity
-// associated with them.
-
 class ProcessSchedulingTrackController extends TrackController<Config, Data> {
   static readonly kind = PROCESS_SCHEDULING_TRACK_KIND;
+  private busy = false;
   private setup = false;
-  private maxCpu = 0;
+  private numCpus = 0;
 
-  async onBoundsChange(start: number, end: number, resolution: number):
-      Promise<Data> {
-    if (this.config.upid === null) {
-      throw new Error('Upid not set.');
+  onBoundsChange(start: number, end: number, resolution: number): void {
+    this.update(start, end, resolution);
+  }
+
+  private async update(start: number, end: number, resolution: number):
+      Promise<void> {
+    // TODO: we should really call TraceProcessor.Interrupt() at this point.
+    if (this.busy) return;
+
+    if (!this.config.upid) {
+      return;
     }
 
-    const startNs = toNs(start);
-    const endNs = toNs(end);
+    const startNs = Math.round(start * 1e9);
+    const endNs = Math.round(end * 1e9);
 
+    this.busy = true;
     if (this.setup === false) {
       await this.query(
           `create virtual table ${this.tableName('window')} using window;`);
@@ -55,7 +59,7 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
       await this.query(`create virtual table ${this.tableName('span')}
               using span_join(${this.tableName('process')} PARTITIONED cpu,
                               ${this.tableName('window')});`);
-      this.maxCpu = Math.max(...await this.engine.getCpus()) + 1;
+      this.numCpus = await this.engine.getNumberOfCpus();
       this.setup = true;
     }
 
@@ -75,31 +79,32 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
       where rowid = 0;`);
 
     if (isQuantized) {
-      return this.computeSummary(
-          fromNs(windowStartNs), end, resolution, bucketSizeNs);
+      this.publish(await this.computeSummary(
+          fromNs(windowStartNs), end, resolution, bucketSizeNs));
     } else {
-      return this.computeSlices(fromNs(windowStartNs), end, resolution);
+      this.publish(
+          await this.computeSlices(fromNs(windowStartNs), end, resolution));
     }
+    this.busy = false;
   }
 
   private async computeSummary(
       start: number, end: number, resolution: number,
       bucketSizeNs: number): Promise<SummaryData> {
-    const startNs = toNs(start);
-    const endNs = toNs(end);
+    const startNs = Math.round(start * 1e9);
+    const endNs = Math.round(end * 1e9);
     const numBuckets = Math.ceil((endNs - startNs) / bucketSizeNs);
 
-    // cpu < maxCpu improves performance a lot since the window table can
+    // cpu < numCpus improves perfomance a lot since the window table can
     // avoid generating many rows.
     const query = `select
         quantum_ts as bucket,
-        sum(dur)/cast(${bucketSizeNs * this.maxCpu} as float) as utilization
+        sum(dur)/cast(${bucketSizeNs * this.numCpus} as float) as utilization
         from ${this.tableName('span')}
         where upid = ${this.config.upid}
         and utid != 0
-        and cpu < ${this.maxCpu}
-        group by quantum_ts
-        limit ${LIMIT}`;
+        and cpu < ${this.numCpus}
+        group by quantum_ts`;
 
     const rawResult = await this.query(query);
     const numRows = +rawResult.numRecords;
@@ -109,7 +114,6 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
       start,
       end,
       resolution,
-      length: numRows,
       bucketSizeSeconds: fromNs(bucketSizeNs),
       utilizations: new Float64Array(numBuckets),
     };
@@ -123,14 +127,17 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
 
   private async computeSlices(start: number, end: number, resolution: number):
       Promise<SliceData> {
-    // cpu < maxCpu improves performance a lot since the window table can
+    // TODO(hjd): Remove LIMIT
+    const LIMIT = 10000;
+
+    // cpu < numCpus improves perfomance a lot since the window table can
     // avoid generating many rows.
     const query = `select ts,dur,cpu,utid from ${this.tableName('span')}
         join
         (select utid from thread where upid = ${this.config.upid})
         using(utid)
         where
-        cpu < ${this.maxCpu}
+        cpu < ${this.numCpus}
         order by
         cpu,
         ts
@@ -138,13 +145,15 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
     const rawResult = await this.query(query);
 
     const numRows = +rawResult.numRecords;
+    if (numRows === LIMIT) {
+      console.warn(`More than ${LIMIT} rows returned.`);
+    }
     const slices: SliceData = {
       kind: 'slice',
       start,
       end,
       resolution,
-      length: numRows,
-      maxCpu: this.maxCpu,
+      numCpus: this.numCpus,
       starts: new Float64Array(numRows),
       ends: new Float64Array(numRows),
       cpus: new Uint32Array(numRows),
@@ -161,6 +170,15 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
       slices.end = Math.max(slices.ends[row], slices.end);
     }
     return slices;
+  }
+
+  private async query(query: string) {
+    const result = await this.engine.query(query);
+    if (result.error) {
+      console.error(`Query error "${query}": ${result.error}`);
+      throw new Error(`Query error "${query}": ${result.error}`);
+    }
+    return result;
   }
 
   onDestroy(): void {

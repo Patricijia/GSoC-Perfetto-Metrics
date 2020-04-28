@@ -25,7 +25,6 @@ import {
   RunningStatistics,
   runningStatStr
 } from './perf';
-import {TRACK_SHELL_WIDTH} from './track_constants';
 
 /**
  * If the panel container scrolls, the backing canvas height is
@@ -40,7 +39,6 @@ export type AnyAttrsVnode = m.Vnode<any, {}>;
 interface Attrs {
   panels: AnyAttrsVnode[];
   doesScroll: boolean;
-  kind: 'TRACKS'|'OVERVIEW'|'DETAILS';
 }
 
 export class PanelContainer implements m.ClassComponent<Attrs> {
@@ -138,7 +136,7 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     this.attrs = attrs;
     const renderPanel = (panel: m.Vnode) => perfDebug() ?
         m('.panel', panel, m('.debug-panel-border')) :
-        m('.panel', {key: panel.key}, panel);
+        m('.panel', panel);
 
     return m(
         '.scroll-limiter',
@@ -151,15 +149,10 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     const parentSizeChanged = this.readParentSizeFromDom(vnodeDom.dom);
 
     const canvasSizeShouldChange =
-        parentSizeChanged || !this.attrs.doesScroll && totalPanelHeightChanged;
+        this.attrs.doesScroll ? parentSizeChanged : totalPanelHeightChanged;
     if (canvasSizeShouldChange) {
       this.updateCanvasDimensions();
       this.repositionCanvas();
-      if (this.attrs.kind === 'TRACKS') {
-        globals.frontendLocalState.timeScale.setLimitsPx(
-            0, this.parentWidth - TRACK_SHELL_WIDTH);
-      }
-      this.redrawCanvas();
     }
   }
 
@@ -171,12 +164,7 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     const canvas = assertExists(ctx.canvas);
     canvas.style.height = `${this.canvasHeight}px`;
     const dpr = window.devicePixelRatio;
-    // On non-MacOS if there is a solid scroll bar it can cover important
-    // pixels, reduce the size of the canvas so it doesn't overlap with
-    // the scroll bar.
-    ctx.canvas.width =
-        (this.parentWidth - globals.frontendLocalState.getScrollbarWidth()) *
-        dpr;
+    ctx.canvas.width = this.parentWidth * dpr;
     ctx.canvas.height = this.canvasHeight * dpr;
     ctx.scale(dpr, dpr);
   }

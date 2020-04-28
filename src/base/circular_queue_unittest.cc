@@ -14,11 +14,11 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/base/circular_queue.h"
+#include "perfetto/base/circular_queue.h"
 
 #include <random>
 
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace base {

@@ -15,7 +15,9 @@
  */
 
 #include "perfetto/base/logging.h"
-#include "perfetto/trace_processor/trace_processor_storage.h"
+#include "perfetto/trace_processor/trace_processor.h"
+
+#include "perfetto/trace_processor/raw_query.pb.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -23,12 +25,11 @@ namespace trace_processor {
 void FuzzTraceProcessor(const uint8_t* data, size_t size);
 
 void FuzzTraceProcessor(const uint8_t* data, size_t size) {
-  std::unique_ptr<TraceProcessorStorage> processor =
-      TraceProcessorStorage::CreateInstance(Config());
+  std::unique_ptr<TraceProcessor> processor =
+      TraceProcessor::CreateInstance(Config());
   std::unique_ptr<uint8_t[]> buf(new uint8_t[size]);
   memcpy(buf.get(), data, size);
-  util::Status status = processor->Parse(std::move(buf), size);
-  if (!status.ok())
+  if (!processor->Parse(std::move(buf), size))
     return;
   processor->NotifyEndOfFile();
 }

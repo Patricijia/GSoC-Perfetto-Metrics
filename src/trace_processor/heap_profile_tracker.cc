@@ -16,7 +16,6 @@
 
 #include "src/trace_processor/heap_profile_tracker.h"
 
-#include "src/trace_processor/process_tracker.h"
 #include "src/trace_processor/trace_processor_context.h"
 
 #include "perfetto/base/logging.h"
@@ -29,89 +28,174 @@ HeapProfileTracker::HeapProfileTracker(TraceProcessorContext* context)
 
 HeapProfileTracker::~HeapProfileTracker() = default;
 
-void HeapProfileTracker::SetProfilePacketIndex(uint64_t index) {
-  if (last_profile_packet_index_ != 0 &&
-      last_profile_packet_index_ + 1 != index) {
-    context_->storage->IncrementStats(stats::heapprofd_missing_packet);
-  }
-  last_profile_packet_index_ = index;
+void HeapProfileTracker::AddString(ProfileIndex pidx,
+                                   SourceStringId id,
+                                   StringId str) {
+  string_map_.emplace(std::make_pair(pidx, id), str);
 }
 
-void HeapProfileTracker::AddAllocation(
-    StackProfileTracker* stack_profile_tracker,
-    const SourceAllocation& alloc,
-    const StackProfileTracker::InternLookup* intern_lookup) {
-  auto maybe_callstack_id =
-      stack_profile_tracker->FindCallstack(alloc.callstack_id, intern_lookup);
-  if (!maybe_callstack_id)
+void HeapProfileTracker::AddMapping(ProfileIndex pidx,
+                                    SourceMappingId id,
+                                    const SourceMapping& mapping) {
+  auto opt_name_id = FindString(pidx, mapping.name_id);
+  if (!opt_name_id)
     return;
+  const StringId name_id = opt_name_id.value();
 
-  int64_t callstack_id = *maybe_callstack_id;
+  auto opt_build_id = FindString(pidx, mapping.build_id);
+  if (!opt_build_id)
+    return;
+  const StringId build_id = opt_build_id.value();
 
-  UniquePid upid = context_->process_tracker->GetOrCreateProcess(
-      static_cast<uint32_t>(alloc.pid));
+  TraceStorage::HeapProfileMappings::Row row{
+      build_id,
+      static_cast<int64_t>(mapping.offset),
+      static_cast<int64_t>(mapping.start),
+      static_cast<int64_t>(mapping.end),
+      static_cast<int64_t>(mapping.load_bias),
+      name_id};
+
+  int64_t cur_row;
+  auto it = mapping_idx_.find(row);
+  if (it != mapping_idx_.end()) {
+    cur_row = it->second;
+  } else {
+    cur_row = context_->storage->mutable_heap_profile_mappings()->Insert(row);
+    mapping_idx_.emplace(row, cur_row);
+  }
+  mappings_.emplace(std::make_pair(pidx, id), cur_row);
+}
+
+void HeapProfileTracker::AddFrame(ProfileIndex pidx,
+                                  SourceFrameId id,
+                                  const SourceFrame& frame) {
+  auto opt_str_id = FindString(pidx, frame.name_id);
+  if (!opt_str_id)
+    return;
+  const StringId& str_id = opt_str_id.value();
+
+  auto mapping_it = mappings_.find({pidx, frame.mapping_id});
+  if (mapping_it == mappings_.end()) {
+    context_->storage->IncrementStats(stats::heapprofd_invalid_mapping_id);
+    PERFETTO_DFATAL("Invalid mapping.");
+    return;
+  }
+  int64_t mapping_row = mapping_it->second;
+
+  TraceStorage::HeapProfileFrames::Row row{str_id, mapping_row,
+                                           static_cast<int64_t>(frame.rel_pc)};
+
+  int64_t cur_row;
+  auto it = frame_idx_.find(row);
+  if (it != frame_idx_.end()) {
+    cur_row = it->second;
+  } else {
+    cur_row = context_->storage->mutable_heap_profile_frames()->Insert(row);
+    frame_idx_.emplace(row, cur_row);
+  }
+  frames_.emplace(std::make_pair(pidx, id), cur_row);
+}
+
+void HeapProfileTracker::AddCallstack(ProfileIndex pidx,
+                                      SourceCallstackId id,
+                                      const SourceCallstack& frame_ids) {
+  int64_t parent_id = 0;
+  for (size_t depth = 0; depth < frame_ids.size(); ++depth) {
+    std::vector<uint64_t> frame_subset = frame_ids;
+    frame_subset.resize(depth + 1);
+    auto self_it = callstacks_from_frames_.find({pidx, frame_subset});
+    if (self_it != callstacks_from_frames_.end()) {
+      parent_id = self_it->second;
+      continue;
+    }
+
+    uint64_t frame_id = frame_ids[depth];
+    auto it = frames_.find({pidx, frame_id});
+    if (it == frames_.end()) {
+      context_->storage->IncrementStats(stats::heapprofd_invalid_frame_id);
+      PERFETTO_DFATAL("Unknown frames.");
+      return;
+    }
+    int64_t frame_row = it->second;
+
+    TraceStorage::HeapProfileCallsites::Row row{static_cast<int64_t>(depth),
+                                                parent_id, frame_row};
+
+    int64_t self_id;
+    auto callsite_it = callsite_idx_.find(row);
+    if (callsite_it != callsite_idx_.end()) {
+      self_id = callsite_it->second;
+    } else {
+      self_id =
+          context_->storage->mutable_heap_profile_callsites()->Insert(row);
+      callsite_idx_.emplace(row, self_id);
+    }
+    parent_id = self_id;
+  }
+  callstacks_.emplace(std::make_pair(pidx, id), parent_id);
+}
+
+void HeapProfileTracker::AddAllocation(ProfileIndex pidx,
+                                       const SourceAllocation& alloc) {
+  auto it = callstacks_.find({pidx, alloc.callstack_id});
+  if (it == callstacks_.end()) {
+    context_->storage->IncrementStats(stats::heapprofd_invalid_callstack_id);
+    PERFETTO_DFATAL("Unknown callstack %" PRIu64 " : %zu", alloc.callstack_id,
+                    callstacks_.size());
+    return;
+  }
 
   TraceStorage::HeapProfileAllocations::Row alloc_row{
-      alloc.timestamp, upid, callstack_id,
-      static_cast<int64_t>(alloc.alloc_count),
+      static_cast<int64_t>(alloc.timestamp), static_cast<int64_t>(alloc.pid),
+      static_cast<int64_t>(it->second), static_cast<int64_t>(alloc.alloc_count),
       static_cast<int64_t>(alloc.self_allocated)};
 
   TraceStorage::HeapProfileAllocations::Row free_row{
-      alloc.timestamp, upid, callstack_id,
-      -static_cast<int64_t>(alloc.free_count),
+      static_cast<int64_t>(alloc.timestamp), static_cast<int64_t>(alloc.pid),
+      static_cast<int64_t>(it->second), -static_cast<int64_t>(alloc.free_count),
       -static_cast<int64_t>(alloc.self_freed)};
 
-  TraceStorage::HeapProfileAllocations::Row alloc_delta = alloc_row;
-  TraceStorage::HeapProfileAllocations::Row free_delta = free_row;
-
-  auto prev_alloc_it = prev_alloc_.find({upid, callstack_id});
-  if (prev_alloc_it == prev_alloc_.end()) {
-    std::tie(prev_alloc_it, std::ignore) =
-        prev_alloc_.emplace(std::make_pair(upid, callstack_id),
-                            TraceStorage::HeapProfileAllocations::Row{});
-  }
-
-  TraceStorage::HeapProfileAllocations::Row& prev_alloc = prev_alloc_it->second;
-  alloc_delta.count -= prev_alloc.count;
-  alloc_delta.size -= prev_alloc.size;
-
-  auto prev_free_it = prev_free_.find({upid, callstack_id});
-  if (prev_free_it == prev_free_.end()) {
-    std::tie(prev_free_it, std::ignore) =
-        prev_free_.emplace(std::make_pair(upid, callstack_id),
-                           TraceStorage::HeapProfileAllocations::Row{});
-  }
-
-  TraceStorage::HeapProfileAllocations::Row& prev_free = prev_free_it->second;
-  free_delta.count -= prev_free.count;
-  free_delta.size -= prev_free.size;
-
-  if (alloc_delta.count)
-    context_->storage->mutable_heap_profile_allocations()->Insert(alloc_delta);
-  if (free_delta.count)
-    context_->storage->mutable_heap_profile_allocations()->Insert(free_delta);
-
-  prev_alloc = alloc_row;
-  prev_free = free_row;
+  context_->storage->mutable_heap_profile_allocations()->Insert(alloc_row);
+  context_->storage->mutable_heap_profile_allocations()->Insert(free_row);
 }
 
-void HeapProfileTracker::StoreAllocation(SourceAllocation alloc) {
-  pending_allocs_.emplace_back(std::move(alloc));
+void HeapProfileTracker::StoreAllocation(ProfileIndex pidx,
+                                         SourceAllocation alloc) {
+  pending_allocs_.emplace_back(pidx, std::move(alloc));
 }
 
-void HeapProfileTracker::CommitAllocations(
-    StackProfileTracker* stack_profile_tracker,
-    const StackProfileTracker::InternLookup* intern_lookup) {
+void HeapProfileTracker::ApplyAllAllocations() {
   for (const auto& p : pending_allocs_)
-    AddAllocation(stack_profile_tracker, p, intern_lookup);
-  pending_allocs_.clear();
+    AddAllocation(p.first, p.second);
 }
 
-void HeapProfileTracker::FinalizeProfile(
-    StackProfileTracker* stack_profile_tracker,
-    const StackProfileTracker::InternLookup* intern_lookup) {
-  CommitAllocations(stack_profile_tracker, intern_lookup);
-  stack_profile_tracker->ClearIndices();
+int64_t HeapProfileTracker::GetDatabaseFrameIdForTesting(
+    ProfileIndex pidx,
+    SourceFrameId frame_id) {
+  auto it = frames_.find({pidx, frame_id});
+  if (it == frames_.end()) {
+    PERFETTO_DFATAL("Invalid frame.");
+    return -1;
+  }
+  return it->second;
+}
+
+base::Optional<StringId> HeapProfileTracker::FindString(ProfileIndex pidx,
+                                                        SourceStringId id) {
+  base::Optional<StringId> res;
+  if (id == 0) {
+    res = empty_;
+    return res;
+  }
+
+  auto it = string_map_.find({pidx, id});
+  if (it == string_map_.end()) {
+    context_->storage->IncrementStats(stats::heapprofd_invalid_string_id);
+    PERFETTO_DFATAL("Invalid string.");
+    return res;
+  }
+  res = it->second;
+  return res;
 }
 
 }  // namespace trace_processor

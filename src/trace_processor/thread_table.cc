@@ -17,8 +17,8 @@
 #include "src/trace_processor/thread_table.h"
 
 #include "perfetto/base/logging.h"
-#include "src/trace_processor/sqlite/query_constraints.h"
-#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/query_constraints.h"
+#include "src/trace_processor/sqlite_utils.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -33,26 +33,23 @@ ThreadTable::ThreadTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void ThreadTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<ThreadTable>(db, storage, "thread");
+  Table::Register<ThreadTable>(db, storage, "thread");
 }
 
-util::Status ThreadTable::Init(int, const char* const*, Schema* schema) {
-  *schema = Schema(
+base::Optional<Table::Schema> ThreadTable::Init(int, const char* const*) {
+  return Schema(
       {
-          SqliteTable::Column(Column::kUtid, "utid", SqlValue::Type::kLong),
-          SqliteTable::Column(Column::kUpid, "upid", SqlValue::Type::kLong),
-          SqliteTable::Column(Column::kName, "name", SqlValue::Type::kString),
-          SqliteTable::Column(Column::kTid, "tid", SqlValue::Type::kLong),
-          SqliteTable::Column(Column::kStartTs, "start_ts",
-                              SqlValue::Type::kLong),
-          SqliteTable::Column(Column::kEndTs, "end_ts", SqlValue::Type::kLong),
+          Table::Column(Column::kUtid, "utid", ColumnType::kInt),
+          Table::Column(Column::kUpid, "upid", ColumnType::kInt),
+          Table::Column(Column::kName, "name", ColumnType::kString),
+          Table::Column(Column::kTid, "tid", ColumnType::kInt),
+          Table::Column(Column::kStartTs, "start_ts", ColumnType::kLong),
       },
       {Column::kUtid});
-  return util::OkStatus();
 }
 
-std::unique_ptr<SqliteTable::Cursor> ThreadTable::CreateCursor() {
-  return std::unique_ptr<SqliteTable::Cursor>(new Cursor(this));
+std::unique_ptr<Table::Cursor> ThreadTable::CreateCursor() {
+  return std::unique_ptr<Table::Cursor>(new Cursor(this));
 }
 
 int ThreadTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
@@ -70,47 +67,44 @@ int ThreadTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
 }
 
 ThreadTable::Cursor::Cursor(ThreadTable* table)
-    : SqliteTable::Cursor(table), storage_(table->storage_), table_(table) {}
+    : Table::Cursor(table), storage_(table->storage_), table_(table) {}
 
 int ThreadTable::Cursor::Filter(const QueryConstraints& qc,
                                 sqlite3_value** argv) {
   *this = Cursor(table_);
 
-  min_ = 0;
-  max_ = static_cast<uint32_t>(storage_->thread_count());
-  desc_ = false;
-
+  min = 0;
+  max = static_cast<uint32_t>(storage_->thread_count()) - 1;
+  desc = false;
+  current = min;
   for (size_t j = 0; j < qc.constraints().size(); j++) {
     const auto& cs = qc.constraints()[j];
     if (cs.iColumn == Column::kUtid) {
       UniqueTid constraint_utid =
           static_cast<UniqueTid>(sqlite3_value_int(argv[j]));
       // Filter the range of utids that we are interested in, based on the
-      // constraints in the query. Everything between min and max (exclusive)
+      // constraints in the query. Everything between min and max (inclusive)
       // will be returned.
       if (IsOpEq(cs.op)) {
-        min_ = constraint_utid;
-        max_ = constraint_utid + 1;
+        min = constraint_utid;
+        max = constraint_utid;
       } else if (IsOpGe(cs.op) || IsOpGt(cs.op)) {
-        min_ = IsOpGt(cs.op) ? constraint_utid + 1 : constraint_utid;
+        min = IsOpGt(cs.op) ? constraint_utid + 1 : constraint_utid;
       } else if (IsOpLe(cs.op) || IsOpLt(cs.op)) {
-        max_ = IsOpLt(cs.op) ? constraint_utid : constraint_utid + 1;
+        max = IsOpLt(cs.op) ? constraint_utid - 1 : constraint_utid;
       }
     }
   }
-
   for (const auto& ob : qc.order_by()) {
     if (ob.iColumn == Column::kUtid) {
-      desc_ = ob.desc;
+      desc = ob.desc;
+      current = desc ? max : min;
     }
   }
-  index_ = 0;
-
   return SQLITE_OK;
 }
 
 int ThreadTable::Cursor::Column(sqlite3_context* context, int N) {
-  uint32_t current = desc_ ? max_ - index_ - 1 : min_ + index_;
   const auto& thread = storage_->GetThread(current);
   switch (N) {
     case Column::kUtid: {
@@ -142,14 +136,6 @@ int ThreadTable::Cursor::Column(sqlite3_context* context, int N) {
       }
       break;
     }
-    case Column::kEndTs: {
-      if (thread.end_ns != 0) {
-        sqlite3_result_int64(context, thread.end_ns);
-      } else {
-        sqlite3_result_null(context);
-      }
-      break;
-    }
     default: {
       PERFETTO_FATAL("Unknown column %d", N);
       break;
@@ -159,12 +145,16 @@ int ThreadTable::Cursor::Column(sqlite3_context* context, int N) {
 }
 
 int ThreadTable::Cursor::Next() {
-  ++index_;
+  if (desc) {
+    --current;
+  } else {
+    ++current;
+  }
   return SQLITE_OK;
 }
 
 int ThreadTable::Cursor::Eof() {
-  return index_ >= (max_ - min_);
+  return desc ? current < min : current > max;
 }
 }  // namespace trace_processor
 }  // namespace perfetto

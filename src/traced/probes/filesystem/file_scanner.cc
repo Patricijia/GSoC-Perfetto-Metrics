@@ -21,7 +21,6 @@
 #include <sys/types.h>
 #include <unistd.h>
 
-#include "protos/perfetto/trace/filesystem/inode_file_map.pbzero.h"
 #include "src/traced/probes/filesystem/inode_file_data_source.h"
 
 namespace perfetto {

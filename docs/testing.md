@@ -18,42 +18,38 @@ and (iii) ftrace raw pipe -> protobuf translation.
 
 Running tests on Linux / MacOS
 ------------------------------
-
-```bash
-tools/ninja -C out/default perfetto_{unittests,integrationtests,benchmarks}
-out/default/perfetto_unittests --gtest_help
+```
+$ tools/ninja -C out/default perfetto_{unittests,integrationtests,benchmarks}
+$ out/default/perfetto_unittests --gtest_help
 ```
 
 `perfetto_integrationtests` requires that the ftrace debugfs directory is
 is readable/writable by the current user on Linux:
-```bash
+```
 sudo chown  -R $USER /sys/kernel/debug/tracing
 ```
 
 Running tests on Android
 ------------------------
 1A) Connect a device through `adb`  
-1B) Start the build-in emulator (supported on Linux and MacOS):
-
-```bash
-tools/install-build-deps
-tools/run_android_emulator &
+1B) Start the build-in emulator (supported on Linux and MacOS):  
+```
+$ tools/install-build-deps
+$ tools/run_android_emulator &
 ```
 
 2) Run the tests (either on the emulator or physical device):  
-
-```bash
-tools/run_android_test out/default perfetto_unittests
 ```
+$ tools/run_android_test out/default perfetto_unittests
+```
+
 
 Continuous testing
 ------------------
 Perfetto is tested in a variety of locations:
 
-**Perfetto CI**: https:/ci.perfetto.dev/  
-Builds and runs perfetto_{unittests,integrationtests,benchmarks} from the
-standalone checkout. Benchmarks are ran in a reduced form for smoke testing.
-See [this doc](/docs/continuous-integration.md) for more details.
+**Travis CI**: https://perfetto-ci.appspot.com/  
+Builds and runs perfetto_{unittests,integrationtests,benchmarks} from then standalone checkout. Benchmarks are ran in a reduced form for smoke testing.
 
 **Android CI** (see go/apct and go/apct-guide):  
 runs only `perfetto_integrationtests`
@@ -61,10 +57,10 @@ runs only `perfetto_integrationtests`
 **Android presubmits (TreeHugger)**:  
 Runs before submission of every AOSP CL of `external/perfetto`.
 
-**Android CTS** (Android test suite used run to ensure API compatibility):   
-Rolling runs internally.
 
-Note that Perfetto CI uses the standalone build system and the others build as
+**Android CTS** (Android test suite used run to ensure API compatibility):   Rolling runs internally.
+
+Note that Travis uses the standalone build system and the others build as
 part of the Android tree.
 
 Unit tests
@@ -72,7 +68,7 @@ Unit tests
 Unit tests exist for most of the code in Perfetto on the class level. They
 ensure that each class broadly works as expected.
 
-Unit tests are currently ran on ci.perfetto.dev and build.chromium.org.
+Unit tests are currently ran only on  Travis.
 Running unit tests on APCT and Treehugger is WIP.
 
 Integration tests
@@ -103,8 +99,7 @@ more complex tests which ensure interaction between platform (e.g. Android apps
 etc.) and Perfetto is not broken.
 
 The relevant targets are `CtsPerfettoProducerApp` and `CtsPerfettoTestCases`. Once these are built, the following commands should be run:
-
-```bash
+```
 adb push $ANDROID_HOST_OUT/cts/android-cts/testcases/CtsPerfettoTestCases64 /data/local/tmp/
 adb install -r $ANDROID_HOST_OUT/cts/android-cts/testcases/CtsPerfettoProducerApp.apk
 ```
@@ -112,17 +107,10 @@ adb install -r $ANDROID_HOST_OUT/cts/android-cts/testcases/CtsPerfettoProducerAp
 Next, the app named `android.perfetto.producer` should be run on the device.
 
 Finally, the following command should be run:
-
-```bash
+```
 adb shell /data/local/tmp/CtsPerfettoTestCases64
 ```
 
 Chromium waterfall
 ------------------
-Perfetto is constantly rolled into chromium's //third_party/perfetto via
-[this autoroller](https://autoroll.skia.org/r/perfetto-chromium-autoroll).
-
-The [Chromium CI](https://build.chromium.org) runs the `perfetto_unittests`
-target, as defined in the [buildbot config][chromium_buildbot].
-
-[chromium_buildbot]: https://cs.chromium.org/search/?q=perfetto_.*tests+f:%5Esrc/testing.*json$&sq=package:chromium&type=cs
+Coming soon!

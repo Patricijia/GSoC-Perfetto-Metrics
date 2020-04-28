@@ -26,7 +26,7 @@ message HeapprofdConfig {
     optional uint32 dump_phase_ms = 5;
     // ms to wait between following dumps.
     optional uint32 dump_interval_ms = 6;
-  }
+  };
 
   // Set to 1 for perfect accuracy.
   // Otherwise, sample every sample_interval_bytes on average.
@@ -63,6 +63,10 @@ message HeapprofdConfig {
   // E.g. /system to not emit symbols for any system libraries.
   repeated string skip_symbol_prefix = 7;
 
+  // Dump once at the end of the trace, emitting the heap dump at maximum
+  // memory usage.
+  // optional bool retain_max = 5;  // TODO(fmayer): Implement
+
   // Dump at a predefined interval.
   optional ContinuousDumpConfig continuous_dump_config = 6;
 
@@ -80,33 +84,4 @@ message HeapprofdConfig {
   // trace. Use with caution as this will significantly slow down the target
   // process.
   optional bool block_client = 9;
-
-  // Do not profile processes from startup, only match already running
-  // processes.
-  //
-  // Can not be set at the same time as no_running.
-  optional bool no_startup = 10;
-
-  // Do not profile running processes. Only match processes on startup.
-  //
-  // Can not be set at the same time as no_startup.
-  optional bool no_running = 11;
-
-  // Gather information on how many bytes of allocations are on non-referenced
-  // pages. The way to use this generally is:
-  // 1. Start profile of app.
-  // 2. Start app.
-  // 3. Trigger a dump by sending SIGUSR1 to heapprofd.
-  // 4. Do operations.
-  // 5. End profile.
-  //
-  // You can then find the allocations that were not used for the operations you
-  // did in step 4.
-  optional bool idle_allocations = 12;
-
-  // Cause heapprofd to emit a single dump at the end, showing the memory usage
-  // at the point in time when the sampled heap usage of the process was at its
-  // maximum. This causes ProfilePacket.HeapSample.self_max to be set, and
-  // self_allocated and self_freed to not be set.
-  optional bool dump_at_max = 13;
 }

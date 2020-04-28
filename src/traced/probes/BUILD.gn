@@ -12,26 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../gn/test.gni")
-
-# The unprivileged daemon that is allowed to access tracefs (for ftrace).
-# Registers as a Producer on the traced daemon.
-executable("traced_probes") {
-  deps = [
-    "../../../:libperfetto",
-    "../../../gn:default_deps",
-    "../../../include/perfetto/ext/traced",
-  ]
-  sources = [
-    "main.cc",
-  ]
-}
-
-# Contains all the implementation but not the main() entry point. This target
-# is shared both by the executable and tests.
 source_set("probes") {
   public_deps = [
-    "../../../include/perfetto/ext/traced",
+    "../../../include/perfetto/traced",
   ]
   deps = [
     ":probes_src",
@@ -50,15 +33,13 @@ source_set("probes_src") {
   deps = [
     ":data_source",
     "../../../gn:default_deps",
-    "../../../include/perfetto/ext/traced",
-    "../../../protos/perfetto/config/ftrace:cpp",
+    "../../../include/perfetto/traced",
     "../../../protos/perfetto/trace/ps:zero",
     "../../base",
     "../../tracing:ipc",
     "../../tracing:tracing",
     "android_log",
     "filesystem",
-    "metatrace",
     "packages_list",
     "power",
     "ps",
@@ -83,12 +64,12 @@ source_set("data_source") {
   ]
 }
 
-perfetto_unittest_source_set("unittests") {
+source_set("unittests") {
   testonly = true
   deps = [
     ":probes_src",
     "../../../gn:default_deps",
-    "../../../gn:gtest_and_gmock",
+    "../../../gn:gtest_deps",
     "../../tracing:test_support",
     "android_log:unittests",
     "filesystem:unittests",

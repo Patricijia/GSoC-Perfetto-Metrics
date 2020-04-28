@@ -19,10 +19,11 @@
 #include <sstream>
 #include <string>
 
-#include "perfetto/ext/base/file_utils.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "perfetto/base/file_utils.h"
 #include "src/traced/probes/ftrace/ftrace_controller.h"
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
-#include "test/gtest_and_gmock.h"
 
 using testing::HasSubstr;
 using testing::Not;

@@ -28,10 +28,6 @@
 namespace protozero {
 
 struct ConstBytes {
-  std::string ToStdString() const {
-    return std::string(reinterpret_cast<const char*>(data), size);
-  }
-
   const uint8_t* data;
   size_t size;
 };
@@ -54,11 +50,11 @@ struct ConstChars {
 // null strings.
 class Field {
  public:
-  bool valid() const { return id_ != 0; }
-  uint16_t id() const { return id_; }
-  explicit operator bool() const { return valid(); }
+  inline bool valid() const { return id_ != 0; }
+  inline uint16_t id() const { return id_; }
+  explicit inline operator bool() const { return valid(); }
 
-  proto_utils::ProtoWireType type() const {
+  inline proto_utils::ProtoWireType type() const {
     auto res = static_cast<proto_utils::ProtoWireType>(type_);
     PERFETTO_DCHECK(res == proto_utils::ProtoWireType::kVarInt ||
                     res == proto_utils::ProtoWireType::kLengthDelimited ||
@@ -67,38 +63,38 @@ class Field {
     return res;
   }
 
-  bool as_bool() const {
+  inline bool as_bool() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kVarInt);
     return static_cast<bool>(int_value_);
   }
 
-  uint32_t as_uint32() const {
+  inline uint32_t as_uint32() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kVarInt ||
                     type() == proto_utils::ProtoWireType::kFixed32);
     return static_cast<uint32_t>(int_value_);
   }
 
-  int32_t as_int32() const {
+  inline int32_t as_int32() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kVarInt ||
                     type() == proto_utils::ProtoWireType::kFixed32);
     return static_cast<int32_t>(int_value_);
   }
 
-  uint64_t as_uint64() const {
+  inline uint64_t as_uint64() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kVarInt ||
                     type() == proto_utils::ProtoWireType::kFixed32 ||
                     type() == proto_utils::ProtoWireType::kFixed64);
     return int_value_;
   }
 
-  int64_t as_int64() const {
+  inline int64_t as_int64() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kVarInt ||
                     type() == proto_utils::ProtoWireType::kFixed32 ||
                     type() == proto_utils::ProtoWireType::kFixed64);
     return static_cast<int64_t>(int_value_);
   }
 
-  float as_float() const {
+  inline float as_float() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kFixed32);
     float res;
     uint32_t value32 = static_cast<uint32_t>(int_value_);
@@ -106,61 +102,50 @@ class Field {
     return res;
   }
 
-  double as_double() const {
+  inline double as_double() const {
     PERFETTO_DCHECK(!valid() || type() == proto_utils::ProtoWireType::kFixed64);
     double res;
     memcpy(&res, &int_value_, sizeof(res));
     return res;
   }
 
-  ConstChars as_string() const {
+  inline ConstChars as_string() const {
     PERFETTO_DCHECK(!valid() ||
                     type() == proto_utils::ProtoWireType::kLengthDelimited);
     return ConstChars{reinterpret_cast<const char*>(data()), size_};
   }
 
-  std::string as_std_string() const { return as_string().ToStdString(); }
+  inline std::string as_std_string() const { return as_string().ToStdString(); }
 
-  ConstBytes as_bytes() const {
+  inline ConstBytes as_bytes() const {
     PERFETTO_DCHECK(!valid() ||
                     type() == proto_utils::ProtoWireType::kLengthDelimited);
     return ConstBytes{data(), size_};
   }
 
-  const uint8_t* data() const {
+  inline const uint8_t* data() const {
     PERFETTO_DCHECK(!valid() ||
                     type() == proto_utils::ProtoWireType::kLengthDelimited);
     return reinterpret_cast<const uint8_t*>(int_value_);
   }
 
-  size_t size() const {
+  inline size_t size() const {
     PERFETTO_DCHECK(!valid() ||
                     type() == proto_utils::ProtoWireType::kLengthDelimited);
     return size_;
   }
 
-  uint64_t raw_int_value() const { return int_value_; }
+  inline uint64_t raw_int_value() const { return int_value_; }
 
-  void initialize(uint16_t id,
-                  uint8_t type,
-                  uint64_t int_value,
-                  uint32_t size) {
+  inline void initialize(uint16_t id,
+                         uint8_t type,
+                         uint64_t int_value,
+                         uint32_t size) {
     id_ = id;
     type_ = type;
     int_value_ = int_value;
     size_ = size;
   }
-
-  // For use with templates. This is used by RepeatedFieldIterator::operator*().
-  void get(bool* val) const { *val = as_bool(); }
-  void get(uint32_t* val) const { *val = as_uint32(); }
-  void get(int32_t* val) const { *val = as_int32(); }
-  void get(uint64_t* val) const { *val = as_uint64(); }
-  void get(int64_t* val) const { *val = as_int64(); }
-  void get(float* val) const { *val = as_float(); }
-  void get(double* val) const { *val = as_double(); }
-  void get(ConstChars* val) const { *val = as_string(); }
-  void get(ConstBytes* val) const { *val = as_bytes(); }
 
  private:
   // Fields are deliberately not initialized to keep the class trivially

@@ -20,7 +20,7 @@
 #include <algorithm>
 #include <limits>
 
-#include "perfetto/ext/base/no_destructor.h"
+#include "perfetto/base/no_destructor.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -41,15 +41,13 @@ void MaybeUpdateMinMax(T begin_it,
 }
 
 std::vector<const char*> CreateRefTypeStringMap() {
-  std::vector<const char*> map(static_cast<size_t>(RefType::kRefMax));
-  map[static_cast<size_t>(RefType::kRefNoRef)] = nullptr;
-  map[static_cast<size_t>(RefType::kRefUtid)] = "utid";
-  map[static_cast<size_t>(RefType::kRefCpuId)] = "cpu";
-  map[static_cast<size_t>(RefType::kRefGpuId)] = "gpu";
-  map[static_cast<size_t>(RefType::kRefIrq)] = "irq";
-  map[static_cast<size_t>(RefType::kRefSoftIrq)] = "softirq";
-  map[static_cast<size_t>(RefType::kRefUpid)] = "upid";
-  map[static_cast<size_t>(RefType::kRefTrack)] = "track";
+  std::vector<const char*> map(RefType::kRefMax);
+  map[RefType::kRefNoRef] = nullptr;
+  map[RefType::kRefUtid] = "utid";
+  map[RefType::kRefCpuId] = "cpu";
+  map[RefType::kRefIrq] = "irq";
+  map[RefType::kRefSoftIrq] = "softirq";
+  map[RefType::kRefUpid] = "upid";
   return map;
 }
 
@@ -68,6 +66,10 @@ TraceStorage::TraceStorage() {
 }
 
 TraceStorage::~TraceStorage() {}
+
+void TraceStorage::ResetStorage() {
+  *this = TraceStorage();
+}
 
 uint32_t TraceStorage::SqlStats::RecordQueryBegin(const std::string& query,
                                                   int64_t time_queued,
@@ -122,17 +124,9 @@ std::pair<int64_t, int64_t> TraceStorage::GetTraceTimestampBoundsNs() const {
                     nestable_slices_.start_ns().end(), &start_ns, &end_ns);
   MaybeUpdateMinMax(android_log_.timestamps().begin(),
                     android_log_.timestamps().end(), &start_ns, &end_ns);
-  MaybeUpdateMinMax(raw_events_.timestamps().begin(),
-                    raw_events_.timestamps().end(), &start_ns, &end_ns);
-  MaybeUpdateMinMax(heap_profile_allocations_.timestamps().begin(),
-                    heap_profile_allocations_.timestamps().end(), &start_ns,
-                    &end_ns);
 
   if (start_ns == std::numeric_limits<int64_t>::max()) {
     return std::make_pair(0, 0);
-  }
-  if (start_ns == end_ns) {
-    end_ns += 1;
   }
   return std::make_pair(start_ns, end_ns);
 }

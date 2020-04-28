@@ -52,7 +52,7 @@ declare namespace Wasm {
         returnType: string,
         argTypes: string[],
         args: any[],
-        ): number;
+    ): void;
     HEAPU8: Uint8Array;
     FS: FileSystem;
   }

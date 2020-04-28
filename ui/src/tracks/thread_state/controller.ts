@@ -12,9 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {fromNs, toNs} from '../../common/time';
-import {LIMIT} from '../../common/track_data';
-
+import {fromNs} from '../../common/time';
 import {
   TrackController,
   trackControllerRegistry
@@ -29,73 +27,75 @@ import {
 
 class ThreadStateTrackController extends TrackController<Config, Data> {
   static readonly kind = THREAD_STATE_TRACK_KIND;
+  private busy = false;
   private setup = false;
 
-  async onBoundsChange(start: number, end: number, resolution: number):
-      Promise<Data> {
-    const startNs = toNs(start);
-    const endNs = toNs(end);
+  onBoundsChange(start: number, end: number, resolution: number): void {
+    this.update(start, end, resolution);
+  }
+
+  private async update(start: number, end: number, resolution: number):
+      Promise<void> {
+    if (this.busy) return;
+    this.busy = true;
+
+    const startNs = Math.round(start * 1e9);
+    const endNs = Math.round(end * 1e9);
     let minNs = 0;
     if (groupBusyStates(resolution)) {
-      // Ns for 1px (the smallest state to display)
-      minNs = Math.round(resolution * 1e9);
+      // Ns for 20px (the smallest state to display)
+      minNs = Math.round(resolution * 20 * 1e9);
     }
 
+
     if (this.setup === false) {
-      let event = 'sched_waking';
-      const waking = await this.query(
-          `select * from instants where name = 'sched_waking' limit 1`);
-      if (waking.numRecords === 0) {
-        // Only use sched_wakeup if sched_waking is not in the trace.
-        event = 'sched_wakeup';
-      }
-      await this.query(`create view ${this.tableName('runnable')} AS
+      await this.query(`create view ${this.tableName('sched_wakeup')} AS
       select
         ts,
         lead(ts, 1, (select end_ts from trace_bounds))
           OVER(order by ts) - ts as dur,
         ref as utid
       from instants
-      where name = '${event}'
+      where name = 'sched_wakeup'
       and utid = ${this.config.utid}`);
 
       await this.query(
           `create virtual table ${this.tableName('window')} using window;`);
 
-      // Get the first ts for this utid - whether a sched wakeup/waking
+      // Get the first ts for this utid - whether a sched wakeup
       // or sched event.
       await this.query(`create view ${this.tableName('start')} as
       select min(ts) as ts from
-        (select ts from ${this.tableName('runnable')} UNION
+        (select ts from ${this.tableName('sched_wakeup')} UNION
         select ts from sched where utid = ${this.config.utid})`);
 
-      // Create an entry from first ts to either the first sched_wakeup/waking
-      // or to the end if there are no sched wakeup/ings. This means we will
-      // show all information we have even with no sched_wakeup/waking events.
+      // Create an entry from first ts to either the first sched_wakeup
+      // or to the end if there are no sched wakeups. This means
+      // we will show all information we have even with no sched_wakeup events.
       await this.query(`create view ${this.tableName('fill')} AS
         select
         (select ts from ${this.tableName('start')}),
         (select coalesce(
-          (select min(ts) from ${this.tableName('runnable')}),
+          (select min(ts) from ${this.tableName('sched_wakeup')}),
           (select end_ts from trace_bounds)
         )) - (select ts from ${this.tableName('start')}) as dur,
         ${this.config.utid} as utid
         `);
 
-      await this.query(`create view ${this.tableName('full_runnable')} as
-        select * from ${this.tableName('runnable')} UNION
+      await this.query(`create view ${this.tableName('full_sched_wakeup')} as
+        select * from ${this.tableName('sched_wakeup')} UNION
         select * from ${this.tableName('fill')}`);
 
       await this.query(`create virtual table ${this.tableName('span')}
         using span_left_join(
-          ${this.tableName('full_runnable')} partitioned utid,
+          ${this.tableName('full_sched_wakeup')} partitioned utid,
           sched partitioned utid)`);
 
       // Need to compute the lag(end_state) before joining with the window
       // table to avoid the first visible slice always having a null prev
       // end state.
       await this.query(`create view ${this.tableName('span_view')} as
-        select ts, dur, utid, cpu,
+        select ts, dur, utid,
         case
         when end_state is not null
         then 'Running'
@@ -148,13 +148,15 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
     await this.query(`create view ${this.tableName('fill_gaps')} as select
      (select min(ts) from ${this.tableName('span_view')}) as ts,
      (select end_ts from trace_bounds) - (select min(ts) from ${
-        this.tableName('span_view')}) as dur,
-     ${this.config.utid} as utid, -1 as cpu`);
+                                                                this.tableName(
+                                                                    'span_view')
+                                                              }) as dur,
+     ${this.config.utid} as utid`);
 
     const query = `select ts, cast(dur as double), utid,
-    case when state is not null then state else 'Busy' end as state,
-    cast(cpu as double)
-    from ${this.tableName('current')} limit ${LIMIT}`;
+    case when state is not null then state else 'Busy' end as state
+    from ${this.tableName('current')}`;
+
 
     const result = await this.query(query);
 
@@ -164,12 +166,10 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       start,
       end,
       resolution,
-      length: numRows,
       starts: new Float64Array(numRows),
       ends: new Float64Array(numRows),
       strings: [],
-      state: new Uint16Array(numRows),
-      cpu: new Uint8Array(numRows)
+      state: new Uint16Array(numRows)
     };
 
     const stringIndexes = new Map<string, number>();
@@ -188,10 +188,19 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       summary.starts[row] = start;
       summary.ends[row] = start + fromNs(+cols[1].doubleValues![row]);
       summary.state[row] = internString(cols[3].stringValues![row]);
-      summary.cpu[row] = +cols[4].doubleValues![row];
     }
 
-    return summary;
+    this.publish(summary);
+    this.busy = false;
+  }
+
+  private async query(query: string) {
+    const result = await this.engine.query(query);
+    if (result.error) {
+      console.error(`Query error "${query}": ${result.error}`);
+      throw new Error(`Query error "${query}": ${result.error}`);
+    }
+    return result;
   }
 
   onDestroy(): void {
@@ -200,9 +209,9 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       this.query(`drop table ${this.tableName('span')}`);
       this.query(`drop table ${this.tableName('current')}`);
       this.query(`drop table ${this.tableName('summarized')}`);
-      this.query(`drop view ${this.tableName('runnable')}`);
+      this.query(`drop view ${this.tableName('sched_wakeup')}`);
       this.query(`drop view ${this.tableName('fill')}`);
-      this.query(`drop view ${this.tableName('full_runnable')}`);
+      this.query(`drop view ${this.tableName('full_sched_wakeup')}`);
       this.query(`drop view ${this.tableName('span_view')}`);
       this.query(`drop view ${this.tableName('long_states')}`);
       this.query(`drop view ${this.tableName('fill_gaps')}`);

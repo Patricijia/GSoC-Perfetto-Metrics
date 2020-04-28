@@ -14,8 +14,6 @@
 
 import {assertTrue} from '../base/logging';
 
-const EPSILON = 0.0000000001;
-
 // TODO(hjd): Combine with timeToCode.
 export function timeToString(sec: number) {
   const units = ['s', 'ms', 'us', 'ns'];
@@ -33,17 +31,6 @@ export function fromNs(ns: number) {
   return ns / 1e9;
 }
 
-export function toNsFloor(seconds: number) {
-  return Math.floor(seconds * 1e9);
-}
-
-export function toNsCeil(seconds: number) {
-  return Math.ceil(seconds * 1e9);
-}
-
-export function toNs(seconds: number) {
-  return Math.round(seconds * 1e9);
-}
 
 // 1000000023ns -> "1.000 000 023"
 export function formatTimestamp(sec: number) {
@@ -91,9 +78,8 @@ export class TimeSpan {
     return new TimeSpan(this.start, this.end);
   }
 
-  equals(other: TimeSpan): boolean {
-    return Math.abs(this.start - other.start) < EPSILON &&
-        Math.abs(this.end - other.end) < EPSILON;
+  equals(other: TimeSpan) {
+    return this.start === other.start && this.end === other.end;
   }
 
   get duration() {
@@ -106,9 +92,5 @@ export class TimeSpan {
 
   add(sec: number): TimeSpan {
     return new TimeSpan(this.start + sec, this.end + sec);
-  }
-
-  contains(other: TimeSpan) {
-    return this.start <= other.start && other.end <= this.end;
   }
 }

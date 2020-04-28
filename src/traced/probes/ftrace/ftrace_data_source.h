@@ -24,22 +24,22 @@
 #include <string>
 #include <utility>
 
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/weak_ptr.h"
-#include "perfetto/ext/tracing/core/basic_types.h"
-#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/base/weak_ptr.h"
 #include "perfetto/protozero/message_handle.h"
-#include "src/traced/probes/ftrace/ftrace_config_utils.h"
+#include "perfetto/tracing/core/basic_types.h"
+#include "perfetto/tracing/core/trace_writer.h"
+#include "src/traced/probes/ftrace/ftrace_config.h"
 #include "src/traced/probes/ftrace/ftrace_metadata.h"
 #include "src/traced/probes/ftrace/ftrace_stats.h"
 #include "src/traced/probes/probes_data_source.h"
 
 namespace perfetto {
 
+class EventFilter;
 class FtraceController;
 class ProcessStatsDataSource;
 class InodeFileDataSource;
-struct FtraceDataSourceConfig;
 
 namespace protos {
 namespace pbzero {
@@ -63,7 +63,7 @@ class FtraceDataSource : public ProbesDataSource {
 
   // Called by FtraceController soon after ProbesProducer creates the data
   // source, to inject ftrace dependencies.
-  void Initialize(FtraceConfigId, const FtraceDataSourceConfig* parsing_config);
+  void Initialize(FtraceConfigId, const EventFilter* event_filter);
 
   // ProbesDataSource implementation.
   void Start() override;
@@ -75,10 +75,7 @@ class FtraceDataSource : public ProbesDataSource {
 
   FtraceConfigId config_id() const { return config_id_; }
   const FtraceConfig& config() const { return config_; }
-  const FtraceDataSourceConfig* parsing_config() const {
-    return parsing_config_;
-  }
-
+  const EventFilter* event_filter() { return event_filter_; }
   FtraceMetadata* mutable_metadata() { return &metadata_; }
   TraceWriter* trace_writer() { return writer_.get(); }
 
@@ -94,14 +91,11 @@ class FtraceDataSource : public ProbesDataSource {
   FtraceStats stats_before_ = {};
   std::map<FlushRequestID, std::function<void()>> pending_flushes_;
 
-  // -- Fields initialized by the Initialize() call:
+  // Initialized by the Initialize() call.
   FtraceConfigId config_id_ = 0;
   std::unique_ptr<TraceWriter> writer_;
   base::WeakPtr<FtraceController> controller_weak_;
-  // Muxer-held state for parsing ftrace according to this data source's
-  // configuration. Not the raw FtraceConfig proto (held by |config_|).
-  const FtraceDataSourceConfig* parsing_config_;
-  // -- End of fields set by Initialize().
+  const EventFilter* event_filter_;
 };
 
 }  // namespace perfetto

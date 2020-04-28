@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../../gn/test.gni")
-
 source_set("filesystem") {
   public_deps = [
     "../../../../protos/perfetto/trace/filesystem:zero",
@@ -22,8 +20,7 @@ source_set("filesystem") {
   deps = [
     "..:data_source",
     "../../../../gn:default_deps",
-    "../../../../include/perfetto/ext/traced",
-    "../../../../protos/perfetto/config/inode_file:zero",
+    "../../../../include/perfetto/traced",
     "../../../base",
   ]
   sources = [
@@ -42,14 +39,12 @@ source_set("filesystem") {
   ]
 }
 
-perfetto_unittest_source_set("unittests") {
+source_set("unittests") {
   testonly = true
   deps = [
     ":filesystem",
     "../../../../gn:default_deps",
-    "../../../../gn:gtest_and_gmock",
-    "../../../../include/perfetto/protozero",
-    "../../../../protos/perfetto/config/inode_file:zero",
+    "../../../../gn:gtest_deps",
     "../../../../src/base:test_support",
   ]
   sources = [

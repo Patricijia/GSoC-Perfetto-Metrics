@@ -29,7 +29,7 @@ import {
 
 // 0.5 Makes the horizontal lines sharp.
 const MARGIN_TOP = 4.5;
-const RECT_HEIGHT = 20;
+const RECT_HEIGHT = 30;
 
 class CpuFreqTrack extends Track<Config, Data> {
   static readonly kind = CPU_FREQ_TRACK_KIND;
@@ -47,15 +47,20 @@ class CpuFreqTrack extends Track<Config, Data> {
     super(trackState);
   }
 
-  getHeight() {
-    return MARGIN_TOP + RECT_HEIGHT;
-  }
-
   renderCanvas(ctx: CanvasRenderingContext2D): void {
     // TODO: fonts and colors should come from the CSS and not hardcoded here.
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const data = this.data();
 
+    // If there aren't enough cached slices data in |data| request more to
+    // the controller.
+    const inRange = data !== undefined &&
+        (visibleWindowTime.start >= data.start &&
+         visibleWindowTime.end <= data.end);
+    if (!inRange || data === undefined ||
+        data.resolution !== globals.getCurResolution()) {
+      globals.requestTrackData(this.trackState.id);
+    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     assertTrue(data.tsStarts.length === data.freqKHz.length);
@@ -129,11 +134,12 @@ class CpuFreqTrack extends Track<Config, Data> {
     ctx.font = '10px Google Sans';
 
     if (this.hoveredValue !== undefined && this.hoveredTs !== undefined) {
-      let text = `${this.hoveredValue.toLocaleString()}kHz`;
+      let text = `Freq: ${this.hoveredValue.toLocaleString()}kHz`;
       if (data.isQuantized) {
-        text = `${this.hoveredValue.toLocaleString()}kHz (weighted avg)`;
+        text = `Weighted avg freq: ${this.hoveredValue.toLocaleString()}kHz`;
       }
 
+      const width = ctx.measureText(text).width;
       ctx.fillStyle = `hsl(${hue}, 45%, 75%)`;
       ctx.strokeStyle = `hsl(${hue}, 45%, 45%)`;
 
@@ -157,34 +163,31 @@ class CpuFreqTrack extends Track<Config, Data> {
       ctx.fill();
       ctx.stroke();
 
+      // Draw the tooltip.
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
+      ctx.fillRect(this.mouseXpos + 5, MARGIN_TOP, width + 16, RECT_HEIGHT);
+      ctx.fillStyle = 'hsl(200, 50%, 40%)';
+      const centerY = MARGIN_TOP + RECT_HEIGHT / 2;
+      ctx.fillText(text, this.mouseXpos + 10, centerY - 3);
       // Display idle value if current hover is idle.
       if (this.hoveredIdle !== undefined && this.hoveredIdle !== -1) {
         // Display the idle value +1 to be consistent with catapult.
-        text += ` (Idle: ${(this.hoveredIdle + 1).toLocaleString()})`;
+        const idle = `Idle: ${(this.hoveredIdle + 1).toLocaleString()}`;
+        ctx.fillText(idle, this.mouseXpos + 10, centerY + 11);
       }
-      const width = ctx.measureText(text).width;
-
-      // Draw the tooltip.
-      ctx.textBaseline = 'middle';
-      ctx.fillStyle = 'rgba(255, 255, 255, 0.8)';
-      ctx.fillRect(this.mouseXpos, MARGIN_TOP, width + 16, RECT_HEIGHT);
-      ctx.fillStyle = 'hsl(200, 50%, 40%)';
-      ctx.fillText(text, this.mouseXpos + 8, MARGIN_TOP + RECT_HEIGHT / 2);
     }
 
     // Write the Y scale on the top left corner.
-    ctx.textBaseline = 'alphabetic';
     ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
-    ctx.fillRect(0, 0, 42, 18);
+    ctx.fillRect(0, 0, 40, 16);
     ctx.fillStyle = '#666';
     ctx.textAlign = 'left';
-    ctx.fillText(`${yLabel}`, 4, 14);
+    ctx.fillText(`${yLabel}`, 5, 14);
 
     // If the cached trace slices don't fully cover the visible time range,
     // show a gray rectangle with a "Loading..." label.
     checkerboardExcept(
         ctx,
-        this.getHeight(),
         timeScale.timeToPx(visibleWindowTime.start),
         timeScale.timeToPx(visibleWindowTime.end),
         timeScale.timeToPx(data.start),

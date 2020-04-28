@@ -18,8 +18,9 @@
 
 #include <string>
 
-#include "protos/perfetto/trace/trace_packet.pb.h"
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
+
+#include "perfetto/trace/trace_packet.pb.h"
 
 namespace perfetto {
 namespace {

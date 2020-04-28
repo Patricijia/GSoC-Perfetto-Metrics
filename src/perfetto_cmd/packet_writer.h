@@ -17,10 +17,9 @@
 #ifndef SRC_PERFETTO_CMD_PACKET_WRITER_H_
 #define SRC_PERFETTO_CMD_PACKET_WRITER_H_
 
-#include <memory>
 #include <vector>
 
-#include <stdio.h>
+#include "perfetto/base/utils.h"
 
 namespace perfetto {
 

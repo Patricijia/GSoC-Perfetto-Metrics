@@ -25,7 +25,7 @@ SliceTable::SliceTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void SliceTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<SliceTable>(db, storage, "internal_slice");
+  Table::Register<SliceTable>(db, storage, "internal_slice");
 }
 
 StorageSchema SliceTable::CreateStorageSchema() {
@@ -34,16 +34,13 @@ StorageSchema SliceTable::CreateStorageSchema() {
       .AddGenericNumericColumn("slice_id", RowAccessor())
       .AddOrderedNumericColumn("ts", &slices.start_ns())
       .AddNumericColumn("dur", &slices.durations())
-      .AddNumericColumn("track_id", &slices.track_id())
       .AddNumericColumn("ref", &slices.refs())
       .AddStringColumn("ref_type", &slices.types(), &GetRefTypeStringMap())
-      .AddStringColumn("category", &slices.categories(),
-                       &storage_->string_pool())
+      .AddStringColumn("cat", &slices.cats(), &storage_->string_pool())
       .AddStringColumn("name", &slices.names(), &storage_->string_pool())
       .AddNumericColumn("depth", &slices.depths())
       .AddNumericColumn("stack_id", &slices.stack_ids())
       .AddNumericColumn("parent_stack_id", &slices.parent_stack_ids())
-      .AddNumericColumn("arg_set_id", &slices.arg_set_ids())
       .Build({"slice_id"});
 }
 
@@ -53,15 +50,15 @@ uint32_t SliceTable::RowCount() {
 
 int SliceTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
   info->estimated_cost = EstimateCost(qc);
-  info->sqlite_omit_order_by = true;
 
   // Only the string columns are handled by SQLite
+  info->order_by_consumed = true;
   size_t name_index = schema().ColumnIndexFromName("name");
-  size_t cat_index = schema().ColumnIndexFromName("category");
+  size_t cat_index = schema().ColumnIndexFromName("cat");
   size_t ref_type_index = schema().ColumnIndexFromName("ref_type");
   for (size_t i = 0; i < qc.constraints().size(); i++) {
     auto col = static_cast<size_t>(qc.constraints()[i].iColumn);
-    info->constraint_info[i].sqlite_omit =
+    info->omit[i] =
         col != name_index && col != cat_index && col != ref_type_index;
   }
   return SQLITE_OK;

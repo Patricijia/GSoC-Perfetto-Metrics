@@ -16,11 +16,7 @@ import * as m from 'mithril';
 
 import {assertExists} from '../base/logging';
 import {Actions} from '../common/actions';
-import {
-  getContainingTrackId,
-  TrackGroupState,
-  TrackState
-} from '../common/state';
+import {TrackGroupState, TrackState} from '../common/state';
 
 import {globals} from './globals';
 import {drawGridLines} from './gridline_helper';
@@ -28,10 +24,8 @@ import {Panel, PanelSize} from './panel';
 import {Track} from './track';
 import {TrackContent} from './track_panel';
 import {trackRegistry} from './track_registry';
-import {
-  drawVerticalLineAtTime,
-  drawVerticalSelection
-} from './vertical_line_helper';
+import {drawVerticalSelection,
+        drawVerticalLineAtTime} from './vertical_line_helper';
 
 
 interface Attrs {
@@ -62,43 +56,25 @@ export class TrackGroupPanel extends Panel<Attrs> {
 
   view({attrs}: m.CVnode<Attrs>) {
     const collapsed = this.trackGroupState.collapsed;
-    let name = this.trackGroupState.name;
-    if (name[0] === '/') {
-      name = StripPathFromExecutable(name);
-    }
-
-    // The shell should be highlighted if the current search result is inside
-    // this track group.
-    let highlightClass = '';
-    const searchIndex = globals.frontendLocalState.searchIndex;
-    if (searchIndex !== -1) {
-      const trackId = globals.currentSearchResults
-                          .trackIds[globals.frontendLocalState.searchIndex];
-      const parentTrackId = getContainingTrackId(globals.state, trackId);
-      if (parentTrackId === attrs.trackGroupId) {
-        highlightClass = 'flash';
-      }
-    }
-
+    const name = StripPathFromExecutable(this.trackGroupState.name);
     return m(
         `.track-group-panel[collapsed=${collapsed}]`,
-        {id: 'track_' + this.trackGroupId},
-        m(`.shell`,
-          {
-            onclick: (e: MouseEvent) => {
-              globals.dispatch(Actions.toggleTrackGroupCollapsed({
-                trackGroupId: attrs.trackGroupId,
-              })),
-                  e.stopPropagation();
-            },
-            class: `${highlightClass}`,
-          },
+        m('.shell',
           m('h1',
             {
               title: name,
             },
-            name),
+            name,
+            m.trust('&#x200E;')),
           m('.fold-button',
+            {
+              onclick: (e: MouseEvent) => {
+                globals.dispatch(Actions.toggleTrackGroupCollapsed({
+                  trackGroupId: attrs.trackGroupId,
+                })),
+                e.stopPropagation();
+              }
+            },
             m('i.material-icons',
               this.trackGroupState.collapsed ? 'expand_more' : 'expand_less'))),
         this.summaryTrack ? m(TrackContent, {track: this.summaryTrack}) : null);
@@ -133,12 +109,12 @@ export class TrackGroupPanel extends Panel<Attrs> {
 
     ctx.translate(this.shellWidth, 0);
     if (this.summaryTrack) {
-      this.summaryTrack.render(ctx);
+      this.summaryTrack.renderCanvas(ctx);
     }
     ctx.restore();
 
     const localState = globals.frontendLocalState;
-    // Draw vertical line when hovering on the notes panel.
+    // Draw vertical line when hovering on the the notes panel.
     if (localState.showNotePreview) {
       drawVerticalLineAtTime(ctx,
                             localState.timeScale,
@@ -154,16 +130,6 @@ export class TrackGroupPanel extends Panel<Attrs> {
                             size.height,
                             `rgb(52,69,150)`);
     }
-    if (globals.frontendLocalState.selectedTimeRange.startSec !== undefined &&
-        globals.frontendLocalState.selectedTimeRange.endSec !== undefined) {
-      drawVerticalSelection(
-          ctx,
-          localState.timeScale,
-          globals.frontendLocalState.selectedTimeRange.startSec,
-          globals.frontendLocalState.selectedTimeRange.endSec,
-          size.height,
-          `rgba(0,0,0,0.5)`);
-    }
     if (globals.state.currentSelection !== null) {
       if (globals.state.currentSelection.kind === 'NOTE') {
         const note = globals.state.notes[globals.state.currentSelection.id];
@@ -172,6 +138,14 @@ export class TrackGroupPanel extends Panel<Attrs> {
                                note.timestamp,
                                size.height,
                                note.color);
+      }
+      if (globals.state.currentSelection.kind === 'TIMESPAN') {
+        drawVerticalSelection(ctx,
+                              localState.timeScale,
+                              globals.state.currentSelection.startTs,
+                              globals.state.currentSelection.endTs,
+                              size.height,
+                              `rgba(52,69,150,0.3)`);
       }
       if (globals.state.currentSelection.kind === 'SLICE' &&
           globals.sliceDetails.wakeupTs !== undefined) {

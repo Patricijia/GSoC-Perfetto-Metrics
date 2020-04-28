@@ -19,8 +19,7 @@ import {
   createEmptyState,
   SCROLLING_TRACK_GROUP,
   State,
-  TraceUrlSource,
-  TrackState,
+  TrackState
 } from './state';
 
 function fakeTrack(state: State, id: string): TrackState {
@@ -249,8 +248,7 @@ test('open trace', () => {
   const engineKeys = Object.keys(after.engines);
   expect(after.nextId).toBe(101);
   expect(engineKeys.length).toBe(1);
-  expect((after.engines[engineKeys[0]].source as TraceUrlSource).url)
-      .toBe('https://example.com/bar');
+  expect(after.engines[engineKeys[0]].source).toBe('https://example.com/bar');
   expect(after.route).toBe('/viewer');
   expect(after.recordConfig).toBe(recordConfig);
 });
@@ -279,8 +277,7 @@ test('open second trace from file', () => {
 
   const engineKeys = Object.keys(thrice.engines);
   expect(engineKeys.length).toBe(1);
-  expect((thrice.engines[engineKeys[0]].source as TraceUrlSource).url)
-      .toBe('https://example.com/foo');
+  expect(thrice.engines[engineKeys[0]].source).toBe('https://example.com/foo');
   expect(thrice.pinnedTracks.length).toBe(0);
   expect(thrice.scrollingTracks.length).toBe(0);
   expect(thrice.route).toBe('/viewer');

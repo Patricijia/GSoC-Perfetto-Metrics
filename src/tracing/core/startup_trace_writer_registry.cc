@@ -14,15 +14,13 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/tracing/core/startup_trace_writer_registry.h"
+#include "perfetto/tracing/core/startup_trace_writer_registry.h"
 
-#include <algorithm>
-#include <cmath>
 #include <functional>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
-#include "perfetto/ext/tracing/core/startup_trace_writer.h"
+#include "perfetto/tracing/core/startup_trace_writer.h"
 #include "src/tracing/core/shared_memory_arbiter_impl.h"
 
 using ChunkHeader = perfetto::SharedMemoryABI::ChunkHeader;
@@ -33,11 +31,11 @@ StartupTraceWriterRegistryHandle::StartupTraceWriterRegistryHandle(
     StartupTraceWriterRegistry* registry)
     : registry_(registry) {}
 
-void StartupTraceWriterRegistryHandle::ReturnWriterToRegistry(
-    std::unique_ptr<StartupTraceWriter> writer) {
+void StartupTraceWriterRegistryHandle::OnWriterDestroyed(
+    StartupTraceWriter* writer) {
   std::lock_guard<std::mutex> lock(lock_);
   if (registry_)
-    registry_->ReturnTraceWriter(std::move(writer));
+    registry_->OnStartupTraceWriterDestroyed(writer);
 }
 
 void StartupTraceWriterRegistryHandle::OnRegistryDestroyed() {
@@ -52,48 +50,22 @@ StartupTraceWriterRegistry::~StartupTraceWriterRegistry() {
   handle_->OnRegistryDestroyed();
 }
 
-// static
-constexpr size_t StartupTraceWriterRegistry::kDefaultMaxBufferSizeBytes;
-
 std::unique_ptr<StartupTraceWriter>
-StartupTraceWriterRegistry::CreateUnboundTraceWriter(
-    BufferExhaustedPolicy buffer_exhausted_policy,
-    size_t max_buffer_size_bytes) {
+StartupTraceWriterRegistry::CreateUnboundTraceWriter() {
   std::lock_guard<std::mutex> lock(lock_);
   PERFETTO_DCHECK(!arbiter_);  // Should only be called while unbound.
-  std::unique_ptr<StartupTraceWriter> writer(new StartupTraceWriter(
-      handle_, buffer_exhausted_policy, max_buffer_size_bytes));
-  unbound_writers_.push_back(writer.get());
+  std::unique_ptr<StartupTraceWriter> writer(new StartupTraceWriter(handle_));
+  unbound_writers_.insert(writer.get());
   return writer;
 }
 
-void StartupTraceWriterRegistry::ReturnTraceWriter(
+void StartupTraceWriterRegistry::ReturnUnboundTraceWriter(
     std::unique_ptr<StartupTraceWriter> trace_writer) {
   std::lock_guard<std::mutex> lock(lock_);
+  PERFETTO_DCHECK(!arbiter_);  // Should only be called while unbound.
   PERFETTO_DCHECK(!trace_writer->write_in_progress_);
-  auto it = std::find(unbound_writers_.begin(), unbound_writers_.end(),
-                      trace_writer.get());
-
-  // If the registry is already bound, but the writer wasn't, bind it now.
-  if (arbiter_) {
-    if (it == unbound_writers_.end()) {
-      // Nothing to do, the writer was already bound.
-      return;
-    }
-
-    // This should succeed since nobody can write to this writer concurrently.
-    bool success = trace_writer->BindToArbiter(arbiter_, target_buffer_,
-                                               chunks_per_batch_);
-    PERFETTO_DCHECK(success);
-    unbound_writers_.erase(it);
-
-    OnUnboundWritersRemovedLocked();
-    return;
-  }
-
-  // If the registry was not bound yet, keep the writer alive until it is.
-  PERFETTO_DCHECK(it != unbound_writers_.end());
-  unbound_writers_.erase(it);
+  PERFETTO_DCHECK(unbound_writers_.count(trace_writer.get()));
+  unbound_writers_.erase(trace_writer.get());
   unbound_owned_writers_.push_back(std::move(trace_writer));
 }
 
@@ -109,24 +81,6 @@ void StartupTraceWriterRegistry::BindToArbiter(
     arbiter_ = arbiter;
     target_buffer_ = target_buffer;
     task_runner_ = task_runner;
-
-    // Attempt to use at most half the SMB for binding of StartupTraceWriters at
-    // the same time. In the worst case, all writers are binding at the same
-    // time, so divide it up between them.
-    //
-    // TODO(eseckler): This assumes that there's only a single registry at the
-    // same time. SharedMemoryArbiterImpl should advise us how much of the SMB
-    // we're allowed to use in the first place.
-    size_t num_writers =
-        unbound_owned_writers_.size() + unbound_writers_.size();
-    if (num_writers) {
-      chunks_per_batch_ = arbiter_->num_pages() / 2 / num_writers;
-    } else {
-      chunks_per_batch_ = arbiter_->num_pages() / 2;
-    }
-    // We should use at least one chunk per batch.
-    chunks_per_batch_ = std::max(chunks_per_batch_, static_cast<size_t>(1u));
-
     // Weakptrs should be valid on |task_runner|. For this, the factory needs to
     // be created on |task_runner|, i.e. BindToArbiter must be called on
     // |task_runner|.
@@ -143,8 +97,7 @@ void StartupTraceWriterRegistry::BindToArbiter(
   // Bind and destroy the owned writers.
   for (const auto& writer : unbound_owned_writers) {
     // This should succeed since nobody can write to these writers concurrently.
-    bool success =
-        writer->BindToArbiter(arbiter_, target_buffer_, chunks_per_batch_);
+    bool success = writer->BindToArbiter(arbiter_, target_buffer_);
     PERFETTO_DCHECK(success);
   }
   unbound_owned_writers.clear();
@@ -155,10 +108,10 @@ void StartupTraceWriterRegistry::BindToArbiter(
 void StartupTraceWriterRegistry::TryBindWriters() {
   std::lock_guard<std::mutex> lock(lock_);
   for (auto it = unbound_writers_.begin(); it != unbound_writers_.end();) {
-    if ((*it)->BindToArbiter(arbiter_, target_buffer_, chunks_per_batch_)) {
+    if ((*it)->BindToArbiter(arbiter_, target_buffer_)) {
       it = unbound_writers_.erase(it);
     } else {
-      break;
+      it++;
     }
   }
   if (!unbound_writers_.empty()) {
@@ -169,6 +122,13 @@ void StartupTraceWriterRegistry::TryBindWriters() {
     });
   }
   OnUnboundWritersRemovedLocked();
+}
+
+void StartupTraceWriterRegistry::OnStartupTraceWriterDestroyed(
+    StartupTraceWriter* trace_writer) {
+  std::lock_guard<std::mutex> lock(lock_);
+  if (unbound_writers_.erase(trace_writer) > 0)
+    OnUnboundWritersRemovedLocked();
 }
 
 void StartupTraceWriterRegistry::OnUnboundWritersRemovedLocked() {

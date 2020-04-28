@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/tracing/core/sliced_protobuf_input_stream.h"
+#include "src/tracing/core/sliced_protobuf_input_stream.h"
 
 #include <algorithm>
 
@@ -86,17 +86,17 @@ bool SlicedProtobufInputStream::Skip(int count) {
   return true;
 }
 
-SlicedProtobufInputStream::int64 SlicedProtobufInputStream::ByteCount() const {
+google::protobuf::int64 SlicedProtobufInputStream::ByteCount() const {
   PERFETTO_DCHECK(Validate());
-  int64_t count = 0;
+  google::protobuf::int64 count = 0;
   for (auto it = slices_->begin(); it != slices_->end(); it++) {
     if (it == cur_slice_) {
-      count += static_cast<int64_t>(pos_in_cur_slice_);
+      count += static_cast<google::protobuf::int64>(pos_in_cur_slice_);
       break;
     }
-    count += static_cast<int64_t>(it->size);
+    count += static_cast<google::protobuf::int64>(it->size);
   }
-  return static_cast<SlicedProtobufInputStream::int64>(count);
+  return count;
 }
 
 bool SlicedProtobufInputStream::Validate() const {

@@ -69,7 +69,7 @@ EOF
 protoc=$(pwd)/out/android/gcc_like_host/protoc
 
 $protoc --encode=perfetto.protos.TraceConfig \
-        -I$(pwd)/external/perfetto \
+        -I$(pwd)/external/perfetto/protos \
         $(pwd)/external/perfetto/protos/perfetto/config/perfetto_config.proto \
         < /tmp/config.txpb \
         > /tmp/config.pb

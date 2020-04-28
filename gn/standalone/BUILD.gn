@@ -13,8 +13,8 @@
 # limitations under the License.
 
 import("//gn/standalone/android.gni")
-import("//gn/standalone/sanitizers/sanitizers.gni")
 import("//gn/standalone/wasm.gni")
+import("//gn/standalone/sanitizers/sanitizers.gni")
 
 config("extra_warnings") {
   cflags = [
@@ -76,10 +76,11 @@ config("default") {
     "-fPIC",
     "-g",
     "-Wformat",
+    "-Werror",
   ]
 
-  if (!is_fuzzer) {
-    cflags += [ "-Werror" ]
+  if (!is_wasm && !is_lto) {
+    cflags += [ "-Wa,--noexecstack" ]
   }
 
   if (is_clang) {
@@ -108,10 +109,7 @@ config("default") {
       "-msse2",
       "-mfpmath=sse",
     ]
-    ldflags += [
-      "-m32",
-      "-lgcc",
-    ]
+    ldflags += [ "-m32" ]
   } else if (current_cpu == "arm64") {
     cflags += [ "-fno-omit-frame-pointer" ]
   }
@@ -192,7 +190,7 @@ config("release") {
     "-ffunction-sections",
   ]
   if (is_android) {
-    cflags += [ "-O2" ]
+    cflags += [ "-Oz" ]
   } else if (is_fuzzer) {
     cflags += [ "-O1" ]
   } else {
@@ -202,6 +200,7 @@ config("release") {
     ldflags = [ "-dead_strip" ]
   } else {
     ldflags = [
+      "-fuse-ld=gold",
       "-Wl,--gc-sections",
       "-Wl,--icf=all",
       "-Wl,-O1",

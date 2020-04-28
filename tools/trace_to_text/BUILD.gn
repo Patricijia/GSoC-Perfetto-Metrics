@@ -13,149 +13,38 @@
 # limitations under the License.
 
 import("../../gn/perfetto.gni")
-import("../../gn/perfetto_host_executable.gni")
+import("../../gn/proto_library.gni")
 import("../../gn/wasm.gni")
 
-perfetto_host_executable("trace_to_text") {
-  testonly = true
-  deps = [
-    ":full",
-    "../../gn:default_deps",
-  ]
-}
-
-# This is just to check that we can build a version of trace_to_text against
-# libprotobuf-lite. This configuration is only used by WASM. Unfortunately,
-# however, the WASM linker is very permissive and failures show up only when
-# loading the executable in the browser.
-perfetto_host_executable("trace_to_text_lite") {
-  testonly = true
-  deps = [
-    ":lite",
-    "../../gn:default_deps",
-  ]
-}
-
-source_set("utils") {
-  deps = [
-    ":symbolizer",
-  ]
+# The core source files that are used both by the "full" version (the host
+# executable) and by the "lite" version (the WASM module for the UI).
+source_set("common") {
   public_deps = [
     "../../gn:default_deps",
-    "../../gn:zlib",
     "../../include/perfetto/base",
-    "../../include/perfetto/ext/base",
-    "../../include/perfetto/ext/traced:sys_stats_counters",
+    "../../include/perfetto/trace_processor:trace_processor",
+    "../../include/perfetto/traced:sys_stats_counters",
     "../../protos/perfetto/trace:lite",
     "../../protos/perfetto/trace/ftrace:lite",
-    "../../protos/perfetto/trace/interned_data:lite",
-    "../../protos/perfetto/trace/profiling:lite",
-    "../../src/trace_processor:lib",
-  ]
-  sources = [
-    "utils.cc",
-    "utils.h",
-  ]
-}
-
-source_set("local_symbolizer") {
-  public_deps = [
-    ":symbolizer",
-    ":utils",
-    "../../gn:default_deps",
-    "../../include/perfetto/base",
-    "../../include/perfetto/ext/base",
-    "../../include/perfetto/protozero",
-    "../../protos/perfetto/trace:lite",
-    "../../protos/perfetto/trace:zero",
-    "../../protos/perfetto/trace/interned_data:lite",
-    "../../protos/perfetto/trace/profiling:lite",
-  ]
-  sources = [
-    "local_symbolizer.cc",
-    "local_symbolizer.h",
-  ]
-}
-
-source_set("symbolizer") {
-  public_deps = [
-    "../../gn:default_deps",
-    "../../include/perfetto/base",
-    "../../include/perfetto/ext/base",
-    "../../include/perfetto/profiling:symbolizer",
-    "../../include/perfetto/protozero",
-    "../../protos/perfetto/trace:lite",
-    "../../protos/perfetto/trace:zero",
-    "../../protos/perfetto/trace/interned_data:lite",
-    "../../protos/perfetto/trace/profiling:lite",
-  ]
-  sources = [
-    "symbolizer.cc",
-  ]
-}
-
-source_set("pprofbuilder") {
-  deps = [
-    ":symbolizer",
-    ":utils",
-    "../../gn:default_deps",
-    "../../include/perfetto/base",
-    "../../include/perfetto/profiling:symbolizer",
-    "../../protos/perfetto/trace:lite",
     "../../protos/perfetto/trace/profiling:lite",
     "../../protos/third_party/pprof:lite",
     "../../src/base",
     "../../src/trace_processor:lib",
   ]
   sources = [
-    "pprof_builder.cc",
-  ]
-}
-
-# Exposed in bazel builds.
-static_library("libpprofbuilder") {
-  complete_static_lib = true
-  deps = [
-    ":pprofbuilder",
-  ]
-}
-
-# The core source files that are used both by the "full" version (the host
-# executable) and by the "lite" version (the WASM module for the UI).
-source_set("common") {
-  deps = [
-    ":local_symbolizer",
-    ":pprofbuilder",
-    ":symbolizer",
-    ":utils",
-  ]
-  public_deps = [
-    "../../gn:default_deps",
-    "../../include/perfetto/base",
-    "../../include/perfetto/ext/traced:sys_stats_counters",
-    "../../include/perfetto/protozero",
-    "../../protos/perfetto/trace:lite",
-    "../../protos/perfetto/trace:zero",
-    "../../protos/perfetto/trace/ftrace:lite",
-    "../../protos/perfetto/trace/interned_data:lite",
-    "../../protos/perfetto/trace/profiling:lite",
-    "../../src/base",
-    "../../src/trace_processor:lib",
-  ]
-  sources = [
     "main.cc",
-    "symbolize_profile.cc",
-    "symbolize_profile.h",
-    "trace_to_json.cc",
-    "trace_to_json.h",
     "trace_to_profile.cc",
     "trace_to_profile.h",
     "trace_to_systrace.cc",
     "trace_to_systrace.h",
     "trace_to_text.h",
+    "utils.cc",
+    "utils.h",
   ]
-  if (enable_perfetto_version_gen) {
-    deps += [ "//gn/standalone:gen_git_revision" ]
+  if (perfetto_build_standalone) {
+    deps = [
+      "../../gn/standalone:gen_git_revision",
+    ]
   }
 }
 
@@ -170,15 +59,13 @@ source_set("lite") {
   ]
 }
 
-# Full target for the host. Depends on libprotobuf-full.
+# Full traget for the host. Depends on libprotobuf-full.
 source_set("full") {
   testonly = true
   deps = [
     ":common",
-    ":utils",
     "../../gn:default_deps",
-    "../../gn:protobuf_full",
-    "../../gn:zlib",
+    "../../gn:protobuf_full_deps",
   ]
   sources = [
     "proto_full_utils.cc",
@@ -187,10 +74,47 @@ source_set("full") {
   ]
 }
 
+if (current_toolchain == host_toolchain) {
+  executable("trace_to_text_host") {
+    testonly = true
+    deps = [
+      ":full",
+      "../../gn:default_deps",
+    ]
+  }
+
+  # WASM is too permissive, build a normal version of the binary to test for
+  # missing symbols.
+  executable("trace_to_text_lite_host") {
+    deps = [
+      ":lite",
+      "../../gn:default_deps",
+    ]
+  }
+}
+
 wasm_lib("trace_to_text_wasm") {
   name = "trace_to_text"
   deps = [
     ":lite",
     "../../gn:default_deps",
   ]
+}
+
+# The one for the android tree is defined in the top-level BUILD.gn.
+if (!perfetto_build_with_android) {
+  copy("trace_to_text") {
+    testonly = true
+    host_out_dir_ =
+        get_label_info(":trace_to_text_host($host_toolchain)", "root_out_dir")
+    deps = [
+      ":trace_to_text_host($host_toolchain)",
+    ]
+    sources = [
+      "${host_out_dir_}/trace_to_text_host",
+    ]
+    outputs = [
+      "${root_out_dir}/trace_to_text",
+    ]
+  }
 }

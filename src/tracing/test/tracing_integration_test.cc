@@ -17,28 +17,29 @@
 #include <inttypes.h>
 #include <unistd.h>
 
-#include "perfetto/ext/base/temp_file.h"
-#include "perfetto/ext/tracing/core/consumer.h"
-#include "perfetto/ext/tracing/core/producer.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
-#include "perfetto/ext/tracing/core/trace_stats.h"
-#include "perfetto/ext/tracing/core/trace_writer.h"
-#include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
-#include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
-#include "perfetto/ext/tracing/ipc/service_ipc_host.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "perfetto/base/temp_file.h"
+#include "perfetto/tracing/core/consumer.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
+#include "perfetto/tracing/core/producer.h"
 #include "perfetto/tracing/core/trace_config.h"
+#include "perfetto/tracing/core/trace_packet.h"
+#include "perfetto/tracing/core/trace_stats.h"
+#include "perfetto/tracing/core/trace_writer.h"
+#include "perfetto/tracing/ipc/consumer_ipc_client.h"
+#include "perfetto/tracing/ipc/producer_ipc_client.h"
+#include "perfetto/tracing/ipc/service_ipc_host.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/ipc/test/test_socket.h"
 #include "src/tracing/core/tracing_service_impl.h"
-#include "test/gtest_and_gmock.h"
 
-#include "protos/perfetto/config/trace_config.pb.h"
-#include "protos/perfetto/trace/test_event.pbzero.h"
-#include "protos/perfetto/trace/trace.pb.h"
-#include "protos/perfetto/trace/trace_packet.pb.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/config/trace_config.pb.h"
+#include "perfetto/trace/test_event.pbzero.h"
+#include "perfetto/trace/trace.pb.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 namespace {
@@ -308,8 +309,7 @@ TEST_F(TracingIntegrationTest, WithIPCTransport) {
 
             for (auto& encoded_packet : *packets) {
               protos::TracePacket packet;
-              ASSERT_TRUE(packet.ParseFromString(
-                  encoded_packet.GetRawBytesForTesting()));
+              ASSERT_TRUE(encoded_packet.Decode(&packet));
               if (packet.has_for_testing()) {
                 char buf[8];
                 sprintf(buf, "evt_%zu", num_pack_rx++);
@@ -517,8 +517,7 @@ TEST_F(TracingIntegrationTestWithSMBScrapingProducer, ScrapeOnFlush) {
                      std::vector<TracePacket>* packets, bool has_more) {
             for (auto& encoded_packet : *packets) {
               protos::TracePacket packet;
-              ASSERT_TRUE(packet.ParseFromString(
-                  encoded_packet.GetRawBytesForTesting()));
+              ASSERT_TRUE(encoded_packet.Decode(&packet));
               if (packet.has_for_testing()) {
                 num_test_pack_rx++;
               }
@@ -527,7 +526,7 @@ TEST_F(TracingIntegrationTestWithSMBScrapingProducer, ScrapeOnFlush) {
               all_packets_rx();
           }));
   task_runner_->RunUntilCheckpoint("all_packets_rx");
-  ASSERT_EQ(2u, num_test_pack_rx);
+  ASSERT_EQ(2, num_test_pack_rx);
 
   // Disable tracing.
   consumer_endpoint_->DisableTracing();

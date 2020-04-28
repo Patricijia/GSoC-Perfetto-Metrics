@@ -12,18 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {TrackData} from '../../common/track_data';
-
 export const COUNTER_TRACK_KIND = 'CounterTrack';
 
-export interface Data extends TrackData {
+export interface Data {
+  start: number;
+  end: number;
   isQuantized: boolean;
+  resolution: number;
   maximumValue: number;
   minimumValue: number;
 
   timestamps: Float64Array;
   values: Float64Array;
-  ids: Float64Array;
 }
 
 export interface Config {
@@ -31,5 +31,4 @@ export interface Config {
   maximumValue?: number;
   minimumValue?: number;
   ref: number;
-  scale?: 'DEFAULT'|'RELATIVE';
 }

@@ -17,7 +17,7 @@
 #include "src/base/test/vm_test_utils.h"
 
 #include "perfetto/base/build_config.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/utils.h"
 
 #include <memory>
 
@@ -25,24 +25,22 @@
 #include <string.h>
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-#include <vector>
-
 #include <Windows.h>
 #include <Psapi.h>
-#else  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#else
 #include <sys/mman.h>
 #include <sys/stat.h>
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#endif
 
+#include "gtest/gtest.h"
 #include "perfetto/base/build_config.h"
-#include "perfetto/base/logging.h"
 
 namespace perfetto {
 namespace base {
 namespace vm_test_utils {
 
 bool IsMapped(void* start, size_t size) {
-  PERFETTO_CHECK(size % kPageSize == 0);
+  EXPECT_EQ(0u, size % kPageSize);
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   int retries = 5;
   int number_of_entries = 4000;  // Just a guess.
@@ -63,7 +61,10 @@ bool IsMapped(void* start, size_t size) {
     if (QueryWorkingSet(GetCurrentProcess(), &buffer[0], buffer_size))
       break;  // Success
 
-    PERFETTO_CHECK(GetLastError() == ERROR_BAD_LENGTH);
+    if (GetLastError() != ERROR_BAD_LENGTH) {
+      EXPECT_EQ(true, false);
+      return false;
+    }
 
     number_of_entries = ws_info->NumberOfEntries;
 
@@ -71,7 +72,11 @@ bool IsMapped(void* start, size_t size) {
     // take that into account. Increasing by 10% should generally be enough.
     number_of_entries *= 1.1;
 
-    PERFETTO_CHECK(--retries > 0);  // If we're looping, eventually fail.
+    if (--retries == 0) {
+      // If we're looping, eventually fail.
+      EXPECT_EQ(true, false);
+      return false;
+    }
   }
 
   void* end = reinterpret_cast<char*>(start) + size;
@@ -107,7 +112,7 @@ bool IsMapped(void* start, size_t size) {
   // MacOS instead returns 0 but leaves the page_states empty.
   if (res == -1 && errno == ENOMEM)
     return false;
-  PERFETTO_CHECK(res == 0);
+  EXPECT_EQ(0, res);
   for (size_t i = 0; i < num_pages; i++) {
     if (!(page_states[i] & kIncoreMask))
       return false;

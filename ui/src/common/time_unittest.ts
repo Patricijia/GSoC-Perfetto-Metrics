@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {TimeSpan, timeToCode} from './time';
+import {timeToCode} from './time';
 
 test('seconds to code', () => {
   expect(timeToCode(3)).toEqual('3s');
@@ -27,11 +27,4 @@ test('seconds to code', () => {
   expect(timeToCode(1.000001)).toEqual('1s 1us');
   expect(timeToCode(200.00000003)).toEqual('3m 20s 30ns');
   expect(timeToCode(0)).toEqual('0s');
-});
-
-test('Time span equality', () => {
-  expect((new TimeSpan(0, 1)).equals(new TimeSpan(0, 1))).toBe(true);
-  expect((new TimeSpan(0, 1)).equals(new TimeSpan(0, 2))).toBe(false);
-  expect((new TimeSpan(0, 1)).equals(new TimeSpan(0, 1 + Number.EPSILON)))
-      .toBe(true);
 });

@@ -14,13 +14,14 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/base/string_view.h"
+#include "perfetto/base/string_view.h"
 
 #include <forward_list>
 #include <unordered_map>
 #include <unordered_set>
 
-#include "test/gtest_and_gmock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace base {
@@ -53,46 +54,21 @@ TEST(StringViewTest, BasicCases) {
     EXPECT_TRUE(x == "abc");
     EXPECT_TRUE(x == StringView("abc"));
     EXPECT_TRUE(x != StringView("abcd"));
-    EXPECT_FALSE(x == StringView("aBc"));
-    EXPECT_TRUE(x.CaseInsensitiveEq("aBc"));
-    EXPECT_TRUE(x.CaseInsensitiveEq("AbC"));
-    EXPECT_FALSE(x.CaseInsensitiveEq("AbCd"));
-    EXPECT_FALSE(x.CaseInsensitiveEq("ab"));
-    EXPECT_FALSE(x.CaseInsensitiveEq("abcd"));
-    EXPECT_FALSE(x.CaseInsensitiveEq(""));
   }
 
-  // Test find(char).
+  // Test find().
   EXPECT_EQ(StringView().find('x'), StringView::npos);
   EXPECT_EQ(StringView("").find('x'), StringView::npos);
   EXPECT_EQ(StringView("foo").find('x'), StringView::npos);
   EXPECT_EQ(StringView("foo").find('f'), 0u);
   EXPECT_EQ(StringView("foo").find('o'), 1u);
 
-  // Test rfind(char).
+  // Test rfind().
   EXPECT_EQ(StringView().rfind('x'), StringView::npos);
   EXPECT_EQ(StringView("").rfind('x'), StringView::npos);
   EXPECT_EQ(StringView("foo").rfind('x'), StringView::npos);
   EXPECT_EQ(StringView("foo").rfind('f'), 0u);
   EXPECT_EQ(StringView("foo").rfind('o'), 2u);
-
-  // Test find(const char*).
-  EXPECT_EQ(StringView().find("x"), StringView::npos);
-  EXPECT_EQ(StringView("").find("x"), StringView::npos);
-  EXPECT_EQ(StringView("foo").find("x"), StringView::npos);
-  EXPECT_EQ(StringView("foo").find("foobar"), StringView::npos);
-  EXPECT_EQ(StringView("foo").find("f", 1), StringView::npos);
-  EXPECT_EQ(StringView("foo").find("f"), 0u);
-  EXPECT_EQ(StringView("foo").find("fo"), 0u);
-  EXPECT_EQ(StringView("foo").find("oo"), 1u);
-  EXPECT_EQ(StringView("foo").find("o"), 1u);
-  EXPECT_EQ(StringView("foo").find("o", 2), 2u);
-  EXPECT_EQ(StringView("foo").find("o", 3), StringView::npos);
-  EXPECT_EQ(StringView("foo").find("o", 10), StringView::npos);
-  EXPECT_EQ(StringView("foobar").find("bar", 3), 3u);
-  EXPECT_EQ(StringView("foobar").find("bartender"), StringView::npos);
-  EXPECT_EQ(StringView("foobar").find("bartender", 3), StringView::npos);
-  EXPECT_EQ(StringView("foo").find(""), 0u);  // std::string behaves the same.
 
   // Test substr().
   EXPECT_EQ(StringView().substr(0, 0).ToStdString(), "");

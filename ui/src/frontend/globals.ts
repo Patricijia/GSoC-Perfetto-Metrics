@@ -13,8 +13,7 @@
 // limitations under the License.
 
 import {assertExists} from '../base/logging';
-import {DeferredAction} from '../common/actions';
-import {CurrentSearchResults, SearchSummary} from '../common/search_data';
+import {Actions, DeferredAction} from '../common/actions';
 import {createEmptyState, State} from '../common/state';
 
 import {FrontendLocalState} from './frontend_local_state';
@@ -28,37 +27,9 @@ export interface SliceDetails {
   dur?: number;
   priority?: number;
   endState?: string;
-  cpu?: number;
-  id?: number;
-  utid?: number;
   wakeupTs?: number;
   wakerUtid?: number;
   wakerCpu?: number;
-  category?: string;
-  name?: string;
-}
-
-export interface CounterDetails {
-  startTime?: number;
-  value?: number;
-  delta?: number;
-  duration?: number;
-}
-
-export interface CallsiteInfo {
-  hash: number;
-  parentHash: number;
-  depth: number;
-  name?: string;
-  totalSize: number;
-}
-
-export interface HeapProfileDetails {
-  ts?: number;
-  tsNs?: number;
-  allocated?: number;
-  allocatedNotFreed?: number;
-  pid?: number;
 }
 
 export interface QuantizedLoad {
@@ -93,24 +64,7 @@ class Globals {
   private _overviewStore?: OverviewStore = undefined;
   private _threadMap?: ThreadMap = undefined;
   private _sliceDetails?: SliceDetails = undefined;
-  private _counterDetails?: CounterDetails = undefined;
-  private _heapDumpDetails?: HeapProfileDetails = undefined;
-  private _numQueriesQueued = 0;
-  private _bufferUsage?: number = undefined;
-  private _recordingLog?: string = undefined;
-  private _currentSearchResults: CurrentSearchResults = {
-    sliceIds: new Float64Array(0),
-    tsStarts: new Float64Array(0),
-    utids: new Float64Array(0),
-    trackIds: [],
-    refTypes: [],
-    totalResults: 0,
-  };
-  searchSummary: SearchSummary = {
-    tsStarts: new Float64Array(0),
-    tsEnds: new Float64Array(0),
-    count: new Uint8Array(0),
-  };
+  private _pendingTrackRequests?: Set<string> = undefined;
 
   initialize(dispatch: Dispatch, controllerWorker: Worker) {
     this._dispatch = dispatch;
@@ -125,8 +79,7 @@ class Globals {
     this._overviewStore = new Map<string, QuantizedLoad[]>();
     this._threadMap = new Map<number, ThreadDesc>();
     this._sliceDetails = {};
-    this._counterDetails = {};
-    this._heapDumpDetails = {};
+    this._pendingTrackRequests = new Set<string>();
   }
 
   get state(): State {
@@ -174,71 +127,33 @@ class Globals {
     this._sliceDetails = assertExists(click);
   }
 
-  get counterDetails() {
-    return assertExists(this._counterDetails);
-  }
-
-  set counterDetails(click: CounterDetails) {
-    this._counterDetails = assertExists(click);
-  }
-
-  get heapDumpDetails() {
-    return assertExists(this._heapDumpDetails);
-  }
-
-  set heapDumpDetails(click: HeapProfileDetails) {
-    this._heapDumpDetails = assertExists(click);
-  }
-
-  set numQueuedQueries(value: number) {
-    this._numQueriesQueued = value;
-  }
-
-  get numQueuedQueries() {
-    return this._numQueriesQueued;
-  }
-
-  get bufferUsage() {
-    return this._bufferUsage;
-  }
-
-  get recordingLog() {
-    return this._recordingLog;
-  }
-
-  get currentSearchResults() {
-    return this._currentSearchResults;
-  }
-
-  set currentSearchResults(results: CurrentSearchResults) {
-    this._currentSearchResults = results;
-  }
-
-  setBufferUsage(bufferUsage: number) {
-    this._bufferUsage = bufferUsage;
-  }
-
   setTrackData(id: string, data: {}) {
     this.trackDataStore.set(id, data);
-  }
-
-  setRecordingLog(recordingLog: string) {
-    this._recordingLog = recordingLog;
+    assertExists(this._pendingTrackRequests).delete(id);
   }
 
   getCurResolution() {
-    // Truncate the resolution to the closest power of 2.
-    // This effectively means the resolution changes every 6 zoom levels.
+    // Truncate the resolution to the closest power of 10.
     const resolution = this.frontendLocalState.timeScale.deltaPxToDuration(1);
-    return Math.pow(2, Math.floor(Math.log2(resolution)));
+    return Math.pow(10, Math.floor(Math.log10(resolution)));
   }
 
-  makeSelection(action: DeferredAction<{}>) {
-    // A new selection should cancel the current search selection.
-    globals.frontendLocalState.searchIndex = -1;
-    globals.frontendLocalState.currentTab =
-        action.type === 'deselect' ? undefined : 'current_selection';
-    globals.dispatch(action);
+  requestTrackData(trackId: string) {
+    const pending = assertExists(this._pendingTrackRequests);
+    if (pending.has(trackId)) return;
+
+    const {visibleWindowTime} = globals.frontendLocalState;
+    const resolution = this.getCurResolution();
+    const start = visibleWindowTime.start - visibleWindowTime.duration;
+    const end = visibleWindowTime.end + visibleWindowTime.duration;
+
+    pending.add(trackId);
+    globals.dispatch(Actions.reqTrackData({
+      trackId,
+      start,
+      end,
+      resolution,
+    }));
   }
 
   resetForTesting() {
@@ -253,15 +168,7 @@ class Globals {
     this._overviewStore = undefined;
     this._threadMap = undefined;
     this._sliceDetails = undefined;
-    this._numQueriesQueued = 0;
-    this._currentSearchResults = {
-      sliceIds: new Float64Array(0),
-      tsStarts: new Float64Array(0),
-      utids: new Float64Array(0),
-      trackIds: [],
-      refTypes: [],
-      totalResults: 0,
-    };
+    this._pendingTrackRequests = undefined;
   }
 
   // Used when switching to the legacy TraceViewer UI.

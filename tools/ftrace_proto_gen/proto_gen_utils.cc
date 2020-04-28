@@ -23,11 +23,11 @@
 #include <fstream>
 #include <regex>
 
+#include "perfetto/base/file_utils.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/file_utils.h"
-#include "perfetto/ext/base/pipe.h"
-#include "perfetto/ext/base/string_splitter.h"
-#include "perfetto/ext/base/string_utils.h"
+#include "perfetto/base/pipe.h"
+#include "perfetto/base/string_splitter.h"
+#include "perfetto/base/string_utils.h"
 
 namespace perfetto {
 
@@ -91,10 +91,9 @@ std::string RunClangFmt(const std::string& input) {
 
 }  // namespace
 
-using base::Contains;
 using base::EndsWith;
 using base::StartsWith;
-using base::Uppercase;
+using base::Contains;
 
 VerifyStream::VerifyStream(std::string filename)
     : filename_(std::move(filename)) {
@@ -147,7 +146,7 @@ std::string ToCamelCase(const std::string& s) {
     }
     if (upperCaseNextChar) {
       upperCaseNextChar = false;
-      c = Uppercase(c);
+      c = static_cast<char>(toupper(c));
     }
     result.push_back(c);
   }

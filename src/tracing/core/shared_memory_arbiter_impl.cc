@@ -19,9 +19,9 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/tracing/core/commit_data_request.h"
-#include "perfetto/ext/tracing/core/shared_memory.h"
-#include "perfetto/ext/tracing/core/startup_trace_writer_registry.h"
+#include "perfetto/tracing/core/commit_data_request.h"
+#include "perfetto/tracing/core/shared_memory.h"
+#include "perfetto/tracing/core/startup_trace_writer_registry.h"
 #include "src/tracing/core/null_trace_writer.h"
 #include "src/tracing/core/trace_writer_impl.h"
 
@@ -61,7 +61,6 @@ SharedMemoryArbiterImpl::SharedMemoryArbiterImpl(
 
 Chunk SharedMemoryArbiterImpl::GetNewChunk(
     const SharedMemoryABI::ChunkHeader& header,
-    BufferExhaustedPolicy buffer_exhausted_policy,
     size_t size_hint) {
   PERFETTO_DCHECK(size_hint == 0);  // Not implemented yet.
   int stall_count = 0;
@@ -69,30 +68,13 @@ Chunk SharedMemoryArbiterImpl::GetNewChunk(
   static const unsigned kMaxStallIntervalUs = 100000;
   static const int kLogAfterNStalls = 3;
   static const int kFlushCommitsAfterEveryNStalls = 2;
-  static const int kAssertAtNStalls = 100;
 
   for (;;) {
     // TODO(primiano): Probably this lock is not really required and this code
     // could be rewritten leveraging only the Try* atomic operations in
     // SharedMemoryABI. But let's not be too adventurous for the moment.
     {
-      std::unique_lock<std::mutex> scoped_lock(lock_);
-
-      // If more than half of the SMB.size() is filled with completed chunks for
-      // which we haven't notified the service yet (i.e. they are still enqueued
-      // in |commit_data_req_|), force a synchronous CommitDataRequest() even if
-      // we acquire a chunk, to reduce the likeliness of stalling the writer.
-      //
-      // We can only do this if we're writing on the same thread that we access
-      // the producer endpoint on, since we cannot notify the producer endpoint
-      // to commit synchronously on a different thread. Attempting to flush
-      // synchronously on another thread will lead to subtle bugs caused by
-      // out-of-order commit requests (crbug.com/919187#c28).
-      bool should_commit_synchronously =
-          buffer_exhausted_policy == BufferExhaustedPolicy::kStall &&
-          commit_data_req_ && bytes_pending_commit_ >= shmem_abi_.size() / 2 &&
-          task_runner_->RunsTasksOnCurrentThread();
-
+      std::lock_guard<std::mutex> scoped_lock(lock_);
       const size_t initial_page_idx = page_idx_;
       for (size_t i = 0; i < shmem_abi_.num_pages(); i++) {
         page_idx_ = (initial_page_idx + i) % shmem_abi_.num_pages();
@@ -125,33 +107,16 @@ Chunk SharedMemoryArbiterImpl::GetNewChunk(
             PERFETTO_LOG("Recovered from stall after %d iterations",
                          stall_count);
           }
-
-          if (should_commit_synchronously) {
-            // We can't flush while holding the lock.
-            scoped_lock.unlock();
-            FlushPendingCommitDataRequests();
-            return chunk;
-          } else {
-            return chunk;
-          }
+          return chunk;
         }
       }
-    }  // std::unique_lock<std::mutex>
-
-    if (buffer_exhausted_policy == BufferExhaustedPolicy::kDrop) {
-      PERFETTO_DLOG("Shared memory buffer exhaused, returning invalid Chunk!");
-      return Chunk();
-    }
+    }  // std::lock_guard<std::mutex>
 
     // All chunks are taken (either kBeingWritten by us or kBeingRead by the
-    // Service).
+    // Service). TODO: at this point we should return a bankrupcy chunk, not
+    // crash the process.
     if (stall_count++ == kLogAfterNStalls) {
-      PERFETTO_LOG("Shared memory buffer overrun! Stalling");
-    }
-
-    if (stall_count == kAssertAtNStalls) {
-      PERFETTO_FATAL(
-          "Shared memory buffer max stall count exceeded; possible deadlock");
+      PERFETTO_ELOG("Shared memory buffer overrun! Stalling");
     }
 
     // If the IPC thread itself is stalled because the current process has
@@ -205,6 +170,7 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(Chunk chunk,
                                                       PatchList* patch_list) {
   // Note: chunk will be invalid if the call came from SendPatches().
   bool should_post_callback = false;
+  bool should_commit_synchronously = false;
   base::WeakPtr<SharedMemoryArbiterImpl> weak_this;
   {
     std::lock_guard<std::mutex> scoped_lock(lock_);
@@ -229,6 +195,22 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(Chunk chunk,
       ctm->set_page(static_cast<uint32_t>(page_idx));
       ctm->set_chunk(chunk_idx);
       ctm->set_target_buffer(target_buffer);
+
+      // If more than half of the SMB.size() is filled with completed chunks for
+      // which we haven't notified the service yet (i.e. they are still enqueued
+      // in |commit_data_req_|), force a synchronous CommitDataRequest(), to
+      // reduce the likeliness of stalling the writer.
+      //
+      // We can only do this if we're writing on the same thread that we access
+      // the producer endpoint on, since we cannot notify the producer endpoint
+      // to commit synchronously on a different thread. Attempting to flush
+      // synchronously on another thread will lead to subtle bugs caused by
+      // out-of-order commit requests (crbug.com/919187#c28).
+      if (task_runner_->RunsTasksOnCurrentThread() &&
+          bytes_pending_commit_ >= shmem_abi_.size() / 2) {
+        should_commit_synchronously = true;
+        should_post_callback = false;
+      }
     }
 
     // Get the completed patches for previous chunks from the |patch_list|
@@ -266,6 +248,9 @@ void SharedMemoryArbiterImpl::UpdateCommitDataRequest(Chunk chunk,
         weak_this->FlushPendingCommitDataRequests();
     });
   }
+
+  if (should_commit_synchronously)
+    FlushPendingCommitDataRequests();
 }
 
 // This function is quite subtle. When making changes keep in mind these two
@@ -310,8 +295,7 @@ void SharedMemoryArbiterImpl::FlushPendingCommitDataRequests(
 }
 
 std::unique_ptr<TraceWriter> SharedMemoryArbiterImpl::CreateTraceWriter(
-    BufferID target_buffer,
-    BufferExhaustedPolicy buffer_exhausted_policy) {
+    BufferID target_buffer) {
   WriterID id;
   {
     std::lock_guard<std::mutex> scoped_lock(lock_);
@@ -325,7 +309,7 @@ std::unique_ptr<TraceWriter> SharedMemoryArbiterImpl::CreateTraceWriter(
       weak_this->producer_endpoint_->RegisterTraceWriter(id, target_buffer);
   });
   return std::unique_ptr<TraceWriter>(
-      new TraceWriterImpl(this, id, target_buffer, buffer_exhausted_policy));
+      new TraceWriterImpl(this, id, target_buffer));
 }
 
 void SharedMemoryArbiterImpl::BindStartupTraceWriterRegistry(

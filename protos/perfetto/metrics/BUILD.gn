@@ -14,22 +14,26 @@
 
 import("../../../gn/perfetto.gni")
 import("../../../gn/proto_library.gni")
+import("../../../gn/protozero_library.gni")
 
-perfetto_proto_library("@TYPE@") {
+common_sources = [ "metrics.proto" ]
+
+proto_library("lite") {
   deps = [
-    "android:@TYPE@",
+    "android:lite",
   ]
-  sources = [
-    "metrics.proto",
-  ]
+  generate_python = false
+  proto_in_dir = "$perfetto_root_path/protos"
+  proto_out_dir = "$perfetto_root_path/protos"
+  sources = common_sources
 }
 
-if (perfetto_build_standalone) {
-  perfetto_proto_library("descriptor") {
-    proto_generators = [ "descriptor" ]
-    generate_descriptor = "metrics.descriptor"
-    sources = [
-      "metrics.proto",
-    ]
-  }
+protozero_library("zero") {
+  deps = [
+    "android:zero",
+  ]
+  proto_in_dir = "$perfetto_root_path/protos"
+  proto_out_dir = "$perfetto_root_path/protos"
+  sources = common_sources
+  generator_plugin_options = "wrapper_namespace=pbzero"
 }

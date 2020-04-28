@@ -19,13 +19,16 @@ option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
-// Describes a process's attributes. Emitted as part of a TrackDescriptor,
-// usually by the process's main thread.
+// Process-wide data that is periodically emitted by one thread per process.
+// Valid for all events in packet sequences emitted by the same process.
 //
 // Next id: 5.
 message ProcessDescriptor {
   optional int32 pid = 1;
   repeated string cmdline = 2;
+
+  // To support old UI. New UI should determine default sorting by process_type.
+  optional int32 legacy_sort_index = 3;
 
   // See chromium's content::ProcessType.
   enum ChromeProcessType {
@@ -40,8 +43,4 @@ message ProcessDescriptor {
     PROCESS_PPAPI_BROKER = 8;
   }
   optional ChromeProcessType chrome_process_type = 4;
-  optional int32 process_priority = 5;
-
-  // To support old UI. New UI should determine default sorting by process_type.
-  optional int32 legacy_sort_index = 3;
 }

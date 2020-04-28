@@ -21,7 +21,7 @@
 #include <set>
 #include <string>
 
-#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/base/scoped_file.h"
 
 namespace perfetto {
 
@@ -73,7 +73,7 @@ class FtraceProcfs {
   // Disables tracing, does not clear the buffer.
   bool DisableTracing();
 
-  // Enables/disables tracing, does not clear the buffer.
+  // Enabls/disables tracing, does not clear the buffer.
   bool SetTracingOn(bool enable);
 
   // Returns true iff tracing is enabled.
@@ -88,7 +88,7 @@ class FtraceProcfs {
   // Get the currently set clock.
   std::string GetClock();
 
-  // Get all the available clocks.
+  // Get all the avaiable clocks.
   std::set<std::string> AvailableClocks();
 
   // Open the raw pipe for |cpu|.

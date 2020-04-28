@@ -18,7 +18,6 @@
 #define SRC_TRACE_PROCESSOR_SPAN_JOIN_OPERATOR_TABLE_H_
 
 #include <sqlite3.h>
-
 #include <array>
 #include <deque>
 #include <limits>
@@ -28,10 +27,8 @@
 #include <unordered_map>
 #include <vector>
 
-#include "perfetto/trace_processor/basic_types.h"
-#include "perfetto/trace_processor/status.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
-#include "src/trace_processor/sqlite/sqlite_table.h"
+#include "src/trace_processor/scoped_db.h"
+#include "src/trace_processor/table.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -68,7 +65,7 @@ namespace trace_processor {
 //
 // All other columns apart from timestamp (ts), duration (dur) and the join key
 // are passed through unchanged.
-class SpanJoinOperatorTable : public SqliteTable {
+class SpanJoinOperatorTable : public Table {
  public:
   // Columns of the span operator table.
   enum Column {
@@ -86,8 +83,8 @@ class SpanJoinOperatorTable : public SqliteTable {
 
   // Parsed version of a table descriptor.
   struct TableDescriptor {
-    static util::Status Parse(const std::string& raw_descriptor,
-                              TableDescriptor* descriptor);
+    static base::Optional<TableDescriptor> Parse(
+        const std::string& raw_descriptor);
 
     bool IsPartitioned() const { return !partition_col.empty(); }
 
@@ -102,7 +99,7 @@ class SpanJoinOperatorTable : public SqliteTable {
 
     TableDefinition(std::string name,
                     std::string partition_col,
-                    std::vector<SqliteTable::Column> cols,
+                    std::vector<Table::Column> cols,
                     bool emit_shadow_slices,
                     uint32_t ts_idx,
                     uint32_t dur_idx,
@@ -110,7 +107,7 @@ class SpanJoinOperatorTable : public SqliteTable {
 
     const std::string& name() const { return name_; }
     const std::string& partition_col() const { return partition_col_; }
-    const std::vector<SqliteTable::Column>& columns() const { return cols_; }
+    const std::vector<Table::Column>& columns() const { return cols_; }
 
     bool emit_shadow_slices() const { return emit_shadow_slices_; }
     uint32_t ts_idx() const { return ts_idx_; }
@@ -122,7 +119,7 @@ class SpanJoinOperatorTable : public SqliteTable {
    private:
     std::string name_;
     std::string partition_col_;
-    std::vector<SqliteTable::Column> cols_;
+    std::vector<Table::Column> cols_;
     bool emit_shadow_slices_;
     uint32_t ts_idx_ = std::numeric_limits<uint32_t>::max();
     uint32_t dur_idx_ = std::numeric_limits<uint32_t>::max();
@@ -222,7 +219,7 @@ class SpanJoinOperatorTable : public SqliteTable {
   };
 
   // Base class for a cursor on the span table.
-  class Cursor : public SqliteTable::Cursor {
+  class Cursor : public Table::Cursor {
    public:
     Cursor(SpanJoinOperatorTable*, sqlite3* db);
     ~Cursor() override = default;
@@ -254,8 +251,8 @@ class SpanJoinOperatorTable : public SqliteTable {
   static void RegisterTable(sqlite3* db, const TraceStorage* storage);
 
   // Table implementation.
-  util::Status Init(int, const char* const*, SqliteTable::Schema*) override;
-  std::unique_ptr<SqliteTable::Cursor> CreateCursor() override;
+  base::Optional<Table::Schema> Init(int, const char* const*) override;
+  std::unique_ptr<Table::Cursor> CreateCursor() override;
   int BestIndex(const QueryConstraints& qc, BestIndexInfo* info) override;
 
  private:
@@ -273,10 +270,9 @@ class SpanJoinOperatorTable : public SqliteTable {
                                     : t2_defn_.partition_col();
   }
 
-  util::Status CreateTableDefinition(
+  base::Optional<TableDefinition> CreateTableDefinition(
       const TableDescriptor& desc,
-      bool emit_shadow_slices,
-      SpanJoinOperatorTable::TableDefinition* defn);
+      bool emit_shadow_slices);
 
   std::vector<std::string> ComputeSqlConstraintsForDefinition(
       const TableDefinition& defn,
@@ -287,7 +283,7 @@ class SpanJoinOperatorTable : public SqliteTable {
                                           int global_column);
 
   void CreateSchemaColsForDefn(const TableDefinition& defn,
-                               std::vector<SqliteTable::Column>* cols);
+                               std::vector<Table::Column>* cols);
 
   TableDefinition t1_defn_;
   TableDefinition t2_defn_;

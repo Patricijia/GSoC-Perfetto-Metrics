@@ -1,4 +1,3 @@
-
 // Copyright (C) 2019 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
@@ -12,16 +11,18 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
-import {TrackData} from '../../common/track_data';
 
 export const THREAD_STATE_TRACK_KIND = 'ThreadStateTrack';
 
-export interface Data extends TrackData {
+export interface Data {
+  start: number;
+  end: number;
+  resolution: number;
+
   strings: string[];
   starts: Float64Array;
   ends: Float64Array;
   state: Uint16Array;  // Index into |strings|.
-  cpu: Uint8Array;
 }
 
 export interface Config { utid: number; }

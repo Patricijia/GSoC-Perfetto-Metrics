@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {Actions} from '../../common/actions';
 import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
@@ -24,20 +25,52 @@ import {Config, Data, KIND} from './common';
 const MARGIN_TOP = 5;
 const RECT_HEIGHT = 30;
 
+function getCurResolution() {
+  // Truncate the resolution to the closest power of 10.
+  const resolution = globals.frontendLocalState.timeScale.deltaPxToDuration(1);
+  return Math.pow(10, Math.floor(Math.log10(resolution)));
+}
+
 class VsyncTrack extends Track<Config, Data> {
   static readonly kind = KIND;
   static create(trackState: TrackState): VsyncTrack {
     return new VsyncTrack(trackState);
   }
 
+  private reqPending = false;
+
   constructor(trackState: TrackState) {
     super(trackState);
+  }
+
+  reqDataDeferred() {
+    const {visibleWindowTime} = globals.frontendLocalState;
+    const reqStart = visibleWindowTime.start - visibleWindowTime.duration;
+    const reqEnd = visibleWindowTime.end + visibleWindowTime.duration;
+    const reqRes = getCurResolution();
+    this.reqPending = false;
+    globals.dispatch(Actions.reqTrackData({
+      trackId: this.trackState.id,
+      start: reqStart,
+      end: reqEnd,
+      resolution: reqRes
+    }));
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D): void {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
 
     const data = this.data();
+    const inRange = data !== undefined &&
+        (visibleWindowTime.start >= data.start &&
+         visibleWindowTime.end <= data.end);
+    if (!inRange || data === undefined ||
+        data.resolution !== getCurResolution()) {
+      if (!this.reqPending) {
+        this.reqPending = true;
+        setTimeout(() => this.reqDataDeferred(), 50);
+      }
+    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     const dataStartPx = timeScale.timeToPx(data.start);
@@ -46,12 +79,7 @@ class VsyncTrack extends Track<Config, Data> {
     const visibleEndPx = timeScale.timeToPx(visibleWindowTime.end);
 
     checkerboardExcept(
-        ctx,
-        this.getHeight(),
-        visibleStartPx,
-        visibleEndPx,
-        dataStartPx,
-        dataEndPx);
+        ctx, visibleStartPx, visibleEndPx, dataStartPx, dataEndPx);
 
     const bgColor = '#5E909B';
     const fgColor = '#323D48';

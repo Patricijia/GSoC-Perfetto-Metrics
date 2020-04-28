@@ -16,62 +16,27 @@
 
 #include "src/trace_processor/args_table.h"
 
-#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/sqlite_utils.h"
 
 namespace perfetto {
 namespace trace_processor {
-
-namespace {
-PERFETTO_ALWAYS_INLINE
-bool TreatedAsInteger(Variadic v) {
-  return v.type == Variadic::Type::kInt || v.type == Variadic::Type::kBool ||
-         v.type == Variadic::Type::kPointer || v.type == Variadic::Type::kUint;
-}
-
-PERFETTO_ALWAYS_INLINE
-bool TreatedAsString(Variadic v) {
-  return v.type == Variadic::Type::kString || v.type == Variadic::Type::kJson;
-}
-
-PERFETTO_ALWAYS_INLINE
-int64_t AsInt64(Variadic v) {
-  if (v.type == Variadic::Type::kInt)
-    return v.int_value;
-  if (v.type == Variadic::Type::kBool)
-    return static_cast<int64_t>(v.bool_value);
-  if (v.type == Variadic::Type::kUint)
-    return static_cast<int64_t>(v.uint_value);
-  if (v.type == Variadic::Type::kPointer)
-    return static_cast<int64_t>(v.pointer_value);
-  PERFETTO_FATAL("invalid Variadic type");
-}
-
-PERFETTO_ALWAYS_INLINE
-StringId AsStringId(Variadic v) {
-  if (v.type == Variadic::Type::kString)
-    return v.string_value;
-  if (v.type == Variadic::Type::kJson)
-    return v.json_value;
-  PERFETTO_FATAL("invalid Variadic type");
-}
-}  // namespace
 
 ArgsTable::ArgsTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void ArgsTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<ArgsTable>(db, storage, "args");
+  Table::Register<ArgsTable>(db, storage, "args");
 }
 
 StorageSchema ArgsTable::CreateStorageSchema() {
   const auto& args = storage_->args();
   return StorageSchema::Builder()
-      .AddOrderedNumericColumn("arg_set_id", &args.set_ids())
+      .AddNumericColumn("arg_set_id", &args.set_ids())
       .AddStringColumn("flat_key", &args.flat_keys(), &storage_->string_pool())
       .AddStringColumn("key", &args.keys(), &storage_->string_pool())
-      .AddColumn<ValueColumn>("int_value", Variadic::Type::kInt, storage_)
-      .AddColumn<ValueColumn>("string_value", Variadic::Type::kString, storage_)
-      .AddColumn<ValueColumn>("real_value", Variadic::Type::kReal, storage_)
+      .AddColumn<ValueColumn>("int_value", VariadicType::kInt, storage_)
+      .AddColumn<ValueColumn>("string_value", VariadicType::kString, storage_)
+      .AddColumn<ValueColumn>("real_value", VariadicType::kReal, storage_)
       .Build({"arg_set_id", "key"});
 }
 
@@ -80,65 +45,48 @@ uint32_t ArgsTable::RowCount() {
 }
 
 int ArgsTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
-  if (HasEqConstraint(qc, "arg_set_id")) {
-    info->estimated_cost = 1;
-  } else {
-    info->estimated_cost = static_cast<uint32_t>(storage_->args().args_count());
+  // In the case of an id equality filter, we can do a very efficient lookup.
+  if (qc.constraints().size() == 1) {
+    auto id = static_cast<int>(schema().ColumnIndexFromName("arg_set_id"));
+    const auto& cs = qc.constraints().back();
+    if (cs.iColumn == id && sqlite_utils::IsOpEq(cs.op)) {
+      info->estimated_cost = 1;
+      return SQLITE_OK;
+    }
   }
+
+  // Otherwise, just give the worst case scenario.
+  info->estimated_cost = static_cast<uint32_t>(storage_->args().args_count());
   return SQLITE_OK;
 }
 
 ArgsTable::ValueColumn::ValueColumn(std::string col_name,
-                                    Variadic::Type type,
+                                    VariadicType type,
                                     const TraceStorage* storage)
     : StorageColumn(col_name, false /* hidden */),
       type_(type),
-      storage_(storage) {
-  PERFETTO_CHECK(type == Variadic::Type::kInt ||
-                 type == Variadic::Type::kReal ||
-                 type == Variadic::Type::kString);
-}
+      storage_(storage) {}
 
 void ArgsTable::ValueColumn::ReportResult(sqlite3_context* ctx,
                                           uint32_t row) const {
   const auto& value = storage_->args().arg_values()[row];
+  if (value.type != type_) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+
   switch (type_) {
-    // Integer column, returns all integer-like variadic values (as an int64_t).
-    case Variadic::Type::kInt: {
-      if (!TreatedAsInteger(value)) {
-        sqlite3_result_null(ctx);
-        return;
-      }
-      sqlite_utils::ReportSqliteResult(ctx, AsInt64(value));
-      return;
-    }
-
-      // Float column, returns only float values.
-    case Variadic::Type::kReal: {
-      if (value.type != Variadic::Type::kReal) {
-        sqlite3_result_null(ctx);
-        return;
-      }
+    case VariadicType::kInt:
+      sqlite_utils::ReportSqliteResult(ctx, value.int_value);
+      break;
+    case VariadicType::kReal:
       sqlite_utils::ReportSqliteResult(ctx, value.real_value);
-      return;
-    }
-
-      // String column, returns string & json variadic values (as a string).
-    case Variadic::Type::kString: {
-      if (!TreatedAsString(value)) {
-        sqlite3_result_null(ctx);
-        return;
-      }
-      const char* str = storage_->GetString(AsStringId(value)).c_str();
+      break;
+    case VariadicType::kString: {
+      const char* str = storage_->GetString(value.string_value).c_str();
       sqlite3_result_text(ctx, str, -1, sqlite_utils::kSqliteStatic);
-      return;
+      break;
     }
-
-    case Variadic::Type::kBool:
-    case Variadic::Type::kUint:
-    case Variadic::Type::kPointer:
-    case Variadic::Type::kJson:
-      PERFETTO_FATAL("Unexpected column type");
   }
 }
 
@@ -152,52 +100,37 @@ void ArgsTable::ValueColumn::Filter(int op,
                                     sqlite3_value* value,
                                     FilteredRowIndex* index) const {
   switch (type_) {
-    // Integer column, returns all integer-like variadic values (as an int64_t).
-    case Variadic::Type::kInt: {
+    case VariadicType::kInt: {
       bool op_is_null = sqlite_utils::IsOpIsNull(op);
       auto predicate = sqlite_utils::CreateNumericPredicate<int64_t>(op, value);
       index->FilterRows(
           [this, predicate, op_is_null](uint32_t row) PERFETTO_ALWAYS_INLINE {
-            const Variadic& arg = storage_->args().arg_values()[row];
-            if (!TreatedAsInteger(arg)) {
-              return op_is_null;
-            }
-            return predicate(AsInt64(arg));
+            const auto& arg = storage_->args().arg_values()[row];
+            return arg.type == type_ ? predicate(arg.int_value) : op_is_null;
           });
       break;
     }
-
-    // Float column, returns only float values.
-    case Variadic::Type::kReal: {
+    case VariadicType::kReal: {
       bool op_is_null = sqlite_utils::IsOpIsNull(op);
       auto predicate = sqlite_utils::CreateNumericPredicate<double>(op, value);
       index->FilterRows(
           [this, predicate, op_is_null](uint32_t row) PERFETTO_ALWAYS_INLINE {
             const auto& arg = storage_->args().arg_values()[row];
-            return arg.type == Variadic::Type::kReal ? predicate(arg.real_value)
-                                                     : op_is_null;
+            return arg.type == type_ ? predicate(arg.real_value) : op_is_null;
           });
       break;
     }
-
-    // String column, returns string & json variadic values (as a string).
-    case Variadic::Type::kString: {
+    case VariadicType::kString: {
       auto predicate = sqlite_utils::CreateStringPredicate(op, value);
-      index->FilterRows(
-          [this, &predicate](uint32_t row) PERFETTO_ALWAYS_INLINE {
-            const auto& arg = storage_->args().arg_values()[row];
-            if (!TreatedAsString(arg)) {
-              return predicate(nullptr);
-            }
-            return predicate(storage_->GetString(AsStringId(arg)).c_str());
-          });
+      index->FilterRows([this,
+                         &predicate](uint32_t row) PERFETTO_ALWAYS_INLINE {
+        const auto& arg = storage_->args().arg_values()[row];
+        return arg.type == type_
+                   ? predicate(storage_->GetString(arg.string_value).c_str())
+                   : predicate(nullptr);
+      });
       break;
     }
-    case Variadic::Type::kBool:
-    case Variadic::Type::kUint:
-    case Variadic::Type::kPointer:
-    case Variadic::Type::kJson:
-      PERFETTO_FATAL("Unexpected column type");
   }
 }
 
@@ -212,53 +145,26 @@ ArgsTable::ValueColumn::Comparator ArgsTable::ValueColumn::Sort(
 int ArgsTable::ValueColumn::CompareRefsAsc(uint32_t f, uint32_t s) const {
   const auto& arg_f = storage_->args().arg_values()[f];
   const auto& arg_s = storage_->args().arg_values()[s];
-  switch (type_) {
-    // Integer column, returns all integer-like variadic values (as an int64_t).
-    case Variadic::Type::kInt: {
-      if (TreatedAsInteger(arg_f) && TreatedAsInteger(arg_s)) {
-        return sqlite_utils::CompareValuesAsc(AsInt64(arg_f), AsInt64(arg_s));
-      } else if (TreatedAsInteger(arg_f)) {
-        return 1;  // second value treated as null
-      } else if (TreatedAsInteger(arg_s)) {
-        return -1;  // first value treated as null
-      }
-      return 0;
-    }
 
-    // Float column, returns only float values.
-    case Variadic::Type::kReal: {
-      if (arg_f.type == Variadic::Type::kReal &&
-          arg_s.type == Variadic::Type::kReal) {
+  if (arg_f.type == type_ && arg_s.type == type_) {
+    switch (type_) {
+      case VariadicType::kInt:
+        return sqlite_utils::CompareValuesAsc(arg_f.int_value, arg_s.int_value);
+      case VariadicType::kReal:
         return sqlite_utils::CompareValuesAsc(arg_f.real_value,
                                               arg_s.real_value);
-      } else if (arg_f.type == Variadic::Type::kReal) {
-        return 1;  // second value treated as null
-      } else if (arg_s.type == Variadic::Type::kReal) {
-        return -1;  // first value treated as null
-      }
-      return 0;
-    }
-
-    // String column, returns string & json variadic values (as a string).
-    case Variadic::Type::kString: {
-      if (TreatedAsString(arg_f) && TreatedAsString(arg_s)) {
-        const auto& f_str = storage_->GetString(AsStringId(arg_f));
-        const auto& s_str = storage_->GetString(AsStringId(arg_s));
+      case VariadicType::kString: {
+        const auto& f_str = storage_->GetString(arg_f.string_value);
+        const auto& s_str = storage_->GetString(arg_s.string_value);
         return sqlite_utils::CompareValuesAsc(f_str, s_str);
-      } else if (TreatedAsString(arg_f)) {
-        return 1;  // second value treated as null
-      } else if (TreatedAsString(arg_s)) {
-        return -1;  // first value treated as null
       }
-      return 0;
     }
-    case Variadic::Type::kBool:
-    case Variadic::Type::kUint:
-    case Variadic::Type::kPointer:
-    case Variadic::Type::kJson:
-      PERFETTO_FATAL("Unexpected column type");
+  } else if (arg_s.type == type_) {
+    return -1;
+  } else if (arg_f.type == type_) {
+    return 1;
   }
-  PERFETTO_FATAL("Never reached");  // for gcc
+  return 0;
 }
 
 }  // namespace trace_processor

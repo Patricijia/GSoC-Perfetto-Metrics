@@ -34,11 +34,11 @@
 #include <new>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/thread_utils.h"
-#include "perfetto/ext/base/unix_socket.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/unix_socket.h"
+#include "perfetto/base/utils.h"
 #include "src/profiling/memory/sampler.h"
 #include "src/profiling/memory/scoped_spinlock.h"
 #include "src/profiling/memory/wire_protocol.h"
@@ -101,8 +101,7 @@ const char* GetThreadStackBase() {
 // static
 base::Optional<base::UnixSocketRaw> Client::ConnectToHeapprofd(
     const std::string& sock_name) {
-  auto sock = base::UnixSocketRaw::CreateMayFail(base::SockFamily::kUnix,
-                                                 base::SockType::kStream);
+  auto sock = base::UnixSocketRaw::CreateMayFail(base::SockType::kStream);
   if (!sock || !sock.Connect(sock_name)) {
     PERFETTO_PLOG("Failed to connect to %s", sock_name.c_str());
     return base::nullopt;
@@ -123,7 +122,7 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
     base::UnixSocketRaw sock,
     UnhookedAllocator<Client> unhooked_allocator) {
   if (!sock) {
-    PERFETTO_DFATAL_OR_ELOG("Socket not connected.");
+    PERFETTO_DFATAL("Socket not connected.");
     return nullptr;
   }
 
@@ -143,38 +142,28 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
     prctl(PR_SET_DUMPABLE, 1);
   }
 
-  size_t num_send_fds = kHandshakeSize;
-
   base::ScopedFile maps(base::OpenFile("/proc/self/maps", O_RDONLY));
   if (!maps) {
-    PERFETTO_DFATAL_OR_ELOG("Failed to open /proc/self/maps");
+    PERFETTO_DFATAL("Failed to open /proc/self/maps");
     return nullptr;
   }
   base::ScopedFile mem(base::OpenFile("/proc/self/mem", O_RDONLY));
   if (!mem) {
-    PERFETTO_DFATAL_OR_ELOG("Failed to open /proc/self/mem");
+    PERFETTO_DFATAL("Failed to open /proc/self/mem");
     return nullptr;
   }
-
-  base::ScopedFile page_idle(base::OpenFile("/proc/self/page_idle", O_RDWR));
-  if (!page_idle) {
-    PERFETTO_LOG("Failed to open /proc/self/page_idle. Continuing.");
-    num_send_fds = kHandshakeSize - 1;
-  }
-
   // Restore original dumpability value if we overrode it.
   unset_dumpable.reset();
 
   int fds[kHandshakeSize];
   fds[kHandshakeMaps] = *maps;
   fds[kHandshakeMem] = *mem;
-  fds[kHandshakePageIdle] = *page_idle;
 
   // Send an empty record to transfer fds for /proc/self/maps and
   // /proc/self/mem.
-  if (sock.Send(kSingleByte, sizeof(kSingleByte), fds, num_send_fds) !=
+  if (sock.Send(kSingleByte, sizeof(kSingleByte), fds, kHandshakeSize) !=
       sizeof(kSingleByte)) {
-    PERFETTO_DFATAL_OR_ELOG("Failed to send file descriptors.");
+    PERFETTO_DFATAL("Failed to send file descriptors.");
     return nullptr;
   }
 
@@ -202,13 +191,13 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
   }
 
   if (!shmem_fd) {
-    PERFETTO_DFATAL_OR_ELOG("Did not receive shmem fd.");
+    PERFETTO_DFATAL("Did not receive shmem fd.");
     return nullptr;
   }
 
   auto shmem = SharedRingBuffer::Attach(std::move(shmem_fd));
   if (!shmem || !shmem->is_valid()) {
-    PERFETTO_DFATAL_OR_ELOG("Failed to attach to shmem.");
+    PERFETTO_DFATAL("Failed to attach to shmem.");
     return nullptr;
   }
 
@@ -258,8 +247,8 @@ const char* Client::GetStackBase() {
 //               +------------+    |
 //               |  main      |    v
 // stackbase +-> +------------+ 0xffff
-bool Client::RecordMalloc(uint64_t sample_size,
-                          uint64_t alloc_size,
+bool Client::RecordMalloc(uint64_t alloc_size,
+                          uint64_t total_size,
                           uint64_t alloc_address) {
   if (PERFETTO_UNLIKELY(getpid() != pid_at_creation_)) {
     PERFETTO_LOG("Detected post-fork child situation, stopping profiling.");
@@ -271,13 +260,13 @@ bool Client::RecordMalloc(uint64_t sample_size,
   const char* stacktop = reinterpret_cast<char*>(__builtin_frame_address(0));
   unwindstack::AsmGetRegs(metadata.register_data);
 
-  if (PERFETTO_UNLIKELY(stackbase < stacktop)) {
-    PERFETTO_DFATAL_OR_ELOG("Stackbase >= stacktop.");
+  if (stackbase < stacktop) {
+    PERFETTO_DFATAL("Stackbase >= stacktop.");
     return false;
   }
 
   uint64_t stack_size = static_cast<uint64_t>(stackbase - stacktop);
-  metadata.sample_size = sample_size;
+  metadata.total_size = total_size;
   metadata.alloc_size = alloc_size;
   metadata.alloc_address = alloc_address;
   metadata.stack_pointer = reinterpret_cast<uint64_t>(stacktop);

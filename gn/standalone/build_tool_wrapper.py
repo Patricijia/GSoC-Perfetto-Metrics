@@ -12,19 +12,17 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+
 """ Wrapper to invoke compiled build tools from the build system.
 
 This is just a workaround for GN assuming that all external scripts are
 python sources. It is used to invoke tools like the protoc compiler.
 """
 
-from __future__ import print_function
-
 import argparse
 import os
 import subprocess
 import sys
-
 
 def main():
   parser = argparse.ArgumentParser()
@@ -41,8 +39,7 @@ def main():
     return 0
 
   if args.chdir and not os.path.exists(args.chdir):
-    print(
-        'Cannot chdir to %s from %s' % (workdir, os.getcwd()), file=sys.stderr)
+    print >> sys.stderr, 'Cannot chdir to %s from %s' % (workdir, os.getcwd())
     return 1
 
   exe = os.path.abspath(args.cmd[0]) if os.sep in args.cmd[0] else args.cmd[0]
@@ -67,10 +64,9 @@ def main():
         os.utime(args.stamp, None)
     return ret
   except OSError as e:
-    print('Error running: "%s" (%s)' % (args.cmd[0], e.strerror))
-    print('PATH=%s' % env.get('PATH'))
+    print 'Error running: "%s" (%s)' % (args.cmd[0], e.strerror)
+    print 'PATH=%s' % env.get('PATH')
     return 127
-
 
 if __name__ == '__main__':
   sys.exit(main())

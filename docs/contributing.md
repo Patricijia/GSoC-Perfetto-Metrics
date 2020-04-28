@@ -13,21 +13,11 @@ external contributions and CLA signing.
 ### Continuous integration
 
 Continuous build and test coverage is available at
-[ci.perfetto.dev](https://ci.perfetto.dev).
+[perfetto-ci.appspot.com](https://perfetto-ci.appspot.com).
 
-**Trybots**:  
-CLs uploaded to gerrit are automatically submitted to the CI and
-and available on the CI page.
-If the label `Presubmit-Ready: +1` is set, the CI will also publish a comment
-like [this][ci-example] on the CL.
-
-### Community
-
-You can reach us on our [Discord channel](https://discord.gg/35ShE3A).
-If you prefer using IRC we have an experimental Discord <> IRC bridge
-synced with `#perfetto-dev` on [Freenode](https://webchat.freenode.net/).
+**Trybots**: CLs uploaded to gerrit are automatically submitted to TravisCI
+within one minute and available on the CI page.
 
 [perfetto-gerrit]: https://android-review.googlesource.com/q/project:platform%252Fexternal%252Fperfetto+status:open
 [google-cpp-style]: https://google.github.io/styleguide/cppguide.html
 [depot-tools]: https://dev.chromium.org/developers/how-tos/depottools
-[ci-example]: https://android-review.googlesource.com/c/platform/external/perfetto/+/1108253/3#message-09fd27fb92ca8357abade3ec725919ac3445f3af

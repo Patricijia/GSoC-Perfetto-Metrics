@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import("../../../../gn/test.gni")
-
 source_set("ps") {
   public_deps = [
     "../../../tracing",
@@ -21,8 +19,7 @@ source_set("ps") {
   deps = [
     "..:data_source",
     "../../../../gn:default_deps",
-    "../../../../include/perfetto/ext/traced",
-    "../../../../protos/perfetto/config/process_stats:zero",
+    "../../../../include/perfetto/traced",
     "../../../../protos/perfetto/trace/ps:zero",
     "../../../base",
   ]
@@ -32,14 +29,13 @@ source_set("ps") {
   ]
 }
 
-perfetto_unittest_source_set("unittests") {
+source_set("unittests") {
   testonly = true
   deps = [
     ":ps",
     "../../../../gn:default_deps",
-    "../../../../gn:gtest_and_gmock",
-    "../../../../protos/perfetto/config/process_stats:zero",
-    "../../../../protos/perfetto/trace/ps:zero",
+    "../../../../gn:gtest_deps",
+    "../../../../protos/perfetto/trace:lite",
     "../../../../src/base:test_support",
     "../../../../src/tracing:test_support",
   ]

@@ -19,13 +19,13 @@
 
 #include <memory>
 
-#include "perfetto/ext/tracing/core/consumer.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
-#include "perfetto/ext/tracing/core/tracing_service.h"
+#include "gmock/gmock.h"
+#include "perfetto/tracing/core/consumer.h"
+#include "perfetto/tracing/core/trace_packet.h"
+#include "perfetto/tracing/core/tracing_service.h"
 #include "perfetto/tracing/core/tracing_service_state.h"
-#include "test/gtest_and_gmock.h"
 
-#include "protos/perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pb.h"
 
 namespace perfetto {
 

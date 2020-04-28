@@ -19,33 +19,17 @@ import * as uuidv4 from 'uuid/v4';
 import {assertExists, assertTrue} from '../base/logging';
 import {
   Actions,
-  AddTrackArgs,
   DeferredAction,
 } from '../common/actions';
 import {Engine} from '../common/engine';
-import {HttpRpcEngine} from '../common/http_rpc_engine';
 import {NUM, NUM_NULL, rawQueryToRows, STR_NULL} from '../common/protos';
-import {
-  EngineMode,
-  SCROLLING_TRACK_GROUP,
-} from '../common/state';
-import {toNs, toNsCeil, toNsFloor} from '../common/time';
+import {SCROLLING_TRACK_GROUP} from '../common/state';
 import {TimeSpan} from '../common/time';
-import {
-  createWasmEngine,
-  destroyWasmEngine,
-  WasmEngineProxy
-} from '../common/wasm_engine_proxy';
 import {QuantizedLoad, ThreadDesc} from '../frontend/globals';
 import {ANDROID_LOGS_TRACK_KIND} from '../tracks/android_log/common';
 import {SLICE_TRACK_KIND} from '../tracks/chrome_slices/common';
 import {CPU_FREQ_TRACK_KIND} from '../tracks/cpu_freq/common';
 import {CPU_SLICE_TRACK_KIND} from '../tracks/cpu_slices/common';
-import {GPU_FREQ_TRACK_KIND} from '../tracks/gpu_freq/common';
-import {HEAP_PROFILE_TRACK_KIND} from '../tracks/heap_profile/common';
-import {
-  HEAP_PROFILE_FLAMEGRAPH_TRACK_KIND
-} from '../tracks/heap_profile_flamegraph/common';
 import {
   PROCESS_SCHEDULING_TRACK_KIND
 } from '../tracks/process_scheduling/common';
@@ -54,28 +38,21 @@ import {THREAD_STATE_TRACK_KIND} from '../tracks/thread_state/common';
 
 import {Child, Children, Controller} from './controller';
 import {globals} from './globals';
-import {LoadingManager} from './loading_manager';
 import {LogsController} from './logs_controller';
 import {QueryController, QueryControllerArgs} from './query_controller';
-import {SearchController} from './search_controller';
 import {
   SelectionController,
   SelectionControllerArgs
 } from './selection_controller';
-import {
-  TraceBufferStream,
-  TraceFileStream,
-  TraceHttpStream,
-  TraceStream
-} from './trace_stream';
 import {TrackControllerArgs, trackControllerRegistry} from './track_controller';
 
 type States = 'init'|'loading_trace'|'ready';
 
-interface ThreadSliceTrack {
-  maxDepth: number;
-  trackId: number;
-}
+
+declare interface FileReaderSync { readAsArrayBuffer(blob: Blob): ArrayBuffer; }
+
+declare var FileReaderSync:
+    {prototype: FileReaderSync; new (): FileReaderSync;};
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -91,27 +68,23 @@ export class TraceController extends Controller<States> {
   }
 
   onDestroy() {
-    if (this.engine instanceof WasmEngineProxy) {
-      destroyWasmEngine(this.engine.id);
-    }
+    if (this.engine !== undefined) globals.destroyEngine(this.engine.id);
   }
 
   run() {
     const engineCfg = assertExists(globals.state.engines[this.engineId]);
     switch (this.state) {
       case 'init':
-        this.loadTrace()
-            .then(mode => {
-              globals.dispatch(Actions.setEngineReady({
-                engineId: this.engineId,
-                ready: true,
-                mode,
-              }));
-            })
-            .catch(err => {
-              this.updateStatus(`${err}`);
-              throw err;
-            });
+        globals.dispatch(Actions.setEngineReady({
+          engineId: this.engineId,
+          ready: false,
+        }));
+        this.loadTrace().then(() => {
+          globals.dispatch(Actions.setEngineReady({
+            engineId: this.engineId,
+            ready: true,
+          }));
+        });
         this.updateStatus('Opening trace');
         this.setState('loading_trace');
         break;
@@ -149,11 +122,6 @@ export class TraceController extends Controller<States> {
         childControllers.push(
           Child('selection', SelectionController, selectionArgs));
 
-        childControllers.push(Child('search', SearchController, {
-          engine,
-          app: globals,
-        }));
-
         childControllers.push(Child('logs', LogsController, {
           engine,
           app: globals,
@@ -167,81 +135,56 @@ export class TraceController extends Controller<States> {
     return;
   }
 
-  private async loadTrace(): Promise<EngineMode> {
+  private async loadTrace() {
     this.updateStatus('Creating trace processor');
-    // Check if there is any instance of the trace_processor_shell running in
-    // HTTP RPC mode (i.e. trace_processor_shell -D).
-    let engineMode: EngineMode;
-    let useRpc = false;
-    if (globals.state.newEngineMode === 'USE_HTTP_RPC_IF_AVAILABLE') {
-      useRpc = (await HttpRpcEngine.checkConnection()).connected;
-    }
-    if (useRpc) {
-      console.log('Opening trace using native accelerator over HTTP+RPC');
-      engineMode = 'HTTP_RPC';
-      const engine =
-          new HttpRpcEngine(this.engineId, LoadingManager.getInstance);
-      engine.errorHandler = (err) => {
-        globals.dispatch(
-            Actions.setEngineFailed({mode: 'HTTP_RPC', failure: `${err}`}));
-        throw err;
-      };
-      this.engine = engine;
-    } else {
-      console.log('Opening trace using built-in WASM engine');
-      engineMode = 'WASM';
-      this.engine = new WasmEngineProxy(
-          this.engineId,
-          createWasmEngine(this.engineId),
-          LoadingManager.getInstance);
-    }
-
-    globals.dispatch(Actions.setEngineReady({
-      engineId: this.engineId,
-      ready: false,
-      mode: engineMode,
-    }));
     const engineCfg = assertExists(globals.state.engines[this.engineId]);
-    let traceStream: TraceStream|undefined;
-    if (engineCfg.source.type === 'FILE') {
-      traceStream = new TraceFileStream(engineCfg.source.file);
-    } else if (engineCfg.source.type === 'ARRAY_BUFFER') {
-      traceStream = new TraceBufferStream(engineCfg.source.buffer);
-    } else if (engineCfg.source.type === 'URL') {
-      traceStream = new TraceHttpStream(engineCfg.source.url);
-    } else if (engineCfg.source.type === 'HTTP_RPC') {
-      traceStream = undefined;
+    this.engine = globals.createEngine();
+
+    const statusHeader = 'Opening trace';
+    if (engineCfg.source instanceof File) {
+      const blob = engineCfg.source as Blob;
+      const reader = new FileReaderSync();
+      const SLICE_SIZE = 1024 * 1024;
+      for (let off = 0; off < blob.size; off += SLICE_SIZE) {
+        const slice = blob.slice(off, off + SLICE_SIZE);
+        const arrBuf = reader.readAsArrayBuffer(slice);
+        await this.engine.parse(new Uint8Array(arrBuf));
+        const progress = Math.round((off + slice.size) / blob.size * 100);
+        this.updateStatus(`${statusHeader} ${progress} %`);
+      }
     } else {
-      throw new Error(`Unknown source: ${JSON.stringify(engineCfg.source)}`);
+      const resp = await fetch(engineCfg.source);
+      if (resp.status !== 200) {
+        this.updateStatus(`HTTP error ${resp.status}`);
+        throw new Error(`fetch() failed with HTTP error ${resp.status}`);
+      }
+      // tslint:disable-next-line no-any
+      const rd = (resp.body as any).getReader() as ReadableStreamReader;
+      const tStartMs = performance.now();
+      let tLastUpdateMs = 0;
+      for (let off = 0;;) {
+        const readRes = await rd.read() as {value: Uint8Array, done: boolean};
+        if (readRes.value !== undefined) {
+          off += readRes.value.length;
+          await this.engine.parse(readRes.value);
+        }
+        // For traces loaded from the network there doesn't seem to be a
+        // reliable way to compute the %. The content-length exposed by GCS is
+        // before compression (which is handled transparently by the browser).
+        const nowMs = performance.now();
+        if (nowMs - tLastUpdateMs > 100) {
+          tLastUpdateMs = nowMs;
+          const mb = off / 1e6;
+          const tElapsed = (nowMs - tStartMs) / 1e3;
+          let status = `${statusHeader} ${mb.toFixed(1)} MB `;
+          status += `(${(mb / tElapsed).toFixed(1)} MB/s)`;
+          this.updateStatus(status);
+        }
+        if (readRes.done) break;
+      }
     }
 
-    // |traceStream| can be undefined in the case when we are using the external
-    // HTTP+RPC endpoint and the trace processor instance has already loaded
-    // a trace (because it was passed as a cmdline argument to
-    // trace_processor_shell). In this case we don't want the UI to load any
-    // file/stream and we just want to jump to the loading phase.
-    if (traceStream !== undefined) {
-      const tStart = performance.now();
-      for (;;) {
-        const res = await traceStream.readChunk();
-        await this.engine.parse(res.data);
-        const elapsed = (performance.now() - tStart) / 1000;
-        let status = 'Loading trace ';
-        if (res.bytesTotal > 0) {
-          const progress = Math.round(res.bytesRead / res.bytesTotal * 100);
-          status += `${progress}%`;
-        } else {
-          status += `${Math.round(res.bytesRead / 1e6)} MB`;
-        }
-        status += ` - ${Math.ceil(res.bytesRead / elapsed / 1e6)} MB/s`;
-        this.updateStatus(status);
-        if (res.eof) break;
-      }
-      await this.engine.notifyEof();
-    } else {
-      assertTrue(this.engine instanceof HttpRpcEngine);
-      await this.engine.restoreInitialTables();
-    }
+    await this.engine.notifyEof();
 
     const traceTime = await this.engine.getTraceTimeBounds();
     const traceTimeState = {
@@ -253,33 +196,33 @@ export class TraceController extends Controller<States> {
       Actions.navigate({route: '/viewer'}),
     ];
 
-    // We don't know the resolution at this point. However this will be
-    // replaced in 50ms so a guess is fine.
-    const resolution = (traceTime.end - traceTime.start) / 1000;
-    actions.push(Actions.setVisibleTraceTime(
-        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution}));
+    if (globals.state.frontendLocalState.lastUpdate === 0) {
+      actions.push(Actions.setVisibleTraceTime({
+        time: traceTimeState,
+        lastUpdate: Date.now() / 1000,
+      }));
+    }
 
     globals.dispatchMultiple(actions);
 
     {
       // When we reload from a permalink don't create extra tracks:
-      const {pinnedTracks, tracks} = globals.state;
-      if (!pinnedTracks.length && !Object.keys(tracks).length) {
+      const {pinnedTracks, scrollingTracks} = globals.state;
+      if (!pinnedTracks.length && !scrollingTracks.length) {
         await this.listTracks();
       }
     }
 
     await this.listThreads();
     await this.loadTimelineOverview(traceTime);
-    return engineMode;
   }
 
   private async listTracks() {
     this.updateStatus('Loading tracks');
 
     const engine = assertExists<Engine>(this.engine);
-    const numGpus = await engine.getNumberOfGpus();
-    const tracksToAdd: AddTrackArgs[] = [];
+    const addToTrackActions: DeferredAction[] = [];
+    const numCpus = await engine.getNumberOfCpus();
 
     // TODO(hjd): Renable Vsync tracks when fixed.
     //// TODO(hjd): Move this code out of TraceController.
@@ -300,16 +243,14 @@ export class TraceController extends Controller<States> {
     //    }
     //  }));
     //}
-    const maxCpuFreq = await engine.query(`
+    const maxFreq = await engine.query(`
      select max(value)
      from counters
      where name = 'cpufreq';
     `);
 
-    const cpus = await engine.getCpus();
-
-    for (const cpu of cpus) {
-      tracksToAdd.push({
+    for (let cpu = 0; cpu < numCpus; cpu++) {
+      addToTrackActions.push(Actions.addTrack({
         engineId: this.engineId,
         kind: CPU_SLICE_TRACK_KIND,
         name: `Cpu ${cpu}`,
@@ -317,10 +258,8 @@ export class TraceController extends Controller<States> {
         config: {
           cpu,
         }
-      });
-    }
+      }));
 
-    for (const cpu of cpus) {
       // Only add a cpu freq track if we have
       // cpu freq data.
       // TODO(taylori): Find a way to display cpu idle
@@ -332,146 +271,63 @@ export class TraceController extends Controller<States> {
         limit 1;
       `);
       if (freqExists.numRecords > 0) {
-        tracksToAdd.push({
+        addToTrackActions.push(Actions.addTrack({
           engineId: this.engineId,
           kind: CPU_FREQ_TRACK_KIND,
           name: `Cpu ${cpu} Frequency`,
           trackGroup: SCROLLING_TRACK_GROUP,
           config: {
             cpu,
-            maximumValue: +maxCpuFreq.columns[0].doubleValues![0],
+            maximumValue: +maxFreq.columns[0].doubleValues![0],
           }
-        });
+        }));
       }
     }
-
-
-    const upidToProcessTracks = new Map();
-    const rawProcessTracks = await engine.query(`
-      select id, upid, process_track.name, max(depth) as maxDepth
-      from process_track
-      inner join slice on slice.track_id = process_track.id
-      group by track_id
-    `);
-    for (let i = 0; i < rawProcessTracks.numRecords; i++) {
-      const trackId = rawProcessTracks.columns[0].longValues![i];
-      const upid = rawProcessTracks.columns[1].longValues![i];
-      const name = rawProcessTracks.columns[2].stringValues![i];
-      const maxDepth = rawProcessTracks.columns[3].longValues![i];
-      const track = {
-        engineId: this.engineId,
-        kind: 'AsyncSliceTrack',
-        name,
-        config: {
-          trackId,
-          maxDepth,
-        },
-      };
-
-      const tracks = upidToProcessTracks.get(upid);
-      if (tracks) {
-        tracks.push(track);
-      } else {
-        upidToProcessTracks.set(upid, [track]);
-      }
-    }
-
-    const heapProfiles = await engine.query(`
-      select distinct(upid) from heap_profile_allocation`);
-
-    const heapUpids: Set<number> = new Set();
-    for (let i = 0; i < heapProfiles.numRecords; i++) {
-      const upid = heapProfiles.columns[0].longValues![i];
-      heapUpids.add(+upid);
-    }
-
-    const maxGpuFreq = await engine.query(`
-     select max(value)
-     from counters
-     where name = 'gpufreq';
-    `);
-
-    for (let gpu = 0; gpu < numGpus; gpu++) {
-      // Only add a gpu freq track if we have
-      // gpu freq data.
-      const freqExists = await engine.query(`
-        select value
-        from counters
-        where name = 'gpufreq' and ref = ${gpu}
-        limit 1;
-      `);
-      if (freqExists.numRecords > 0) {
-        tracksToAdd.push({
-          engineId: this.engineId,
-          kind: GPU_FREQ_TRACK_KIND,
-          name: `Gpu ${gpu} Frequency`,
-          trackGroup: SCROLLING_TRACK_GROUP,
-          config: {
-            gpu,
-            maximumValue: +maxGpuFreq.columns[0].doubleValues![0],
-          }
-        });
-      }
-    }
-
 
     const counters = await engine.query(`
-      select name, ref, ref_type
+      select name, ref, ref_type, count(ref_type)
       from counter_definitions
       where ref is not null
       group by name, ref, ref_type
       order by ref_type desc
     `);
-
-    interface CounterMap {
-      [index: number]: string[];
-    }
-
-    const counterUpids: CounterMap = new Array();
-    const counterUtids: CounterMap = new Array();
+    const counterUpids = new Set<number>();
+    const counterUtids = new Set<number>();
     for (let i = 0; i < counters.numRecords; i++) {
-      const name = counters.columns[0].stringValues![i];
       const ref = +counters.columns[1].longValues![i];
       const refType = counters.columns[2].stringValues![i];
-      if (refType === 'upid') {
-        const el = counterUpids[ref];
-        el === undefined ? counterUpids[ref] = [name] :
-                           counterUpids[ref].push(name);
-      } else if (refType === 'utid') {
-        const el = counterUtids[ref];
-        el === undefined ? counterUtids[ref] = [name] :
-                           counterUtids[ref].push(name);
-      } else if (
-          refType === '[NULL]' || (refType === 'gpu' && name !== 'gpufreq')) {
-        // Add global or GPU counter tracks that are not bound to any pid/tid.
-        tracksToAdd.push({
-          engineId: this.engineId,
-          kind: 'CounterTrack',
+      if (refType === 'upid') counterUpids.add(ref);
+      if (refType === 'utid') counterUtids.add(ref);
+    }
+
+    // Add all the global counter tracks that are not bound to any pid/tid,
+    // the ones for which refType == NULL.
+    for (let i = 0; i < counters.numRecords; i++) {
+      const name = counters.columns[0].stringValues![i];
+      const refType = counters.columns[2].stringValues![i];
+      if (refType !== '[NULL]') continue;
+      addToTrackActions.push(Actions.addTrack({
+        engineId: this.engineId,
+        kind: 'CounterTrack',
+        name,
+        trackGroup: SCROLLING_TRACK_GROUP,
+        config: {
           name,
-          trackGroup: SCROLLING_TRACK_GROUP,
-          config: {
-            name,
-            ref: 0,
-          }
-        });
-      }
+          ref: 0,
+        }
+      }));
     }
 
     // Local experiments shows getting maxDepth separately is ~2x faster than
     // joining with threads and processes.
-    const maxDepthQuery = await engine.query(`
-          select thread_track.utid, thread_track.id, max(depth) as maxDepth
-          from slice
-          inner join thread_track on slice.track_id = thread_track.id
-          group by thread_track.id
-        `);
+    const maxDepthQuery =
+        await engine.query('select utid, max(depth) from slices group by utid');
 
-    const utidToThreadTrack = new Map<number, ThreadSliceTrack>();
+    const utidToMaxDepth = new Map<number, number>();
     for (let i = 0; i < maxDepthQuery.numRecords; i++) {
       const utid = maxDepthQuery.columns[0].longValues![i] as number;
-      const trackId = maxDepthQuery.columns[1].longValues![i] as number;
-      const maxDepth = maxDepthQuery.columns[2].longValues![i] as number;
-      utidToThreadTrack.set(utid, {maxDepth, trackId});
+      const maxDepth = maxDepthQuery.columns[1].longValues![i] as number;
+      utidToMaxDepth.set(utid, maxDepth);
     }
 
     // Return all threads
@@ -494,13 +350,12 @@ export class TraceController extends Controller<States> {
           left join (select upid, sum(dur) as total_dur
               from sched join thread using(utid)
               group by upid
-            ) using(upid)
-        where utid != 0
-        group by utid, upid
+            ) using(upid) group by utid, upid
         order by total_dur desc, upid, utid`);
 
     const upidToUuid = new Map<number, string>();
     const utidToUuid = new Map<number, string>();
+    const addSummaryTrackActions: DeferredAction[] = [];
     const addTrackGroupActions: DeferredAction[] = [];
 
     for (const row of rawQueryToRows(threadQuery, {
@@ -523,18 +378,15 @@ export class TraceController extends Controller<States> {
           await engine.query(`select count(1) from sched where utid = ${utid}`);
       const threadHasSched = threadSched.columns[0].longValues![0] > 0;
 
-      const threadTrack =
-          utid === null ? undefined : utidToThreadTrack.get(utid);
-      if (threadTrack === undefined &&
-          (upid === null || counterUpids[upid] === undefined) &&
-          counterUtids[utid] === undefined && !threadHasSched &&
-          (upid === null || upid !== null && !heapUpids.has(upid))) {
+      const maxDepth = utid === null ? undefined : utidToMaxDepth.get(utid);
+      if (maxDepth === undefined &&
+          (upid === null || !counterUpids.has(upid)) &&
+          !counterUtids.has(utid) && !threadHasSched) {
         continue;
       }
 
       // Group by upid if present else by utid.
       let pUuid = upid === null ? utidToUuid.get(utid) : upidToUuid.get(upid);
-      // These should only happen once for each track group.
       if (pUuid === undefined) {
         pUuid = uuidv4();
         const summaryTrackId = uuidv4();
@@ -547,125 +399,94 @@ export class TraceController extends Controller<States> {
         const pidForColor = pid || tid || upid || utid || 0;
         const kind = hasSchedEvents ? PROCESS_SCHEDULING_TRACK_KIND :
                                       PROCESS_SUMMARY_TRACK;
-
-        tracksToAdd.push({
+        addSummaryTrackActions.push(Actions.addTrack({
           id: summaryTrackId,
           engineId: this.engineId,
           kind,
           name: `${upid === null ? tid : pid} summary`,
           config: {pidForColor, upid, utid},
-        });
+        }));
 
-        const name = upid === null ?
-            `${threadName} ${tid}` :
-            `${
-                processName === null && heapUpids.has(upid) ?
-                    'Heap Profile for' :
-                    processName} ${pid}`;
         addTrackGroupActions.push(Actions.addTrackGroup({
           engineId: this.engineId,
           summaryTrackId,
-          name,
+          name: upid === null ? `${threadName} ${tid}` :
+                                `${processName} ${pid}`,
           id: pUuid,
-          collapsed: !(upid !== null && heapUpids.has(upid)),
+          collapsed: true,
         }));
 
-        if (upid !== null) {
-          const counterNames = counterUpids[upid];
-          if (counterNames !== undefined) {
-            counterNames.forEach(element => {
-              tracksToAdd.push({
-                engineId: this.engineId,
-                kind: 'CounterTrack',
-                name: element,
-                trackGroup: pUuid,
-                config: {
-                  name: element,
-                  ref: upid,
-                }
-              });
-            });
-          }
-
-          if (heapUpids.has(upid)) {
-            tracksToAdd.push({
-              engineId: this.engineId,
-              kind: HEAP_PROFILE_TRACK_KIND,
-              name: `Heap Profile`,
-              trackGroup: pUuid,
-              config: {upid}
-            });
-
-            tracksToAdd.push({
-              engineId: this.engineId,
-              kind: HEAP_PROFILE_FLAMEGRAPH_TRACK_KIND,
-              name: `Heap Profile Flamegraph`,
-              trackGroup: pUuid,
-              config: {upid}
-            });
-          }
-
-          if (upidToProcessTracks.has(upid)) {
-            for (const track of upidToProcessTracks.get(upid)) {
-              tracksToAdd.push(Object.assign(track, {trackGroup: pUuid}));
-            }
-          }
-        }
-      }
-      const counterThreadNames = counterUtids[utid];
-      if (counterThreadNames !== undefined) {
-        counterThreadNames.forEach(element => {
-          tracksToAdd.push({
+        for (let i = 0; i < counters.numRecords; i++) {
+          const name = counters.columns[0].stringValues![i];
+          const ref = counters.columns[1].longValues![i];
+          const refType = counters.columns[2].stringValues![i];
+          if (refType !== 'upid' || ref !== upid) continue;
+          addTrackGroupActions.push(Actions.addTrack({
             engineId: this.engineId,
             kind: 'CounterTrack',
-            name: element,
+            name,
             trackGroup: pUuid,
             config: {
-              name: element,
-              ref: utid,
+              name,
+              ref,
             }
-          });
-        });
+          }));
+        }
       }
+
+      for (let i = 0; i < counters.numRecords; i++) {
+        const name = counters.columns[0].stringValues![i];
+        const ref = counters.columns[1].longValues![i];
+        const refType = counters.columns[2].stringValues![i];
+
+        if (refType !== 'utid' || ref !== utid) continue;
+        addTrackGroupActions.push(Actions.addTrack({
+          engineId: this.engineId,
+          kind: 'CounterTrack',
+          name,
+          trackGroup: pUuid,
+          config: {
+            name,
+            ref,
+          }
+        }));
+      }
+
       if (threadHasSched) {
-        tracksToAdd.push({
+        addToTrackActions.push(Actions.addTrack({
           engineId: this.engineId,
           kind: THREAD_STATE_TRACK_KIND,
           name: `${threadName} [${tid}]`,
           trackGroup: pUuid,
           config: {utid}
-        });
+        }));
       }
 
-      if (threadTrack !== undefined) {
-        tracksToAdd.push({
+      if (maxDepth !== undefined) {
+        addToTrackActions.push(Actions.addTrack({
           engineId: this.engineId,
           kind: SLICE_TRACK_KIND,
           name: `${threadName} [${tid}]`,
           trackGroup: pUuid,
-          config: {
-            upid,
-            utid,
-            maxDepth: threadTrack.maxDepth,
-            trackId: threadTrack.trackId
-          },
-        });
+          config: {upid, utid, maxDepth},
+        }));
       }
     }
 
     const logCount = await engine.query(`select count(1) from android_logs`);
     if (logCount.columns[0].longValues![0] > 0) {
-      tracksToAdd.push({
+      addToTrackActions.push(Actions.addTrack({
         engineId: this.engineId,
         kind: ANDROID_LOGS_TRACK_KIND,
         name: 'Android logs',
         trackGroup: SCROLLING_TRACK_GROUP,
         config: {}
-      });
+      }));
     }
 
-    addTrackGroupActions.push(Actions.addTracks({tracks: tracksToAdd}));
-    globals.dispatchMultiple(addTrackGroupActions);
+    const allActions =
+        addSummaryTrackActions.concat(addTrackGroupActions, addToTrackActions);
+    globals.dispatchMultiple(allActions);
   }
 
   private async listThreads() {
@@ -674,9 +495,7 @@ export class TraceController extends Controller<States> {
         ifnull(
           case when length(process.name) > 0 then process.name else null end,
           thread.name)
-        from (select * from thread order by upid) as thread
-        left join (select * from process order by upid) as process
-        using(upid)`;
+        from thread left join process using(upid)`;
     const threadRows = await assertExists(this.engine).query(sqlQuery);
     const threads: ThreadDesc[] = [];
     for (let i = 0; i < threadRows.numRecords; i++) {
@@ -700,9 +519,9 @@ export class TraceController extends Controller<States> {
           'Loading overview ' +
           `${Math.round((step + 1) / numSteps * 1000) / 10}%`);
       const startSec = traceTime.start + step * stepSec;
-      const startNs = toNsFloor(startSec);
+      const startNs = Math.floor(startSec * 1e9);
       const endSec = startSec + stepSec;
-      const endNs = toNsCeil(endSec);
+      const endNs = Math.ceil(endSec * 1e9);
 
       // Sched overview.
       const schedRows = await engine.query(
@@ -724,23 +543,14 @@ export class TraceController extends Controller<States> {
     }
 
     // Slices overview.
-    const traceStartNs = toNs(traceTime.start);
-    const stepSecNs = toNs(stepSec);
-    const sliceSummaryQuery = await engine.query(`select
-           bucket,
-           upid,
-           sum(utid_sum) / cast(${stepSecNs} as float) as upid_sum
-         from thread
-         inner join (
-           select
-             cast((ts - ${traceStartNs})/${stepSecNs} as int) as bucket
-             sum(dur) as utid_sum,
-             utid
-           from slice
-           inner join thread_track on slice.track_id = thread_track.id
-           group by bucket, utid
-         ) using(utid)
-         group by bucket, upid`);
+    const traceStartNs = traceTime.start * 1e9;
+    const stepSecNs = stepSec * 1e9;
+    const sliceSummaryQuery = await engine.query(
+        `select bucket, upid, sum(utid_sum) / cast(${stepSecNs} as float) ` +
+        `as upid_sum from thread inner join ` +
+        `(select cast((ts - ${traceStartNs})/${stepSecNs} as int) as bucket, ` +
+        `sum(dur) as utid_sum, utid from slices group by bucket, utid) ` +
+        `using(utid) group by bucket, upid`);
 
     const slicesData: {[key: string]: QuantizedLoad[]} = {};
     for (let i = 0; i < sliceSummaryQuery.numRecords; i++) {

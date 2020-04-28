@@ -22,13 +22,12 @@ namespace trace_processor {
 StorageTable::StorageTable() = default;
 StorageTable::~StorageTable() = default;
 
-util::Status StorageTable::Init(int, const char* const*, Schema* schema) {
+base::Optional<Table::Schema> StorageTable::Init(int, const char* const*) {
   schema_ = CreateStorageSchema();
-  *schema = schema_.ToTableSchema();
-  return util::OkStatus();
+  return schema_.ToTableSchema();
 }
 
-std::unique_ptr<SqliteTable::Cursor> StorageTable::CreateCursor() {
+std::unique_ptr<Table::Cursor> StorageTable::CreateCursor() {
   return std::unique_ptr<Cursor>(new Cursor(this));
 }
 
@@ -167,7 +166,7 @@ bool StorageTable::HasEqConstraint(const QueryConstraints& qc,
 }
 
 StorageTable::Cursor::Cursor(StorageTable* table)
-    : SqliteTable::Cursor(table), table_(table) {}
+    : Table::Cursor(table), table_(table) {}
 
 int StorageTable::Cursor::Filter(const QueryConstraints& qc,
                                  sqlite3_value** argv) {

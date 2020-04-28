@@ -17,8 +17,7 @@
 #include <algorithm>
 #include <utility>
 
-#include "perfetto/ext/base/utils.h"
-#include "src/trace_processor/importers/proto/proto_trace_parser.h"
+#include "src/trace_processor/proto_trace_parser.h"
 #include "src/trace_processor/trace_sorter.h"
 
 namespace perfetto {
@@ -40,7 +39,7 @@ void TraceSorter::Queue::Sort() {
   // smaller than max_ts_.
   PERFETTO_DCHECK(sort_min_ts_ < max_ts_);
 
-  // We know that all events between [0, sort_start_idx_] are sorted. Within
+  // We know that all events between [0, sort_start_idx_] are sorted. Witin
   // this range, perform a bound search and find the iterator for the min
   // timestamp that broke the monotonicity. Re-sort from there to the end.
   auto sort_end = events_.begin() + static_cast<ssize_t>(sort_start_idx_);
@@ -77,7 +76,6 @@ void TraceSorter::Queue::Sort() {
 // time in a profiler.
 void TraceSorter::SortAndExtractEventsBeyondWindow(int64_t window_size_ns) {
   DCHECK_ftrace_batch_cpu(kNoBatch);
-
   constexpr int64_t kTsMax = std::numeric_limits<int64_t>::max();
   const bool was_empty = global_min_ts_ == kTsMax && global_max_ts_ == 0;
   int64_t extract_end_ts = global_max_ts_ - window_size_ns;

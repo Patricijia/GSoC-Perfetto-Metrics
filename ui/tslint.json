@@ -67,8 +67,5 @@
        "check-decl",
        "check-operator"
     ]
-  },
-  "jsRules": {
-    "no-empty": true
   }
 }

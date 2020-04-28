@@ -19,7 +19,7 @@
 
 #include <memory>
 
-#include "perfetto/ext/tracing/ipc/service_ipc_host.h"
+#include "perfetto/tracing/ipc/service_ipc_host.h"
 
 namespace perfetto {
 

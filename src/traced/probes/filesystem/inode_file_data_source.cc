@@ -24,13 +24,11 @@
 #include <unordered_map>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
-#include "perfetto/ext/tracing/core/trace_writer.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/tracing/core/trace_packet.h"
+#include "perfetto/tracing/core/trace_writer.h"
 
-#include "protos/perfetto/config/inode_file/inode_file_config.pbzero.h"
-#include "protos/perfetto/trace/filesystem/inode_file_map.pbzero.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 #include "src/traced/probes/filesystem/file_scanner.h"
 
 namespace perfetto {
@@ -55,6 +53,16 @@ std::string DbgFmt(const std::vector<std::string>& values) {
   return result;
 }
 
+std::map<std::string, std::vector<std::string>> BuildMountpointMapping(
+    const DataSourceConfig& source_config) {
+  std::map<std::string, std::vector<std::string>> m;
+  for (const auto& map_entry :
+       source_config.inode_file_config().mount_point_mapping())
+    m.emplace(map_entry.mountpoint(), map_entry.scan_roots());
+
+  return m;
+}
+
 class StaticMapDelegate : public FileScanner::Delegate {
  public:
   StaticMapDelegate(
@@ -66,7 +74,7 @@ class StaticMapDelegate : public FileScanner::Delegate {
   bool OnInodeFound(BlockDeviceID block_device_id,
                     Inode inode_number,
                     const std::string& path,
-                    InodeFileMap_Entry_Type type) {
+                    protos::pbzero::InodeFileMap_Entry_Type type) {
     std::unordered_map<Inode, InodeMapValue>& inode_map =
         (*map_)[block_device_id];
     inode_map[inode_number].SetType(type);
@@ -96,14 +104,13 @@ void InodeFileDataSource::FillInodeEntry(InodeFileMap* destination,
                                          const InodeMapValue& inode_map_value) {
   auto* entry = destination->add_entries();
   entry->set_inode_number(inode_number);
-  entry->set_type(static_cast<protos::pbzero::InodeFileMap_Entry_Type>(
-      inode_map_value.type()));
+  entry->set_type(inode_map_value.type());
   for (const auto& path : inode_map_value.paths())
     entry->add_paths(path.c_str());
 }
 
 InodeFileDataSource::InodeFileDataSource(
-    DataSourceConfig ds_config,
+    DataSourceConfig source_config,
     base::TaskRunner* task_runner,
     TracingSessionID session_id,
     std::map<BlockDeviceID, std::unordered_map<Inode, InodeMapValue>>*
@@ -111,28 +118,16 @@ InodeFileDataSource::InodeFileDataSource(
     LRUInodeCache* cache,
     std::unique_ptr<TraceWriter> writer)
     : ProbesDataSource(session_id, kTypeId),
+      source_config_(std::move(source_config)),
+      scan_mount_points_(
+          source_config_.inode_file_config().scan_mount_points().cbegin(),
+          source_config_.inode_file_config().scan_mount_points().cend()),
+      mount_point_mapping_(BuildMountpointMapping(source_config_)),
       task_runner_(task_runner),
       static_file_map_(static_file_map),
       cache_(cache),
       writer_(std::move(writer)),
-      weak_factory_(this) {
-  using protos::pbzero::InodeFileConfig;
-  InodeFileConfig::Decoder cfg(ds_config.inode_file_config_raw());
-  for (auto mp = cfg.scan_mount_points(); mp; ++mp)
-    scan_mount_points_.insert((*mp).ToStdString());
-  for (auto mpm = cfg.mount_point_mapping(); mpm; ++mpm) {
-    InodeFileConfig::MountPointMappingEntry::Decoder entry(*mpm);
-    std::vector<std::string> scan_roots;
-    for (auto scan_root = entry.scan_roots(); scan_root; ++scan_root)
-      scan_roots.push_back((*scan_root).ToStdString());
-    std::string mountpoint = entry.mountpoint().ToStdString();
-    mount_point_mapping_.emplace(mountpoint, std::move(scan_roots));
-  }
-  scan_interval_ms_ = OrDefault(cfg.scan_interval_ms(), kScanIntervalMs);
-  scan_delay_ms_ = OrDefault(cfg.scan_delay_ms(), kScanDelayMs);
-  scan_batch_size_ = OrDefault(cfg.scan_batch_size(), kScanBatchSize);
-  do_not_scan_ = cfg.do_not_scan();
-}
+      weak_factory_(this) {}
 
 InodeFileDataSource::~InodeFileDataSource() = default;
 
@@ -219,7 +214,7 @@ void InodeFileDataSource::OnInodes(
     AddInodesFromStaticMap(block_device_id, &inode_numbers);
     AddInodesFromLRUCache(block_device_id, &inode_numbers);
 
-    if (do_not_scan_)
+    if (source_config_.inode_file_config().do_not_scan())
       inode_numbers.clear();
 
     // If we defined mount points we want to scan in the config,
@@ -256,7 +251,7 @@ void InodeFileDataSource::OnInodes(
               }
               weak_this.get()->FindMissingInodes();
             },
-            scan_delay_ms_);
+            GetScanDelayMs());
       }
     }
   }
@@ -294,10 +289,11 @@ void InodeFileDataSource::RemoveFromNextMissingInodes(
   it->second.erase(inode_number);
 }
 
-bool InodeFileDataSource::OnInodeFound(BlockDeviceID block_device_id,
-                                       Inode inode_number,
-                                       const std::string& path,
-                                       InodeFileMap_Entry_Type type) {
+bool InodeFileDataSource::OnInodeFound(
+    BlockDeviceID block_device_id,
+    Inode inode_number,
+    const std::string& path,
+    protos::pbzero::InodeFileMap_Entry_Type type) {
   auto it = missing_inodes_.find(block_device_id);
   if (it == missing_inodes_.end())
     return true;
@@ -360,7 +356,7 @@ void InodeFileDataSource::OnInodeScanDone() {
           }
           weak_this->FindMissingInodes();
         },
-        scan_delay_ms_);
+        GetScanDelayMs());
   }
 }
 
@@ -392,9 +388,24 @@ void InodeFileDataSource::FindMissingInodes() {
   auto weak_this = GetWeakPtr();
   PERFETTO_DLOG("Starting scan of %s", DbgFmt(roots).c_str());
   file_scanner_ = std::unique_ptr<FileScanner>(new FileScanner(
-      std::move(roots), this, scan_interval_ms_, scan_batch_size_));
+      std::move(roots), this, GetScanIntervalMs(), GetScanBatchSize()));
 
   file_scanner_->Scan(task_runner_);
+}
+
+uint32_t InodeFileDataSource::GetScanIntervalMs() const {
+  return OrDefault(source_config_.inode_file_config().scan_interval_ms(),
+                   kScanIntervalMs);
+}
+
+uint32_t InodeFileDataSource::GetScanDelayMs() const {
+  return OrDefault(source_config_.inode_file_config().scan_delay_ms(),
+                   kScanDelayMs);
+}
+
+uint32_t InodeFileDataSource::GetScanBatchSize() const {
+  return OrDefault(source_config_.inode_file_config().scan_batch_size(),
+                   kScanBatchSize);
 }
 
 base::WeakPtr<InodeFileDataSource> InodeFileDataSource::GetWeakPtr() const {

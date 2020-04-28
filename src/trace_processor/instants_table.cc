@@ -27,7 +27,7 @@ InstantsTable::InstantsTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void InstantsTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<InstantsTable>(db, storage, "instants");
+  Table::Register<InstantsTable>(db, storage, "instants");
 }
 
 StorageSchema InstantsTable::CreateStorageSchema() {
@@ -50,13 +50,13 @@ uint32_t InstantsTable::RowCount() {
 int InstantsTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
   info->estimated_cost =
       static_cast<uint32_t>(storage_->instants().instant_count());
-  info->sqlite_omit_order_by = true;
 
   // Only the string columns are handled by SQLite
+  info->order_by_consumed = true;
   size_t name_index = schema().ColumnIndexFromName("name");
   size_t ref_type_index = schema().ColumnIndexFromName("ref_type");
   for (size_t i = 0; i < qc.constraints().size(); i++) {
-    info->constraint_info[i].sqlite_omit =
+    info->omit[i] =
         qc.constraints()[i].iColumn != static_cast<int>(name_index) &&
         qc.constraints()[i].iColumn != static_cast<int>(ref_type_index);
   }

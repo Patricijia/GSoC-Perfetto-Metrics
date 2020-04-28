@@ -21,13 +21,11 @@ import {globals} from './globals';
 import {gridlines} from './gridline_helper';
 import {Panel, PanelSize} from './panel';
 import {TRACK_SHELL_WIDTH} from './track_constants';
-import {randomColor} from './colorizer';
+import {hsl} from 'color-convert';
 
 const FLAG_WIDTH = 16;
-const MOVIE_WIDTH = 16;
 const MOUSE_OFFSET = 6;
 const FLAG = `\uE153`;
-const MOVIE = '\uE8DA';
 
 function toSummary(s: string) {
   const newlineIndex = s.indexOf('\n') > 0 ? s.indexOf('\n') : s.length;
@@ -41,11 +39,6 @@ export class NotesPanel extends Panel {
     dom.addEventListener('mousemove', (e: Event) => {
       this.hoveredX =
         (e as MouseEvent).layerX - TRACK_SHELL_WIDTH - MOUSE_OFFSET;
-      if (globals.state.scrubbingEnabled) {
-        const timescale = globals.frontendLocalState.timeScale;
-        const timestamp = timescale.pxToTime(this.hoveredX);
-        globals.frontendLocalState.setVidTimestamp(timestamp);
-      }
       globals.rafScheduler.scheduleRedraw();
     }, {passive: true});
     dom.addEventListener('mouseenter', (e: Event) => {
@@ -65,8 +58,7 @@ export class NotesPanel extends Panel {
       '.notes-panel',
       {
         onclick: (e: MouseEvent) => {
-          const isMovie = globals.state.flagPauseEnabled;
-          this.onClick(e.layerX - TRACK_SHELL_WIDTH, e.layerY, isMovie);
+          this.onClick(e.layerX - TRACK_SHELL_WIDTH, e.layerY);
           e.stopPropagation();
         },
       });
@@ -78,7 +70,7 @@ export class NotesPanel extends Panel {
     let aNoteIsHovered = false;
 
     ctx.fillStyle = '#999';
-    ctx.fillRect(TRACK_SHELL_WIDTH - 2, 0, 2, size.height);
+    ctx.fillRect(TRACK_SHELL_WIDTH - 1, 0, 2, size.height);
     for (const xAndTime of gridlines(size.width, range, timeScale)) {
       ctx.fillRect(xAndTime[0], 0, 1, size.height);
     }
@@ -103,14 +95,11 @@ export class NotesPanel extends Panel {
       // Draw flag.
       if (!aNoteIsHovered && currentIsHovered) {
         aNoteIsHovered = true;
-        this.drawFlag(ctx, left, size.height, note.color, isSelected,
-          note.isMovie);
+        this.drawFlag(ctx, left, size.height, note.color, isSelected);
       } else if (isSelected) {
-        this.drawFlag(ctx, left, size.height, note.color, /* fill */ true,
-          note.isMovie);
+        this.drawFlag(ctx, left, size.height, note.color, /* fill */ true);
       } else {
-        this.drawFlag(ctx, left, size.height, note.color, false,
-          note.isMovie);
+        this.drawFlag(ctx, left, size.height, note.color);
       }
 
       if (note.text) {
@@ -143,7 +132,7 @@ export class NotesPanel extends Panel {
 
   private drawFlag(
       ctx: CanvasRenderingContext2D, x: number, height: number, color: string,
-      fill?: boolean, isMovie = globals.state.flagPauseEnabled) {
+      fill?: boolean) {
     const prevFont = ctx.font;
     const prevBaseline = ctx.textBaseline;
     ctx.textBaseline = 'alphabetic';
@@ -151,37 +140,31 @@ export class NotesPanel extends Panel {
       ctx.font = '24px Material Icons';
       ctx.fillStyle = color;
       // Adjust height for icon font.
-      ctx.fillText(isMovie ? MOVIE : FLAG, x - MOUSE_OFFSET, height + 2);
+      ctx.fillText(FLAG, x - MOUSE_OFFSET, height + 2);
     } else {
       ctx.strokeStyle = color;
       ctx.font = '24px Material Icons';
       // Adjust height for icon font.
-      ctx.strokeText(isMovie ? MOVIE : FLAG, x - MOUSE_OFFSET, height + 2.5);
+      ctx.strokeText(FLAG, x - MOUSE_OFFSET, height + 2.5);
     }
     ctx.font = prevFont;
     ctx.textBaseline = prevBaseline;
   }
 
-
-  private onClick(x: number, _: number, isMovie: boolean) {
+  private onClick(x: number, _: number) {
     const timeScale = globals.frontendLocalState.timeScale;
     const timestamp = timeScale.pxToTime(x - MOUSE_OFFSET);
-    const width = isMovie ? MOVIE_WIDTH : FLAG_WIDTH;
     for (const note of Object.values(globals.state.notes)) {
       const noteX = timeScale.timeToPx(note.timestamp);
-      if (noteX <= x && x < noteX + width) {
-        if (note.isMovie) {
-          globals.frontendLocalState.setVidTimestamp(note.timestamp);
-        }
-        globals.makeSelection(Actions.selectNote({id: note.id}));
+      if (noteX <= x && x < noteX + FLAG_WIDTH) {
+        globals.dispatch(Actions.selectNote({id: note.id}));
         return;
       }
     }
-    if (isMovie) {
-      globals.frontendLocalState.setVidTimestamp(timestamp);
-    }
-    const color = randomColor();
-    globals.makeSelection(Actions.addNote({timestamp, color, isMovie}));
+    // 40 different random hues 9 degrees apart.
+    const hue = Math.floor(Math.random() * 40) * 9;
+    const color = '#' + hsl.hex([hue, 90, 30]);
+    globals.dispatch(Actions.addNote({timestamp, color}));
   }
 }
 

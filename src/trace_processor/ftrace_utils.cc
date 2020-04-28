@@ -20,7 +20,7 @@
 #include <algorithm>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/string_writer.h"
+#include "perfetto/base/string_writer.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -35,14 +35,6 @@ struct FtraceTime {
   const int64_t micros;
 };
 }  // namespace
-
-TaskState::TaskState(uint16_t raw_state) {
-  if (raw_state > kMaxState) {
-    state_ = 0;
-  } else {
-    state_ = raw_state | kValid;
-  }
-}
 
 TaskState::TaskState(const char* state_str) {
   bool invalid_char = false;
@@ -97,8 +89,6 @@ TaskState::TaskState(const char* state_str) {
       state_ |= Atom::kParked;
     else if (c == 'N')
       state_ |= Atom::kNoLoad;
-    else if (c == '|')
-      continue;
     else {
       invalid_char = true;
       break;
@@ -106,14 +96,14 @@ TaskState::TaskState(const char* state_str) {
   }
 
   bool no_state = !is_runnable && state_ == 0;
-  if (invalid_char || no_state || state_ > kMaxState) {
+  if (invalid_char || no_state) {
     state_ = 0;
   } else {
     state_ |= kValid;
   }
 }
 
-TaskState::TaskStateStr TaskState::ToString(char separator) const {
+TaskState::TaskStateStr TaskState::ToString() const {
   PERFETTO_CHECK(is_valid());
 
   char buffer[32];
@@ -126,56 +116,26 @@ TaskState::TaskStateStr TaskState::ToString(char separator) const {
   } else {
     if (state_ & Atom::kInterruptibleSleep)
       buffer[pos++] = 'S';
-    if (state_ & Atom::kUninterruptibleSleep) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kUninterruptibleSleep)
       buffer[pos++] = 'D';  // D for (D)isk sleep
-    }
-    if (state_ & Atom::kStopped) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kStopped)
       buffer[pos++] = 'T';
-    }
-    if (state_ & Atom::kTraced) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kTraced)
       buffer[pos++] = 't';
-    }
-    if (state_ & Atom::kExitDead) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kExitDead)
       buffer[pos++] = 'X';
-    }
-    if (state_ & Atom::kExitZombie) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kExitZombie)
       buffer[pos++] = 'Z';
-    }
-    if (state_ & Atom::kTaskDead) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kTaskDead)
       buffer[pos++] = 'x';
-    }
-    if (state_ & Atom::kWakeKill) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kWakeKill)
       buffer[pos++] = 'K';
-    }
-    if (state_ & Atom::kWaking) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kWaking)
       buffer[pos++] = 'W';
-    }
-    if (state_ & Atom::kParked) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kParked)
       buffer[pos++] = 'P';
-    }
-    if (state_ & Atom::kNoLoad) {
-      if (separator && pos != 0)
-        buffer[pos++] = separator;
+    if (state_ & Atom::kNoLoad)
       buffer[pos++] = 'N';
-    }
   }
 
   if (is_kernel_preempt())
@@ -195,22 +155,13 @@ void FormatSystracePrefix(int64_t timestamp,
   FtraceTime ftrace_time(timestamp);
   if (pid == 0) {
     name = "<idle>";
-  } else if (name == "") {
-    name = "<unknown>";
-  } else if (name == "CrRendererMain") {
-    // TODO(taylori): Remove this when crbug.com/978093 is fixed or
-    // when a better solution is found.
-    name = "CrRendererMainThread";
   }
 
   int64_t padding = 16 - static_cast<int64_t>(name.size());
-  if (padding > 0) {
+  if (PERFETTO_LIKELY(padding > 0)) {
     writer->AppendChar(' ', static_cast<size_t>(padding));
   }
-  for (size_t i = 0; i < name.size(); ++i) {
-    char c = name.data()[i];
-    writer->AppendChar(c == '-' ? '_' : c);
-  }
+  writer->AppendString(name);
   writer->AppendChar('-');
 
   size_t pre_pid_pos = writer->pos();

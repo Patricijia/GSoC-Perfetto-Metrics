@@ -21,7 +21,7 @@
 #include <set>
 #include <vector>
 
-#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/base/scoped_file.h"
 
 namespace perfetto {
 namespace profiling {
@@ -30,7 +30,7 @@ template <typename Fn>
 void ForEachPid(Fn callback) {
   base::ScopedDir proc_dir(opendir("/proc"));
   if (!proc_dir) {
-    PERFETTO_DFATAL_OR_ELOG("Failed to open /proc");
+    PERFETTO_DFATAL("Failed to open /proc");
     return;
   }
   struct dirent* entry;
@@ -43,6 +43,7 @@ void ForEachPid(Fn callback) {
   }
 }
 
+bool NormalizeCmdLine(char* cmdline, size_t size, std::string* name);
 std::vector<std::string> NormalizeCmdlines(
     const std::vector<std::string>& cmdlines);
 

@@ -14,10 +14,10 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/tracing/core/sliced_protobuf_input_stream.h"
+#include "src/tracing/core/sliced_protobuf_input_stream.h"
 
-#include "perfetto/ext/base/utils.h"
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
+#include "perfetto/base/utils.h"
 
 namespace perfetto {
 namespace {

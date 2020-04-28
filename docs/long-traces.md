@@ -4,8 +4,7 @@ By default Perfetto keeps the full trace buffer in memory and writes it into the
 destination file (passed with the `-o` cmdline argument) only at the end of the
 trace, to reduce the intrusiveness of the tracing system.
 That, however, limits the max size of the trace to the physical memory size of
-the device.
-
+the device.  
 In some cases (e.g., benchmarks, hard to repro cases) it is desirable to capture
 traces that are way larger than that.
 
@@ -17,7 +16,7 @@ the target file (or stdout) by using some flags in the
 `bool write_into_file`  
 When true drains periodically the trace buffers into the output
 file. When this option is enabled, the userspace buffers need to be just
-big enough to hold tracing data between two periods.
+big enough to hold tracing data between two periods.  
 The buffer sizing depends on the activity of the device. A reasonable estimation
 is ~5-20 MB per second.
 
@@ -35,8 +34,7 @@ For a complete example of a working trace config in long-tracing mode see
 
 ## Instructions
 These instructions assume you have a working standalone checkout (see
-[instructions here](/docs/build-instructions.md)).
-
+[instructions here](/docs/build-instructions.md)).  
 These instructions have been tested as non-root. Many of the steps below can be
 simplified when running as root and are required due to SELinux when running as
 `shell` rather than `root`.
@@ -48,14 +46,14 @@ $ cd perfetto
 $ tools/install-build-deps --no-android
 $ tools/gn gen out/mac_release --args="is_debug=false"
 
-# Compiles the textual protobuf into binary format
+# Compiles the textual protobuf into binary format 
 # for /test/configs/long_trace.cfg.
 $ tools/ninja -C out/mac_release/ long_trace.cfg.protobuf
 
 # Alternatively, the more verbose variant:
 $ protoc=$(pwd)/out/mac_release/gcc_like_host/protoc
 $ protoc --encode=perfetto.protos.TraceConfig \
-        -I$(pwd) \
+        -I$(pwd)/protos \
         $(pwd)/protos/perfetto/config/perfetto_config.proto \
         < /test/configs/long_trace.cfg \
         > /tmp/long_trace.cfg.protobuf

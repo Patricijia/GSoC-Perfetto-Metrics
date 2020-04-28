@@ -17,9 +17,7 @@
 #ifndef SRC_TRACE_PROCESSOR_STRING_POOL_H_
 #define SRC_TRACE_PROCESSOR_STRING_POOL_H_
 
-#include "perfetto/ext/base/optional.h"
-#include "perfetto/ext/base/paged_memory.h"
-#include "perfetto/protozero/proto_utils.h"
+#include "perfetto/base/paged_memory.h"
 #include "src/trace_processor/null_term_string_view.h"
 
 #include <unordered_map>
@@ -28,31 +26,15 @@
 namespace perfetto {
 namespace trace_processor {
 
+// Interns strings in a string pool and hands out compact StringIds which can
+// be used to retrieve the string in O(1).
 // On 64-bit platforms, the string pool is implemented as a mmaped buffer
 // of 4GB with the id being equal ot the offset into this buffer of the string.
 // On 32-bit platforms instead, the implementation allocates 32MB blocks of
 // mmaped memory with the pointer being directly converted to the id.
-constexpr size_t kDefaultBlockSize =
-    sizeof(void*) == 8
-        ? static_cast<size_t>(4ull * 1024ull * 1024ull * 1024ull) /* 4GB */
-        : 32ull * 1024ull * 1024ull /* 32MB */;
-
-// Interns strings in a string pool and hands out compact StringIds which can
-// be used to retrieve the string in O(1).
 class StringPool {
  public:
-  struct Id {
-    Id() = default;
-    constexpr Id(uint32_t i) : id(i) {}
-
-    bool operator==(const Id& other) const { return other.id == id; }
-    bool operator!=(const Id& other) const { return !(other == *this); }
-    bool operator<(const Id& other) const { return id < other.id; }
-
-    bool is_null() const { return id == 0u; }
-
-    uint32_t id;
-  };
+  using Id = uint32_t;
 
   // Iterator over the strings in the pool.
   class Iterator {
@@ -84,7 +66,7 @@ class StringPool {
 
   Id InternString(base::StringView str) {
     if (str.data() == nullptr)
-      return Id(0);
+      return 0;
 
     auto hash = str.Hash();
     auto id_it = string_index_.find(hash);
@@ -95,21 +77,8 @@ class StringPool {
     return InsertString(str, hash);
   }
 
-  base::Optional<Id> GetId(base::StringView str) const {
-    if (str.data() == nullptr)
-      return Id(0u);
-
-    auto hash = str.Hash();
-    auto id_it = string_index_.find(hash);
-    if (id_it != string_index_.end()) {
-      PERFETTO_DCHECK(Get(id_it->second) == str);
-      return id_it->second;
-    }
-    return base::nullopt;
-  }
-
   NullTermStringView Get(Id id) const {
-    if (id.id == 0)
+    if (id == 0)
       return NullTermStringView();
     return GetFromPtr(IdToPtr(id));
   }
@@ -120,10 +89,8 @@ class StringPool {
 
  private:
   using StringHash = uint64_t;
-
   struct Block {
-    explicit Block(size_t size)
-        : mem_(base::PagedMemory::Allocate(size)), size_(size) {}
+    Block() : mem_(base::PagedMemory::Allocate(kBlockSize)) {}
     ~Block() = default;
 
     // Allow std::move().
@@ -138,81 +105,78 @@ class StringPool {
       return static_cast<uint8_t*>(mem_.Get()) + offset;
     }
 
-    const uint8_t* TryInsert(base::StringView str);
+    uint8_t* TryInsert(base::StringView str);
 
-    uint32_t OffsetOf(const uint8_t* ptr) const {
-      PERFETTO_DCHECK(Get(0) < ptr &&
-                      ptr < Get(static_cast<uint32_t>(size_ - 1)));
+    uint32_t OffsetOf(uint8_t* ptr) const {
+      PERFETTO_DCHECK(Get(0) < ptr && ptr < Get(kBlockSize - 1));
       return static_cast<uint32_t>(ptr - Get(0));
     }
 
     uint32_t pos() const { return pos_; }
 
    private:
+    static constexpr size_t kBlockSize =
+        sizeof(void*) == 8
+            ? static_cast<size_t>(4ull * 1024ull * 1024ull * 1024ull) /* 4GB */
+            : 32ull * 1024ull * 1024ull /* 32MB */;
+
     base::PagedMemory mem_;
     uint32_t pos_ = 0;
-    size_t size_;
   };
 
   friend class Iterator;
 
   // Number of bytes to reserve for size and null terminator.
-  // This is the upper limit on metadata size: 5 bytes for max uint32,
-  // plus 1 byte for null terminator. The actual size may be lower.
-  static constexpr uint8_t kMaxMetadataSize = 6;
+  static constexpr uint8_t kMetadataSize = 3;
 
   // Inserts the string with the given hash into the pool
   Id InsertString(base::StringView, uint64_t hash);
 
   // |ptr| should point to the start of the string metadata (i.e. the first byte
   // of the size).
-  Id PtrToId(const uint8_t* ptr) const {
+  Id PtrToId(uint8_t* ptr) const {
     // For a 64 bit architecture, the id is the offset of the pointer inside
     // the one and only 4GB block.
     if (sizeof(void*) == 8) {
       PERFETTO_DCHECK(blocks_.size() == 1);
-      return Id(blocks_.back().OffsetOf(ptr));
+      return blocks_.back().OffsetOf(ptr);
     }
 
     // On 32 bit architectures, the size of the pointer is 32-bit so we simply
     // use the pointer itself as the id.
     // Double cast needed because, on 64 archs, the compiler complains that we
     // are losing information.
-    return Id(static_cast<uint32_t>(reinterpret_cast<uintptr_t>(ptr)));
+    return static_cast<Id>(reinterpret_cast<uintptr_t>(ptr));
   }
 
-  // The returned pointer points to the start of the string metadata (i.e. the
+  // THe returned pointer points to the start of the string metadata (i.e. the
   // first byte of the size).
-  const uint8_t* IdToPtr(Id id) const {
+  uint8_t* IdToPtr(Id id) const {
     // For a 64 bit architecture, the pointer is simply the found by taking
     // the base of the 4GB block and adding the offset given by |id|.
     if (sizeof(void*) == 8) {
       PERFETTO_DCHECK(blocks_.size() == 1);
-      return blocks_.back().Get(id.id);
+      return blocks_.back().Get(id);
     }
     // On a 32 bit architecture, the pointer is the same as the id.
-    return reinterpret_cast<uint8_t*>(id.id);
+    return reinterpret_cast<uint8_t*>(id);
   }
 
   // |ptr| should point to the start of the string metadata (i.e. the first byte
   // of the size).
-  // Returns pointer to the start of the string.
-  static const uint8_t* ReadSize(const uint8_t* ptr, uint32_t* size) {
-    uint64_t value = 0;
-    const uint8_t* str_ptr = protozero::proto_utils::ParseVarInt(
-        ptr, ptr + kMaxMetadataSize, &value);
-    PERFETTO_DCHECK(str_ptr != ptr);
-    PERFETTO_DCHECK(value < std::numeric_limits<uint32_t>::max());
-    *size = static_cast<uint32_t>(value);
-    return str_ptr;
+  static uint16_t GetSize(uint8_t* ptr) {
+    // The size is simply memcpyed into the byte buffer when writing.
+    uint16_t size;
+    memcpy(&size, ptr, sizeof(uint16_t));
+    return size;
   }
 
   // |ptr| should point to the start of the string metadata (i.e. the first byte
   // of the size).
-  static NullTermStringView GetFromPtr(const uint8_t* ptr) {
-    uint32_t size = 0;
-    const uint8_t* str_ptr = ReadSize(ptr, &size);
-    return NullTermStringView(reinterpret_cast<const char*>(str_ptr), size);
+  static NullTermStringView GetFromPtr(uint8_t* ptr) {
+    // With the first two bytes being used for the size, the string starts from
+    // byte 3.
+    return NullTermStringView(reinterpret_cast<char*>(&ptr[2]), GetSize(ptr));
   }
 
   // The actual memory storing the strings.
@@ -226,19 +190,5 @@ class StringPool {
 
 }  // namespace trace_processor
 }  // namespace perfetto
-
-namespace std {
-
-template <>
-struct hash< ::perfetto::trace_processor::StringPool::Id> {
-  using argument_type = ::perfetto::trace_processor::StringPool::Id;
-  using result_type = size_t;
-
-  result_type operator()(const argument_type& r) const {
-    return std::hash<uint32_t>{}(r.id);
-  }
-};
-
-}  // namespace std
 
 #endif  // SRC_TRACE_PROCESSOR_STRING_POOL_H_

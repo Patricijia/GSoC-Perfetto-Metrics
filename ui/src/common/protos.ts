@@ -23,30 +23,23 @@ import AndroidLogId = protos.perfetto.protos.AndroidLogId;
 import BatteryCounters =
     protos.perfetto.protos.AndroidPowerConfig.BatteryCounters;
 import BufferConfig = protos.perfetto.protos.TraceConfig.BufferConfig;
-import ChromeConfig = protos.perfetto.protos.ChromeConfig;
-import ConsumerPort = protos.perfetto.protos.ConsumerPort;
-import ContinuousDumpConfig =
-    protos.perfetto.protos.HeapprofdConfig.ContinuousDumpConfig;
 import DataSourceConfig = protos.perfetto.protos.DataSourceConfig;
 import FtraceConfig = protos.perfetto.protos.FtraceConfig;
-import HeapprofdConfig = protos.perfetto.protos.HeapprofdConfig;
 import IAndroidPowerConfig = protos.perfetto.protos.IAndroidPowerConfig;
 import IBufferConfig = protos.perfetto.protos.TraceConfig.IBufferConfig;
 import IProcessStatsConfig = protos.perfetto.protos.IProcessStatsConfig;
+import IRawQueryArgs = protos.perfetto.protos.IRawQueryArgs;
 import ISysStatsConfig = protos.perfetto.protos.ISysStatsConfig;
 import ITraceConfig = protos.perfetto.protos.ITraceConfig;
 import MeminfoCounters = protos.perfetto.protos.MeminfoCounters;
 import ProcessStatsConfig = protos.perfetto.protos.ProcessStatsConfig;
+import RawQueryArgs = protos.perfetto.protos.RawQueryArgs;
+import RawQueryResult = protos.perfetto.protos.RawQueryResult;
 import StatCounters = protos.perfetto.protos.SysStatsConfig.StatCounters;
 import SysStatsConfig = protos.perfetto.protos.SysStatsConfig;
 import TraceConfig = protos.perfetto.protos.TraceConfig;
+import TraceProcessor = protos.perfetto.protos.TraceProcessor;
 import VmstatCounters = protos.perfetto.protos.VmstatCounters;
-
-// Trace Processor protos.
-import IRawQueryArgs = protos.perfetto.trace_processor.protos.IRawQueryArgs;
-import RawQueryArgs = protos.perfetto.trace_processor.protos.RawQueryArgs;
-import RawQueryResult = protos.perfetto.trace_processor.protos.RawQueryResult;
-import StatusResult = protos.perfetto.trace_processor.protos.StatusResult;
 
 // TODO(hjd): Maybe these should go in their own file.
 export interface Row { [key: string]: number|string; }
@@ -205,12 +198,8 @@ export {
   AndroidPowerConfig,
   BatteryCounters,
   BufferConfig,
-  ChromeConfig,
-  ConsumerPort,
-  ContinuousDumpConfig,
   DataSourceConfig,
   FtraceConfig,
-  HeapprofdConfig,
   IAndroidPowerConfig,
   IBufferConfig,
   IProcessStatsConfig,
@@ -221,9 +210,9 @@ export {
   ProcessStatsConfig,
   RawQueryArgs,
   RawQueryResult,
-  StatusResult,
   StatCounters,
   SysStatsConfig,
   TraceConfig,
+  TraceProcessor,
   VmstatCounters,
 };

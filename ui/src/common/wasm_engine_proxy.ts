@@ -12,11 +12,14 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {defer, Deferred} from '../base/deferred';
-import {assertTrue} from '../base/logging';
+import * as protobufjs from 'protobufjs/light';
+
+import {defer} from '../base/deferred';
 import {WasmBridgeRequest, WasmBridgeResponse} from '../engine/wasm_bridge';
 
-import {Engine, LoadingTracker} from './engine';
+import {Engine} from './engine';
+import {TraceProcessor} from './protos';
+import {Method, rpc, Message} from 'protobufjs/light';
 
 const activeWorkers = new Map<string, Worker>();
 let warmWorker: null|Worker = null;
@@ -63,78 +66,77 @@ export function warmupWasmEngine(): void {
   warmWorker = createWorker();
 }
 
-interface PendingRequest {
-  id: number;
-  respHandler: Deferred<Uint8Array>;
-}
-
 /**
- * This implementation of Engine uses a WASM backend hosted in a separate
+ * This implementation of Engine uses a WASM backend hosted in a seperate
  * worker thread.
  */
 export class WasmEngineProxy extends Engine {
-  readonly id: string;
   private readonly worker: Worker;
-  private pendingRequests = new Array<PendingRequest>();
-  private nextRequestId = 0;
+  private readonly traceProcessor_: TraceProcessor;
+  private pendingCallbacks: Map<number, protobufjs.RPCImplCallback>;
+  private nextRequestId: number;
+  readonly id: string;
 
-  constructor(id: string, worker: Worker, loadingTracker?: LoadingTracker) {
-    super(loadingTracker);
-    this.id = id;
-    this.worker = worker;
+  constructor(args: {id: string, worker: Worker}) {
+    super();
+    this.nextRequestId = 0;
+    this.pendingCallbacks = new Map();
+    this.id = args.id;
+    this.worker = args.worker;
     this.worker.onmessage = this.onMessage.bind(this);
+    this.traceProcessor_ =
+        TraceProcessor.create(this.rpcImpl.bind(this, 'trace_processor'));
   }
 
-  async parse(reqData: Uint8Array): Promise<void> {
-    // We don't care about the response data (the method is actually a void). We
-    // just want to linearize and wait for the call to have been completed on
-    // the worker.
-    await this.queueRequest('trace_processor_parse', reqData);
+  get rpc(): TraceProcessor {
+    return this.traceProcessor_;
   }
 
-  async notifyEof(): Promise<void> {
-    // We don't care about the response data (the method is actually a void). We
-    // just want to linearize and wait for the call to have been completed on
-    // the worker.
-    await this.queueRequest('trace_processor_notify_eof', new Uint8Array());
-  }
-
-  restoreInitialTables(): Promise<void> {
-    // We should never get here, restoreInitialTables() should be called only
-    // when using the HttpRpcEngine.
-    throw new Error('restoreInitialTables() not supported by the WASM engine');
-  }
-
-  rawQuery(rawQueryArgs: Uint8Array): Promise<Uint8Array> {
-    return this.queueRequest('trace_processor_raw_query', rawQueryArgs);
-  }
-
-  // Enqueues a request to the worker queue via postMessage(). The returned
-  // promised will be resolved once the worker replies to the postMessage()
-  // with the paylad of the response, a proto-encoded object which wraps the
-  // method return value (e.g., RawQueryResult for SQL query results).
-  private queueRequest(methodName: string, reqData: Uint8Array):
-      Deferred<Uint8Array> {
-    const respHandler = defer<Uint8Array>();
+  parse(data: Uint8Array): Promise<void> {
     const id = this.nextRequestId++;
-    const request: WasmBridgeRequest = {id, methodName, data: reqData};
-    this.pendingRequests.push({id, respHandler});
+    const request: WasmBridgeRequest =
+        {id, serviceName: 'trace_processor', methodName: 'parse', data};
+    const promise = defer<void>();
+    this.pendingCallbacks.set(id, () => promise.resolve());
     this.worker.postMessage(request);
-    return respHandler;
+    return promise;
+  }
+
+  notifyEof(): Promise<void> {
+    const id = this.nextRequestId++;
+    const data = Uint8Array.from([]);
+    const request: WasmBridgeRequest =
+        {id, serviceName: 'trace_processor', methodName: 'notifyEof', data};
+    const promise = defer<void>();
+    this.pendingCallbacks.set(id, () => promise.resolve());
+    this.worker.postMessage(request);
+    return promise;
   }
 
   onMessage(m: MessageEvent) {
     const response = m.data as WasmBridgeResponse;
-    assertTrue(this.pendingRequests.length > 0);
-    const request = this.pendingRequests.shift()!;
-
-    // Requests should be executed and ACKed by the worker in the same order
-    // they came in.
-    assertTrue(request.id === response.id);
-    if (response.aborted) {
-      request.respHandler.reject('WASM module crashed');
-    } else {
-      request.respHandler.resolve(response.data);
+    const callback = this.pendingCallbacks.get(response.id);
+    if (callback === undefined) {
+      throw new Error(`No such request: ${response.id}`);
     }
+    this.pendingCallbacks.delete(response.id);
+    callback(null, response.data);
+  }
+
+  rpcImpl(
+      serviceName: string,
+      method: Method | rpc.ServiceMethod<Message<{}>, Message<{}>>,
+      requestData: Uint8Array,
+      callback: protobufjs.RPCImplCallback): void {
+    const methodName = method.name;
+    const id = this.nextRequestId++;
+    this.pendingCallbacks.set(id, callback);
+    const request: WasmBridgeRequest = {
+      id,
+      serviceName,
+      methodName,
+      data: requestData,
+    };
+    this.worker.postMessage(request);
   }
 }

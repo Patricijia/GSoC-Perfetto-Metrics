@@ -17,10 +17,9 @@
 #include "perfetto/protozero/proto_decoder.h"
 
 #include <string.h>
-#include <limits>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/utils.h"
 #include "perfetto/protozero/proto_utils.h"
 
 namespace protozero {
@@ -57,7 +56,7 @@ ParseOneField(const uint8_t* const buffer, const uint8_t* const end) {
     return res;
 
   uint64_t preamble = 0;
-  if (PERFETTO_LIKELY(*pos < 0x80)) {  // Fastpath for fields with ID < 16.
+  if (PERFETTO_LIKELY(*pos < 0x80)) {  // Fastpath for fields with ID < 32.
     preamble = *(pos++);
   } else {
     pos = ParseVarInt(pos, end, &preamble);
@@ -129,7 +128,7 @@ ParseOneField(const uint8_t* const buffer, const uint8_t* const end) {
   }
 
   if (PERFETTO_UNLIKELY(field_id > std::numeric_limits<uint16_t>::max())) {
-    // PERFETTO_DFATAL("Cannot parse proto field ids > 0xFFFF");
+    PERFETTO_DFATAL("Cannot parse proto field ids > 0xFFFF");
     return res;
   }
 

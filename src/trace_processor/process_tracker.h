@@ -19,7 +19,7 @@
 
 #include <tuple>
 
-#include "perfetto/ext/base/string_view.h"
+#include "perfetto/base/string_view.h"
 #include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_storage.h"
 
@@ -53,24 +53,13 @@ class ProcessTracker {
                            uint32_t tid,
                            StringId thread_name_id);
 
-  // Called when sched_process_exit is observed. This forces the tracker to
-  // end the thread lifetime for the utid associated with the given tid.
-  void EndThread(int64_t timestamp, uint32_t tid);
-
-  // Returns the thread utid or base::nullopt if it doesn't exist.
-  base::Optional<UniqueTid> GetThreadOrNull(uint32_t tid);
-
   // Returns the thread utid (or creates a new entry if not present)
   UniqueTid GetOrCreateThread(uint32_t tid);
 
   // Called when a sched switch event is seen in the trace. Retrieves the
   // UniqueTid that matches the tid or assigns a new UniqueTid and stores
   // the thread_name_id.
-  virtual UniqueTid UpdateThreadName(uint32_t tid, StringId thread_name_id);
-
-  // Assigns the given name to the thread identified |utid| if it does not have
-  // a name yet.
-  virtual void SetThreadNameIfUnset(UniqueTid utid, StringId thread_name_id);
+  UniqueTid UpdateThreadName(uint32_t tid, StringId thread_name_id);
 
   // Called when a thread is seen the process tree. Retrieves the matching utid
   // for the tid and the matching upid for the tgid and stores both.
@@ -79,25 +68,14 @@ class ProcessTracker {
 
   // Called when a task_newtask without the CLONE_THREAD flag is observed.
   // This force the tracker to start both a new UTID and a new UPID.
-  UniquePid StartNewProcess(int64_t timestamp,
-                            uint32_t parent_tid,
-                            uint32_t pid,
-                            StringId main_thread_name);
+  UniquePid StartNewProcess(int64_t timestamp, uint32_t pid);
 
   // Called when a process is seen in a process tree. Retrieves the UniquePid
   // for that pid or assigns a new one.
   // Virtual for testing.
-  virtual UniquePid SetProcessMetadata(uint32_t pid,
-                                       base::Optional<uint32_t> ppid,
-                                       base::StringView name);
-
-  // Assigns the given name to the process identified by |upid| if it does not
-  // have a name yet.
-  void SetProcessNameIfUnset(UniquePid upid, StringId process_name_id);
-
-  // Called on a task rename event to set the process name if the tid provided
-  // is the main thread of the process.
-  void UpdateProcessNameFromThreadName(uint32_t tid, StringId thread_name);
+  virtual UniquePid UpdateProcess(uint32_t pid,
+                                  base::Optional<uint32_t> ppid,
+                                  base::StringView name);
 
   // Called when a process is seen in a process tree. Retrieves the UniquePid
   // for that pid or assigns a new one.
@@ -146,11 +124,6 @@ class ProcessTracker {
   // don't know yet which process. A and A are idempotent, as in, pair<A,B> is
   // equivalent to pair<B,A>.
   std::vector<std::pair<UniqueTid, UniqueTid>> pending_assocs_;
-
-  // Pending parent process associations. The meaning of pair<ThreadA, ProcessB>
-  // in this vector is: we know that A created process B but we don't know the
-  // process of A. That is, we don't know the parent *process* of B.
-  std::vector<std::pair<UniqueTid, UniquePid>> pending_parent_assocs_;
 };
 
 }  // namespace trace_processor

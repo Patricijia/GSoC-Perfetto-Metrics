@@ -38,9 +38,7 @@
 
 syntax = "proto3";
 
-// This is in perfetto.third_party to avoid clashing with potential other
-// copies of this proto.
-package perfetto.third_party.perftools.profiles;
+package perftools.profiles;
 
 option java_package = "com.google.perftools.profiles";
 option java_outer_classname = "ProfileProto";

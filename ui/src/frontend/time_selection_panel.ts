@@ -80,35 +80,6 @@ function drawHBar(
   ctx.fillText(label, labelXLeft, yMid);
 }
 
-function drawIBar(
-    ctx: CanvasRenderingContext2D, xPos: number, bounds: BBox, label: string) {
-  if (xPos < bounds.x) return;
-
-  ctx.fillStyle = '#222';
-  ctx.fillRect(xPos, 0, 1, bounds.width);
-
-  const yMid = Math.floor(bounds.height / 2 + bounds.y);
-  const labelWidth = ctx.measureText(label).width;
-  const padding = 3;
-
-  let xPosLabel;
-  if (xPos + padding + labelWidth > bounds.width) {
-    xPosLabel = xPos - padding;
-    ctx.textAlign = 'right';
-  } else {
-    xPosLabel = xPos + padding;
-    ctx.textAlign = 'left';
-  }
-
-  ctx.fillStyle = '#ffffff';
-  ctx.fillRect(xPosLabel - 1, 0, labelWidth + 2, bounds.height);
-
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#222';
-  ctx.font = '10px Google Sans';
-  ctx.fillText(label, xPosLabel, yMid);
-}
-
 export class TimeSelectionPanel extends Panel {
   view() {
     return m('.time-selection-panel');
@@ -119,31 +90,17 @@ export class TimeSelectionPanel extends Panel {
     const timeScale = globals.frontendLocalState.timeScale;
 
     ctx.fillStyle = '#999';
-    ctx.fillRect(TRACK_SHELL_WIDTH - 2, 0, 2, size.height);
+    ctx.fillRect(TRACK_SHELL_WIDTH - 1, 0, 2, size.height);
     for (const xAndTime of gridlines(size.width, range, timeScale)) {
       ctx.fillRect(xAndTime[0], 0, 1, size.height);
     }
 
-    const selectedTimeRange = globals.frontendLocalState.selectedTimeRange;
-    if (selectedTimeRange.startSec !== undefined &&
-        selectedTimeRange.endSec !== undefined) {
-      const start =
-          Math.min(selectedTimeRange.startSec, selectedTimeRange.endSec);
-      const end =
-          Math.max(selectedTimeRange.startSec, selectedTimeRange.endSec);
+    const selection = globals.state.currentSelection;
+    if (selection !== null && selection.kind === `TIMESPAN`) {
+      const start = Math.min(selection.startTs, selection.endTs);
+      const end = Math.max(selection.startTs, selection.endTs);
       this.renderSpan(ctx, size, new TimeSpan(start, end));
-    } else if (globals.frontendLocalState.showTimeSelectPreview) {
-      this.renderHover(ctx, size, globals.frontendLocalState.hoveredTimestamp);
     }
-  }
-
-  renderHover(ctx: CanvasRenderingContext2D, size: PanelSize, ts: number) {
-    const timeScale = globals.frontendLocalState.timeScale;
-    const xPos = TRACK_SHELL_WIDTH + Math.floor(timeScale.timeToPx(ts));
-    const offsetTime = timeToString(ts - globals.state.traceTime.startSec);
-    const timeFromStart = timeToString(ts);
-    const label = `${offsetTime} (${timeFromStart})`;
-    drawIBar(ctx, xPos, this.bounds(size), label);
   }
 
   renderSpan(ctx: CanvasRenderingContext2D, size: PanelSize, span: TimeSpan) {
@@ -159,11 +116,7 @@ export class TimeSelectionPanel extends Panel {
           width: xRight - xLeft,
           height: size.height
         },
-        this.bounds(size),
+        {x: 0, y: 0, width: size.width, height: size.height},
         label);
-  }
-
-  private bounds(size: PanelSize): BBox {
-    return {x: TRACK_SHELL_WIDTH, y: 0, width: size.width, height: size.height};
   }
 }

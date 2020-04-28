@@ -16,8 +16,8 @@
 
 #include "src/tracing/test/mock_consumer.h"
 
-#include "perfetto/ext/tracing/core/trace_stats.h"
 #include "perfetto/tracing/core/trace_config.h"
+#include "perfetto/tracing/core/trace_stats.h"
 #include "src/base/test/test_task_runner.h"
 
 using ::testing::_;
@@ -109,7 +109,7 @@ std::vector<protos::TracePacket> MockConsumer::ReadBuffers() {
             for (TracePacket& packet : *packets) {
               decoded_packets.emplace_back();
               protos::TracePacket* decoded_packet = &decoded_packets.back();
-              decoded_packet->ParseFromString(packet.GetRawBytesForTesting());
+              packet.Decode(decoded_packet);
             }
             if (!has_more)
               on_read_buffers();

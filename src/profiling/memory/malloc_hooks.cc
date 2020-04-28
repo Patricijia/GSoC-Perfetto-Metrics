@@ -14,10 +14,9 @@
  * limitations under the License.
  */
 
-#include <android/fdsan.h>
-#include <bionic/malloc.h>
 #include <inttypes.h>
 #include <malloc.h>
+#include <private/bionic_malloc.h>
 #include <private/bionic_malloc_dispatch.h>
 #include <stddef.h>
 #include <stdio.h>
@@ -32,9 +31,9 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/no_destructor.h"
-#include "perfetto/ext/base/unix_socket.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/no_destructor.h"
+#include "perfetto/base/unix_socket.h"
+#include "perfetto/base/utils.h"
 #include "src/profiling/memory/client.h"
 #include "src/profiling/memory/proc_utils.h"
 #include "src/profiling/memory/scoped_spinlock.h"
@@ -84,12 +83,12 @@ int HEAPPROFD_ADD_PREFIX(_malloc_info)(int options, FILE* fp);
 int HEAPPROFD_ADD_PREFIX(_posix_memalign)(void** memptr,
                                           size_t alignment,
                                           size_t size);
-int HEAPPROFD_ADD_PREFIX(_malloc_iterate)(uintptr_t base,
-                                          size_t size,
-                                          void (*callback)(uintptr_t base,
-                                                           size_t size,
-                                                           void* arg),
-                                          void* arg);
+int HEAPPROFD_ADD_PREFIX(_iterate)(uintptr_t base,
+                                   size_t size,
+                                   void (*callback)(uintptr_t base,
+                                                    size_t size,
+                                                    void* arg),
+                                   void* arg);
 void HEAPPROFD_ADD_PREFIX(_malloc_disable)();
 void HEAPPROFD_ADD_PREFIX(_malloc_enable)();
 
@@ -146,17 +145,11 @@ const MallocDispatch* GetDispatch() {
 }
 
 int CloneWithoutSigchld() {
-  auto ret = clone(nullptr, nullptr, 0, nullptr);
-  if (ret == 0)
-    android_fdsan_set_error_level(ANDROID_FDSAN_ERROR_LEVEL_DISABLED);
-  return ret;
+  return clone(nullptr, nullptr, 0, nullptr);
 }
 
 int ForklikeClone() {
-  auto ret = clone(nullptr, nullptr, SIGCHLD, nullptr);
-  if (ret == 0)
-    android_fdsan_set_error_level(ANDROID_FDSAN_ERROR_LEVEL_DISABLED);
-  return ret;
+  return clone(nullptr, nullptr, SIGCHLD, nullptr);
 }
 
 // Like daemon(), but using clone to avoid invoking pthread_atfork(3) handlers.
@@ -248,11 +241,8 @@ std::shared_ptr<perfetto::profiling::Client> CreateClientForCentralDaemon(
 
   perfetto::base::Optional<perfetto::base::UnixSocketRaw> sock =
       Client::ConnectToHeapprofd(perfetto::profiling::kHeapprofdSocketFile);
-  if (!sock) {
-    PERFETTO_ELOG("Failed to connect to %s.",
-                  perfetto::profiling::kHeapprofdSocketFile);
+  if (!sock)
     return nullptr;
-  }
   return Client::CreateAndHandshake(std::move(sock.value()),
                                     unhooked_allocator);
 }
@@ -263,7 +253,7 @@ std::shared_ptr<perfetto::profiling::Client> CreateClientAndPrivateDaemon(
   perfetto::base::UnixSocketRaw parent_sock;
   perfetto::base::UnixSocketRaw child_sock;
   std::tie(parent_sock, child_sock) = perfetto::base::UnixSocketRaw::CreatePair(
-      perfetto::base::SockFamily::kUnix, perfetto::base::SockType::kStream);
+      perfetto::base::SockType::kStream);
 
   if (!parent_sock || !child_sock) {
     PERFETTO_PLOG("Failed to create socketpair.");
@@ -461,7 +451,7 @@ static void MaybeSampleAllocation(size_t size, void* addr) {
     client = g_client.ref();  // owning copy
   }                           // unlock
 
-  if (!client->RecordMalloc(sampled_alloc_sz, size,
+  if (!client->RecordMalloc(size, sampled_alloc_sz,
                             reinterpret_cast<uint64_t>(addr))) {
     ShutdownLazy();
   }
@@ -477,7 +467,7 @@ void* HEAPPROFD_ADD_PREFIX(_malloc)(size_t size) {
 void* HEAPPROFD_ADD_PREFIX(_calloc)(size_t nmemb, size_t size) {
   const MallocDispatch* dispatch = GetDispatch();
   void* addr = dispatch->calloc(nmemb, size);
-  MaybeSampleAllocation(size, addr);
+  MaybeSampleAllocation(nmemb * size, addr);
   return addr;
 }
 
@@ -574,11 +564,7 @@ void* HEAPPROFD_ADD_PREFIX(_realloc)(void* pointer, size_t size) {
   if (size == 0 || sampled_alloc_sz == 0)
     return addr;
 
-  // We do not reach this point without a valid client, because in that case
-  // sampled_alloc_sz == 0.
-  PERFETTO_DCHECK(client);
-
-  if (!client->RecordMalloc(sampled_alloc_sz, size,
+  if (!client->RecordMalloc(size, sampled_alloc_sz,
                             reinterpret_cast<uint64_t>(addr))) {
     ShutdownLazy();
   }
@@ -620,12 +606,12 @@ int HEAPPROFD_ADD_PREFIX(_malloc_info)(int options, FILE* fp) {
   return dispatch->malloc_info(options, fp);
 }
 
-int HEAPPROFD_ADD_PREFIX(_malloc_iterate)(uintptr_t,
-                                          size_t,
-                                          void (*)(uintptr_t base,
-                                                   size_t size,
-                                                   void* arg),
-                                          void*) {
+int HEAPPROFD_ADD_PREFIX(_iterate)(uintptr_t,
+                                   size_t,
+                                   void (*)(uintptr_t base,
+                                            size_t size,
+                                            void* arg),
+                                   void*) {
   return 0;
 }
 

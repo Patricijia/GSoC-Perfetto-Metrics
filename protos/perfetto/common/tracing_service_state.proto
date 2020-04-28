@@ -19,7 +19,10 @@ option optimize_for = LITE_RUNTIME;
 
 package perfetto.protos;
 
-import "protos/perfetto/common/data_source_descriptor.proto";
+import "perfetto/common/data_source_descriptor.proto";
+
+// When editing this file run ./tools/gen_tracing_cpp_headers_from_protos.py
+// to reflect changes in the corresponding C++ headers.
 
 // Reports the state of the tracing service. Used to gather details about the
 // data sources connected.
@@ -36,7 +39,7 @@ message TracingServiceState {
   // regardless of the fact that they are being used or not.
   message DataSource {
     // Descriptor passed by the data source when calling RegisterDataSource().
-    optional DataSourceDescriptor ds_descriptor = 1;
+    optional DataSourceDescriptor descriptor = 1;
 
     // ID of the producer, as per Producer.id.
     optional int32 producer_id = 2;

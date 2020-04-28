@@ -21,12 +21,13 @@
 #include <stdlib.h>
 #include <sys/stat.h>
 
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 #include "perfetto/base/build_config.h"
-#include "perfetto/ext/base/file_utils.h"
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/temp_file.h"
-#include "perfetto/ext/base/utils.h"
-#include "test/gtest_and_gmock.h"
+#include "perfetto/base/file_utils.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/base/temp_file.h"
+#include "perfetto/base/utils.h"
 
 namespace perfetto {
 namespace {
@@ -53,7 +54,7 @@ devfs /dev devfs,local,nobrowse
 
   base::TempFile tmp_file = base::TempFile::Create();
   ASSERT_EQ(base::WriteAll(tmp_file.fd(), kMounts, sizeof(kMounts)),
-            static_cast<ssize_t>(sizeof(kMounts)));
+            sizeof(kMounts));
   std::multimap<BlockDeviceID, std::string> mounts =
       ParseMounts(tmp_file.path().c_str());
   struct stat dev_stat = {}, root_stat = {};

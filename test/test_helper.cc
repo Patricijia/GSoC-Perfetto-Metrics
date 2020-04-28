@@ -16,14 +16,15 @@
 
 #include "test/test_helper.h"
 
-#include "perfetto/ext/traced/traced.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "gtest/gtest.h"
+#include "perfetto/traced/traced.h"
+#include "perfetto/tracing/core/trace_packet.h"
 #include "test/task_runner_thread_delegates.h"
 
-#include "perfetto/ext/tracing/ipc/default_socket.h"
+#include "src/tracing/ipc/default_socket.h"
 
-#include "protos/perfetto/trace/trace_packet.pb.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 
@@ -51,7 +52,7 @@ void TestHelper::OnConnect() {
 }
 
 void TestHelper::OnDisconnect() {
-  PERFETTO_FATAL("Consumer unexpectedly disconnected from the service");
+  FAIL() << "Consumer unexpectedly disconnected from the service";
 }
 
 void TestHelper::OnTracingDisabled() {
@@ -61,15 +62,14 @@ void TestHelper::OnTracingDisabled() {
 void TestHelper::OnTraceData(std::vector<TracePacket> packets, bool has_more) {
   for (auto& encoded_packet : packets) {
     protos::TracePacket packet;
-    PERFETTO_CHECK(
-        packet.ParseFromString(encoded_packet.GetRawBytesForTesting()));
+    ASSERT_TRUE(encoded_packet.Decode(&packet));
     if (packet.has_clock_snapshot() || packet.has_trace_config() ||
         packet.has_trace_stats() || !packet.synchronization_marker().empty() ||
         packet.has_system_info()) {
       continue;
     }
-    PERFETTO_CHECK(packet.optional_trusted_uid_case() ==
-                   protos::TracePacket::kTrustedUid);
+    ASSERT_EQ(protos::TracePacket::kTrustedUid,
+              packet.optional_trusted_uid_case());
     trace_.push_back(std::move(packet));
   }
 
@@ -163,9 +163,8 @@ void TestHelper::WaitForTracingDisabled(uint32_t timeout_ms) {
   RunUntilCheckpoint("stop.tracing", timeout_ms);
 }
 
-void TestHelper::WaitForReadData(uint32_t read_count, uint32_t timeout_ms) {
-  RunUntilCheckpoint("readback.complete." + std::to_string(read_count),
-                     timeout_ms);
+void TestHelper::WaitForReadData(uint32_t read_count) {
+  RunUntilCheckpoint("readback.complete." + std::to_string(read_count));
 }
 
 std::function<void()> TestHelper::WrapTask(

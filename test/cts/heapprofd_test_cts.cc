@@ -16,18 +16,15 @@
  */
 
 #include <stdlib.h>
-#include <sys/system_properties.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 
-#include "perfetto/base/logging.h"
-#include "perfetto/tracing/core/data_source_config.h"
-#include "src/base/test/test_task_runner.h"
-#include "test/cts/utils.h"
-#include "test/gtest_and_gmock.h"
-#include "test/test_helper.h"
+#include <sys/system_properties.h>
 
-#include "protos/perfetto/config/profiling/heapprofd_config.pb.h"
+#include "gtest/gtest.h"
+#include "perfetto/base/logging.h"
+#include "src/base/test/test_task_runner.h"
+#include "test/test_helper.h"
 
 namespace perfetto {
 namespace {
@@ -41,6 +38,76 @@ constexpr uint64_t kExpectedIndividualAllocSz = 4153;
 static_assert(kExpectedIndividualAllocSz > kTestSamplingInterval,
               "kTestSamplingInterval invalid");
 
+bool IsDebuggableBuild() {
+  char buf[PROP_VALUE_MAX + 1] = {};
+  int ret = __system_property_get("ro.debuggable", buf);
+  PERFETTO_CHECK(ret >= 0);
+  std::string debuggable(buf);
+  if (debuggable == "1")
+    return true;
+  return false;
+}
+
+// note: cannot use gtest macros due to return type
+bool IsAppRunning(const std::string& name) {
+  std::string cmd = "pgrep -f " + name;
+  int retcode = system(cmd.c_str());
+  PERFETTO_CHECK(retcode >= 0);
+  int exit_status = WEXITSTATUS(retcode);
+  if (exit_status == 0)
+    return true;
+  if (exit_status == 1)
+    return false;
+  PERFETTO_FATAL("unexpected exit status from system(pgrep): %d", exit_status);
+}
+
+// invokes |callback| once the target app is in the desired state
+void PollRunState(bool desired_run_state,
+                  base::TestTaskRunner* task_runner,
+                  const std::string& name,
+                  std::function<void()> callback) {
+  bool app_running = IsAppRunning(name);
+  if (app_running == desired_run_state) {
+    callback();
+    return;
+  }
+  task_runner->PostTask([desired_run_state, task_runner, name, callback] {
+    PollRunState(desired_run_state, task_runner, name, std::move(callback));
+  });
+}
+
+void StartAppActivity(const std::string& app_name,
+                      const std::string& checkpoint_name,
+                      base::TestTaskRunner* task_runner,
+                      int delay_ms = 1) {
+  std::string start_cmd = "am start " + app_name + "/.MainActivity";
+  int status = system(start_cmd.c_str());
+  ASSERT_TRUE(status >= 0 && WEXITSTATUS(status) == 0) << "status: " << status;
+
+  bool desired_run_state = true;
+  const auto checkpoint = task_runner->CreateCheckpoint(checkpoint_name);
+  task_runner->PostDelayedTask(
+      [desired_run_state, task_runner, app_name, checkpoint] {
+        PollRunState(desired_run_state, task_runner, app_name,
+                     std::move(checkpoint));
+      },
+      delay_ms);
+}
+
+void StopApp(const std::string& app_name,
+             const std::string& checkpoint_name,
+             base::TestTaskRunner* task_runner) {
+  std::string stop_cmd = "am force-stop " + app_name;
+  int status = system(stop_cmd.c_str());
+  ASSERT_TRUE(status >= 0 && WEXITSTATUS(status) == 0) << "status: " << status;
+
+  bool desired_run_state = false;
+  auto checkpoint = task_runner->CreateCheckpoint(checkpoint_name);
+  task_runner->PostTask([desired_run_state, task_runner, app_name, checkpoint] {
+    PollRunState(desired_run_state, task_runner, app_name,
+                 std::move(checkpoint));
+  });
+}
 
 std::vector<protos::TracePacket> ProfileRuntime(std::string app_name) {
   base::TestTaskRunner task_runner;
@@ -61,22 +128,20 @@ std::vector<protos::TracePacket> ProfileRuntime(std::string app_name) {
 
   TraceConfig trace_config;
   trace_config.add_buffers()->set_size_kb(10 * 1024);
-  trace_config.set_duration_ms(4000);
+  trace_config.set_duration_ms(2000);
 
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
   ds_config->set_name("android.heapprofd");
   ds_config->set_target_buffer(0);
 
-  protos::HeapprofdConfig heapprofd_config;
-  heapprofd_config.set_sampling_interval_bytes(kTestSamplingInterval);
-  heapprofd_config.add_process_cmdline(app_name.c_str());
-  heapprofd_config.set_block_client(true);
-  heapprofd_config.set_all(false);
-  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+  auto* heapprofd_config = ds_config->mutable_heapprofd_config();
+  heapprofd_config->set_sampling_interval_bytes(kTestSamplingInterval);
+  *heapprofd_config->add_process_cmdline() = app_name.c_str();
+  heapprofd_config->set_all(false);
 
   // start tracing
   helper.StartTracing(trace_config);
-  helper.WaitForTracingDisabled(10000 /*ms*/);
+  helper.WaitForTracingDisabled(4000 /*ms*/);
   helper.ReadData();
   helper.WaitForReadData();
 
@@ -104,12 +169,10 @@ std::vector<protos::TracePacket> ProfileStartup(std::string app_name) {
   ds_config->set_name("android.heapprofd");
   ds_config->set_target_buffer(0);
 
-  protos::HeapprofdConfig heapprofd_config;
-  heapprofd_config.set_sampling_interval_bytes(kTestSamplingInterval);
-  heapprofd_config.add_process_cmdline(app_name.c_str());
-  heapprofd_config.set_block_client(true);
-  heapprofd_config.set_all(false);
-  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+  auto* heapprofd_config = ds_config->mutable_heapprofd_config();
+  heapprofd_config->set_sampling_interval_bytes(kTestSamplingInterval);
+  *heapprofd_config->add_process_cmdline() = app_name.c_str();
+  heapprofd_config->set_all(false);
 
   // start tracing
   helper.StartTracing(trace_config);
@@ -159,35 +222,33 @@ void AssertNoProfileContents(std::vector<protos::TracePacket> packets) {
   }
 }
 
-TEST(HeapprofdCtsTest, DebuggableAppRuntime) {
+void StopApp(std::string app_name) {
+  std::string stop_cmd = "am force-stop " + app_name;
+  system(stop_cmd.c_str());
+}
+
+// TODO(b/118428762): look into unwinding issues on x86.
+#if defined(__i386__) || defined(__x86_64__)
+#define MAYBE_SKIP(x) DISABLED_##x
+#else
+#define MAYBE_SKIP(x) x
+#endif
+
+TEST(HeapprofdCtsTest, MAYBE_SKIP(DebuggableAppRuntime)) {
   std::string app_name = "android.perfetto.cts.app.debuggable";
   const auto& packets = ProfileRuntime(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, DebuggableAppStartup) {
+TEST(HeapprofdCtsTest, MAYBE_SKIP(DebuggableAppStartup)) {
   std::string app_name = "android.perfetto.cts.app.debuggable";
   const auto& packets = ProfileStartup(app_name);
   AssertExpectedAllocationsPresent(packets);
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ProfileableAppRuntime) {
-  std::string app_name = "android.perfetto.cts.app.profileable";
-  const auto& packets = ProfileRuntime(app_name);
-  AssertExpectedAllocationsPresent(packets);
-  StopApp(app_name);
-}
-
-TEST(HeapprofdCtsTest, ProfileableAppStartup) {
-  std::string app_name = "android.perfetto.cts.app.profileable";
-  const auto& packets = ProfileStartup(app_name);
-  AssertExpectedAllocationsPresent(packets);
-  StopApp(app_name);
-}
-
-TEST(HeapprofdCtsTest, ReleaseAppRuntime) {
+TEST(HeapprofdCtsTest, MAYBE_SKIP(ReleaseAppRuntime)) {
   std::string app_name = "android.perfetto.cts.app.release";
   const auto& packets = ProfileRuntime(app_name);
 
@@ -199,7 +260,7 @@ TEST(HeapprofdCtsTest, ReleaseAppRuntime) {
   StopApp(app_name);
 }
 
-TEST(HeapprofdCtsTest, ReleaseAppStartup) {
+TEST(HeapprofdCtsTest, MAYBE_SKIP(ReleaseAppStartup)) {
   std::string app_name = "android.perfetto.cts.app.release";
   const auto& packets = ProfileStartup(app_name);
 

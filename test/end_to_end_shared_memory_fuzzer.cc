@@ -20,21 +20,25 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
-#include "perfetto/ext/base/utils.h"
-#include "perfetto/ext/tracing/core/producer.h"
-#include "perfetto/ext/tracing/core/trace_writer.h"
-#include "perfetto/ext/tracing/ipc/default_socket.h"
-#include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
-#include "perfetto/ext/tracing/ipc/service_ipc_host.h"
+#include "perfetto/base/utils.h"
+#include "perfetto/trace/test_event.pbzero.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
-#include "protos/perfetto/trace/test_event.pbzero.h"
+#include "perfetto/tracing/core/producer.h"
+#include "perfetto/tracing/core/trace_writer.h"
+#include "perfetto/tracing/ipc/producer_ipc_client.h"
+#include "perfetto/tracing/ipc/service_ipc_host.h"
 #include "src/base/test/test_task_runner.h"
+#include "src/tracing/ipc/default_socket.h"
 #include "test/task_runner_thread.h"
 #include "test/task_runner_thread_delegates.h"
 #include "test/test_helper.h"
 
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
+
+namespace perfetto {
+namespace shm_fuzz {
 
 // If we're building on Android and starting the daemons ourselves,
 // create the sockets in a world-writable location.
@@ -44,10 +48,6 @@
 #else
 #define TEST_PRODUCER_SOCK_NAME ::perfetto::GetProducerSocket()
 #endif
-
-namespace perfetto {
-namespace shm_fuzz {
-namespace {
 
 // Fake producer writing a protozero message of data into shared memory
 // buffer, followed by a sentinel message to signal completion to the
@@ -85,7 +85,7 @@ class FakeProducer : public Producer {
         static_cast<BufferID>(source_config.target_buffer()));
     {
       auto packet = trace_writer->NewTracePacket();
-      packet->stream_writer_for_testing()->WriteBytes(data_, size_);
+      packet->stream_writer_->WriteBytes(data_, size_);
     }
     trace_writer->Flush();
 
@@ -99,7 +99,7 @@ class FakeProducer : public Producer {
   void StopDataSource(DataSourceInstanceID) override {}
   void OnTracingSetup() override {}
   void Flush(FlushRequestID, const DataSourceInstanceID*, size_t) override {}
-  void ClearIncrementalState(const DataSourceInstanceID*, size_t) override {}
+  void ClearIncrementalState(const DataSourceInstanceID*, size_t) {}
 
  private:
   const std::string name_;
@@ -165,7 +165,6 @@ int FuzzSharedMemory(const uint8_t* data, size_t size) {
   return 0;
 }
 
-}  // namespace
 }  // namespace shm_fuzz
 }  // namespace perfetto
 

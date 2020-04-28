@@ -24,24 +24,32 @@
 #include <time.h>
 
 #include "perfetto/base/build_config.h"
-#include "perfetto/ext/base/event_fd.h"
-#include "perfetto/ext/base/optional.h"
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/unix_task_runner.h"
-#include "perfetto/ext/base/uuid.h"
-#include "perfetto/ext/tracing/core/consumer.h"
-#include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
+#include "perfetto/base/event.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/base/unix_task_runner.h"
+#include "perfetto/tracing/core/consumer.h"
+#include "perfetto/tracing/ipc/consumer_ipc_client.h"
 #include "src/perfetto_cmd/rate_limiter.h"
 
 #include "src/perfetto_cmd/perfetto_cmd_state.pb.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#include "perfetto/base/android_task_runner.h"
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
 
 namespace perfetto {
 
 class PacketWriter;
 
-// Directory for local state and temporary files. This is automatically
+// Temporary directory for DropBox traces. Note that this is automatically
 // created by the system by setting setprop persist.traced.enable=1.
-extern const char* kStateDir;
+extern const char* kTempDropBoxTraceDir;
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+using PlatformTaskRunner = base::AndroidTaskRunner;
+#else
+using PlatformTaskRunner = base::UnixTaskRunner;
+#endif
 
 class PerfettoCmd : public Consumer {
  public:
@@ -77,14 +85,10 @@ class PerfettoCmd : public Consumer {
   // within OnTraceDataTimeoutMs of when we expected to.
   void CheckTraceDataTimeout();
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  static base::ScopedFile OpenDropboxTmpFile();
-  void SaveTraceIntoDropboxAndIncidentOrCrash();
   void SaveOutputToDropboxOrCrash();
   void SaveOutputToIncidentTraceOrCrash();
-#endif
 
-  base::UnixTaskRunner task_runner_;
+  PlatformTaskRunner task_runner_;
 
   std::unique_ptr<perfetto::TracingService::ConsumerEndpoint>
       consumer_endpoint_;
@@ -94,7 +98,7 @@ class PerfettoCmd : public Consumer {
   base::ScopedFstream trace_out_stream_;
 
   std::string trace_out_path_;
-  base::EventFd ctrl_c_evt_;
+  base::Event ctrl_c_evt_;
   std::string dropbox_tag_;
   bool did_process_full_trace_ = false;
   uint64_t bytes_written_ = 0;

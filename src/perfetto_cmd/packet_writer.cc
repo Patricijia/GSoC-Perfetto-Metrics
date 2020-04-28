@@ -26,10 +26,9 @@
 #include <unistd.h>
 #include <zlib.h>
 
-#include "perfetto/ext/base/paged_memory.h"
-#include "perfetto/ext/base/utils.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/base/paged_memory.h"
 #include "perfetto/protozero/proto_utils.h"
+#include "perfetto/tracing/core/trace_packet.h"
 
 namespace perfetto {
 namespace {

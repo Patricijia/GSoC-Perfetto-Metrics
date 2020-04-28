@@ -19,9 +19,9 @@
 #include "src/traced/probes/ftrace/cpu_reader.h"
 #include "src/traced/probes/ftrace/ftrace_controller.h"
 
-#include "protos/perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
-#include "protos/perfetto/trace/ftrace/ftrace_stats.pbzero.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/ftrace/ftrace_event_bundle.pbzero.h"
+#include "perfetto/trace/ftrace/ftrace_stats.pbzero.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 
@@ -43,12 +43,11 @@ FtraceDataSource::~FtraceDataSource() {
     controller_weak_->RemoveDataSource(this);
 };
 
-void FtraceDataSource::Initialize(
-    FtraceConfigId config_id,
-    const FtraceDataSourceConfig* parsing_config) {
+void FtraceDataSource::Initialize(FtraceConfigId config_id,
+                                  const EventFilter* event_filter) {
   PERFETTO_CHECK(config_id);
   config_id_ = config_id;
-  parsing_config_ = parsing_config;
+  event_filter_ = event_filter;
 }
 
 void FtraceDataSource::Start() {

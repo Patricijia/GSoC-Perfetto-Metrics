@@ -12,20 +12,27 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {TrackData} from '../../common/track_data';
-
 export const PROCESS_SCHEDULING_TRACK_KIND = 'ProcessSchedulingTrack';
 
-export interface SummaryData extends TrackData {
+
+export interface SummaryData {
   kind: 'summary';
+
+  start: number;
+  end: number;
+  resolution: number;
 
   bucketSizeSeconds: number;
   utilizations: Float64Array;
 }
 
-export interface SliceData extends TrackData {
+export interface SliceData {
   kind: 'slice';
-  maxCpu: number;
+
+  start: number;
+  end: number;
+  resolution: number;
+  numCpus: number;
 
   // Slices are stored in a columnar fashion. All fields have the same length.
   starts: Float64Array;

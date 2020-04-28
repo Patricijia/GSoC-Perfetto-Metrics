@@ -19,13 +19,35 @@
 
 #include <deque>
 
-#include "perfetto/ext/base/optional.h"
-
-#include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
-#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
-#include "src/trace_processor/stack_profile_tracker.h"
+#include "perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "src/trace_processor/trace_storage.h"
 
+namespace std {
+
+template <>
+struct hash<std::pair<uint64_t, uint64_t>> {
+  using argument_type = std::pair<uint64_t, uint64_t>;
+  using result_type = size_t;
+
+  result_type operator()(const argument_type& p) const {
+    return std::hash<uint64_t>{}(p.first) ^ std::hash<uint64_t>{}(p.second);
+  }
+};
+
+template <>
+struct hash<std::pair<uint64_t, std::vector<uint64_t>>> {
+  using argument_type = std::pair<uint64_t, std::vector<uint64_t>>;
+  using result_type = size_t;
+
+  result_type operator()(const argument_type& p) const {
+    auto h = std::hash<uint64_t>{}(p.first);
+    for (auto v : p.second)
+      h = h ^ std::hash<uint64_t>{}(v);
+    return h;
+  }
+};
+
+}  // namespace std
 namespace perfetto {
 namespace trace_processor {
 
@@ -33,54 +55,81 @@ class TraceProcessorContext;
 
 class HeapProfileTracker {
  public:
+  // Not the same as ProfilePacket.index. This gets only gets incremented when
+  // encountering a ProfilePacket that is not continued.
+  // This namespaces all other Source*Ids.
+  using ProfileIndex = uint64_t;
+
+  using SourceStringId = uint64_t;
+
+  struct SourceMapping {
+    SourceStringId build_id = 0;
+    uint64_t offset = 0;
+    uint64_t start = 0;
+    uint64_t end = 0;
+    uint64_t load_bias = 0;
+    SourceStringId name_id = 0;
+  };
+  using SourceMappingId = uint64_t;
+
+  struct SourceFrame {
+    SourceStringId name_id = 0;
+    SourceMappingId mapping_id = 0;
+    uint64_t rel_pc = 0;
+  };
+  using SourceFrameId = uint64_t;
+
+  using SourceCallstack = std::vector<SourceFrameId>;
+  using SourceCallstackId = uint64_t;
+
   struct SourceAllocation {
     uint64_t pid = 0;
-    // This is int64_t, because we get this from the TraceSorter which also
-    // converts this for us.
-    int64_t timestamp = 0;
-    StackProfileTracker::SourceCallstackId callstack_id = 0;
+    uint64_t timestamp = 0;
+    SourceCallstackId callstack_id = 0;
     uint64_t self_allocated = 0;
     uint64_t self_freed = 0;
     uint64_t alloc_count = 0;
     uint64_t free_count = 0;
   };
 
-  void SetProfilePacketIndex(uint64_t id);
-
   explicit HeapProfileTracker(TraceProcessorContext* context);
 
-  void StoreAllocation(SourceAllocation);
+  void AddString(ProfileIndex, SourceStringId, StringId);
+  void AddMapping(ProfileIndex, SourceMappingId, const SourceMapping&);
+  void AddFrame(ProfileIndex, SourceFrameId, const SourceFrame&);
+  void AddCallstack(ProfileIndex, SourceCallstackId, const SourceCallstack&);
 
-  // Call after the last profile packet of a dump to commit the allocations
-  // that had been stored using StoreAllocation and clear internal indices
-  // for that dump.
-  void FinalizeProfile(StackProfileTracker* stack_profile_tracker,
-                       const StackProfileTracker::InternLookup* lookup);
+  void StoreAllocation(ProfileIndex, SourceAllocation);
+  void ApplyAllAllocations();
 
-  // Only commit the allocations that had been stored using StoreAllocations.
-  // This is only needed in tests, use FinalizeProfile instead.
-  void CommitAllocations(StackProfileTracker* stack_profile_tracker,
-                         const StackProfileTracker::InternLookup* lookup);
+  int64_t GetDatabaseFrameIdForTesting(ProfileIndex, SourceFrameId);
 
   ~HeapProfileTracker();
 
  private:
-  void AddAllocation(
-      StackProfileTracker* stack_profile_tracker,
-      const SourceAllocation&,
-      const StackProfileTracker::InternLookup* intern_lookup = nullptr);
+  void AddAllocation(ProfileIndex, const SourceAllocation&);
 
-  std::vector<SourceAllocation> pending_allocs_;
+  base::Optional<StringId> FindString(ProfileIndex, SourceStringId);
 
-  std::unordered_map<std::pair<UniquePid, int64_t>,
-                     TraceStorage::HeapProfileAllocations::Row>
-      prev_alloc_;
-  std::unordered_map<std::pair<UniquePid, int64_t>,
-                     TraceStorage::HeapProfileAllocations::Row>
-      prev_free_;
+  std::unordered_map<std::pair<ProfileIndex, SourceStringId>, StringId>
+      string_map_;
+  std::unordered_map<std::pair<ProfileIndex, SourceMappingId>, int64_t>
+      mappings_;
+  std::unordered_map<std::pair<ProfileIndex, SourceFrameId>, int64_t> frames_;
+  std::unordered_map<std::pair<ProfileIndex, SourceCallstack>, int64_t>
+      callstacks_from_frames_;
+  std::unordered_map<std::pair<ProfileIndex, SourceCallstackId>, int64_t>
+      callstacks_;
+
+  std::unordered_map<TraceStorage::HeapProfileMappings::Row, int64_t>
+      mapping_idx_;
+  std::unordered_map<TraceStorage::HeapProfileFrames::Row, int64_t> frame_idx_;
+  std::unordered_map<TraceStorage::HeapProfileCallsites::Row, int64_t>
+      callsite_idx_;
+
+  std::vector<std::pair<ProfileIndex, SourceAllocation>> pending_allocs_;
 
   TraceProcessorContext* const context_;
-  uint64_t last_profile_packet_index_ = 0;
   const StringId empty_;
 };
 

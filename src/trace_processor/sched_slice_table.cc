@@ -23,7 +23,7 @@ SchedSliceTable::SchedSliceTable(sqlite3*, const TraceStorage* storage)
     : storage_(storage) {}
 
 void SchedSliceTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<SchedSliceTable>(db, storage, "sched");
+  Table::Register<SchedSliceTable>(db, storage, "sched");
 }
 
 StorageSchema SchedSliceTable::CreateStorageSchema() {
@@ -51,9 +51,8 @@ int SchedSliceTable::BestIndex(const QueryConstraints& qc,
 
   // We should be able to handle any constraint and any order by clause given
   // to us.
-  info->sqlite_omit_order_by = true;
-  for (auto& c_info : info->constraint_info)
-    c_info.sqlite_omit = true;
+  info->order_by_consumed = true;
+  std::fill(info->omit.begin(), info->omit.end(), true);
 
   return SQLITE_OK;
 }
@@ -203,8 +202,8 @@ StorageColumn::Comparator SchedSliceTable::EndStateColumn::Sort(
   };
 }
 
-SqlValue::Type SchedSliceTable::EndStateColumn::GetType() const {
-  return SqlValue::Type::kString;
+Table::ColumnType SchedSliceTable::EndStateColumn::GetType() const {
+  return Table::ColumnType::kString;
 }
 
 }  // namespace trace_processor

@@ -18,24 +18,20 @@
 
 #include <inttypes.h>
 
-#include "perfetto/base/compiler.h"
-#include "src/trace_processor/sqlite/sqlite_utils.h"
-#include "src/trace_processor/variadic.h"
+#include "src/trace_processor/ftrace_descriptors.h"
+#include "src/trace_processor/sqlite_utils.h"
 
-#include "protos/perfetto/trace/ftrace/binder.pbzero.h"
-#include "protos/perfetto/trace/ftrace/clk.pbzero.h"
-#include "protos/perfetto/trace/ftrace/filemap.pbzero.h"
-#include "protos/perfetto/trace/ftrace/ftrace.pbzero.h"
-#include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
-#include "protos/perfetto/trace/ftrace/sched.pbzero.h"
-#include "protos/perfetto/trace/ftrace/workqueue.pbzero.h"
+#include "perfetto/trace/ftrace/binder.pbzero.h"
+#include "perfetto/trace/ftrace/clk.pbzero.h"
+#include "perfetto/trace/ftrace/ftrace.pbzero.h"
+#include "perfetto/trace/ftrace/ftrace_event.pbzero.h"
+#include "perfetto/trace/ftrace/sched.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 RawTable::RawTable(sqlite3* db, const TraceStorage* storage)
     : storage_(storage) {
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
   auto fn = [](sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     auto* thiz = static_cast<RawTable*>(sqlite3_user_data(ctx));
     thiz->ToSystrace(ctx, argc, argv);
@@ -43,13 +39,10 @@ RawTable::RawTable(sqlite3* db, const TraceStorage* storage)
   sqlite3_create_function(db, "to_ftrace", 1,
                           SQLITE_UTF8 | SQLITE_DETERMINISTIC, this, fn, nullptr,
                           nullptr);
-#else   // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
-  base::ignore_result(db);
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
 }
 
 void RawTable::RegisterTable(sqlite3* db, const TraceStorage* storage) {
-  SqliteTable::Register<RawTable>(db, storage, "raw");
+  Table::Register<RawTable>(db, storage, "raw");
 }
 
 StorageSchema RawTable::CreateStorageSchema() {
@@ -70,19 +63,17 @@ uint32_t RawTable::RowCount() {
 
 int RawTable::BestIndex(const QueryConstraints& qc, BestIndexInfo* info) {
   info->estimated_cost = RowCount();
-  info->sqlite_omit_order_by = true;
 
   // Only the string columns are handled by SQLite
+  info->order_by_consumed = true;
   size_t name_index = schema().ColumnIndexFromName("name");
   for (size_t i = 0; i < qc.constraints().size(); i++) {
-    info->constraint_info[i].sqlite_omit =
-        qc.constraints()[i].iColumn != static_cast<int>(name_index);
+    info->omit[i] = qc.constraints()[i].iColumn != static_cast<int>(name_index);
   }
 
   return SQLITE_OK;
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
 void RawTable::FormatSystraceArgs(NullTermStringView event_name,
                                   ArgSetId arg_set_id,
                                   base::StringWriter* writer) {
@@ -91,34 +82,20 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
   auto ub = std::find(lb, set_ids.end(), arg_set_id + 1);
 
   auto start_row = static_cast<uint32_t>(std::distance(set_ids.begin(), lb));
-  auto end_row = static_cast<uint32_t>(std::distance(set_ids.begin(), ub));
+
+  using Variadic = TraceStorage::Args::Variadic;
   using ValueWriter = std::function<void(const Variadic&)>;
   auto write_value = [this, writer](const Variadic& value) {
     switch (value.type) {
-      case Variadic::kInt:
+      case TraceStorage::Args::Variadic::kInt:
         writer->AppendInt(value.int_value);
         break;
-      case Variadic::kUint:
-        writer->AppendUnsignedInt(value.uint_value);
-        break;
-      case Variadic::kString: {
-        const auto& str = storage_->GetString(value.string_value);
-        writer->AppendString(str.c_str(), str.size());
-        break;
-      }
-      case Variadic::kReal:
+      case TraceStorage::Args::Variadic::kReal:
         writer->AppendDouble(value.real_value);
         break;
-      case Variadic::kPointer:
-        writer->AppendUnsignedInt(value.pointer_value);
-        break;
-      case Variadic::kBool:
-        writer->AppendBool(value.bool_value);
-        break;
-      case Variadic::kJson: {
-        const auto& str = storage_->GetString(value.json_value);
+      case TraceStorage::Args::Variadic::kString: {
+        const auto& str = storage_->GetString(value.string_value);
         writer->AppendString(str.c_str(), str.size());
-        break;
       }
     }
   };
@@ -145,9 +122,8 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
     write_arg(SS::kPrevPidFieldNumber - 1, write_value);
     write_arg(SS::kPrevPrioFieldNumber - 1, write_value);
     write_arg(SS::kPrevStateFieldNumber - 1, [writer](const Variadic& value) {
-      PERFETTO_DCHECK(value.type == Variadic::Type::kInt);
       auto state = static_cast<uint16_t>(value.int_value);
-      writer->AppendString(ftrace_utils::TaskState(state).ToString('|').data());
+      writer->AppendString(ftrace_utils::TaskState(state).ToString().data());
     });
     writer->AppendLiteral(" ==>");
     write_arg(SS::kNextCommFieldNumber - 1, write_value);
@@ -160,7 +136,6 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
     write_arg(SW::kPidFieldNumber - 1, write_value);
     write_arg(SW::kPrioFieldNumber - 1, write_value);
     write_arg(SW::kTargetCpuFieldNumber - 1, [writer](const Variadic& value) {
-      PERFETTO_DCHECK(value.type == Variadic::Type::kInt);
       writer->AppendPaddedInt<'0', 3>(value.int_value);
     });
     return;
@@ -196,14 +171,12 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
     writer->AppendString(" flags=0x");
     write_value_at_index(
         BT::kFlagsFieldNumber - 1, [writer](const Variadic& value) {
-          PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-          writer->AppendHexInt(value.uint_value);
+          writer->AppendHexInt(static_cast<uint32_t>(value.int_value));
         });
     writer->AppendString(" code=0x");
     write_value_at_index(
         BT::kCodeFieldNumber - 1, [writer](const Variadic& value) {
-          PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-          writer->AppendHexInt(value.uint_value);
+          writer->AppendHexInt(static_cast<uint32_t>(value.int_value));
         });
     return;
   } else if (event_name == "binder_transaction_alloc_buf") {
@@ -218,40 +191,10 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
     writer->AppendString(" transaction=");
     write_value_at_index(BTR::kDebugIdFieldNumber - 1, write_value);
     return;
-  } else if (event_name == "mm_filemap_add_to_page_cache") {
-    using MFA = protos::pbzero::MmFilemapAddToPageCacheFtraceEvent;
-    writer->AppendString(" dev ");
-    write_value_at_index(MFA::kSDevFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendUnsignedInt(value.uint_value >> 20);
-                         });
-    writer->AppendString(":");
-    write_value_at_index(
-        MFA::kSDevFieldNumber - 1, [writer](const Variadic& value) {
-          PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-          writer->AppendUnsignedInt(value.uint_value & ((1 << 20) - 1));
-        });
-    writer->AppendString(" ino ");
-    write_value_at_index(MFA::kIInoFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    writer->AppendString(" page=0000000000000000");
-    writer->AppendString(" pfn=");
-    write_value_at_index(MFA::kPfnFieldNumber - 1, write_value);
-    writer->AppendString(" ofs=");
-    write_value_at_index(MFA::kIndexFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendUnsignedInt(value.uint_value << 12);
-                         });
-    return;
   } else if (event_name == "print") {
-    // 'ip' may be the first field or it may be dropped. We only care
-    // about the 'buf' field which will always appear last.
-    uint32_t arg_row = end_row - 1;
+    using P = protos::pbzero::PrintFtraceEvent;
+
+    uint32_t arg_row = start_row + P::kBufFieldNumber - 1;
     const auto& args = storage_->args();
     const auto& value = args.arg_values()[arg_row];
     const auto& str = storage_->GetString(value.string_value);
@@ -261,67 +204,6 @@ void RawTable::FormatSystraceArgs(NullTermStringView event_name,
                               : str.size();
     writer->AppendChar(' ');
     writer->AppendString(str.c_str(), chars_to_print);
-    return;
-  } else if (event_name == "sched_blocked_reason") {
-    using SBR = protos::pbzero::SchedBlockedReasonFtraceEvent;
-    write_arg(SBR::kPidFieldNumber - 1, write_value);
-    write_arg(SBR::kIoWaitFieldNumber - 1, write_value);
-    write_arg(SBR::kCallerFieldNumber - 1, [writer](const Variadic& value) {
-      PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-      writer->AppendHexInt(value.uint_value);
-    });
-    return;
-  } else if (event_name == "workqueue_activate_work") {
-    using WAW = protos::pbzero::WorkqueueActivateWorkFtraceEvent;
-    writer->AppendString(" work struct ");
-    write_value_at_index(WAW::kWorkFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    return;
-  } else if (event_name == "workqueue_execute_start") {
-    using WES = protos::pbzero::WorkqueueExecuteStartFtraceEvent;
-    writer->AppendString(" work struct ");
-    write_value_at_index(WES::kWorkFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    writer->AppendString(": function ");
-    write_value_at_index(WES::kFunctionFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    return;
-  } else if (event_name == "workqueue_execute_end") {
-    using WE = protos::pbzero::WorkqueueExecuteEndFtraceEvent;
-    writer->AppendString(" work struct ");
-    write_value_at_index(WE::kWorkFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    return;
-  } else if (event_name == "workqueue_queue_work") {
-    using WQW = protos::pbzero::WorkqueueQueueWorkFtraceEvent;
-    writer->AppendString(" work struct=");
-    write_value_at_index(WQW::kWorkFieldNumber - 1,
-                         [writer](const Variadic& value) {
-                           PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-                           writer->AppendHexInt(value.uint_value);
-                         });
-    write_arg(WQW::kFunctionFieldNumber - 1, [writer](const Variadic& value) {
-      PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-      writer->AppendHexInt(value.uint_value);
-    });
-    write_arg(WQW::kWorkqueueFieldNumber - 1, [writer](const Variadic& value) {
-      PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
-      writer->AppendHexInt(value.uint_value);
-    });
-    write_value_at_index(WQW::kReqCpuFieldNumber - 1, write_value);
-    write_value_at_index(WQW::kCpuFieldNumber - 1, write_value);
     return;
   }
 
@@ -372,7 +254,6 @@ void RawTable::ToSystrace(sqlite3_context* ctx,
   FormatSystraceArgs(event_name, raw_evts.arg_set_ids()[row], &writer);
   sqlite3_result_text(ctx, writer.CreateStringCopy(), -1, free);
 }
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_FTRACE)
 
 }  // namespace trace_processor
 }  // namespace perfetto

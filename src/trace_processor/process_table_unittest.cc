@@ -17,10 +17,11 @@
 #include "src/trace_processor/process_table.h"
 #include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
+#include "src/trace_processor/scoped_db.h"
 #include "src/trace_processor/trace_processor_context.h"
 
-#include "test/gtest_and_gmock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -30,7 +31,6 @@ class ProcessTableUnittest : public ::testing::Test {
  public:
   ProcessTableUnittest() {
     sqlite3* db = nullptr;
-    PERFETTO_CHECK(sqlite3_initialize() == SQLITE_OK);
     PERFETTO_CHECK(sqlite3_open(":memory:", &db) == SQLITE_OK);
     db_.reset(db);
 
@@ -52,6 +52,8 @@ class ProcessTableUnittest : public ::testing::Test {
     return reinterpret_cast<const char*>(sqlite3_column_text(*stmt_, colId));
   }
 
+  ~ProcessTableUnittest() override { context_.storage->ResetStorage(); }
+
  protected:
   TraceProcessorContext context_;
   ScopedDb db_;
@@ -61,8 +63,8 @@ class ProcessTableUnittest : public ::testing::Test {
 TEST_F(ProcessTableUnittest, SelectUpidAndName) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement("SELECT upid, name FROM process");
 
@@ -83,8 +85,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndName) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameWithFilter) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement("SELECT upid, name FROM process where upid = 2");
 
@@ -98,8 +100,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndNameWithFilter) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameWithOrder) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement("SELECT upid, name FROM process ORDER BY upid desc");
 
@@ -120,8 +122,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndNameWithOrder) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterGt) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement("SELECT upid, name FROM process where upid > 1");
 
@@ -135,8 +137,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterGt) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterName) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement(
       "SELECT upid, name FROM process where name = \"process2\"");
@@ -151,8 +153,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterName) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterDifferentOr) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement(
       "SELECT upid, name FROM process where upid = 2 or name = \"process2\"");
@@ -167,8 +169,8 @@ TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterDifferentOr) {
 TEST_F(ProcessTableUnittest, SelectUpidAndNameFilterSameOr) {
   static const char kCommProc1[] = "process1";
   static const char kCommProc2[] = "process2";
-  context_.process_tracker->SetProcessMetadata(1, base::nullopt, kCommProc1);
-  context_.process_tracker->SetProcessMetadata(2, base::nullopt, kCommProc2);
+  context_.process_tracker->UpdateProcess(1, base::nullopt, kCommProc1);
+  context_.process_tracker->UpdateProcess(2, base::nullopt, kCommProc2);
 
   PrepareValidStatement(
       "SELECT upid, name FROM process where upid = 1 or upid = 2");

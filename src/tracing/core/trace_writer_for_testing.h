@@ -18,10 +18,10 @@
 
 #include <vector>
 
-#include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/protozero/message_handle.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
-#include "protos/perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/tracing/core/trace_writer.h"
 
 namespace perfetto {
 
@@ -39,7 +39,8 @@ class TraceWriterForTesting : public TraceWriter {
   void Flush(std::function<void()> callback = {}) override;
 
   std::vector<protos::TracePacket> GetAllTracePackets();
-  protos::TracePacket GetOnlyTracePacket();
+  // TODO(rsavitski): rewrite as "get only packet".
+  std::unique_ptr<protos::TracePacket> ParseProto();
 
   WriterID writer_id() const override;
   uint64_t written() const override;

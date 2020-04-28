@@ -14,14 +14,14 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/base/thread_checker.h"
+#include "perfetto/base/thread_checker.h"
 
 #include <pthread.h>
 
 #include <functional>
 #include <memory>
 
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace base {

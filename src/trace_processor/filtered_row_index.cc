@@ -16,7 +16,6 @@
 
 #include "src/trace_processor/filtered_row_index.h"
 
-#include <stddef.h>
 #include <numeric>
 
 namespace perfetto {

@@ -22,7 +22,7 @@
 #include <string>
 #include <tuple>
 
-#include "perfetto/ext/traced/data_source_types.h"
+#include "perfetto/traced/data_source_types.h"
 
 namespace perfetto {
 

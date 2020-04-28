@@ -16,8 +16,6 @@ import * as m from 'mithril';
 
 import {assertTrue} from '../base/logging';
 
-import {globals} from './globals';
-
 import {
   debugNow,
   measure,
@@ -118,11 +116,9 @@ export class RafScheduler {
   private syncCanvasRedraw(nowMs: number) {
     const redrawStart = debugNow();
     if (this.isRedrawing) return;
-    globals.frontendLocalState.clearVisibleTracks();
     this.isRedrawing = true;
     for (const redraw of this.canvasRedrawCallbacks) redraw(nowMs);
     this.isRedrawing = false;
-    globals.frontendLocalState.sendVisibleTracks();
     if (perfDebug()) {
       this.perfStats.rafCanvas.addValue(debugNow() - redrawStart);
     }

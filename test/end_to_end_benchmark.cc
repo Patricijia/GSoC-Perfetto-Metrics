@@ -12,22 +12,21 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <gtest/gtest.h>
 #include <random>
 
-#include <benchmark/benchmark.h>
-
+#include "benchmark/benchmark.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/traced/traced.h"
-#include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/traced/traced.h"
 #include "perfetto/tracing/core/trace_config.h"
+#include "perfetto/tracing/core/trace_packet.h"
 #include "src/base/test/test_task_runner.h"
-#include "test/gtest_and_gmock.h"
 #include "test/task_runner_thread.h"
 #include "test/task_runner_thread_delegates.h"
 #include "test/test_helper.h"
 
-#include "protos/perfetto/config/test_config.gen.h"
-#include "protos/perfetto/trace/trace_packet.pbzero.h"
+#include "perfetto/trace/trace_packet.pb.h"
+#include "perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
 

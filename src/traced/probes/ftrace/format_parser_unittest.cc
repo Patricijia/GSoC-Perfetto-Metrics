@@ -15,7 +15,8 @@
  */
 #include "src/traced/probes/ftrace/format_parser.h"
 
-#include "test/gtest_and_gmock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace {

@@ -19,41 +19,22 @@ import {QueryResponse} from '../common/queries';
 import {EngineConfig} from '../common/state';
 
 import {globals} from './globals';
-import {executeSearch} from './search_handler';
 
 const QUERY_ID = 'quicksearch';
 
-const SEARCH = Symbol('search');
-const COMMAND = Symbol('command');
-type Mode = typeof SEARCH|typeof COMMAND;
-
-const PLACEHOLDER = {
-  [SEARCH]: 'Search',
-  [COMMAND]: 'e.g. select * from sched left join thread using(utid) limit 10'
-};
-
 let selResult = 0;
 let numResults = 0;
-let mode: Mode = SEARCH;
-let displayStepThrough = false;
+let mode: 'search'|'command' = 'search';
+let omniboxValue = '';
 
-function clearOmniboxResults(e: Event) {
+function clearOmniboxResults() {
   globals.queryResults.delete(QUERY_ID);
   globals.dispatch(Actions.deleteQuery({queryId: QUERY_ID}));
-  const txt = (e.target as HTMLInputElement);
-  if (txt.value.length <= 0) {
-    mode = SEARCH;
-    globals.rafScheduler.scheduleFullRedraw();
-  }
 }
 
 function onKeyDown(e: Event) {
-  const event = (e as KeyboardEvent);
-  const key = event.key;
-  if (key !== 'Enter') {
-    e.stopPropagation();
-  }
-  const txt = (e.target as HTMLInputElement);
+  e.stopPropagation();
+  const key = (e as KeyboardEvent).key;
 
   // Avoid that the global 'a', 'd', 'w', 's' handler sees these keystrokes.
   // TODO: this seems a bug in the pan_and_zoom_handler.ts.
@@ -61,30 +42,32 @@ function onKeyDown(e: Event) {
     e.preventDefault();
     return;
   }
-
-  if (mode === SEARCH && txt.value === '' && key === ':') {
+  const txt = (e.target as HTMLInputElement);
+  omniboxValue = txt.value;
+  if (key === ':' && txt.value === '') {
+    mode = 'command';
+    globals.rafScheduler.scheduleFullRedraw();
     e.preventDefault();
-    mode = COMMAND;
+    return;
+  }
+  if (key === 'Escape' && mode === 'command') {
+    txt.value = '';
+    mode = 'search';
     globals.rafScheduler.scheduleFullRedraw();
     return;
   }
-
-  if (mode === COMMAND && txt.value === '' && key === 'Backspace') {
-    mode = SEARCH;
+  if (key === 'Backspace' && txt.value.length === 0 && mode === 'command') {
+    mode = 'search';
     globals.rafScheduler.scheduleFullRedraw();
     return;
-  }
-
-  if (mode === SEARCH && key === 'Enter') {
-    txt.blur();
   }
 }
 
 function onKeyUp(e: Event) {
   e.stopPropagation();
-  const event = (e as KeyboardEvent);
-  const key = event.key;
+  const key = (e as KeyboardEvent).key;
   const txt = e.target as HTMLInputElement;
+  omniboxValue = txt.value;
   if (key === 'ArrowUp' || key === 'ArrowDown') {
     selResult += (key === 'ArrowUp') ? -1 : 1;
     selResult = Math.max(selResult, 0);
@@ -93,21 +76,23 @@ function onKeyUp(e: Event) {
     globals.rafScheduler.scheduleFullRedraw();
     return;
   }
-
-  if (key === 'Escape') {
-    globals.queryResults.delete(QUERY_ID);
-    globals.dispatch(Actions.deleteQuery({queryId: 'command'}));
-    mode = SEARCH;
-    txt.value = '';
-    txt.blur();
+  if (txt.value.length <= 0 || key === 'Escape') {
+    clearOmniboxResults();
     globals.rafScheduler.scheduleFullRedraw();
     return;
   }
-  if (mode === COMMAND && key === 'Enter') {
+  if (mode === 'search') {
+    const name = txt.value.replace(/'/g, '\\\'').replace(/[*]/g, '%');
+    const query = `select str from strings where str like '%${name}%' limit 10`;
+    globals.dispatch(
+        Actions.executeQuery({engineId: '0', queryId: QUERY_ID, query}));
+  }
+  if (mode === 'command' && key === 'Enter') {
     globals.dispatch(Actions.executeQuery(
         {engineId: '0', queryId: 'command', query: txt.value}));
   }
 }
+
 
 class Omnibox implements m.ClassComponent {
   oncreate(vnode: m.VnodeDOM) {
@@ -144,93 +129,30 @@ class Omnibox implements m.ClassComponent {
         results.push(m(`div${clazz}`, resp.rows[i][resp.columns[0]]));
       }
     }
-    const commandMode = mode === COMMAND;
-    const state = globals.frontendLocalState;
+    const placeholder = {
+      search: 'Search or type : to enter command mode',
+      command: 'e.g., select * from sched left join thread using(utid) limit 10'
+    };
+
+    const commandMode = mode === 'command';
     return m(
         `.omnibox${commandMode ? '.command-mode' : ''}`,
-        m('input', {
-          placeholder: PLACEHOLDER[mode],
-          oninput: m.withAttr(
-              'value',
-              v => {
-                globals.frontendLocalState.setOmnibox(
-                    v, commandMode ? 'COMMAND' : 'SEARCH');
-                if (mode === SEARCH) {
-                  globals.frontendLocalState.setSearchIndex(-1);
-                  displayStepThrough = v.length >= 4;
-                  globals.rafScheduler.scheduleFullRedraw();
-                }
-              }),
-          value: globals.frontendLocalState.omnibox,
+        m(`input[placeholder=${placeholder[mode]}]`, {
+          onchange: m.withAttr('value', v => omniboxValue = v),
+          value: omniboxValue,
         }),
-        displayStepThrough ?
-            m(
-                '.stepthrough',
-                m('.current',
-                  `${
-                      globals.currentSearchResults.totalResults === 0 ?
-                          '0 / 0' :
-                          `${state.searchIndex + 1} / ${
-                              globals.currentSearchResults.totalResults}`}`),
-                m('button',
-                  {
-                    disabled: state.searchIndex <= 0,
-                    onclick: () => {
-                      executeSearch(true /* reverse direction */);
-                    }
-                  },
-                  m('i.material-icons.left', 'keyboard_arrow_left')),
-                m('button',
-                  {
-                    disabled: state.searchIndex ===
-                        globals.currentSearchResults.totalResults - 1,
-                    onclick: () => {
-                      executeSearch();
-                    }
-                  },
-                  m('i.material-icons.right', 'keyboard_arrow_right')),
-                ) :
-            '',
         m('.omnibox-results', results));
-  }
-}
-
-class Progress implements m.ClassComponent {
-  private loading: () => void;
-  private progressBar?: HTMLElement;
-
-  constructor() {
-    this.loading = () => this.loadingAnimation();
-  }
-
-  oncreate(vnodeDom: m.CVnodeDOM) {
-    this.progressBar = vnodeDom.dom as HTMLElement;
-    globals.rafScheduler.addRedrawCallback(this.loading);
-  }
-
-  onremove() {
-    globals.rafScheduler.removeRedrawCallback(this.loading);
-  }
-
-  view() {
-    return m('.progress');
-  }
-
-  loadingAnimation() {
-    if (this.progressBar === undefined) return;
-    const engine: EngineConfig = globals.state.engines['0'];
-    if (globals.state.queries[QUERY_ID] !== undefined ||
-        (engine !== undefined && !engine.ready) ||
-        globals.numQueuedQueries > 0) {
-      this.progressBar.classList.add('progress-anim');
-    } else {
-      this.progressBar.classList.remove('progress-anim');
-    }
   }
 }
 
 export class Topbar implements m.ClassComponent {
   view() {
-    return m('.topbar', m(Omnibox), m(Progress));
+    const progBar = [];
+    const engine: EngineConfig = globals.state.engines['0'];
+    if (globals.state.queries[QUERY_ID] !== undefined ||
+        (engine !== undefined && !engine.ready)) {
+      progBar.push(m('.progress'));
+    }
+    return m('.topbar', m(Omnibox), ...progBar);
   }
 }

@@ -27,8 +27,8 @@
 #include <google/protobuf/descriptor.h>
 #include <google/protobuf/descriptor.pb.h>
 
+#include "perfetto/base/file_utils.h"
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/file_utils.h"
 #include "src/traced/probes/ftrace/format_parser.h"
 #include "tools/ftrace_proto_gen/ftrace_descriptor_gen.h"
 #include "tools/ftrace_proto_gen/ftrace_proto_gen.h"
@@ -42,13 +42,6 @@ inline std::unique_ptr<std::ostream> MakeVerifyStream(
     const std::string& filename) {
   return std::unique_ptr<std::ostream>(new perfetto::VerifyStream(filename));
 }
-
-void PrintUsage(const char* bin_name) {
-  fprintf(stderr,
-          "Usage: %s -w whitelist_dir -o output_dir -d proto_descriptor "
-          "[--check_only] input_dir...\n",
-          bin_name);
-}
 }  // namespace
 
 int main(int argc, char** argv) {
@@ -58,7 +51,7 @@ int main(int argc, char** argv) {
       {"proto_descriptor", required_argument, nullptr, 'd'},
       {"update_build_files", no_argument, nullptr, 'b'},
       {"check_only", no_argument, nullptr, 'c'},
-      {nullptr, 0, nullptr, 0}};
+  };
 
   int option_index;
   int c;
@@ -87,22 +80,20 @@ int main(int argc, char** argv) {
         break;
       case 'c':
         ostream_factory = &MakeVerifyStream;
-        break;
-      default: {
-        PrintUsage(argv[0]);
-        return 1;
-      }
     }
-  }
-
-  if (optind >= argc) {
-    PrintUsage(argv[0]);
-    return 1;
   }
 
   PERFETTO_CHECK(!whitelist_path.empty());
   PERFETTO_CHECK(!output_dir.empty());
   PERFETTO_CHECK(!proto_descriptor.empty());
+
+  if (optind >= argc) {
+    fprintf(stderr,
+            "Usage: ./%s -w whitelist_dir -o output_dir -d proto_descriptor "
+            "[--check_only] input_dir...\n",
+            argv[0]);
+    return 1;
+  }
 
   std::vector<perfetto::FtraceEventName> whitelist =
       perfetto::ReadWhitelist(whitelist_path);
@@ -144,6 +135,15 @@ int main(int argc, char** argv) {
     std::unique_ptr<std::ostream> out =
         ostream_factory(output_dir + "/ftrace_event.proto");
     perfetto::GenerateFtraceEventProto(whitelist, groups, out.get());
+  }
+
+  if (!new_events.empty()) {
+    perfetto::PrintEventFormatterMain(new_events);
+    perfetto::PrintEventFormatterUsingStatements(new_events);
+    perfetto::PrintEventFormatterFunctions(new_events);
+    printf(
+        "\nAdd output to ParseInode in "
+        "tools/ftrace_proto_gen/ftrace_inode_handler.cc\n");
   }
 
   for (const std::string& group : groups) {
@@ -198,6 +198,9 @@ int main(int argc, char** argv) {
         proto.MergeFrom(event_proto);
       }
 
+      if (!new_events.empty())
+        PrintInodeHandlerMain(proto.name, proto);
+
       uint32_t i = 0;
       for (; it->second != &whitelist[i]; i++)
         ;
@@ -219,8 +222,8 @@ int main(int argc, char** argv) {
   }
 
   {
-    std::unique_ptr<std::ostream> out = ostream_factory(
-        "src/trace_processor/importers/ftrace/ftrace_descriptors.cc");
+    std::unique_ptr<std::ostream> out =
+        ostream_factory("src/trace_processor/ftrace_descriptors.cc");
     perfetto::GenerateFtraceDescriptors(descriptor_pool, out.get());
     PERFETTO_CHECK(!out->fail());
   }

@@ -22,12 +22,12 @@
 
 #include <inttypes.h>
 #include <unwindstack/Elf.h>
-#include <unwindstack/MachineArm.h>
-#include <unwindstack/MachineArm64.h>
-#include <unwindstack/MachineMips.h>
-#include <unwindstack/MachineMips64.h>
-#include <unwindstack/MachineX86.h>
-#include <unwindstack/MachineX86_64.h>
+#include <unwindstack/UserArm.h>
+#include <unwindstack/UserArm64.h>
+#include <unwindstack/UserMips.h>
+#include <unwindstack/UserMips64.h>
+#include <unwindstack/UserX86.h>
+#include <unwindstack/UserX86_64.h>
 
 #include "src/profiling/memory/shared_ring_buffer.h"
 
@@ -69,12 +69,12 @@ constexpr size_t kMaxRegisterDataSize =
       constexpr_max(
         constexpr_max(
             constexpr_max(
-              sizeof(uint32_t) * unwindstack::ARM_REG_LAST,
-              sizeof(uint64_t) * unwindstack::ARM64_REG_LAST),
-            sizeof(uint32_t) * unwindstack::X86_REG_LAST),
-          sizeof(uint64_t) * unwindstack::X86_64_REG_LAST),
-        sizeof(uint32_t) * unwindstack::MIPS_REG_LAST),
-      sizeof(uint64_t) * unwindstack::MIPS64_REG_LAST
+              sizeof(unwindstack::arm_user_regs),
+              sizeof(unwindstack::arm64_user_regs)),
+            sizeof(unwindstack::x86_user_regs)),
+          sizeof(unwindstack::x86_64_user_regs)),
+        sizeof(unwindstack::mips_user_regs)),
+      sizeof(unwindstack::mips64_user_regs)
   );
 // clang-format on
 
@@ -90,7 +90,7 @@ struct AllocMetadata {
   // Size of the allocation that was made.
   uint64_t alloc_size;
   // Total number of bytes attributed to this allocation.
-  uint64_t sample_size;
+  uint64_t total_size;
   // Pointer returned by malloc(2) for this allocation.
   uint64_t alloc_address;
   // Current value of the stack pointer.
@@ -99,7 +99,8 @@ struct AllocMetadata {
   uint64_t stack_pointer_offset;
   uint64_t clock_monotonic_coarse_timestamp;
   alignas(uint64_t) char register_data[kMaxRegisterDataSize];
-  // CPU architecture of the client.
+  // CPU architecture of the client. This determines the size of the
+  // register data that follows this struct.
   unwindstack::ArchEnum arch;
 };
 
@@ -118,9 +119,8 @@ struct FreeBatch {
 
 enum HandshakeFDs : size_t {
   kHandshakeMaps = 0,
-  kHandshakeMem,
-  kHandshakePageIdle,
-  kHandshakeSize,
+  kHandshakeMem = 1,
+  kHandshakeSize = 2,
 };
 
 struct WireMessage {

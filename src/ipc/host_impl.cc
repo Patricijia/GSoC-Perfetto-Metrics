@@ -22,11 +22,11 @@
 #include <utility>
 
 #include "perfetto/base/task_runner.h"
-#include "perfetto/ext/base/utils.h"
-#include "perfetto/ext/ipc/service.h"
-#include "perfetto/ext/ipc/service_descriptor.h"
+#include "perfetto/base/utils.h"
+#include "perfetto/ipc/service.h"
+#include "perfetto/ipc/service_descriptor.h"
 
-#include "protos/perfetto/ipc/wire_protocol.pb.h"
+#include "src/ipc/wire_protocol.pb.h"
 
 // TODO(primiano): put limits on #connections/uid and req. queue (b/69093705).
 
@@ -39,7 +39,7 @@ std::unique_ptr<Host> Host::CreateInstance(const char* socket_name,
   std::unique_ptr<HostImpl> host(new HostImpl(socket_name, task_runner));
   if (!host->sock() || !host->sock()->is_listening())
     return nullptr;
-  return std::unique_ptr<Host>(std::move(host));
+  return std::move(host);
 }
 
 // static
@@ -49,23 +49,21 @@ std::unique_ptr<Host> Host::CreateInstance(base::ScopedFile socket_fd,
       new HostImpl(std::move(socket_fd), task_runner));
   if (!host->sock() || !host->sock()->is_listening())
     return nullptr;
-  return std::unique_ptr<Host>(std::move(host));
+  return std::move(host);
 }
 
 HostImpl::HostImpl(base::ScopedFile socket_fd, base::TaskRunner* task_runner)
     : task_runner_(task_runner), weak_ptr_factory_(this) {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  sock_ = base::UnixSocket::Listen(std::move(socket_fd), this, task_runner_,
-                                   base::SockFamily::kUnix,
-                                   base::SockType::kStream);
+  sock_ = base::UnixSocket::Listen(std::move(socket_fd), this, task_runner_);
 }
 
 HostImpl::HostImpl(const char* socket_name, base::TaskRunner* task_runner)
     : task_runner_(task_runner), weak_ptr_factory_(this) {
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  sock_ = base::UnixSocket::Listen(socket_name, this, task_runner_,
-                                   base::SockFamily::kUnix,
-                                   base::SockType::kStream);
+  sock_ = base::UnixSocket::Listen(socket_name, this, task_runner_);
 }
 
 HostImpl::~HostImpl() = default;

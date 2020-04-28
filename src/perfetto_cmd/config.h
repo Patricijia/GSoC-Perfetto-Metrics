@@ -20,7 +20,7 @@
 #include <string>
 #include <utility>
 
-#include "protos/perfetto/config/trace_config.pb.h"
+#include "perfetto/config/trace_config.pb.h"
 
 namespace perfetto {
 

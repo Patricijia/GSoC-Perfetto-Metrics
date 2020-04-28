@@ -7,12 +7,10 @@
   * [Capturing long traces](long-traces.md)
   * [Advanced trace config](trace-config.md)
   * [Running in detached mode](detached-mode.md)
-  * [Native Heap Profiling](heapprofd.md)
+  * [Heap Profiling](heapprofd.md)
 * Trace analysis
   * [Trace processor](trace-processor.md)
-  * [Trace-based metrics](metrics.md)
   * [Trace conversion](traceconv.md)
-  * [Clock synchronization](clock-sync.md)
 * Architectural docs
   * [Key concepts](architecture.md)
   * [Life of a tracing session](life-of-a-tracing-session.md)

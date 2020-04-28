@@ -16,9 +16,9 @@
 
 #include "src/profiling/memory/sampler.h"
 
-#include <thread>
+#include "gtest/gtest.h"
 
-#include "test/gtest_and_gmock.h"
+#include <thread>
 
 namespace perfetto {
 namespace profiling {
@@ -26,19 +26,19 @@ namespace {
 
 TEST(SamplerTest, TestLarge) {
   Sampler sampler(512);
-  EXPECT_EQ(sampler.SampleSize(1024), 1024u);
+  EXPECT_EQ(sampler.SampleSize(1024), 1024);
 }
 
 TEST(SamplerTest, TestSmall) {
   Sampler sampler(512);
-  EXPECT_EQ(sampler.SampleSize(511), 512u);
+  EXPECT_EQ(sampler.SampleSize(511), 512);
 }
 
 TEST(SamplerTest, TestSequence) {
   Sampler sampler(1);
-  EXPECT_EQ(sampler.SampleSize(3), 3u);
-  EXPECT_EQ(sampler.SampleSize(7), 7u);
-  EXPECT_EQ(sampler.SampleSize(5), 5u);
+  EXPECT_EQ(sampler.SampleSize(3), 3);
+  EXPECT_EQ(sampler.SampleSize(7), 7);
+  EXPECT_EQ(sampler.SampleSize(5), 5);
 }
 
 }  // namespace

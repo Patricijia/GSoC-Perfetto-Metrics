@@ -21,8 +21,8 @@
 #include <array>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/string_view.h"
-#include "perfetto/ext/base/string_writer.h"
+#include "perfetto/base/string_view.h"
+#include "perfetto/base/string_writer.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -61,17 +61,16 @@ class TaskState {
   };
 
   TaskState() = default;
-  explicit TaskState(uint16_t raw_state);
+  explicit TaskState(uint16_t raw_state) : state_(raw_state | kValid) {}
   explicit TaskState(const char* state_str);
 
   // Returns if this TaskState has a valid representation.
   bool is_valid() const { return state_ & kValid; }
 
   // Returns the string representation of this (valid) TaskState. This array
-  // is null terminated. |seperator| specifies if a separator should be printed
-  // between the atoms (default: \0 meaning no separator).
+  // is null terminated.
   // Note: This function CHECKs that |is_valid()| is true.
-  TaskStateStr ToString(char separator = '\0') const;
+  TaskStateStr ToString() const;
 
   // Returns the raw state this class was created from.
   uint16_t raw_state() const {

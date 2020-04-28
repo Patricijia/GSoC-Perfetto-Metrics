@@ -25,8 +25,7 @@
 #include <string>
 #include <vector>
 
-#include "perfetto/ext/base/scoped_file.h"
-#include "src/traced/probes/ftrace/compact_sched.h"
+#include "perfetto/base/scoped_file.h"
 #include "src/traced/probes/ftrace/event_info.h"
 #include "src/traced/probes/ftrace/format_parser.h"
 
@@ -92,8 +91,7 @@ class ProtoTranslationTable {
   ProtoTranslationTable(const FtraceProcfs* ftrace_procfs,
                         const std::vector<Event>& events,
                         std::vector<Field> common_fields,
-                        FtracePageHeaderSpec ftrace_page_header_spec,
-                        CompactSchedEventFormat compact_sched_format);
+                        FtracePageHeaderSpec ftrace_page_header_spec);
 
   size_t largest_id() const { return largest_id_; }
 
@@ -153,10 +151,6 @@ class ProtoTranslationTable {
     return name_to_events_.at(name)[0];
   }
 
-  const CompactSchedEventFormat& compact_sched_format() const {
-    return compact_sched_format_;
-  }
-
  private:
   ProtoTranslationTable(const ProtoTranslationTable&) = delete;
   ProtoTranslationTable& operator=(const ProtoTranslationTable&) = delete;
@@ -176,7 +170,6 @@ class ProtoTranslationTable {
   std::vector<Field> common_fields_;
   FtracePageHeaderSpec ftrace_page_header_spec_{};
   std::set<std::string> interned_strings_;
-  CompactSchedEventFormat compact_sched_format_;
 };
 
 // Class for efficient 'is event with id x enabled?' checks.

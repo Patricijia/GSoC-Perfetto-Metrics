@@ -16,7 +16,8 @@
 
 #include "src/profiling/memory/interner.h"
 
-#include "test/gtest_and_gmock.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace profiling {
@@ -28,7 +29,7 @@ TEST(InternerStringTest, Basic) {
     Interned<std::string> interned_str = interner.Intern("foo");
     ASSERT_EQ(interned_str.data(), "foo");
   }
-  ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+  ASSERT_EQ(interner.entry_count_for_testing(), 0);
 }
 
 TEST(InternerStringTest, TwoStrings) {
@@ -39,7 +40,7 @@ TEST(InternerStringTest, TwoStrings) {
     ASSERT_EQ(interned_str.data(), "foo");
     ASSERT_EQ(other_interned_str.data(), "bar");
   }
-  ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+  ASSERT_EQ(interner.entry_count_for_testing(), 0);
 }
 
 TEST(InternerStringTest, TwoReferences) {
@@ -48,10 +49,10 @@ TEST(InternerStringTest, TwoReferences) {
     Interned<std::string> interned_str = interner.Intern("foo");
     ASSERT_EQ(interned_str.data(), "foo");
     Interned<std::string> interned_str2 = interner.Intern("foo");
-    ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+    ASSERT_EQ(interner.entry_count_for_testing(), 1);
     ASSERT_EQ(interned_str2.data(), "foo");
   }
-  ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+  ASSERT_EQ(interner.entry_count_for_testing(), 0);
 }
 
 TEST(InternerStringTest, Move) {
@@ -60,10 +61,10 @@ TEST(InternerStringTest, Move) {
     Interned<std::string> interned_str = interner.Intern("foo");
     {
       Interned<std::string> interned_str2(std::move(interned_str));
-      ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+      ASSERT_EQ(interner.entry_count_for_testing(), 1);
       ASSERT_EQ(interned_str2.data(), "foo");
     }
-    ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+    ASSERT_EQ(interner.entry_count_for_testing(), 0);
   }
 }
 
@@ -73,10 +74,10 @@ TEST(InternerStringTest, Copy) {
     Interned<std::string> interned_str = interner.Intern("foo");
     {
       Interned<std::string> interned_str2(interned_str);
-      ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+      ASSERT_EQ(interner.entry_count_for_testing(), 1);
       ASSERT_EQ(interned_str2.data(), "foo");
     }
-    ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+    ASSERT_EQ(interner.entry_count_for_testing(), 1);
     ASSERT_EQ(interned_str.data(), "foo");
   }
 }
@@ -87,10 +88,10 @@ TEST(InternerStringTest, MoveAssign) {
     Interned<std::string> interned_str = interner.Intern("foo");
     {
       Interned<std::string> interned_str2 = std::move(interned_str);
-      ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+      ASSERT_EQ(interner.entry_count_for_testing(), 1);
       ASSERT_EQ(interned_str2.data(), "foo");
     }
-    ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+    ASSERT_EQ(interner.entry_count_for_testing(), 0);
   }
 }
 
@@ -100,10 +101,10 @@ TEST(InternerStringTest, CopyAssign) {
     Interned<std::string> interned_str = interner.Intern("foo");
     {
       Interned<std::string> interned_str2 = interned_str;
-      ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+      ASSERT_EQ(interner.entry_count_for_testing(), 1);
       ASSERT_EQ(interned_str2.data(), "foo");
     }
-    ASSERT_EQ(interner.entry_count_for_testing(), 1u);
+    ASSERT_EQ(interner.entry_count_for_testing(), 1);
     ASSERT_EQ(interned_str.data(), "foo");
   }
 }
@@ -125,7 +126,7 @@ TEST(InternerStringTest, IdsConsecutive) {
     Interned<std::string> other_interned_str = interner.Intern("bar");
     ASSERT_EQ(interned_str.id() + 1, other_interned_str.id());
   }
-  ASSERT_EQ(interner.entry_count_for_testing(), 0u);
+  ASSERT_EQ(interner.entry_count_for_testing(), 0);
 }
 
 }  // namespace

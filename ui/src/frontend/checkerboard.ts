@@ -12,33 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-const LOADING_TEXT = 'Loading...';
-let LOADING_TEXT_WIDTH = 0;
+// TODO(hjd): Dedupe these.
+const SLICE_HEIGHT = 32;
+const TRACK_PADDING = 5;
 
 /**
  * Checker board the range [leftPx, rightPx].
  */
 export function checkerboard(
-    ctx: CanvasRenderingContext2D,
-    heightPx: number,
-    leftPx: number,
-    rightPx: number): void {
+    ctx: CanvasRenderingContext2D, leftPx: number, rightPx: number): void {
   const widthPx = rightPx - leftPx;
   ctx.font = '12px Google Sans';
   ctx.fillStyle = '#eee';
-  ctx.fillRect(leftPx, 0, widthPx, heightPx);
+  ctx.fillRect(leftPx, TRACK_PADDING, widthPx, SLICE_HEIGHT);
   ctx.fillStyle = '#666';
-  const oldBaseline = ctx.textBaseline;
-  ctx.textBaseline = 'middle';
-  if (LOADING_TEXT_WIDTH === 0) {
-    LOADING_TEXT_WIDTH = ctx.measureText(LOADING_TEXT).width;
-  }
+  ctx.textBaseline = 'alphabetic';
   ctx.fillText(
-      LOADING_TEXT,
-      leftPx + widthPx / 2 - LOADING_TEXT_WIDTH,
-      heightPx / 2,
+      'loading...',
+      leftPx + widthPx / 2,
+      TRACK_PADDING + SLICE_HEIGHT / 2,
       widthPx);
-  ctx.textBaseline = oldBaseline;
 }
 
 /**
@@ -46,24 +39,23 @@ export function checkerboard(
  */
 export function checkerboardExcept(
     ctx: CanvasRenderingContext2D,
-    heightPx: number,
     startPx: number,
     endPx: number,
     leftPx: number,
     rightPx: number): void {
   // [leftPx, rightPx] doesn't overlap [startPx, endPx] at all:
   if (rightPx <= startPx || leftPx >= endPx) {
-    checkerboard(ctx, heightPx, startPx, endPx);
+    checkerboard(ctx, startPx, endPx);
     return;
   }
 
   // Checkerboard [startPx, leftPx]:
   if (leftPx > startPx) {
-    checkerboard(ctx, heightPx, startPx, leftPx);
+    checkerboard(ctx, startPx, leftPx);
   }
 
   // Checkerboard [rightPx, endPx]:
   if (rightPx < endPx) {
-    checkerboard(ctx, heightPx, rightPx, endPx);
+    checkerboard(ctx, rightPx, endPx);
   }
 }

@@ -27,19 +27,15 @@
 #include <unwindstack/JitDebug.h>
 #endif
 
-#include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/thread_task_runner.h"
-#include "perfetto/ext/tracing/core/basic_types.h"
+#include "perfetto/base/scoped_file.h"
+#include "perfetto/base/thread_task_runner.h"
+#include "perfetto/tracing/core/basic_types.h"
 #include "src/profiling/memory/bookkeeping.h"
 #include "src/profiling/memory/unwound_messages.h"
 #include "src/profiling/memory/wire_protocol.h"
 
 namespace perfetto {
 namespace profiling {
-
-std::unique_ptr<unwindstack::Regs> CreateRegsFromRawData(
-    unwindstack::ArchEnum arch,
-    void* raw_data);
 
 // Read /proc/[pid]/maps from an open file descriptor.
 // TODO(fmayer): Figure out deduplication to other maps.
@@ -110,8 +106,7 @@ struct UnwindingMetadata {
             new unwindstack::DexFiles(fd_mem)))
 #endif
   {
-    bool parsed = maps.Parse();
-    PERFETTO_DCHECK(parsed);
+    PERFETTO_CHECK(maps.Parse());
   }
   void ReparseMaps() {
     reparses++;
@@ -152,8 +147,7 @@ class UnwindingWorker : public base::UnixSocket::EventListener {
   struct HandoffData {
     DataSourceInstanceID data_source_instance_id;
     base::UnixSocketRaw sock;
-    base::ScopedFile maps_fd;
-    base::ScopedFile mem_fd;
+    base::ScopedFile fds[kHandshakeSize];
     SharedRingBuffer shmem;
     ClientConfiguration client_config;
   };
@@ -171,7 +165,7 @@ class UnwindingWorker : public base::UnixSocket::EventListener {
   void OnDisconnect(base::UnixSocket* self) override;
   void OnNewIncomingConnection(base::UnixSocket*,
                                std::unique_ptr<base::UnixSocket>) override {
-    PERFETTO_DFATAL_OR_ELOG("This should not happen.");
+    PERFETTO_DFATAL("This should not happen.");
   }
   void OnDataAvailable(base::UnixSocket* self) override;
 

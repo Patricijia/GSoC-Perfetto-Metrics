@@ -16,14 +16,13 @@
 
 #include "src/traced/probes/ftrace/proto_translation_table.h"
 
-#include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
-#include "protos/perfetto/trace/ftrace/generic.pbzero.h"
+#include "gmock/gmock.h"
+#include "gtest/gtest.h"
+#include "perfetto/trace/ftrace/ftrace_event.pbzero.h"
+#include "perfetto/trace/ftrace/generic.pbzero.h"
 #include "src/base/test/gtest_test_suite.h"
-#include "src/base/test/utils.h"
-#include "src/traced/probes/ftrace/compact_sched.h"
 #include "src/traced/probes/ftrace/event_info.h"
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
-#include "test/gtest_and_gmock.h"
 
 using testing::_;
 using testing::Values;
@@ -53,8 +52,8 @@ class MockFtraceProcfs : public FtraceProcfs {
 class AllTranslationTableTest : public TestWithParam<const char*> {
  public:
   void SetUp() override {
-    std::string path = base::GetTestDataPath(
-        "src/traced/probes/ftrace/test/data/" + std::string(GetParam()) + "/");
+    std::string path =
+        "src/traced/probes/ftrace/test/data/" + std::string(GetParam()) + "/";
     FtraceProcfs ftrace_procfs(path);
     table_ = ProtoTranslationTable::Create(&ftrace_procfs, GetStaticEventInfo(),
                                            GetStaticCommonFieldsInfo());
@@ -107,8 +106,8 @@ TEST_P(AllTranslationTableTest, Create) {
 INSTANTIATE_TEST_SUITE_P(ByDevice, AllTranslationTableTest, ValuesIn(kDevices));
 
 TEST(TranslationTableTest, Seed) {
-  std::string path = base::GetTestDataPath(
-      "src/traced/probes/ftrace/test/data/android_seed_N2F62_3.10.49/");
+  std::string path =
+      "src/traced/probes/ftrace/test/data/android_seed_N2F62_3.10.49/";
   FtraceProcfs ftrace_procfs(path);
   auto table = ProtoTranslationTable::Create(
       &ftrace_procfs, GetStaticEventInfo(), GetStaticCommonFieldsInfo());
@@ -173,6 +172,7 @@ format:
 	field:u32 field_e;	offset:32;	size:4;	signed:0;
 
 print fmt: "some format")"));
+  ;
 
   EXPECT_CALL(ftrace, ReadPageHeaderFormat()).Times(AnyNumber());
   EXPECT_CALL(ftrace, ReadEventFormat(_, _)).Times(AnyNumber());
@@ -259,58 +259,6 @@ print fmt: "some format")"));
 
 INSTANTIATE_TEST_SUITE_P(BySize, TranslationTableCreationTest, Values(4, 8));
 
-TEST(TranslationTableTest, CompactSchedFormatParsingWalleyeData) {
-  std::string path =
-      "src/traced/probes/ftrace/test/data/"
-      "android_walleye_OPM5.171019.017.A1_4.4.88/";
-  FtraceProcfs ftrace_procfs(path);
-  auto table = ProtoTranslationTable::Create(
-      &ftrace_procfs, GetStaticEventInfo(), GetStaticCommonFieldsInfo());
-  PERFETTO_CHECK(table);
-  const CompactSchedEventFormat& format = table->compact_sched_format();
-
-  // Format matches compile-time assumptions.
-  ASSERT_TRUE(format.format_valid);
-
-  // Check exact sched_switch format (note: 64 bit long prev_state).
-  EXPECT_EQ(47u, format.sched_switch.event_id);
-  EXPECT_EQ(64u, format.sched_switch.size);
-  EXPECT_EQ(56u, format.sched_switch.next_pid_offset);
-  EXPECT_EQ(FtraceFieldType::kFtracePid32, format.sched_switch.next_pid_type);
-  EXPECT_EQ(60u, format.sched_switch.next_prio_offset);
-  EXPECT_EQ(FtraceFieldType::kFtraceInt32, format.sched_switch.next_prio_type);
-  EXPECT_EQ(32u, format.sched_switch.prev_state_offset);
-  EXPECT_EQ(FtraceFieldType::kFtraceInt64, format.sched_switch.prev_state_type);
-  EXPECT_EQ(40u, format.sched_switch.next_comm_offset);
-
-  // Check exact sched_waking format.
-  EXPECT_EQ(44u, format.sched_waking.event_id);
-  EXPECT_EQ(40u, format.sched_waking.size);
-  EXPECT_EQ(24u, format.sched_waking.pid_offset);
-  EXPECT_EQ(FtraceFieldType::kFtracePid32, format.sched_waking.pid_type);
-  EXPECT_EQ(36u, format.sched_waking.target_cpu_offset);
-  EXPECT_EQ(FtraceFieldType::kFtraceInt32, format.sched_waking.target_cpu_type);
-  EXPECT_EQ(28u, format.sched_waking.prio_offset);
-  EXPECT_EQ(FtraceFieldType::kFtraceInt32, format.sched_waking.prio_type);
-  EXPECT_EQ(8u, format.sched_waking.comm_offset);
-}
-
-TEST(TranslationTableTest, CompactSchedFormatParsingSeedData) {
-  std::string path =
-      "src/traced/probes/ftrace/test/data/android_seed_N2F62_3.10.49/";
-  FtraceProcfs ftrace_procfs(path);
-  auto table = ProtoTranslationTable::Create(
-      &ftrace_procfs, GetStaticEventInfo(), GetStaticCommonFieldsInfo());
-  PERFETTO_CHECK(table);
-  const CompactSchedEventFormat& format = table->compact_sched_format();
-
-  // We consider the entire format invalid as there's no sched_waking event
-  // available. This is a simplifying assumption. We could instead look at each
-  // event independently (and in this case, sched_switch does match compile-time
-  // assumptions).
-  ASSERT_FALSE(format.format_valid);
-}
-
 TEST(TranslationTableTest, InferFtraceType) {
   FtraceFieldType type;
 
@@ -394,9 +342,7 @@ TEST(TranslationTableTest, Getters) {
 
   ProtoTranslationTable table(
       &ftrace, events, std::move(common_fields),
-      ProtoTranslationTable::DefaultPageHeaderSpecForTesting(),
-      InvalidCompactSchedEventFormatForTesting());
-
+      ProtoTranslationTable::DefaultPageHeaderSpecForTesting());
   EXPECT_EQ(table.largest_id(), 100ul);
   EXPECT_EQ(table.EventToFtraceId(GroupAndName("group_one", "foo")), 1ul);
   EXPECT_EQ(table.EventToFtraceId(GroupAndName("group_two", "baz")), 100ul);
@@ -456,9 +402,9 @@ print fmt: "some format")"));
   EXPECT_EQ(table->EventToFtraceId(group_and_name), 42ul);
 
   // Check getters
-  EXPECT_EQ(static_cast<int>(table->GetEventById(42)->proto_field_id),
+  EXPECT_EQ(table->GetEventById(42)->proto_field_id,
             protos::pbzero::FtraceEvent::kGenericFieldNumber);
-  EXPECT_EQ(static_cast<int>(table->GetEvent(group_and_name)->proto_field_id),
+  EXPECT_EQ(table->GetEvent(group_and_name)->proto_field_id,
             protos::pbzero::FtraceEvent::kGenericFieldNumber);
   EXPECT_EQ(table->GetEventsByGroup("group")->front()->name,
             group_and_name.name());
@@ -468,7 +414,7 @@ print fmt: "some format")"));
   // Check string field
   const auto& str_field = fields[0];
   EXPECT_STREQ(str_field.ftrace_name, "field_a");
-  EXPECT_EQ(static_cast<int>(str_field.proto_field_id),
+  EXPECT_EQ(str_field.proto_field_id,
             protos::pbzero::GenericFtraceEvent::Field::kStrValueFieldNumber);
   EXPECT_EQ(str_field.proto_field_type, ProtoSchemaType::kString);
   EXPECT_EQ(str_field.ftrace_type, kFtraceFixedCString);
@@ -478,7 +424,7 @@ print fmt: "some format")"));
   // Check bool field
   const auto& bool_field = fields[1];
   EXPECT_STREQ(bool_field.ftrace_name, "field_b");
-  EXPECT_EQ(static_cast<int>(bool_field.proto_field_id),
+  EXPECT_EQ(bool_field.proto_field_id,
             protos::pbzero::GenericFtraceEvent::Field::kUintValueFieldNumber);
   EXPECT_EQ(bool_field.proto_field_type, ProtoSchemaType::kUint64);
   EXPECT_EQ(bool_field.ftrace_type, kFtraceBool);
@@ -488,7 +434,7 @@ print fmt: "some format")"));
   // Check int field
   const auto& int_field = fields[2];
   EXPECT_STREQ(int_field.ftrace_name, "field_c");
-  EXPECT_EQ(static_cast<int>(int_field.proto_field_id),
+  EXPECT_EQ(int_field.proto_field_id,
             protos::pbzero::GenericFtraceEvent::Field::kIntValueFieldNumber);
   EXPECT_EQ(int_field.proto_field_type, ProtoSchemaType::kInt64);
   EXPECT_EQ(int_field.ftrace_type, kFtraceInt32);
@@ -498,7 +444,7 @@ print fmt: "some format")"));
   // Check uint field
   const auto& uint_field = fields[3];
   EXPECT_STREQ(uint_field.ftrace_name, "field_d");
-  EXPECT_EQ(static_cast<int>(uint_field.proto_field_id),
+  EXPECT_EQ(uint_field.proto_field_id,
             protos::pbzero::GenericFtraceEvent::Field::kUintValueFieldNumber);
   EXPECT_EQ(uint_field.proto_field_type, ProtoSchemaType::kUint64);
   EXPECT_EQ(uint_field.ftrace_type, kFtraceUint32);

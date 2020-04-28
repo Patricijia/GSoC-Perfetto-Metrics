@@ -12,18 +12,13 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as m from 'mithril';
 import {TrackState} from '../common/state';
-import {TrackData} from '../common/track_data';
-import {checkerboard} from './checkerboard';
-
 import {globals} from './globals';
-import {TrackButtonAttrs} from './track_panel';
 
 /**
  * This interface forces track implementations to have some static properties.
  * Typescript does not have abstract static members, which is why this needs to
- * be in a separate interface.
+ * be in a seperate interface.
  */
 export interface TrackCreator {
   // Store the kind explicitly as a string as opposed to using class.kind in
@@ -38,9 +33,9 @@ export interface TrackCreator {
 /**
  * The abstract class that needs to be implemented by all tracks.
  */
-export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
+export abstract class Track<Config = {}, Data = {}> {
   constructor(protected trackState: TrackState) {}
-  protected abstract renderCanvas(ctx: CanvasRenderingContext2D): void;
+  abstract renderCanvas(ctx: CanvasRenderingContext2D): void;
 
   get config(): Config {
     return this.trackState.config as Config;
@@ -54,10 +49,6 @@ export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
     return 40;
   }
 
-  getTrackShellButtons(): Array<m.Vnode<TrackButtonAttrs>> {
-    return [];
-  }
-
   onMouseMove(_position: {x: number, y: number}) {}
 
   /**
@@ -69,16 +60,4 @@ export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
   }
 
   onMouseOut() {}
-
-  render(ctx: CanvasRenderingContext2D) {
-    globals.frontendLocalState.addVisibleTrack(this.trackState.id);
-    if (this.data() === undefined) {
-      const {visibleWindowTime, timeScale} = globals.frontendLocalState;
-      const startPx = Math.floor(timeScale.timeToPx(visibleWindowTime.start));
-      const endPx = Math.ceil(timeScale.timeToPx(visibleWindowTime.end));
-      checkerboard(ctx, this.getHeight(), startPx, endPx);
-    } else {
-      this.renderCanvas(ctx);
-    }
-  }
 }

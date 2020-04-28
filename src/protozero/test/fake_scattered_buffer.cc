@@ -19,7 +19,7 @@
 #include <sstream>
 #include <utility>
 
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
 
 namespace protozero {
 

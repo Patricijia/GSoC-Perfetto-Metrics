@@ -12,74 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {RawQueryArgs, RawQueryResult} from './protos';
+import {RawQueryResult, TraceProcessor} from './protos';
 import {TimeSpan} from './time';
-
-export interface LoadingTracker {
-  beginLoading(): void;
-  endLoading(): void;
-}
-
-export class NullLoadingTracker implements LoadingTracker {
-  beginLoading(): void {}
-  endLoading(): void {}
-}
 
 /**
  * Abstract interface of a trace proccessor.
- * This is the TypeScript equivalent of src/trace_processor/rpc.h.
+ * This class is wrapper for multiple proto services defined in:
+ * //protos/perfetto/trace_processor/*
+ * For each service ("FooService") Engine will have abstract getter
+ * ("fooService") which returns a protobufjs rpc.Service object for
+ * the given service.
  *
  * Engine also defines helpers for the most common service methods
  * (e.g. query).
  */
 export abstract class Engine {
   abstract readonly id: string;
-  private _cpus?: number[];
-  private _numGpus?: number;
-  private loadingTracker: LoadingTracker;
-
-  constructor(tracker?: LoadingTracker) {
-    this.loadingTracker = tracker ? tracker : new NullLoadingTracker();
-  }
+  private _numCpus?: number;
 
   /**
    * Push trace data into the engine. The engine is supposed to automatically
    * figure out the type of the trace (JSON vs Protobuf).
    */
-  abstract parse(data: Uint8Array): Promise<void>;
+  abstract parse(data: Uint8Array): void;
 
   /**
    * Notify the engine no more data is coming.
    */
   abstract notifyEof(): void;
 
-  /**
-   * Resets the trace processor state by destroying any table/views created by
-   * the UI after loading.
-   */
-  abstract restoreInitialTables(): void;
-
   /*
-   * Performs a SQL query and retruns a proto-encoded RawQueryResult object.
+   * The RCP interface to call service methods defined in trace_processor.proto.
    */
-  abstract rawQuery(rawQueryArgs: Uint8Array): Promise<Uint8Array>;
+  abstract get rpc(): TraceProcessor;
 
   /**
    * Shorthand for sending a SQL query to the engine.
-   * Deals with {,un}marshalling of request/response args.
+   * Exactly the same as engine.rpc.rawQuery({rawQuery});
    */
-  async query(sqlQuery: string): Promise<RawQueryResult> {
-    this.loadingTracker.beginLoading();
-    try {
-      const args = new RawQueryArgs();
-      args.sqlQuery = sqlQuery;
-      args.timeQueuedNs = Math.floor(performance.now() * 1e6);
-      const argsEncoded = RawQueryArgs.encode(args).finish();
-      const respEncoded = await this.rawQuery(argsEncoded);
-      return RawQueryResult.decode(respEncoded);
-    } finally {
-      this.loadingTracker.endLoading();
-    }
+  query(sqlQuery: string): Promise<RawQueryResult> {
+    const timeQueuedNs = Math.floor(performance.now() * 1e6);
+    return this.rpc.rawQuery({sqlQuery, timeQueuedNs});
   }
 
   async queryOneRow(query: string): Promise<number[]> {
@@ -90,22 +63,13 @@ export abstract class Engine {
   }
 
   // TODO(hjd): When streaming must invalidate this somehow.
-  async getCpus(): Promise<number[]> {
-    if (!this._cpus) {
-      const result =
-          await this.query('select distinct(cpu) from sched order by cpu;');
-      this._cpus = result.columns[0].longValues!.map(n => +n);
-    }
-    return this._cpus;
-  }
-
-  async getNumberOfGpus(): Promise<number> {
-    if (!this._numGpus) {
+  async getNumberOfCpus(): Promise<number> {
+    if (!this._numCpus) {
       const result = await this.query(
-          'select count(distinct(arg_set_id)) as gpuCount from counters where name = "gpufreq";');
-      this._numGpus = +result.columns[0].longValues![0];
+          'select count(distinct(cpu)) as cpuCount from sched;');
+      this._numCpus = +result.columns[0].longValues![0];
     }
-    return this._numGpus;
+    return this._numCpus;
   }
 
   // TODO: This should live in code that's more specific to chrome, instead of

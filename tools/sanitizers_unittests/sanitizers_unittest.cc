@@ -21,7 +21,7 @@
 
 #include <memory>
 
-#include "test/gtest_and_gmock.h"
+#include "gtest/gtest.h"
 
 namespace perfetto {
 namespace {
@@ -77,8 +77,7 @@ TEST(SanitizerTests, MSAN_UninitializedMemory) {
 }
 #endif
 
-// b/141460117: Leak sanitizer tests don't work in debug builds.
-#if defined(LEAK_SANITIZER) && defined(NDEBUG)
+#if defined(LEAK_SANITIZER)
 TEST(SanitizerTests, LSAN_LeakMalloc) {
   EXPECT_DEATH(
       {
@@ -104,7 +103,7 @@ TEST(SanitizerTests, LSAN_LeakCppNew) {
       },
       "LeakSanitizer:.*detected memory leaks");
 }
-#endif  // LEAK_SANITIZER && defined(NDEBUG)
+#endif  // LEAK_SANITIZER
 
 #if defined(UNDEFINED_SANITIZER)
 TEST(SanitizerTests, UBSAN_DivisionByZero) {

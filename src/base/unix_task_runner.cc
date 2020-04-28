@@ -14,18 +14,15 @@
  * limitations under the License.
  */
 
-#include "perfetto/base/build_config.h"
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include "perfetto/base/unix_task_runner.h"
 
-#include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/base/build_config.h"
 
 #include <errno.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include <limits>
-
-#include "perfetto/ext/base/watchdog.h"
 
 namespace perfetto {
 namespace base {
@@ -117,10 +114,10 @@ void UnixTaskRunner::RunImmediateAndDelayedTask() {
 
   errno = 0;
   if (immediate_task)
-    RunTaskWithWatchdogGuard(immediate_task);
+    RunTask(immediate_task);
   errno = 0;
   if (delayed_task)
-    RunTaskWithWatchdogGuard(delayed_task);
+    RunTask(delayed_task);
 }
 
 void UnixTaskRunner::PostFileDescriptorWatches() {
@@ -166,7 +163,7 @@ void UnixTaskRunner::RunFileDescriptorWatch(int fd) {
     task = it->second.callback;
   }
   errno = 0;
-  RunTaskWithWatchdogGuard(task);
+  RunTask(task);
 }
 
 int UnixTaskRunner::GetDelayMsToNextTaskLocked() const {
@@ -230,5 +227,3 @@ bool UnixTaskRunner::RunsTasksOnCurrentThread() const {
 
 }  // namespace base
 }  // namespace perfetto
-
-#endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)

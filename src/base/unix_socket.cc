@@ -14,12 +14,10 @@
  * limitations under the License.
  */
 
-#include "perfetto/ext/base/unix_socket.h"
+#include "perfetto/base/unix_socket.h"
 
 #include <errno.h>
 #include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -34,8 +32,7 @@
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
-#include "perfetto/ext/base/string_utils.h"
-#include "perfetto/ext/base/utils.h"
+#include "perfetto/base/utils.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
 #include <sys/ucred.h>
@@ -51,7 +48,6 @@ namespace base {
 #endif
 
 namespace {
-
 // MSG_NOSIGNAL is not supported on Mac OS X, but in that case the socket is
 // created with SO_NOSIGPIPE (See InitializeSocket()).
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
@@ -67,36 +63,7 @@ using CBufLenType = size_t;
 using CBufLenType = socklen_t;
 #endif
 
-// A wrapper around variable-size sockaddr structs.
-// This is solving the following problem: when calling connect() or bind(), the
-// caller needs to take care to allocate the right struct (sockaddr_un for
-// AF_UNIX, sockaddr_in for AF_INET).   Those structs have different sizes and,
-// more importantly, are bigger than the base struct sockaddr.
-struct SockaddrAny {
-  SockaddrAny() : size() {}
-  SockaddrAny(const void* addr, socklen_t sz) : data(new char[sz]), size(sz) {
-    memcpy(data.get(), addr, static_cast<size_t>(size));
-  }
-
-  const struct sockaddr* addr() const {
-    return reinterpret_cast<const struct sockaddr*>(data.get());
-  }
-
-  std::unique_ptr<char[]> data;
-  socklen_t size;
-};
-
-inline int GetSockFamily(SockFamily family) {
-  switch (family) {
-    case SockFamily::kUnix:
-      return AF_UNIX;
-    case SockFamily::kInet:
-      return AF_INET;
-  }
-  PERFETTO_CHECK(false);  // For GCC.
-}
-
-inline int GetSockType(SockType type) {
+inline int GetUnixSockType(SockType type) {
   switch (type) {
     case SockType::kStream:
       return SOCK_STREAM;
@@ -105,42 +72,25 @@ inline int GetSockType(SockType type) {
     case SockType::kSeqPacket:
       return SOCK_SEQPACKET;
   }
-  PERFETTO_CHECK(false);  // For GCC.
+  PERFETTO_CHECK(false);
 }
 
-SockaddrAny MakeSockAddr(SockFamily family, const std::string& socket_name) {
-  switch (family) {
-    case SockFamily::kUnix: {
-      struct sockaddr_un saddr {};
-      const size_t name_len = socket_name.size();
-      if (name_len >= sizeof(saddr.sun_path)) {
-        errno = ENAMETOOLONG;
-        return SockaddrAny();
-      }
-      memcpy(saddr.sun_path, socket_name.data(), name_len);
-      if (saddr.sun_path[0] == '@')
-        saddr.sun_path[0] = '\0';
-      saddr.sun_family = AF_UNIX;
-      auto size = static_cast<socklen_t>(
-          __builtin_offsetof(sockaddr_un, sun_path) + name_len + 1);
-      PERFETTO_CHECK(static_cast<size_t>(size) <= sizeof(saddr));
-      return SockaddrAny(&saddr, size);
-    }
-    case SockFamily::kInet: {
-      auto parts = SplitString(socket_name, ":");
-      PERFETTO_CHECK(parts.size() == 2);
-      struct addrinfo* addr_info = nullptr;
-      struct addrinfo hints {};
-      hints.ai_family = AF_INET;
-      PERFETTO_CHECK(getaddrinfo(parts[0].c_str(), parts[1].c_str(), &hints,
-                                 &addr_info) == 0);
-      PERFETTO_CHECK(addr_info->ai_family == AF_INET);
-      SockaddrAny res(addr_info->ai_addr, addr_info->ai_addrlen);
-      freeaddrinfo(addr_info);
-      return res;
-    }
+bool MakeSockAddr(const std::string& socket_name,
+                  sockaddr_un* addr,
+                  socklen_t* addr_size) {
+  memset(addr, 0, sizeof(*addr));
+  const size_t name_len = socket_name.size();
+  if (name_len >= sizeof(addr->sun_path)) {
+    errno = ENAMETOOLONG;
+    return false;
   }
-  PERFETTO_CHECK(false);  // For GCC.
+  memcpy(addr->sun_path, socket_name.data(), name_len);
+  if (addr->sun_path[0] == '@')
+    addr->sun_path[0] = '\0';
+  addr->sun_family = AF_UNIX;
+  *addr_size = static_cast<socklen_t>(
+      __builtin_offsetof(sockaddr_un, sun_path) + name_len + 1);
+  return true;
 }
 
 }  // namespace
@@ -172,38 +122,28 @@ void UnixSocketRaw::ShiftMsgHdr(size_t n, struct msghdr* msg) {
 }
 
 // static
-std::pair<UnixSocketRaw, UnixSocketRaw> UnixSocketRaw::CreatePair(
-    SockFamily family,
-    SockType type) {
+std::pair<UnixSocketRaw, UnixSocketRaw> UnixSocketRaw::CreatePair(SockType t) {
   int fds[2];
-  if (socketpair(GetSockFamily(family), GetSockType(type), 0, fds) != 0)
+  if (socketpair(AF_UNIX, GetUnixSockType(t), 0, fds) != 0)
     return std::make_pair(UnixSocketRaw(), UnixSocketRaw());
 
-  return std::make_pair(UnixSocketRaw(ScopedFile(fds[0]), family, type),
-                        UnixSocketRaw(ScopedFile(fds[1]), family, type));
+  return std::make_pair(UnixSocketRaw(ScopedFile(fds[0]), t),
+                        UnixSocketRaw(ScopedFile(fds[1]), t));
 }
 
 UnixSocketRaw::UnixSocketRaw() = default;
 
-UnixSocketRaw::UnixSocketRaw(SockFamily family, SockType type)
-    : UnixSocketRaw(
-          ScopedFile(socket(GetSockFamily(family), GetSockType(type), 0)),
-          family,
-          type) {}
+UnixSocketRaw::UnixSocketRaw(SockType type)
+    : UnixSocketRaw(ScopedFile(socket(AF_UNIX, GetUnixSockType(type), 0)),
+                    type) {}
 
-UnixSocketRaw::UnixSocketRaw(ScopedFile fd, SockFamily family, SockType type)
-    : fd_(std::move(fd)), family_(family), type_(type) {
+UnixSocketRaw::UnixSocketRaw(ScopedFile fd, SockType type)
+    : fd_(std::move(fd)), type_(type) {
   PERFETTO_CHECK(fd_);
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
   const int no_sigpipe = 1;
   setsockopt(*fd_, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
 #endif
-
-  if (family == SockFamily::kInet) {
-    int flag = 1;
-    PERFETTO_CHECK(
-        !setsockopt(*fd_, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)));
-  }
 
   // There is no reason why a socket should outlive the process in case of
   // exec() by default, this is just working around a broken unix design.
@@ -238,11 +178,12 @@ bool UnixSocketRaw::IsBlocking() const {
 
 bool UnixSocketRaw::Bind(const std::string& socket_name) {
   PERFETTO_DCHECK(fd_);
-  SockaddrAny addr = MakeSockAddr(family_, socket_name);
-  if (addr.size == 0)
+  sockaddr_un addr;
+  socklen_t addr_size;
+  if (!MakeSockAddr(socket_name, &addr, &addr_size))
     return false;
 
-  if (bind(*fd_, addr.addr(), addr.size)) {
+  if (bind(*fd_, reinterpret_cast<sockaddr*>(&addr), addr_size)) {
     PERFETTO_DPLOG("bind(%s)", socket_name.c_str());
     return false;
   }
@@ -258,11 +199,13 @@ bool UnixSocketRaw::Listen() {
 
 bool UnixSocketRaw::Connect(const std::string& socket_name) {
   PERFETTO_DCHECK(fd_);
-  SockaddrAny addr = MakeSockAddr(family_, socket_name);
-  if (addr.size == 0)
+  sockaddr_un addr;
+  socklen_t addr_size;
+  if (!MakeSockAddr(socket_name, &addr, &addr_size))
     return false;
 
-  int res = PERFETTO_EINTR(connect(*fd_, addr.addr(), addr.size));
+  int res = PERFETTO_EINTR(
+      connect(*fd_, reinterpret_cast<sockaddr*>(&addr), addr_size));
   if (res && errno != EINPROGRESS)
     return false;
 
@@ -428,36 +371,32 @@ bool UnixSocketRaw::SetRxTimeout(uint32_t timeout_ms) {
 std::unique_ptr<UnixSocket> UnixSocket::Listen(const std::string& socket_name,
                                                EventListener* event_listener,
                                                TaskRunner* task_runner,
-                                               SockFamily sock_family,
                                                SockType sock_type) {
-  auto sock_raw = UnixSocketRaw::CreateMayFail(sock_family, sock_type);
+  auto sock_raw = UnixSocketRaw::CreateMayFail(sock_type);
   if (!sock_raw || !sock_raw.Bind(socket_name))
     return nullptr;
 
   // Forward the call to the Listen() overload below.
-  return Listen(sock_raw.ReleaseFd(), event_listener, task_runner, sock_family,
-                sock_type);
+  return Listen(sock_raw.ReleaseFd(), event_listener, task_runner, sock_type);
 }
 
 // static
 std::unique_ptr<UnixSocket> UnixSocket::Listen(ScopedFile fd,
                                                EventListener* event_listener,
                                                TaskRunner* task_runner,
-                                               SockFamily sock_family,
                                                SockType sock_type) {
   return std::unique_ptr<UnixSocket>(
       new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kListening, sock_family, sock_type));
+                     State::kListening, sock_type));
 }
 
 // static
 std::unique_ptr<UnixSocket> UnixSocket::Connect(const std::string& socket_name,
                                                 EventListener* event_listener,
                                                 TaskRunner* task_runner,
-                                                SockFamily sock_family,
                                                 SockType sock_type) {
   std::unique_ptr<UnixSocket> sock(
-      new UnixSocket(event_listener, task_runner, sock_family, sock_type));
+      new UnixSocket(event_listener, task_runner, sock_type));
   sock->DoConnect(socket_name);
   return sock;
 }
@@ -467,29 +406,25 @@ std::unique_ptr<UnixSocket> UnixSocket::AdoptConnected(
     ScopedFile fd,
     EventListener* event_listener,
     TaskRunner* task_runner,
-    SockFamily sock_family,
     SockType sock_type) {
   return std::unique_ptr<UnixSocket>(
       new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kConnected, sock_family, sock_type));
+                     State::kConnected, sock_type));
 }
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
-                       SockFamily sock_family,
                        SockType sock_type)
     : UnixSocket(event_listener,
                  task_runner,
                  ScopedFile(),
                  State::kDisconnected,
-                 sock_family,
                  sock_type) {}
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
                        ScopedFile adopt_fd,
                        State adopt_state,
-                       SockFamily sock_family,
                        SockType sock_type)
     : event_listener_(event_listener),
       task_runner_(task_runner),
@@ -497,14 +432,14 @@ UnixSocket::UnixSocket(EventListener* event_listener,
   state_ = State::kDisconnected;
   if (adopt_state == State::kDisconnected) {
     PERFETTO_DCHECK(!adopt_fd);
-    sock_raw_ = UnixSocketRaw::CreateMayFail(sock_family, sock_type);
+    sock_raw_ = UnixSocketRaw::CreateMayFail(sock_type);
     if (!sock_raw_) {
       last_error_ = errno;
       return;
     }
   } else if (adopt_state == State::kConnected) {
     PERFETTO_DCHECK(adopt_fd);
-    sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_family, sock_type);
+    sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_type);
     state_ = State::kConnected;
     ReadPeerCredentials();
   } else if (adopt_state == State::kListening) {
@@ -516,7 +451,7 @@ UnixSocket::UnixSocket(EventListener* event_listener,
       return;
     }
 
-    sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_family, sock_type);
+    sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_type);
     if (!sock_raw_.Listen()) {
       last_error_ = errno;
       PERFETTO_DPLOG("listen()");
@@ -533,7 +468,6 @@ UnixSocket::UnixSocket(EventListener* event_listener,
   sock_raw_.SetBlocking(false);
 
   WeakPtr<UnixSocket> weak_ptr = weak_ptr_factory_.GetWeakPtr();
-
   task_runner_->AddFileDescriptorWatch(sock_raw_.fd(), [weak_ptr] {
     if (weak_ptr)
       weak_ptr->OnEvent();
@@ -588,10 +522,6 @@ void UnixSocket::DoConnect(const std::string& socket_name) {
 }
 
 void UnixSocket::ReadPeerCredentials() {
-  // Peer credentials are supported only on AF_UNIX sockets.
-  if (sock_raw_.family() != SockFamily::kUnix)
-    return;
-
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
   struct ucred user_cred;
@@ -624,7 +554,6 @@ void UnixSocket::OnEvent() {
     socklen_t err_len = sizeof(sock_err);
     int res =
         getsockopt(sock_raw_.fd(), SOL_SOCKET, SO_ERROR, &sock_err, &err_len);
-
     if (res == 0 && sock_err == EINPROGRESS)
       return;  // Not connected yet, just a spurious FD watch wakeup.
     if (res == 0 && sock_err == 0) {
@@ -632,7 +561,6 @@ void UnixSocket::OnEvent() {
       state_ = State::kConnected;
       return event_listener_->OnConnect(this, true /* connected */);
     }
-    PERFETTO_DLOG("Connection error: %s", strerror(sock_err));
     last_error_ = sock_err;
     Shutdown(false);
     return event_listener_->OnConnect(this, false /* connected */);
@@ -643,15 +571,15 @@ void UnixSocket::OnEvent() {
     // There could be more than one incoming connection behind each FD watch
     // notification. Drain'em all.
     for (;;) {
-      struct sockaddr_in cli_addr {};
+      sockaddr_un cli_addr = {};
       socklen_t size = sizeof(cli_addr);
       ScopedFile new_fd(PERFETTO_EINTR(accept(
           sock_raw_.fd(), reinterpret_cast<sockaddr*>(&cli_addr), &size)));
       if (!new_fd)
         return;
-      std::unique_ptr<UnixSocket> new_sock(new UnixSocket(
-          event_listener_, task_runner_, std::move(new_fd), State::kConnected,
-          sock_raw_.family(), sock_raw_.type()));
+      std::unique_ptr<UnixSocket> new_sock(
+          new UnixSocket(event_listener_, task_runner_, std::move(new_fd),
+                         State::kConnected, sock_raw_.type()));
       event_listener_->OnNewIncomingConnection(this, std::move(new_sock));
     }
   }
@@ -683,7 +611,7 @@ bool UnixSocket::Send(const void* msg,
     return true;
   }
 
-  // If sendmsg() succeeds but the returned size is < |len| it means that the
+  // If sendmsg() succeds but the returned size is < |len| it means that the
   // endpoint disconnected in the middle of the read, and we managed to send
   // only a portion of the buffer. In this case we should just give up.
 
@@ -695,7 +623,7 @@ bool UnixSocket::Send(const void* msg,
     return false;
   }
 
-  // Either the other endpoint disconnected (ECONNRESET) or some other error
+  // Either the the other endpoint disconnect (ECONNRESET) or some other error
   // happened.
   last_error_ = saved_errno;
   PERFETTO_DPLOG("sendmsg() failed");

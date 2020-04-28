@@ -32,10 +32,9 @@ import {
   SummaryData
 } from './common';
 
-const MARGIN_TOP = 3;
-const RECT_HEIGHT = 24;
-const TRACK_HEIGHT = MARGIN_TOP * 2 + RECT_HEIGHT;
-const SUMMARY_HEIGHT = TRACK_HEIGHT - MARGIN_TOP;
+
+const MARGIN_TOP = 5;
+const RECT_HEIGHT = 30;
 
 class CpuSliceTrack extends Track<Config, Data> {
   static readonly kind = CPU_SLICE_TRACK_KIND;
@@ -52,22 +51,26 @@ class CpuSliceTrack extends Track<Config, Data> {
     this.hue = hueForCpu(this.config.cpu);
   }
 
-  getHeight(): number {
-    return TRACK_HEIGHT;
-  }
-
   renderCanvas(ctx: CanvasRenderingContext2D): void {
     // TODO: fonts and colors should come from the CSS and not hardcoded here.
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const data = this.data();
 
+    // If there aren't enough cached slices data in |data| request more to
+    // the controller.
+    const inRange = data !== undefined &&
+        (visibleWindowTime.start >= data.start &&
+         visibleWindowTime.end <= data.end);
+    if (!inRange || data === undefined ||
+        data.resolution !== globals.getCurResolution()) {
+      globals.requestTrackData(this.trackState.id);
+    }
     if (data === undefined) return;  // Can't possibly draw anything.
 
     // If the cached trace slices don't fully cover the visible time range,
     // show a gray rectangle with a "Loading..." label.
     checkerboardExcept(
         ctx,
-        this.getHeight(),
         timeScale.timeToPx(visibleWindowTime.start),
         timeScale.timeToPx(visibleWindowTime.end),
         timeScale.timeToPx(data.start),
@@ -83,7 +86,7 @@ class CpuSliceTrack extends Track<Config, Data> {
   renderSummary(ctx: CanvasRenderingContext2D, data: SummaryData): void {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const startPx = Math.floor(timeScale.timeToPx(visibleWindowTime.start));
-    const bottomY = TRACK_HEIGHT;
+    const bottomY = MARGIN_TOP + RECT_HEIGHT;
 
     let lastX = startPx;
     let lastY = bottomY;
@@ -98,7 +101,7 @@ class CpuSliceTrack extends Track<Config, Data> {
       lastX = Math.floor(timeScale.timeToPx(startTime));
 
       ctx.lineTo(lastX, lastY);
-      lastY = MARGIN_TOP + Math.round(SUMMARY_HEIGHT * (1 - utilization));
+      lastY = MARGIN_TOP + Math.round(RECT_HEIGHT * (1 - utilization));
       ctx.lineTo(lastX, lastY);
     }
     ctx.lineTo(lastX, bottomY);
@@ -172,10 +175,10 @@ class CpuSliceTrack extends Track<Config, Data> {
       const rectXCenter = rectStart + rectWidth / 2;
       ctx.fillStyle = '#fff';
       ctx.font = '12px Google Sans';
-      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 1);
+      ctx.fillText(title, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 - 3);
       ctx.fillStyle = 'rgba(255, 255, 255, 0.6)';
       ctx.font = '10px Google Sans';
-      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 9);
+      ctx.fillText(subTitle, rectXCenter, MARGIN_TOP + RECT_HEIGHT / 2 + 11);
     }
 
     const selection = globals.state.currentSelection;
@@ -228,7 +231,7 @@ class CpuSliceTrack extends Track<Config, Data> {
 
       // Draw diamond if the track being drawn is the cpu of the waker.
       if (this.config.cpu === details.wakerCpu && details.wakeupTs) {
-        const wakeupPos = Math.floor(timeScale.timeToPx(details.wakeupTs));
+        const wakeupPos = timeScale.timeToPx(details.wakeupTs);
         ctx.beginPath();
         ctx.moveTo(wakeupPos, MARGIN_TOP + RECT_HEIGHT / 2 + 8);
         ctx.fillStyle = 'black';
@@ -260,10 +263,8 @@ class CpuSliceTrack extends Track<Config, Data> {
       ctx.fillRect(this.mouseXpos!, MARGIN_TOP, width + 16, RECT_HEIGHT);
       ctx.fillStyle = 'hsl(200, 50%, 40%)';
       ctx.textAlign = 'left';
-      ctx.fillText(
-          line1, this.mouseXpos! + 8, MARGIN_TOP + RECT_HEIGHT / 2 - 2);
-      ctx.fillText(
-          line2, this.mouseXpos! + 8, MARGIN_TOP + RECT_HEIGHT / 2 + 10);
+      ctx.fillText(line1, this.mouseXpos! + 8, 18);
+      ctx.fillText(line2, this.mouseXpos! + 8, 28);
     }
   }
 
@@ -308,10 +309,12 @@ class CpuSliceTrack extends Track<Config, Data> {
     const time = timeScale.pxToTime(x);
     const index = search(data.starts, time);
     const id = index === -1 ? undefined : data.ids[index];
-    if (!id || this.utidHoveredInThisTrack === -1) return false;
-    globals.makeSelection(
-        Actions.selectSlice({id, trackId: this.trackState.id}));
-    return true;
+    if (id && this.utidHoveredInThisTrack !== -1) {
+      globals.dispatch(Actions.selectSlice(
+        {utid: this.utidHoveredInThisTrack, id}));
+      return true;
+    }
+    return false;
   }
 }
 

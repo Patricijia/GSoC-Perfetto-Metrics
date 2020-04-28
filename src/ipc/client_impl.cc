@@ -23,9 +23,9 @@
 #include <utility>
 
 #include "perfetto/base/task_runner.h"
-#include "perfetto/ext/base/utils.h"
-#include "perfetto/ext/ipc/service_descriptor.h"
-#include "perfetto/ext/ipc/service_proxy.h"
+#include "perfetto/base/utils.h"
+#include "perfetto/ipc/service_descriptor.h"
+#include "perfetto/ipc/service_proxy.h"
 
 // TODO(primiano): Add ThreadChecker everywhere.
 
@@ -43,9 +43,8 @@ std::unique_ptr<Client> Client::CreateInstance(const char* socket_name,
 
 ClientImpl::ClientImpl(const char* socket_name, base::TaskRunner* task_runner)
     : task_runner_(task_runner), weak_ptr_factory_(this) {
-  sock_ = base::UnixSocket::Connect(socket_name, this, task_runner,
-                                    base::SockFamily::kUnix,
-                                    base::SockType::kStream);
+  GOOGLE_PROTOBUF_VERIFY_VERSION;
+  sock_ = base::UnixSocket::Connect(socket_name, this, task_runner);
 }
 
 ClientImpl::~ClientImpl() {

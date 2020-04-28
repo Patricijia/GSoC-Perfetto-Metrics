@@ -14,7 +14,7 @@
 
 import("perfetto.gni")
 
-if (perfetto_root_path == "//") {
+if (perfetto_build_standalone) {
   import("//gn/standalone/fuzzer.gni")
 } else {
   # TODO: integrate fuzzer support for chromium builds.

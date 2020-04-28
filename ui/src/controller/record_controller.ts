@@ -12,67 +12,30 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {Message, Method, rpc, RPCImplCallback} from 'protobufjs';
-
-import {
-  uint8ArrayToBase64,
-} from '../base/string_utils';
-import {Actions} from '../common/actions';
 import {
   AndroidLogConfig,
   AndroidLogId,
   AndroidPowerConfig,
   BufferConfig,
-  ChromeConfig,
-  ConsumerPort,
-  ContinuousDumpConfig,
   DataSourceConfig,
   FtraceConfig,
-  HeapprofdConfig,
   ProcessStatsConfig,
   SysStatsConfig,
-  TraceConfig,
+  TraceConfig
 } from '../common/protos';
 import {MeminfoCounters, VmstatCounters} from '../common/protos';
-import {
-  AdbRecordingTarget,
-  isAndroidTarget,
-  isChromeTarget,
-  MAX_TIME,
-  RecordConfig,
-  TargetOs
-} from '../common/state';
+import {RecordConfig} from '../common/state';
 
-import {AdbOverWebUsb} from './adb';
-import {AdbConsumerPort} from './adb_shell_controller';
-import {AdbSocketConsumerPort} from './adb_socket_controller';
-import {ChromeExtensionConsumerPort} from './chrome_proxy_record_controller';
-import {
-  ConsumerPortResponse,
-  GetTraceStatsResponse,
-  isEnableTracingResponse,
-  isGetTraceStatsResponse,
-  isReadBuffersResponse,
-} from './consumer_port_types';
 import {Controller} from './controller';
-import {App, globals} from './globals';
-import {Consumer, RpcConsumerPort} from './record_controller_interfaces';
+import {App} from './globals';
 
-type RPCImplMethod = (Method|rpc.ServiceMethod<Message<{}>, Message<{}>>);
-
-export function genConfigProto(uiCfg: RecordConfig): Uint8Array {
-  return TraceConfig.encode(genConfig(uiCfg)).finish();
+export function uint8ArrayToBase64(buffer: Uint8Array): string {
+  return btoa(String.fromCharCode.apply(null, Array.from(buffer)));
 }
 
-export function genConfig(uiCfg: RecordConfig): TraceConfig {
+export function genConfigProto(uiCfg: RecordConfig): Uint8Array {
   const protoCfg = new TraceConfig();
   protoCfg.durationMs = uiCfg.durationMs;
-
-  let time = protoCfg.durationMs / 1000;
-
-  if (time > MAX_TIME) {
-    time = MAX_TIME;
-  }
 
   // Auxiliary buffer for slow-rate events.
   // Set to 1/8th of the main buffer size, with reasonable limits.
@@ -105,9 +68,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
   const ftraceEvents = new Set<string>(uiCfg.ftrace ? uiCfg.ftraceEvents : []);
   const atraceCats = new Set<string>(uiCfg.atrace ? uiCfg.atraceCats : []);
   const atraceApps = new Set<string>();
-  const chromeCategories = new Set<string>();
-  uiCfg.chromeCategoriesSelected.forEach(it => chromeCategories.add(it));
-
   let procThreadAssociationPolling = false;
   let procThreadAssociationFtrace = false;
   let trackInitialOomScore = false;
@@ -120,7 +80,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     if (uiCfg.cpuLatency) {
       ftraceEvents.add('sched/sched_wakeup');
       ftraceEvents.add('sched/sched_wakeup_new');
-      ftraceEvents.add('sched/sched_waking');
       ftraceEvents.add('power/suspend_resume');
     }
   }
@@ -129,15 +88,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     ftraceEvents.add('power/cpu_frequency');
     ftraceEvents.add('power/cpu_idle');
     ftraceEvents.add('power/suspend_resume');
-  }
-
-  if (uiCfg.gpuFreq) {
-    ftraceEvents.add('power/gpu_frequency');
-  }
-
-  if (uiCfg.cpuSyscall) {
-    ftraceEvents.add('raw_syscalls/sys_enter');
-    ftraceEvents.add('raw_syscalls/sys_exit');
   }
 
   if (procThreadAssociationFtrace) {
@@ -224,34 +174,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     trackInitialOomScore = true;
   }
 
-  let heapprofd: HeapprofdConfig|undefined = undefined;
-  if (uiCfg.heapProfiling) {
-    // TODO(tneda): Check or inform user if buffer size are too small.
-    if (heapprofd === undefined) heapprofd = new HeapprofdConfig();
-    heapprofd.samplingIntervalBytes = uiCfg.hpSamplingIntervalBytes;
-    if (uiCfg.hpSharedMemoryBuffer >= 8192 &&
-        uiCfg.hpSharedMemoryBuffer % 4096 === 0) {
-      heapprofd.shmemSizeBytes = uiCfg.hpSharedMemoryBuffer;
-    }
-    if (uiCfg.hpProcesses !== '') {
-      uiCfg.hpProcesses.split('\n').forEach(value => {
-        if (isNaN(+value)) {
-          heapprofd!.processCmdline.push(value);
-        } else {
-          heapprofd!.pid.push(+value);
-        }
-      });
-    }
-    if (uiCfg.hpContinuousDumpsInterval > 0) {
-      heapprofd.continuousDumpConfig = new ContinuousDumpConfig();
-      heapprofd.continuousDumpConfig.dumpIntervalMs =
-          uiCfg.hpContinuousDumpsInterval;
-      heapprofd.continuousDumpConfig.dumpPhaseMs =
-          uiCfg.hpContinuousDumpsPhase > 0 ? uiCfg.hpContinuousDumpsPhase :
-                                             undefined;
-    }
-  }
-
   if (uiCfg.procStats || procThreadAssociationPolling || trackInitialOomScore) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
@@ -280,91 +202,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     protoCfg.dataSources.push(ds);
   }
 
-  if (uiCfg.chromeLogs) {
-    chromeCategories.add('log');
-  }
-
-  if (uiCfg.taskScheduling) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('sequence_manager');
-    chromeCategories.add('disabled-by-default-toplevel.flow');
-  }
-
-  if (uiCfg.ipcFlows) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('disabled-by-default-ipc.flow');
-    chromeCategories.add('mojom');
-  }
-
-  if (uiCfg.jsExecution) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('v8');
-  }
-
-  if (uiCfg.webContentRendering) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('blink');
-    chromeCategories.add('cc');
-    chromeCategories.add('gpu');
-  }
-
-  if (uiCfg.uiRendering) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('cc');
-    chromeCategories.add('gpu');
-    chromeCategories.add('viz');
-    chromeCategories.add('ui');
-    chromeCategories.add('views');
-  }
-
-  if (uiCfg.inputEvents) {
-    chromeCategories.add('toplevel');
-    chromeCategories.add('benchmark');
-    chromeCategories.add('evdev');
-    chromeCategories.add('input');
-    chromeCategories.add('disabled-by-default-toplevel.flow');
-  }
-
-  if (uiCfg.navigationAndLoading) {
-    chromeCategories.add('loading');
-    chromeCategories.add('net');
-    chromeCategories.add('netlog');
-    chromeCategories.add('navigation');
-    chromeCategories.add('browser');
-  }
-
-  if (chromeCategories.size !== 0) {
-    let chromeRecordMode = '';
-    if (uiCfg.mode === 'STOP_WHEN_FULL') {
-      chromeRecordMode = 'record-until-full';
-    } else {
-      chromeRecordMode = 'record-continuously';
-    }
-    const traceConfigJson = JSON.stringify({
-      record_mode: chromeRecordMode,
-      included_categories: [...chromeCategories.values()],
-    });
-
-    const traceDs = new TraceConfig.DataSource();
-    traceDs.config = new DataSourceConfig();
-    traceDs.config.name = 'org.chromium.trace_event';
-    traceDs.config.chromeConfig = new ChromeConfig();
-    traceDs.config.chromeConfig.traceConfig = traceConfigJson;
-    protoCfg.dataSources.push(traceDs);
-
-
-    const metadataDs = new TraceConfig.DataSource();
-    metadataDs.config = new DataSourceConfig();
-    metadataDs.config.name = 'org.chromium.trace_metadata';
-    metadataDs.config.chromeConfig = new ChromeConfig();
-    metadataDs.config.chromeConfig.traceConfig = traceConfigJson;
-    protoCfg.dataSources.push(metadataDs);
-  }
-
-  if (uiCfg.screenRecord) {
-    atraceCats.add('gfx');
-  }
-
   // Keep these last. The stages above can enrich them.
 
   if (sysStatsCfg !== undefined) {
@@ -372,15 +209,6 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     ds.config = new DataSourceConfig();
     ds.config.name = 'linux.sys_stats';
     ds.config.sysStatsConfig = sysStatsCfg;
-    protoCfg.dataSources.push(ds);
-  }
-
-  if (heapprofd !== undefined) {
-    const ds = new TraceConfig.DataSource();
-    ds.config = new DataSourceConfig();
-    ds.config.targetBuffer = 0;
-    ds.config.name = 'android.heapprofd';
-    ds.config.heapprofdConfig = heapprofd;
     protoCfg.dataSources.push(ds);
   }
 
@@ -413,7 +241,8 @@ export function genConfig(uiCfg: RecordConfig): TraceConfig {
     protoCfg.dataSources.push(ds);
   }
 
-  return protoCfg;
+  const buffer = TraceConfig.encode(protoCfg).finish();
+  return buffer;
 }
 
 export function toPbtxt(configBuffer: Uint8Array): string {
@@ -424,25 +253,11 @@ export function toPbtxt(configBuffer: Uint8Array): string {
   }
   // With the ahead of time compiled protos we can't seem to tell which
   // fields are enums.
-  function isEnum(value: string): boolean {
+  function looksLikeEnum(value: string): boolean {
     return value.startsWith('MEMINFO_') || value.startsWith('VMSTAT_') ||
         value.startsWith('STAT_') || value.startsWith('LID_') ||
         value.startsWith('BATTERY_COUNTER_') || value === 'DISCARD' ||
         value === 'RING_BUFFER';
-  }
-  // Since javascript doesn't have 64 bit numbers when converting protos to
-  // json the proto library encodes them as strings. This is lossy since
-  // we can't tell which strings that look like numbers are actually strings
-  // and which are actually numbers. Ideally we would reflect on the proto
-  // definition somehow but for now we just hard code keys which have this
-  // problem in the config.
-  function is64BitNumber(key: string): boolean {
-    return [
-      'maxFileSizeBytes',
-      'samplingIntervalBytes',
-      'shmemSizeBytes',
-      'pid'
-    ].includes(key);
   }
   function* message(msg: {}, indent: number): IterableIterator<string> {
     for (const [key, value] of Object.entries(msg)) {
@@ -451,11 +266,7 @@ export function toPbtxt(configBuffer: Uint8Array): string {
       for (const entry of (isRepeated ? value as Array<{}> : [value])) {
         yield ' '.repeat(indent) + `${snakeCase(key)}${isNested ? '' : ':'} `;
         if (typeof entry === 'string') {
-          if (isEnum(entry) || is64BitNumber(key)) {
-            yield entry;
-          } else {
-            yield `"${entry.replace(new RegExp('"', 'g'), '\\"')}"`;
-          }
+          yield looksLikeEnum(entry) ? entry : `"${entry}"`;
         } else if (typeof entry === 'number') {
           yield entry.toString();
         } else if (typeof entry === 'boolean') {
@@ -472,36 +283,18 @@ export function toPbtxt(configBuffer: Uint8Array): string {
   return [...message(json, 0)].join('');
 }
 
-export class RecordController extends Controller<'main'> implements Consumer {
+export class RecordController extends Controller<'main'> {
   private app: App;
   private config: RecordConfig|null = null;
-  private extensionPort: MessagePort;
-  private recordingInProgress = false;
-  private consumerPort: ConsumerPort;
-  private traceBuffer: Uint8Array[] = [];
-  private bufferUpdateInterval: ReturnType<typeof setTimeout>|undefined;
-  private adb = new AdbOverWebUsb();
 
-  // We have a different controller for each targetOS. The correct one will be
-  // created when needed, and stored here. When the key is a string, it is the
-  // serial of the target (used for android devices). When the key is a single
-  // char, it is the 'targetOS'
-  private controllerPromises = new Map<string, Promise<RpcConsumerPort>>();
-
-  constructor(args: {app: App, extensionPort: MessagePort}) {
+  constructor(args: {app: App}) {
     super('main');
     this.app = args.app;
-    this.consumerPort = ConsumerPort.create(this.rpcImpl.bind(this));
-    this.extensionPort = args.extensionPort;
   }
 
   run() {
-    if (this.app.state.recordConfig === this.config &&
-        this.app.state.recordingInProgress === this.recordingInProgress) {
-      return;
-    }
+    if (this.app.state.recordConfig === this.config) return;
     this.config = this.app.state.recordConfig;
-
     const configProto = genConfigProto(this.config);
     const configProtoText = toPbtxt(configProto);
     const commandline = `
@@ -510,185 +303,13 @@ export class RecordController extends Controller<'main'> implements Consumer {
       adb shell "perfetto -c - -o /data/misc/perfetto-traces/trace" &&
       adb pull /data/misc/perfetto-traces/trace /tmp/trace
     `;
-    const traceConfig = genConfig(this.config);
     // TODO(hjd): This should not be TrackData after we unify the stores.
     this.app.publish('TrackData', {
       id: 'config',
-      data: {commandline, pbtxt: configProtoText, traceConfig}
-    });
-
-    // If the recordingInProgress boolean state is different, it means that we
-    // have to start or stop recording a trace.
-    if (this.app.state.recordingInProgress === this.recordingInProgress) return;
-    this.recordingInProgress = this.app.state.recordingInProgress;
-
-    if (this.recordingInProgress) {
-      this.startRecordTrace(traceConfig);
-    } else {
-      this.stopRecordTrace();
-    }
-  }
-
-  startRecordTrace(traceConfig: TraceConfig) {
-    this.scheduleBufferUpdateRequests();
-    this.traceBuffer = [];
-    this.consumerPort.enableTracing({traceConfig});
-  }
-
-  stopRecordTrace() {
-    if (this.bufferUpdateInterval) clearInterval(this.bufferUpdateInterval);
-    this.consumerPort.disableTracing({});
-  }
-
-  scheduleBufferUpdateRequests() {
-    if (this.bufferUpdateInterval) clearInterval(this.bufferUpdateInterval);
-    this.bufferUpdateInterval = setInterval(() => {
-      this.consumerPort.getTraceStats({});
-    }, 200);
-  }
-
-  readBuffers() {
-    this.consumerPort.readBuffers({});
-  }
-
-  onConsumerPortResponse(data: ConsumerPortResponse) {
-    if (data === undefined) return;
-    if (isReadBuffersResponse(data)) {
-      if (!data.slices || data.slices.length === 0) return;
-      // TODO(nicomazz): handle this as intended by consumer_port.proto.
-      console.assert(data.slices.length === 1);
-      if (data.slices[0].data) this.traceBuffer.push(data.slices[0].data);
-      if (data.slices[0].lastSliceForPacket) this.onTraceComplete();
-    } else if (isEnableTracingResponse(data)) {
-      this.readBuffers();
-    } else if (isGetTraceStatsResponse(data)) {
-      const percentage = this.getBufferUsagePercentage(data);
-      if (percentage) {
-        globals.publish('BufferUsage', {percentage});
+      data: {
+        commandline,
+        pbtxt: configProtoText,
       }
-    } else {
-      console.error('Unrecognized consumer port response:', data);
-    }
-  }
-
-  onTraceComplete() {
-    this.consumerPort.freeBuffers({});
-    globals.dispatch(Actions.setRecordingStatus({status: undefined}));
-    if (globals.state.recordingCancelled) {
-      globals.dispatch(
-          Actions.setLastRecordingError({error: 'Recording cancelled.'}));
-      this.traceBuffer = [];
-      return;
-    }
-    const trace = this.generateTrace();
-    globals.dispatch(Actions.openTraceFromBuffer({buffer: trace.buffer}));
-    this.traceBuffer = [];
-  }
-
-  // TODO(nicomazz): stream each chunk into the trace processor, instead of
-  // creating a big long trace.
-  generateTrace() {
-    let traceLen = 0;
-    for (const chunk of this.traceBuffer) traceLen += chunk.length;
-    const completeTrace = new Uint8Array(traceLen);
-    let written = 0;
-    for (const chunk of this.traceBuffer) {
-      completeTrace.set(chunk, written);
-      written += chunk.length;
-    }
-    return completeTrace;
-  }
-
-  getBufferUsagePercentage(data: GetTraceStatsResponse): number {
-    if (!data.traceStats || !data.traceStats.bufferStats) return 0.0;
-    let maximumUsage = 0;
-    for (const buffer of data.traceStats.bufferStats) {
-      const used = buffer.bytesWritten as number;
-      const total = buffer.bufferSize as number;
-      maximumUsage = Math.max(maximumUsage, used / total);
-    }
-    return maximumUsage;
-  }
-
-  onError(message: string) {
-    console.error('Error in record controller: ', message);
-    globals.dispatch(
-        Actions.setLastRecordingError({error: message.substr(0, 150)}));
-    globals.dispatch(Actions.stopRecording({}));
-  }
-
-  onStatus(message: string) {
-    globals.dispatch(Actions.setRecordingStatus({status: message}));
-  }
-
-  // Depending on the recording target, different implementation of the
-  // consumer_port will be used.
-  // - Chrome target: This forwards the messages that have to be sent
-  // to the extension to the frontend. This is necessary because this
-  // controller is running in a separate worker, that can't directly send
-  // messages to the extension.
-  // - Android device target: WebUSB is used to communicate using the adb
-  // protocol. Actually, there is no full consumer_port implementation, but
-  // only the support to start tracing and fetch the file.
-  async getTargetController(target: TargetOs, device?: AdbRecordingTarget):
-      Promise<RpcConsumerPort> {
-    const identifier = this.getTargetIdentifier(target, device);
-
-    // The reason why caching the target 'record controller' Promise is that
-    // multiple rcp calls can happen while we are trying to understand if an
-    // android device has a socket connection available or not.
-    const precedentPromise = this.controllerPromises.get(identifier);
-    if (precedentPromise) return precedentPromise;
-
-    const controllerPromise =
-        new Promise<RpcConsumerPort>(async (resolve, _) => {
-          let controller: RpcConsumerPort|undefined = undefined;
-          if (isChromeTarget(target)) {
-            controller =
-                new ChromeExtensionConsumerPort(this.extensionPort, this);
-          } else if (isAndroidTarget(target)) {
-            if (!device) throw Error(`No android device connected`);
-
-            this.onStatus(`Please allow USB debugging on device.
-                 If you press cancel, reload the page.`);
-            const socketAccess = await this.hasSocketAccess(device);
-
-            controller = socketAccess ?
-                new AdbSocketConsumerPort(this.adb, this) :
-                new AdbConsumerPort(this.adb, this);
-          }
-
-          if (!controller) throw Error(`Unknown target: ${target}`);
-          resolve(controller);
-        });
-
-    this.controllerPromises.set(identifier, controllerPromise);
-    return controllerPromise;
-  }
-
-  private getTargetIdentifier(target: TargetOs, device?: AdbRecordingTarget):
-      string {
-    return device ? device.serial : target;
-  }
-
-  private async hasSocketAccess(target: AdbRecordingTarget) {
-    const devices = await navigator.usb.getDevices();
-    const device = devices.find(d => d.serialNumber === target.serial);
-    console.assert(device);
-    if (!device) return Promise.resolve(false);
-    return AdbSocketConsumerPort.hasSocketAccess(device, this.adb);
-  }
-
-  private async rpcImpl(
-      method: RPCImplMethod, requestData: Uint8Array,
-      _callback: RPCImplCallback) {
-    try {
-      const state = this.app.state;
-      (await this.getTargetController(
-           state.recordConfig.targetOS, state.androidDeviceConnected))
-          .handleCommand(method.name, requestData);
-    } catch (e) {
-      console.error(`error invoking ${method}: ${e.message}`);
-    }
+    });
   }
 }

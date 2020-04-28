@@ -18,71 +18,58 @@
 #define SRC_TRACE_PROCESSOR_TRACE_PROCESSOR_IMPL_H_
 
 #include <sqlite3.h>
-
 #include <atomic>
 #include <functional>
-#include <string>
+#include <memory>
 #include <vector>
 
-#include "perfetto/ext/base/string_view.h"
+#include "perfetto/base/string_view.h"
 #include "perfetto/trace_processor/basic_types.h"
-#include "perfetto/trace_processor/status.h"
 #include "perfetto/trace_processor/trace_processor.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
-#include "src/trace_processor/trace_processor_storage_impl.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
-#include "src/trace_processor/metrics/descriptors.h"
-#include "src/trace_processor/metrics/metrics.h"
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
+#include "src/trace_processor/scoped_db.h"
+#include "src/trace_processor/trace_processor_context.h"
 
 namespace perfetto {
+
 namespace trace_processor {
+
+enum TraceType {
+  kUnknownTraceType,
+  kProtoTraceType,
+  kProtoWithTrackEventsTraceType,
+  kJsonTraceType,
+  kFuchsiaTraceType,
+};
+
+TraceType GuessTraceType(const uint8_t* data, size_t size);
 
 // Coordinates the loading of traces from an arbitrary source and allows
 // execution of SQL queries on the events in these traces.
-class TraceProcessorImpl : public TraceProcessor,
-                           public TraceProcessorStorageImpl {
+class TraceProcessorImpl : public TraceProcessor {
  public:
   explicit TraceProcessorImpl(const Config&);
 
   ~TraceProcessorImpl() override;
 
-  // TraceProcessorStorage implementation:
-  util::Status Parse(std::unique_ptr<uint8_t[]>, size_t) override;
+  bool Parse(std::unique_ptr<uint8_t[]>, size_t) override;
+
   void NotifyEndOfFile() override;
 
-  // TraceProcessor implementation:
   Iterator ExecuteQuery(const std::string& sql,
                         int64_t time_queued = 0) override;
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
-  util::Status RegisterMetric(const std::string& path,
-                              const std::string& sql) override;
-
-  util::Status ExtendMetricsProto(const uint8_t* data, size_t size) override;
-
-  util::Status ComputeMetric(const std::vector<std::string>& metric_names,
-                             std::vector<uint8_t>* metrics) override;
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
+  int ComputeMetric(const std::vector<std::string>& metric_names,
+                    std::vector<uint8_t>* metrics) override;
 
   void InterruptQuery() override;
-
-  size_t RestoreInitialTables() override;
-
-  std::string GetCurrentTraceName() override;
-  void SetCurrentTraceName(const std::string&) override;
 
  private:
   // Needed for iterators to be able to delete themselves from the vector.
   friend class IteratorImpl;
 
-  ScopedDb db_;
-
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
-  metrics::DescriptorPool pool_;
-  std::vector<metrics::SqlMetricFile> sql_metrics_;
-#endif  // PERFETTO_BUILDFLAG(PERFETTO_TP_METRICS)
+  ScopedDb db_;  // Keep first.
+  TraceProcessorContext context_;
+  bool unrecoverable_parse_error_ = false;
 
   std::vector<IteratorImpl*> iterators_;
 
@@ -90,13 +77,7 @@ class TraceProcessorImpl : public TraceProcessor,
   // to prevent single-flow compiler optimizations in ExecuteQuery().
   std::atomic<bool> query_interrupted_{false};
 
-  // Keeps track of the tables created by the ingestion process. This is used
-  // by RestoreInitialTables() to delete all the tables/view that have been
-  // created after that point.
-  std::vector<std::string> initial_tables_;
-
-  std::string current_trace_name_;
-  uint64_t bytes_parsed_ = 0;
+  const Config cfg_;
 };
 
 // The pointer implementation of TraceProcessor::Iterator.
@@ -106,7 +87,7 @@ class TraceProcessor::IteratorImpl {
                sqlite3* db,
                ScopedStmt,
                uint32_t column_count,
-               util::Status,
+               base::Optional<std::string> error,
                uint32_t sql_stats_row);
   ~IteratorImpl();
 
@@ -125,12 +106,12 @@ class TraceProcessor::IteratorImpl {
       called_next_ = true;
     }
 
-    if (!status_.ok())
+    if (PERFETTO_UNLIKELY(error_.has_value()))
       return false;
 
     int ret = sqlite3_step(*stmt_);
     if (PERFETTO_UNLIKELY(ret != SQLITE_ROW && ret != SQLITE_DONE)) {
-      status_ = util::ErrStatus("%s", sqlite3_errmsg(db_));
+      error_ = base::Optional<std::string>(sqlite3_errmsg(db_));
       return false;
     }
     return ret == SQLITE_ROW;
@@ -154,12 +135,6 @@ class TraceProcessor::IteratorImpl {
         value.type = SqlValue::kDouble;
         value.double_value = sqlite3_column_double(*stmt_, column);
         break;
-      case SQLITE_BLOB:
-        value.type = SqlValue::kBytes;
-        value.bytes_value = sqlite3_column_blob(*stmt_, column);
-        value.bytes_count =
-            static_cast<size_t>(sqlite3_column_bytes(*stmt_, column));
-        break;
       case SQLITE_NULL:
         value.type = SqlValue::kNull;
         break;
@@ -173,7 +148,7 @@ class TraceProcessor::IteratorImpl {
 
   uint32_t ColumnCount() { return column_count_; }
 
-  util::Status Status() { return status_; }
+  base::Optional<std::string> GetLastError() { return error_; }
 
   // Methods called by TraceProcessorImpl.
   void Reset();
@@ -185,7 +160,7 @@ class TraceProcessor::IteratorImpl {
   sqlite3* db_ = nullptr;
   ScopedStmt stmt_;
   uint32_t column_count_ = 0;
-  util::Status status_;
+  base::Optional<std::string> error_;
 
   uint32_t sql_stats_row_ = 0;
   bool called_next_ = false;

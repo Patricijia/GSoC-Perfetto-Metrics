@@ -14,7 +14,8 @@
 # limitations under the License.
 
 from os import sys, path
-sys.path.append(path.dirname(path.dirname(path.abspath(__file__))))
+
+sys.path.append(path.dirname(path.abspath(__file__)))
 import synth_common
 
 file_member = 0
@@ -59,5 +60,6 @@ trace.add_rss_stat(129, 3, file_member, 90)
 trace.add_oom_score_update(130, 200, 3)
 trace.add_rss_stat(130, 2, file_member, 0)
 trace.add_rss_stat(130, 2, anon_member, 0)
+
 
 print(trace.trace.SerializeToString())
