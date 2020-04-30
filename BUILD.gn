@@ -114,7 +114,7 @@ if (enable_perfetto_fuzzers) {
 # compile-time checks for the CI.
 if (perfetto_build_standalone) {
   all_targets += [
-    "src/tracing:consumer_api_test",
+    "src/tracing/consumer_api_deprecated:consumer_api_test",
     "test/configs",
 
     # For syntax-checking the proto.
@@ -132,6 +132,9 @@ if (perfetto_build_standalone) {
 
     # Used in the when updating the ftrace protos
     "protos/perfetto/trace/ftrace:descriptor",
+
+    # Checks that the "fake" backend implementations build.
+    "src/tracing:client_api_no_backends_compile_test",
   ]
 }
 
@@ -194,13 +197,13 @@ if (enable_perfetto_platform_services) {
       "gn:default_deps",
       "src/traced/probes",
       "src/traced/service",
-      "src/tracing:consumer_api_deprecated",
+      "src/tracing/consumer_api_deprecated",
     ]
   }
 }
 
 if (!build_with_chromium) {
-  # Client library target.
+  # Client library target exposed to the Android tree.
   # Still in experimental stage and not API stable yet.
   # See "libperfetto_client_example" (in Android.bp.extras) for an example
   # on how to use the Perfetto Client API from the android tree.
@@ -208,7 +211,6 @@ if (!build_with_chromium) {
     complete_static_lib = true
     public_deps = [
       "gn:default_deps",
-      "src/tracing",
       "src/tracing:client_api",
       "src/tracing:platform_posix",
     ]
@@ -227,7 +229,11 @@ if (build_with_chromium) {
     deps = [
       "src/trace_processor:export_json",
       "src/trace_processor:storage_minimal",
-      "src/tracing",
+      "src/tracing:client_api",
+      "src/tracing/core",
+
+      # TODO(eseckler): Create a platform for chrome and hook it up somehow.
+      "src/tracing:platform_fake",
     ]
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
@@ -235,6 +241,7 @@ if (build_with_chromium) {
       "include/perfetto/ext/trace_processor:export_json",
       "include/perfetto/ext/tracing/core",
       "include/perfetto/trace_processor:storage",
+      "include/perfetto/tracing",
       "protos/perfetto/common:zero",
       "protos/perfetto/trace:zero",
       "protos/perfetto/trace/chrome:zero",
@@ -243,7 +250,10 @@ if (build_with_chromium) {
       "protos/perfetto/trace/track_event:zero",
     ]
     if (enable_perfetto_ipc) {
-      deps += [ "src/tracing:ipc" ]
+      deps += [
+        "src/tracing/ipc/producer",
+        "src/tracing/ipc/service",
+      ]
       public_deps += [ "include/perfetto/ext/tracing/ipc:ipc" ]
     }
   }

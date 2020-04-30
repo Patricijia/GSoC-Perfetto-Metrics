@@ -23,28 +23,33 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/dynamic/describe_slice_generator.h"
+#include "src/trace_processor/dynamic/experimental_counter_dur_generator.h"
+#include "src/trace_processor/dynamic/experimental_flamegraph_generator.h"
+#include "src/trace_processor/dynamic/experimental_slice_layout_generator.h"
+#include "src/trace_processor/export_json.h"
+#include "src/trace_processor/importers/additional_modules.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
-#include "src/trace_processor/metadata_tracker.h"
-#include "src/trace_processor/register_additional_modules.h"
-#include "src/trace_processor/sched_slice_table.h"
-#include "src/trace_processor/span_join_operator_table.h"
-#include "src/trace_processor/sql_stats_table.h"
-#include "src/trace_processor/sqlite/db_sqlite_table.h"
+#include "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.h"
+#include "src/trace_processor/importers/fuchsia/fuchsia_trace_tokenizer.h"
+#include "src/trace_processor/importers/gzip/gzip_trace_parser.h"
+#include "src/trace_processor/importers/json/json_trace_parser.h"
+#include "src/trace_processor/importers/json/json_trace_tokenizer.h"
+#include "src/trace_processor/importers/proto/metadata_tracker.h"
+#include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
+#include "src/trace_processor/sqlite/span_join_operator_table.h"
+#include "src/trace_processor/sqlite/sql_stats_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
+#include "src/trace_processor/sqlite/sqlite_raw_table.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
-#include "src/trace_processor/sqlite_experimental_flamegraph_table.h"
-#include "src/trace_processor/sqlite_raw_table.h"
-#include "src/trace_processor/stats_table.h"
+#include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/sqlite/stats_table.h"
+#include "src/trace_processor/sqlite/window_operator_table.h"
 #include "src/trace_processor/types/variadic.h"
-#include "src/trace_processor/window_operator_table.h"
 
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql_metrics.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
-#include "src/trace_processor/export_json.h"
-#endif
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <cxxabi.h>
@@ -185,6 +190,20 @@ void CreateBuiltinViews(sqlite3* db) {
                "0.0 as value "
                "FROM instant;",
                0, 0, &error);
+
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+
+  sqlite3_exec(db,
+               "CREATE VIEW sched AS "
+               "SELECT "
+               "*, "
+               "ts + dur as ts_end "
+               "FROM sched_slice;",
+               0, 0, &error);
+
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
@@ -226,7 +245,6 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 }
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
 void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
   TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   FILE* output;
@@ -262,7 +280,6 @@ void CreateJsonExportFunction(TraceStorage* ts, sqlite3* db) {
     PERFETTO_ELOG("Error initializing EXPORT_JSON");
   }
 }
-#endif
 
 void Hash(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
   base::Hash hash;
@@ -312,6 +329,54 @@ void Demangle(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
 #endif
 }
 
+void LastNonNullStep(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  if (argc != 1) {
+    sqlite3_result_error(
+        ctx, "Unsupported number of args passed to LAST_NON_NULL", -1);
+    return;
+  }
+  sqlite3_value* value = argv[0];
+  if (sqlite3_value_type(value) == SQLITE_NULL) {
+    return;
+  }
+  sqlite3_value** ptr = reinterpret_cast<sqlite3_value**>(
+      sqlite3_aggregate_context(ctx, sizeof(sqlite3_value*)));
+  if (ptr) {
+    if (*ptr != nullptr) {
+      sqlite3_value_free(*ptr);
+    }
+    *ptr = sqlite3_value_dup(value);
+  }
+}
+
+void LastNonNullInverse(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  // Do nothing.
+  base::ignore_result(ctx);
+  base::ignore_result(argc);
+  base::ignore_result(argv);
+}
+
+void LastNonNullValue(sqlite3_context* ctx) {
+  sqlite3_value** ptr =
+      reinterpret_cast<sqlite3_value**>(sqlite3_aggregate_context(ctx, 0));
+  if (!ptr || !*ptr) {
+    sqlite3_result_null(ctx);
+  } else {
+    sqlite3_result_value(ctx, *ptr);
+  }
+}
+
+void LastNonNullFinal(sqlite3_context* ctx) {
+  sqlite3_value** ptr =
+      reinterpret_cast<sqlite3_value**>(sqlite3_aggregate_context(ctx, 0));
+  if (!ptr || !*ptr) {
+    sqlite3_result_null(ctx);
+  } else {
+    sqlite3_result_value(ctx, *ptr);
+    sqlite3_value_free(*ptr);
+  }
+}
+
 void CreateHashFunction(sqlite3* db) {
   auto ret = sqlite3_create_function_v2(
       db, "HASH", -1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr, &Hash,
@@ -327,6 +392,77 @@ void CreateDemangledNameFunction(sqlite3* db) {
       nullptr, nullptr, nullptr);
   if (ret != SQLITE_OK) {
     PERFETTO_ELOG("Error initializing DEMANGLE: %s", sqlite3_errmsg(db));
+  }
+}
+
+void CreateLastNonNullFunction(sqlite3* db) {
+  auto ret = sqlite3_create_window_function(
+      db, "LAST_NON_NULL", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
+      &LastNonNullStep, &LastNonNullFinal, &LastNonNullValue,
+      &LastNonNullInverse, nullptr);
+  if (ret) {
+    PERFETTO_ELOG("Error initializing LAST_NON_NULL");
+  }
+}
+
+void ExtractArg(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  if (argc != 2) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 2 args required", -1);
+    return;
+  }
+  if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 1st argument should be arg set id",
+                         -1);
+    return;
+  }
+  if (sqlite3_value_type(argv[1]) != SQLITE_TEXT) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 2nd argument should be key", -1);
+    return;
+  }
+
+  TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
+  uint32_t arg_set_id = static_cast<uint32_t>(sqlite3_value_int(argv[0]));
+  const char* key = reinterpret_cast<const char*>(sqlite3_value_text(argv[1]));
+
+  const auto& args = storage->arg_table();
+  RowMap filtered = args.FilterToRowMap(
+      {args.arg_set_id().eq(arg_set_id), args.key().eq(key)});
+  if (filtered.size() == 0) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+  if (filtered.size() > 1) {
+    sqlite3_result_error(
+        ctx, "EXTRACT_ARG: received multiple args matching arg set id and key",
+        -1);
+  }
+
+  uint32_t idx = filtered.Get(0);
+  Variadic::Type type = *storage->GetVariadicTypeForId(args.value_type()[idx]);
+  switch (type) {
+    case Variadic::kBool:
+    case Variadic::kInt:
+    case Variadic::kUint:
+    case Variadic::kPointer:
+      sqlite3_result_int64(ctx, *args.int_value()[idx]);
+      break;
+    case Variadic::kJson:
+    case Variadic::kString:
+      sqlite3_result_text(ctx, args.string_value().GetString(idx).data(), -1,
+                          nullptr);
+      break;
+    case Variadic::kReal:
+      sqlite3_result_double(ctx, *args.real_value()[idx]);
+      break;
+  }
+}
+
+void CreateExtractArgFunction(TraceStorage* ts, sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(db, "EXTRACT_ARG", 2,
+                                        SQLITE_UTF8 | SQLITE_DETERMINISTIC, ts,
+                                        &ExtractArg, nullptr, nullptr, nullptr);
+  if (ret != SQLITE_OK) {
+    PERFETTO_FATAL("Error initializing EXTRACT_ARG: %s", sqlite3_errmsg(db));
   }
 }
 
@@ -360,30 +496,55 @@ void SetupMetrics(TraceProcessor* tp,
       PERFETTO_ELOG("Error initializing RepeatedField");
   }
 }
+
+void EnsureSqliteInitialized() {
+  // sqlite3_initialize isn't actually thread-safe despite being documented
+  // as such; we need to make sure multiple TraceProcessorImpl instances don't
+  // call it concurrently and only gets called once per process, instead.
+  static bool init_once = [] { return sqlite3_initialize() == SQLITE_OK; }();
+  PERFETTO_CHECK(init_once);
+}
+
 }  // namespace
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
     : TraceProcessorStorageImpl(cfg) {
+  context_.fuchsia_trace_tokenizer.reset(new FuchsiaTraceTokenizer(&context_));
+  context_.fuchsia_trace_parser.reset(new FuchsiaTraceParser(&context_));
+
+  context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
+
+  if (gzip::IsGzipSupported())
+    context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
+
+  if (json::IsJsonSupported()) {
+    context_.json_trace_tokenizer.reset(new JsonTraceTokenizer(&context_));
+    context_.json_trace_parser.reset(new JsonTraceParser(&context_));
+  }
+
   RegisterAdditionalModules(&context_);
+
   sqlite3* db = nullptr;
-  PERFETTO_CHECK(sqlite3_initialize() == SQLITE_OK);
+  EnsureSqliteInitialized();
   PERFETTO_CHECK(sqlite3_open(":memory:", &db) == SQLITE_OK);
   InitializeSqlite(db);
   CreateBuiltinTables(db);
   CreateBuiltinViews(db);
   db_.reset(std::move(db));
 
-#if PERFETTO_BUILDFLAG(PERFETTO_TP_JSON)
-  CreateJsonExportFunction(this->context_.storage.get(), db);
-#endif
+  CreateJsonExportFunction(context_.storage.get(), db);
   CreateHashFunction(db);
   CreateDemangledNameFunction(db);
+  CreateLastNonNullFunction(db);
+  CreateExtractArgFunction(context_.storage.get(), db);
 
   SetupMetrics(this, *db_, &sql_metrics_);
 
+  // Setup the query cache.
+  query_cache_.reset(new QueryCache());
+
   const TraceStorage* storage = context_.storage.get();
 
-  SchedSliceTable::RegisterTable(*db_, storage);
   SqlStatsTable::RegisterTable(*db_, storage);
   StatsTable::RegisterTable(*db_, storage);
 
@@ -392,87 +553,67 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   WindowOperatorTable::RegisterTable(*db_, storage);
 
   // New style tables but with some custom logic.
-  SqliteExperimentalFlamegraphTable::RegisterTable(*db_, &context_);
-  SqliteRawTable::RegisterTable(*db_, context_.storage.get());
+  SqliteRawTable::RegisterTable(*db_, query_cache_.get(),
+                                context_.storage.get());
+
+  // Tables dynamically generated at query time.
+  RegisterDynamicTable(std::unique_ptr<ExperimentalFlamegraphGenerator>(
+      new ExperimentalFlamegraphGenerator(&context_)));
+  RegisterDynamicTable(std::unique_ptr<ExperimentalCounterDurGenerator>(
+      new ExperimentalCounterDurGenerator(storage->counter_table())));
+  RegisterDynamicTable(std::unique_ptr<DescribeSliceGenerator>(
+      new DescribeSliceGenerator(&context_)));
+  RegisterDynamicTable(std::unique_ptr<ExperimentalSliceLayoutGenerator>(
+      new ExperimentalSliceLayoutGenerator(
+          context_.storage.get()->mutable_string_pool(),
+          &storage->slice_table())));
 
   // New style db-backed tables.
-  DbSqliteTable::RegisterTable(*db_, &storage->arg_table(),
-                               storage->arg_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->thread_table(),
-                               storage->thread_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->process_table(),
-                               storage->process_table().table_name());
+  RegisterDbTable(storage->arg_table());
+  RegisterDbTable(storage->thread_table());
+  RegisterDbTable(storage->process_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->slice_table(),
-                               storage->slice_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->instant_table(),
-                               storage->instant_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->gpu_slice_table(),
-                               storage->gpu_slice_table().table_name());
+  RegisterDbTable(storage->slice_table());
+  RegisterDbTable(storage->sched_slice_table());
+  RegisterDbTable(storage->instant_table());
+  RegisterDbTable(storage->gpu_slice_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->track_table(),
-                               storage->track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->thread_track_table(),
-                               storage->thread_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->process_track_table(),
-                               storage->process_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->gpu_track_table(),
-                               storage->gpu_track_table().table_name());
+  RegisterDbTable(storage->track_table());
+  RegisterDbTable(storage->thread_track_table());
+  RegisterDbTable(storage->process_track_table());
+  RegisterDbTable(storage->gpu_track_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->counter_table(),
-                               storage->counter_table().table_name());
+  RegisterDbTable(storage->counter_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->counter_track_table(),
-                               storage->counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->process_counter_track_table(),
-      storage->process_counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->thread_counter_track_table(),
-      storage->thread_counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->cpu_counter_track_table(),
-                               storage->cpu_counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->irq_counter_track_table(),
-                               storage->irq_counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->softirq_counter_track_table(),
-      storage->softirq_counter_track_table().table_name());
-  DbSqliteTable::RegisterTable(*db_, &storage->gpu_counter_track_table(),
-                               storage->gpu_counter_track_table().table_name());
+  RegisterDbTable(storage->counter_track_table());
+  RegisterDbTable(storage->process_counter_track_table());
+  RegisterDbTable(storage->thread_counter_track_table());
+  RegisterDbTable(storage->cpu_counter_track_table());
+  RegisterDbTable(storage->irq_counter_track_table());
+  RegisterDbTable(storage->softirq_counter_track_table());
+  RegisterDbTable(storage->gpu_counter_track_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->heap_graph_object_table(),
-                               storage->heap_graph_object_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->heap_graph_reference_table(),
-      storage->heap_graph_reference_table().table_name());
+  RegisterDbTable(storage->heap_graph_object_table());
+  RegisterDbTable(storage->heap_graph_reference_table());
+  RegisterDbTable(storage->heap_graph_class_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->symbol_table(),
-                               storage->symbol_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->heap_profile_allocation_table(),
-      storage->heap_profile_allocation_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->cpu_profile_stack_sample_table(),
-      storage->cpu_profile_stack_sample_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->stack_profile_callsite_table(),
-      storage->stack_profile_callsite_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->stack_profile_mapping_table(),
-      storage->stack_profile_mapping_table().table_name());
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->stack_profile_frame_table(),
-      storage->stack_profile_frame_table().table_name());
+  RegisterDbTable(storage->symbol_table());
+  RegisterDbTable(storage->heap_profile_allocation_table());
+  RegisterDbTable(storage->cpu_profile_stack_sample_table());
+  RegisterDbTable(storage->stack_profile_callsite_table());
+  RegisterDbTable(storage->stack_profile_mapping_table());
+  RegisterDbTable(storage->stack_profile_frame_table());
+  RegisterDbTable(storage->package_list_table());
+  RegisterDbTable(storage->profiler_smaps_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->android_log_table(),
-                               storage->android_log_table().table_name());
+  RegisterDbTable(storage->android_log_table());
 
-  DbSqliteTable::RegisterTable(
-      *db_, &storage->vulkan_memory_allocations_table(),
-      storage->vulkan_memory_allocations_table().table_name());
+  RegisterDbTable(storage->vulkan_memory_allocations_table());
 
-  DbSqliteTable::RegisterTable(*db_, &storage->metadata_table(),
-                               storage->metadata_table().table_name());
+  RegisterDbTable(storage->graphics_frame_slice_table());
+  RegisterDbTable(storage->graphics_frame_stats_table());
+
+  RegisterDbTable(storage->metadata_table());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() {

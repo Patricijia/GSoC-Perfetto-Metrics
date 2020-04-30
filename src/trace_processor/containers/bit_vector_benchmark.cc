@@ -143,6 +143,9 @@ static void BM_BitVectorIndexOfNthSet(benchmark::State& state) {
   static constexpr uint32_t kPoolSize = 1024 * 1024;
   std::vector<uint32_t> row_pool(kPoolSize);
   uint32_t set_bit_count = bv.GetNumBitsSet();
+  if (set_bit_count == 0)
+    return;
+
   for (uint32_t i = 0; i < kPoolSize; ++i) {
     row_pool[i] = rnd_engine() % set_bit_count;
   }
@@ -207,6 +210,28 @@ static void BM_BitVectorResize(benchmark::State& state) {
   }
 }
 BENCHMARK(BM_BitVectorResize);
+
+static void BM_BitVectorRangeFixedSize(benchmark::State& state) {
+  static constexpr uint32_t kRandomSeed = 42;
+  std::minstd_rand0 rnd_engine(kRandomSeed);
+
+  uint32_t size = static_cast<uint32_t>(state.range(0));
+  uint32_t set_percentage = static_cast<uint32_t>(state.range(1));
+
+  std::vector<uint32_t> resize_fill_pool(size);
+  for (uint32_t i = 0; i < size; ++i) {
+    resize_fill_pool[i] = rnd_engine() % 100 < set_percentage ? 90 : 100;
+  }
+
+  for (auto _ : state) {
+    auto filler = [&resize_fill_pool](uint32_t i) PERFETTO_ALWAYS_INLINE {
+      return resize_fill_pool[i] < 95;
+    };
+    BitVector bv = BitVector::Range(0, size, filler);
+    benchmark::ClobberMemory();
+  }
+}
+BENCHMARK(BM_BitVectorRangeFixedSize)->Apply(BitVectorArgs);
 
 static void BM_BitVectorUpdateSetBits(benchmark::State& state) {
   static constexpr uint32_t kRandomSeed = 42;

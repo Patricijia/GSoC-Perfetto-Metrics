@@ -48,6 +48,9 @@ export type EngineMode = 'WASM'|'HTTP_RPC';
 
 export type NewEngineMode = 'USE_HTTP_RPC_IF_AVAILABLE'|'FORCE_BUILTIN_WASM';
 
+export type HeapProfileFlamegraphViewingOption =
+    'SPACE'|'ALLOC_SPACE'|'OBJECTS'|'ALLOC_OBJECTS';
+
 export interface CallsiteInfo {
   id: number;
   parentId: number;
@@ -56,6 +59,7 @@ export interface CallsiteInfo {
   totalSize: number;
   selfSize: number;
   mapping: string;
+  merged: boolean;
 }
 
 export interface TraceFileSource {
@@ -134,11 +138,20 @@ export interface Status {
 }
 
 export interface Note {
+  noteType: 'DEFAULT'|'MOVIE';
   id: string;
   timestamp: number;
   color: string;
   text: string;
-  isMovie: boolean;
+}
+
+export interface AreaNote {
+  noteType: 'AREA';
+  id: string;
+  timestamp: number;
+  area: Area;
+  color: string;
+  text: string;
 }
 
 export interface NoteSelection {
@@ -163,6 +176,7 @@ export interface HeapProfileSelection {
   id: number;
   upid: number;
   ts: number;
+  type: string;
 }
 
 export interface HeapProfileFlamegraph {
@@ -170,8 +184,10 @@ export interface HeapProfileFlamegraph {
   id: number;
   upid: number;
   ts: number;
+  type: string;
+  viewingOption: HeapProfileFlamegraphViewingOption;
+  focusRegex: string;
   expandedCallsite?: CallsiteInfo;
-  viewingOption?: string;
 }
 
 export interface ChromeSliceSelection {
@@ -206,6 +222,16 @@ export interface AdbRecordingTarget extends RecordingTarget {
   serial: string;
 }
 
+export interface Sorting {
+  column: string;
+  direction: 'DESC'|'ASC';
+}
+
+export interface AggregationState {
+  id: string;
+  sorting?: Sorting;
+}
+
 export interface State {
   // tslint:disable-next-line:no-any
   [key: string]: any;
@@ -226,12 +252,13 @@ export interface State {
   traceTime: TraceTime;
   trackGroups: ObjectById<TrackGroupState>;
   tracks: ObjectById<TrackState>;
+  aggregatePreferences: ObjectById<AggregationState>;
   visibleTracks: string[];
   scrollingTracks: string[];
   pinnedTracks: string[];
   queries: ObjectById<QueryConfig>;
   permalink: PermalinkConfig;
-  notes: ObjectById<Note>;
+  notes: ObjectById<Note|AreaNote>;
   status: Status;
   currentSelection: Selection|null;
   currentHeapProfileFlamegraph: HeapProfileFlamegraph|null;
@@ -348,6 +375,11 @@ export interface RecordConfig {
   hpContinuousDumpsInterval: number;
   hpSharedMemoryBuffer: number;
 
+  javaHeapDump: boolean;
+  jpProcesses: string;
+  jpContinuousDumpsPhase: number;
+  jpContinuousDumpsInterval: number;
+
   procStats: boolean;
   procStatsPeriodMs: number;
 
@@ -405,6 +437,11 @@ export function createEmptyRecordConfig(): RecordConfig {
     hpContinuousDumpsPhase: 0,
     hpContinuousDumpsInterval: 0,
     hpSharedMemoryBuffer: 8 * 1048576,
+
+    javaHeapDump: false,
+    jpProcesses: '',
+    jpContinuousDumpsPhase: 0,
+    jpContinuousDumpsInterval: 0,
 
     memLmk: false,
     procStats: false,
@@ -640,6 +677,7 @@ export function createEmptyState(): State {
     engines: {},
     traceTime: {...defaultTraceTime},
     tracks: {},
+    aggregatePreferences: {},
     trackGroups: {},
     visibleTracks: [],
     pinnedTracks: [],
@@ -665,7 +703,7 @@ export function createEmptyState(): State {
       },
       selectedArea: {
         lastUpdate: 0,
-      },
+      }
     },
 
     logsPagination: {

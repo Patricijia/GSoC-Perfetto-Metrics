@@ -1,13 +1,30 @@
 android_cpu {
   process_info {
     name: "Process1"
+    metrics {
+      mcycles: 2
+      runtime_ns: 3000000
+      min_freq_khz: 500000
+      max_freq_khz: 1400000
+      avg_freq_khz: 800000
+    }
+    core_type {
+      type: "little"
+      metrics {
+        mcycles: 2
+        runtime_ns: 3000000
+        min_freq_khz: 500000
+        max_freq_khz: 1400000
+        avg_freq_khz: 800000
+      }
+    }
     threads {
       name: "Process1"
       core {
         id: 0
         metrics {
           mcycles: 1
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 500000
           max_freq_khz: 500000
           avg_freq_khz: 500000
@@ -15,7 +32,7 @@ android_cpu {
       }
       metrics {
         mcycles: 1
-        runtime_ns: 2
+        runtime_ns: 2000000
         min_freq_khz: 500000
         max_freq_khz: 500000
         avg_freq_khz: 500000
@@ -24,7 +41,7 @@ android_cpu {
         type: "little"
         metrics {
           mcycles: 1
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 500000
           max_freq_khz: 500000
           avg_freq_khz: 500000
@@ -37,7 +54,7 @@ android_cpu {
         id: 0
         metrics {
           mcycles: 1
-          runtime_ns: 1
+          runtime_ns: 1000000
           min_freq_khz: 1400000
           max_freq_khz: 1400000
           avg_freq_khz: 1400000
@@ -45,7 +62,7 @@ android_cpu {
       }
       metrics {
         mcycles: 1
-        runtime_ns: 1
+        runtime_ns: 1000000
         min_freq_khz: 1400000
         max_freq_khz: 1400000
         avg_freq_khz: 1400000
@@ -54,30 +71,60 @@ android_cpu {
         type: "little"
         metrics {
           mcycles: 1
-          runtime_ns: 1
+          runtime_ns: 1000000
           min_freq_khz: 1400000
           max_freq_khz: 1400000
           avg_freq_khz: 1400000
         }
       }
     }
-    metrics {
-      mcycles: 2
-      runtime_ns: 3
-      min_freq_khz: 500000
-      max_freq_khz: 1400000
-      avg_freq_khz: 800000
+    core {
+      id: 0
+      metrics {
+        mcycles: 2
+        runtime_ns: 3000000
+        min_freq_khz: 500000
+        max_freq_khz: 1400000
+        avg_freq_khz: 800000
+      }
     }
   }
   process_info {
     name: "Process2"
+    metrics {
+      mcycles: 21
+      runtime_ns: 7000000
+      min_freq_khz: 2000000
+      max_freq_khz: 8000000
+      avg_freq_khz: 3000000
+    }
+    core_type {
+      type: "big"
+      metrics {
+        mcycles: 16
+        runtime_ns: 5000000
+        min_freq_khz: 2000000
+        max_freq_khz: 8000000
+        avg_freq_khz: 3200000
+      }
+    }
+    core_type {
+      type: "little"
+      metrics {
+        mcycles: 5
+        runtime_ns: 2000000
+        min_freq_khz: 2500000
+        max_freq_khz: 2500000
+        avg_freq_khz: 2500000
+      }
+    }
     threads {
       name: "p2-t2"
       core {
         id: 6
         metrics {
           mcycles: 4
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 2000000
           max_freq_khz: 2000000
           avg_freq_khz: 2000000
@@ -85,7 +132,7 @@ android_cpu {
       }
       metrics {
         mcycles: 4
-        runtime_ns: 2
+        runtime_ns: 2000000
         min_freq_khz: 2000000
         max_freq_khz: 2000000
         avg_freq_khz: 2000000
@@ -94,7 +141,7 @@ android_cpu {
         type: "big"
         metrics {
           mcycles: 4
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 2000000
           max_freq_khz: 2000000
           avg_freq_khz: 2000000
@@ -107,7 +154,7 @@ android_cpu {
         id: 6
         metrics {
           mcycles: 12
-          runtime_ns: 3
+          runtime_ns: 3000000
           min_freq_khz: 2000000
           max_freq_khz: 8000000
           avg_freq_khz: 4000000
@@ -115,7 +162,7 @@ android_cpu {
       }
       metrics {
         mcycles: 12
-        runtime_ns: 3
+        runtime_ns: 3000000
         min_freq_khz: 2000000
         max_freq_khz: 8000000
         avg_freq_khz: 4000000
@@ -124,7 +171,7 @@ android_cpu {
         type: "big"
         metrics {
           mcycles: 12
-          runtime_ns: 3
+          runtime_ns: 3000000
           min_freq_khz: 2000000
           max_freq_khz: 8000000
           avg_freq_khz: 4000000
@@ -137,7 +184,7 @@ android_cpu {
         id: 0
         metrics {
           mcycles: 5
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 2500000
           max_freq_khz: 2500000
           avg_freq_khz: 2500000
@@ -145,7 +192,7 @@ android_cpu {
       }
       metrics {
         mcycles: 5
-        runtime_ns: 2
+        runtime_ns: 2000000
         min_freq_khz: 2500000
         max_freq_khz: 2500000
         avg_freq_khz: 2500000
@@ -154,30 +201,70 @@ android_cpu {
         type: "little"
         metrics {
           mcycles: 5
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 2500000
           max_freq_khz: 2500000
           avg_freq_khz: 2500000
         }
       }
     }
-    metrics {
-      mcycles: 21
-      runtime_ns: 7
-      min_freq_khz: 2000000
-      max_freq_khz: 8000000
-      avg_freq_khz: 3000000
+    core {
+      id: 0
+      metrics {
+        mcycles: 5
+        runtime_ns: 2000000
+        min_freq_khz: 2500000
+        max_freq_khz: 2500000
+        avg_freq_khz: 2500000
+      }
+    }
+    core {
+      id: 6
+      metrics {
+        mcycles: 16
+        runtime_ns: 5000000
+        min_freq_khz: 2000000
+        max_freq_khz: 8000000
+        avg_freq_khz: 3200000
+      }
     }
   }
   process_info {
     name: "Process3"
+    metrics {
+      mcycles: 18
+      runtime_ns: 6000000
+      min_freq_khz: 500000
+      max_freq_khz: 8000000
+      avg_freq_khz: 3150000
+    }
+    core_type {
+      type: "big"
+      metrics {
+        mcycles: 16
+        runtime_ns: 2000000
+        min_freq_khz: 8000000
+        max_freq_khz: 8000000
+        avg_freq_khz: 8000000
+      }
+    }
+    core_type {
+      type: "little"
+      metrics {
+        mcycles: 2
+        runtime_ns: 4000000
+        min_freq_khz: 500000
+        max_freq_khz: 1400000
+        avg_freq_khz: 725000
+      }
+    }
     threads {
       name: "Process3"
       core {
         id: 0
         metrics {
           mcycles: 2
-          runtime_ns: 4
+          runtime_ns: 4000000
           min_freq_khz: 500000
           max_freq_khz: 1400000
           avg_freq_khz: 725000
@@ -187,7 +274,7 @@ android_cpu {
         id: 6
         metrics {
           mcycles: 16
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 8000000
           max_freq_khz: 8000000
           avg_freq_khz: 8000000
@@ -195,7 +282,7 @@ android_cpu {
       }
       metrics {
         mcycles: 18
-        runtime_ns: 6
+        runtime_ns: 6000000
         min_freq_khz: 500000
         max_freq_khz: 8000000
         avg_freq_khz: 3150000
@@ -204,7 +291,7 @@ android_cpu {
         type: "big"
         metrics {
           mcycles: 16
-          runtime_ns: 2
+          runtime_ns: 2000000
           min_freq_khz: 8000000
           max_freq_khz: 8000000
           avg_freq_khz: 8000000
@@ -214,19 +301,32 @@ android_cpu {
         type: "little"
         metrics {
           mcycles: 2
-          runtime_ns: 4
+          runtime_ns: 4000000
           min_freq_khz: 500000
           max_freq_khz: 1400000
           avg_freq_khz: 725000
         }
       }
     }
-    metrics {
-      mcycles: 18
-      runtime_ns: 6
-      min_freq_khz: 500000
-      max_freq_khz: 8000000
-      avg_freq_khz: 3150000
+    core {
+      id: 0
+      metrics {
+        mcycles: 2
+        runtime_ns: 4000000
+        min_freq_khz: 500000
+        max_freq_khz: 1400000
+        avg_freq_khz: 725000
+      }
+    }
+    core {
+      id: 6
+      metrics {
+        mcycles: 16
+        runtime_ns: 2000000
+        min_freq_khz: 8000000
+        max_freq_khz: 8000000
+        avg_freq_khz: 8000000
+      }
     }
   }
 }

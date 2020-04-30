@@ -19,6 +19,7 @@ syntax = "proto2";
 package perfetto.protos;
 
 // Configuration for go/heapprofd.
+// Next id: 19
 message HeapprofdConfig {
   message ContinuousDumpConfig {
     // ms to wait before first dump.
@@ -57,6 +58,16 @@ message HeapprofdConfig {
   // heapprofd will likely be overloaded by the amount of data for low
   // sampling intervals.
   optional bool all = 5;
+
+  // Do not profile processes whose anon RSS + swap < given value.
+  optional uint32 min_anonymous_memory_kb = 15;
+
+  // Stop profile if heapprofd memory usage goes beyond the given value.
+  optional uint32 max_heapprofd_memory_kb = 16;
+
+  // Stop profile if heapprofd CPU time since start of this data-source
+  // goes beyond given value.
+  optional uint64 max_heapprofd_cpu_secs = 17;
 
   // Do not emit function names for mappings starting with this prefix.
   // E.g. /system to not emit symbols for any system libraries.
@@ -112,4 +123,11 @@ message HeapprofdConfig {
   // maximum. This causes ProfilePacket.HeapSample.self_max to be set, and
   // self_allocated and self_freed to not be set.
   optional bool dump_at_max = 13;
+
+  // FEATURE FLAGS. THERE BE DRAGONS.
+
+  // Escape hatch if the session is being torn down because of a forked child
+  // that shares memory space, but is not correctly identified as a vforked
+  // child.
+  optional bool disable_fork_teardown = 18;
 }

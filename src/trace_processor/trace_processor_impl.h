@@ -28,11 +28,13 @@
 #include "perfetto/trace_processor/basic_types.h"
 #include "perfetto/trace_processor/status.h"
 #include "perfetto/trace_processor/trace_processor.h"
+#include "src/trace_processor/sqlite/db_sqlite_table.h"
+#include "src/trace_processor/sqlite/query_cache.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/trace_processor_storage_impl.h"
 
-#include "src/trace_processor/descriptors.h"
 #include "src/trace_processor/metrics/metrics.h"
+#include "src/trace_processor/util/descriptors.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -73,7 +75,20 @@ class TraceProcessorImpl : public TraceProcessor,
   // Needed for iterators to be able to delete themselves from the vector.
   friend class IteratorImpl;
 
+  template <typename Table>
+  void RegisterDbTable(const Table& table) {
+    DbSqliteTable::RegisterTable(*db_, query_cache_.get(), Table::Schema(),
+                                 &table, table.table_name());
+  }
+
+  void RegisterDynamicTable(
+      std::unique_ptr<DbSqliteTable::DynamicTableGenerator> generator) {
+    DbSqliteTable::RegisterTable(*db_, query_cache_.get(),
+                                 std::move(generator));
+  }
+
   ScopedDb db_;
+  std::unique_ptr<QueryCache> query_cache_;
 
   DescriptorPool pool_;
   std::vector<metrics::SqlMetricFile> sql_metrics_;

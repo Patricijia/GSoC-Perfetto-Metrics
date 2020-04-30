@@ -20,12 +20,14 @@
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/thread_task_runner.h"
 #include "perfetto/ext/tracing/core/consumer.h"
+#include "perfetto/ext/tracing/core/shared_memory_arbiter.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
 #include "perfetto/ext/tracing/ipc/service_ipc_host.h"
 #include "perfetto/tracing/core/trace_config.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/traced/probes/probes_producer.h"
+#include "src/tracing/ipc/posix_shared_memory.h"
 #include "test/fake_producer.h"
 
 #include "protos/perfetto/trace/trace_packet.gen.h"
@@ -98,25 +100,29 @@ class ProbesProducerThread {
 class FakeProducerThread {
  public:
   FakeProducerThread(const std::string& producer_socket,
+                     std::function<void()> connect_callback,
                      std::function<void()> setup_callback,
-                     std::function<void()> connect_callback)
+                     std::function<void()> start_callback)
       : producer_socket_(producer_socket),
+        connect_callback_(std::move(connect_callback)),
         setup_callback_(std::move(setup_callback)),
-        connect_callback_(std::move(connect_callback)) {}
+        start_callback_(std::move(start_callback)) {
+    runner_ = base::ThreadTaskRunner::CreateAndStart("perfetto.prd.fake");
+    runner_->PostTaskAndWaitForTesting([this]() {
+      producer_.reset(
+          new FakeProducer("android.perfetto.FakeProducer", runner_->get()));
+    });
+  }
 
   ~FakeProducerThread() {
-    if (!runner_)
-      return;
     runner_->PostTaskAndWaitForTesting([this]() { producer_.reset(); });
   }
 
   void Connect() {
-    runner_ = base::ThreadTaskRunner::CreateAndStart("perfetto.prd.fake");
     runner_->PostTaskAndWaitForTesting([this]() {
-      producer_.reset(new FakeProducer("android.perfetto.FakeProducer"));
-      producer_->Connect(producer_socket_.c_str(), runner_->get(),
-                         std::move(setup_callback_),
-                         std::move(connect_callback_));
+      producer_->Connect(producer_socket_.c_str(), std::move(connect_callback_),
+                         std::move(setup_callback_), std::move(start_callback_),
+                         std::move(shm_), std::move(shm_arbiter_));
     });
   }
 
@@ -124,13 +130,29 @@ class FakeProducerThread {
 
   FakeProducer* producer() { return producer_.get(); }
 
+  void CreateProducerProvidedSmb() {
+    PosixSharedMemory::Factory factory;
+    shm_ = factory.CreateSharedMemory(1024 * 1024);
+    shm_arbiter_ =
+        SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), base::kPageSize);
+  }
+
+  void ProduceStartupEventBatch(const protos::gen::TestConfig& config,
+                                std::function<void()> callback) {
+    PERFETTO_CHECK(shm_arbiter_);
+    producer_->ProduceStartupEventBatch(config, shm_arbiter_.get(), callback);
+  }
+
  private:
   base::Optional<base::ThreadTaskRunner> runner_;  // Keep first.
 
   std::string producer_socket_;
   std::unique_ptr<FakeProducer> producer_;
-  std::function<void()> setup_callback_;
   std::function<void()> connect_callback_;
+  std::function<void()> setup_callback_;
+  std::function<void()> start_callback_;
+  std::unique_ptr<SharedMemory> shm_;
+  std::unique_ptr<SharedMemoryArbiter> shm_arbiter_;
 };
 
 class TestHelper : public Consumer {
@@ -151,7 +173,11 @@ class TestHelper : public Consumer {
   void OnObservableEvents(const ObservableEvents&) override;
 
   void StartServiceIfRequired();
+
+  // Connects the producer and waits that the service has seen the
+  // RegisterDataSource() call.
   FakeProducer* ConnectFakeProducer();
+
   void ConnectConsumer();
   void StartTracing(const TraceConfig& config,
                     base::ScopedFile = base::ScopedFile());
@@ -160,12 +186,17 @@ class TestHelper : public Consumer {
   void ReadData(uint32_t read_count = 0);
   void DetachConsumer(const std::string& key);
   bool AttachConsumer(const std::string& key);
+  void CreateProducerProvidedSmb();
+  bool IsShmemProvidedByProducer();
+  void ProduceStartupEventBatch(const protos::gen::TestConfig& config);
 
   void WaitForConsumerConnect();
   void WaitForProducerSetup();
   void WaitForProducerEnabled();
   void WaitForTracingDisabled(uint32_t timeout_ms = 5000);
   void WaitForReadData(uint32_t read_count = 0, uint32_t timeout_ms = 5000);
+  void SyncAndWaitProducer();
+  TracingServiceState QueryServiceStateAndWait();
 
   std::string AddID(const std::string& checkpoint) {
     return checkpoint + "." + std::to_string(instance_num_);

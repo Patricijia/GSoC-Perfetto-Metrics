@@ -21,8 +21,8 @@
 
 #include "perfetto/trace_processor/basic_types.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
-#include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_sorter.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 #include "test/gtest_and_gmock.h"
 
 namespace perfetto {
@@ -76,10 +76,13 @@ class TraceSorterTest : public ::testing::Test {
       : test_buffer_(std::unique_ptr<uint8_t[]>(new uint8_t[8]), 0, 8) {
     storage_ = new NiceMock<MockTraceStorage>();
     context_.storage.reset(storage_);
-    context_.sorter.reset(new TraceSorter(
-        &context_, std::numeric_limits<int64_t>::max() /*window_size*/));
-    parser_ = new MockTraceParser(&context_);
-    context_.parser.reset(parser_);
+
+    std::unique_ptr<MockTraceParser> parser(new MockTraceParser(&context_));
+    parser_ = parser.get();
+
+    context_.sorter.reset(
+        new TraceSorter(std::move(parser),
+                        std::numeric_limits<int64_t>::max() /*window_size*/));
   }
 
  protected:

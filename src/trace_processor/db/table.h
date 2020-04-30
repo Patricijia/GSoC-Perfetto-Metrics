@@ -27,6 +27,7 @@
 #include "perfetto/ext/base/optional.h"
 #include "src/trace_processor/containers/string_pool.h"
 #include "src/trace_processor/db/column.h"
+#include "src/trace_processor/db/typed_column.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -70,21 +71,46 @@ class Table {
     std::vector<RowMap::Iterator> its_;
   };
 
+  // Helper class storing the schema of the table. This allows decisions to be
+  // made about operations on the table without materializing the table - this
+  // may be expensive for dynamically computed tables.
+  //
+  // Subclasses of Table usually provide a method (named Schema()) to statically
+  // generate an instance of this class.
+  struct Schema {
+    struct Column {
+      std::string name;
+      SqlValue::Type type;
+      bool is_id;
+      bool is_sorted;
+      bool is_hidden;
+    };
+    std::vector<Column> columns;
+  };
+
+  Table();
+  virtual ~Table();
+
   // We explicitly define the move constructor here because we need to update
   // the Table pointer in each column in the table.
   Table(Table&& other) noexcept { *this = std::move(other); }
   Table& operator=(Table&& other) noexcept;
 
   // Filters the Table using the specified filter constraints.
-  Table Filter(const std::vector<Constraint>& cs) const {
-    return Apply(FilterToRowMap(cs));
+  Table Filter(
+      const std::vector<Constraint>& cs,
+      RowMap::OptimizeFor optimize_for = RowMap::OptimizeFor::kMemory) const {
+    return Apply(FilterToRowMap(cs, optimize_for));
   }
 
-  // Filters the Table using the specified filter constraints.
+  // Filters the Table using the specified filter constraints optionally
+  // specifying what the returned RowMap should optimize for.
   // Returns a RowMap which, if applied to the table, would contain the rows
   // post filter.
-  RowMap FilterToRowMap(const std::vector<Constraint>& cs) const {
-    RowMap rm(0, row_count_);
+  RowMap FilterToRowMap(
+      const std::vector<Constraint>& cs,
+      RowMap::OptimizeFor optimize_for = RowMap::OptimizeFor::kMemory) const {
+    RowMap rm(0, row_count_, optimize_for);
     for (const Constraint& c : cs) {
       columns_[c.col_idx].FilterInto(c.op, c.value, &rm);
     }
@@ -124,6 +150,20 @@ class Table {
   //  * |left|'s values must exist in |right|
   Table LookupJoin(JoinKey left, const Table& other, JoinKey right);
 
+  template <typename T>
+  Table ExtendWithColumn(const char* name,
+                         std::unique_ptr<SparseVector<T>> sv,
+                         uint32_t flags) const {
+    PERFETTO_DCHECK(sv->size() == row_count_);
+    uint32_t size = sv->size();
+    uint32_t row_map_count = static_cast<uint32_t>(row_maps_.size());
+    Table ret = Copy();
+    ret.columns_.push_back(Column::WithOwnedStorage(
+        name, std::move(sv), flags, &ret, GetColumnCount(), row_map_count));
+    ret.row_maps_.emplace_back(RowMap(0, size));
+    return ret;
+  }
+
   // Returns the column at index |idx| in the Table.
   const Column& GetColumn(uint32_t idx) const { return columns_[idx]; }
 
@@ -135,6 +175,11 @@ class Table {
     if (it == columns_.end())
       return nullptr;
     return &*it;
+  }
+
+  template <typename T>
+  const TypedColumn<T>* GetTypedColumnByName(const char* name) const {
+    return TypedColumn<T>::FromColumn(GetColumnByName(name));
   }
 
   // Returns the number of columns in the Table.

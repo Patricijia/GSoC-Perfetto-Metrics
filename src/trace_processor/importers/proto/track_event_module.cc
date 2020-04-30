@@ -17,9 +17,9 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
-#include "src/trace_processor/trace_processor_context.h"
-#include "src/trace_processor/track_tracker.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 #include "protos/perfetto/config/data_source_config.pbzero.h"
 #include "protos/perfetto/config/trace_config.pbzero.h"
@@ -71,10 +71,8 @@ void TrackEventModule::ParsePacket(const TracePacket::Decoder& decoder,
       break;
     case TracePacket::kTrackEventFieldNumber:
       PERFETTO_DCHECK(ttp.type == TimestampedTracePiece::Type::kTrackEvent);
-      parser_.ParseTrackEvent(
-          ttp.timestamp, ttp.track_event_data->thread_timestamp,
-          ttp.track_event_data->thread_instruction_count,
-          ttp.track_event_data->sequence_state, decoder.track_event());
+      parser_.ParseTrackEvent(ttp.timestamp, ttp.track_event_data.get(),
+                              decoder.track_event());
       break;
     case TracePacket::kProcessDescriptorFieldNumber:
       // TODO(eseckler): Remove once Chrome has switched to TrackDescriptors.

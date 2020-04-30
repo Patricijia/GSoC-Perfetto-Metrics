@@ -33,6 +33,12 @@ These can be viewed using pprof. Googlers: head to pprof/ and upload them.
 
 This will create a pprof-compatible heap dump when Ctrl+C is pressed.
 
+If you are having problems, run the following command and try again:
+
+```
+$ adb shell setprop persist.traced.enable 1
+```
+
 You can also use the [Perfetto UI](https://ui.perfetto.dev/#!/record?p=memory)
 to record heapprofd profiles. Tick "Heap profiling" in the trace configuration,
 enter the processes you want to target, click "Add Device" to pair your phone,
@@ -166,12 +172,28 @@ always produced. You can create multiple of these dumps, and they will be
 enumerated in the output directory.
 
 ## Symbolization
-If the profiled binary or libraries do not have debug symbols, you can
-symbolize profiles offline. All tools (traceconv, trace_processor_shell,
-the heap_profile script) support specifying `PERFETTO_BINARY_PATH` as an
-environment variable.
+**Symbolization is currently only available on Linux.**
 
-For instance, run
+### Set up llvm-symbolizer
+You only need to do this once.
+
+To use symbolization, your system must have llvm-symbolizer installed and
+accessible from `$PATH` as `llvm-symbolizer`. On Debian, you can install it
+using `sudo apt install llvm-9`.
+This will create `/usr/bin/llvm-symbolizer-9`. Symlink that to somewhere in
+your `$PATH` as `llvm-symbolizer`. For instance.
+
+For instance, `ln -s /usr/bin/llvm-symbolizer-9 ~/bin/llvm-symbolizer`, and
+add `~/bin` to your path (or run the commands below with `PATH=~/bin:$PATH`
+prefixed).
+
+### Symbolize your profile
+
+If the profiled binary or libraries do not have symbol names, you can
+symbolize profiles offline. Even if they do, you might want to symbolize in
+order to get inlined function and line number information. All tools
+traceconv, trace_processor_shell, the heap_profile script) support specifying
+the `PERFETTO_BINARY_PATH` as an environment variable.
 
 ```
 PERFETTO_BINARY_PATH=somedir tools/heap_profile --name ${NAME}
@@ -205,6 +227,25 @@ Also check the [Known Issues](#known-issues).
 ### Impossible callstacks
 If you see a callstack that seems to impossible from looking at the code, make
 sure no [DEDUPED frames](#deduped-frames) are involved.
+
+
+### Symbolization: Could not find library
+
+When symbolizing a profile, you might come accross messages like this:
+
+```
+Could not find /data/app/invalid.app-wFgo3GRaod02wSvPZQ==/lib/arm64/somelib.so
+(Build ID: 44b7138abd5957b8d0a56ce86216d478).
+```
+
+Check whether your library (in this example somelib.so) exists in
+`PERFETTO_BINARY_PATH`. Then compare the Build ID to the one in your
+symbol file, which you can get by running
+`readelf -n /path/in/binary/path/somelib.so`. If it does not match, the
+symbolized file has a different version than the one on device, and cannot
+be used for symbolization.
+If it does, try moving somelib.so to the root of `PERFETTO_BINARY_PATH` and
+try again.
 
 ## Known Issues
 
@@ -275,7 +316,7 @@ INTERVAL=4096
 
 echo '
 buffers {
-  size_kb: 100024
+  size_kb: 102400
 }
 
 data_sources {

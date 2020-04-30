@@ -17,22 +17,22 @@
 #include "src/trace_processor/trace_processor_storage_impl.h"
 
 #include "perfetto/base/logging.h"
-#include "src/trace_processor/args_tracker.h"
-#include "src/trace_processor/clock_tracker.h"
-#include "src/trace_processor/event_tracker.h"
 #include "src/trace_processor/forwarding_trace_parser.h"
-#include "src/trace_processor/heap_profile_tracker.h"
-#include "src/trace_processor/importers/ftrace/ftrace_module.h"
+#include "src/trace_processor/importers/common/args_tracker.h"
+#include "src/trace_processor/importers/common/clock_tracker.h"
+#include "src/trace_processor/importers/common/event_tracker.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
+#include "src/trace_processor/importers/common/slice_tracker.h"
+#include "src/trace_processor/importers/common/track_tracker.h"
+#include "src/trace_processor/importers/default_modules.h"
+#include "src/trace_processor/importers/proto/heap_profile_tracker.h"
+#include "src/trace_processor/importers/proto/metadata_tracker.h"
+#include "src/trace_processor/importers/proto/perf_sample_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
-#include "src/trace_processor/importers/proto/track_event_module.h"
-#include "src/trace_processor/metadata_tracker.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/slice_tracker.h"
-#include "src/trace_processor/stack_profile_tracker.h"
+#include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
-#include "src/trace_processor/track_tracker.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -49,14 +49,9 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
   context_.metadata_tracker.reset(new MetadataTracker(&context_));
   context_.global_args_tracker.reset(new GlobalArgsTracker(&context_));
+  context_.perf_sample_tracker.reset(new PerfSampleTracker(&context_));
 
-  context_.modules.emplace_back(new FtraceModule());
-  // Ftrace module is special, because it has one extra method for parsing
-  // ftrace packets. So we need to store a pointer to it separately.
-  context_.ftrace_module =
-      static_cast<FtraceModule*>(context_.modules.back().get());
-
-  context_.modules.emplace_back(new TrackEventModule(&context_));
+  RegisterDefaultModules(&context_);
 }
 
 TraceProcessorStorageImpl::~TraceProcessorStorageImpl() {}
@@ -82,10 +77,15 @@ void TraceProcessorStorageImpl::NotifyEndOfFile() {
   if (unrecoverable_parse_error_ || !context_.chunk_reader)
     return;
 
+  context_.chunk_reader->NotifyEndOfFile();
   if (context_.sorter)
     context_.sorter->ExtractEventsForced();
   context_.event_tracker->FlushPendingEvents();
   context_.slice_tracker->FlushPendingSlices();
+  context_.heap_profile_tracker->NotifyEndOfFile();
+  for (std::unique_ptr<ProtoImporterModule>& module : context_.modules) {
+    module->NotifyEndOfFile();
+  }
 }
 
 }  // namespace trace_processor

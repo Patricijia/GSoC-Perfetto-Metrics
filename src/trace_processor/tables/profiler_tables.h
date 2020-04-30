@@ -23,33 +23,28 @@ namespace perfetto {
 namespace trace_processor {
 namespace tables {
 
-#define PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF(NAME, PARENT, C) \
-  NAME(StackProfileCallsiteTable, "stack_profile_callsite")     \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                             \
-  C(int64_t, depth)                                             \
-  C(int64_t, parent_id)                                         \
-  C(int64_t, frame_id)
+#define PERFETTO_TP_PROFILER_SMAPS_DEF(NAME, PARENT, C) \
+  NAME(ProfilerSmapsTable, "profiler_smaps")            \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                     \
+  C(uint32_t, upid)                                     \
+  C(int64_t, ts)                                        \
+  C(StringPool::Id, path)                               \
+  C(int64_t, size_kb)                                   \
+  C(int64_t, private_dirty_kb)                          \
+  C(int64_t, swap_kb)
 
-PERFETTO_TP_TABLE(PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF);
+PERFETTO_TP_TABLE(PERFETTO_TP_PROFILER_SMAPS_DEF);
 
-#define PERFETTO_TP_CPU_PROFILE_STACK_SAMPLE_DEF(NAME, PARENT, C) \
-  NAME(CpuProfileStackSampleTable, "cpu_profile_stack_sample")    \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                               \
-  C(int64_t, ts, Column::Flag::kSorted)                           \
-  C(int64_t, callsite_id)                                         \
-  C(uint32_t, utid)
+#define PERFETTO_TP_PACKAGES_LIST_DEF(NAME, PARENT, C) \
+  NAME(PackageListTable, "package_list")               \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                    \
+  C(StringPool::Id, package_name)                      \
+  C(int64_t, uid)                                      \
+  C(int32_t, debuggable)                               \
+  C(int32_t, profileable_from_shell)                   \
+  C(int64_t, version_code)
 
-PERFETTO_TP_TABLE(PERFETTO_TP_CPU_PROFILE_STACK_SAMPLE_DEF);
-
-#define PERFETTO_TP_SYMBOL_DEF(NAME, PARENT, C) \
-  NAME(SymbolTable, "stack_profile_symbol")     \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)             \
-  C(uint32_t, symbol_set_id)                    \
-  C(StringPool::Id, name)                       \
-  C(StringPool::Id, source_file)                \
-  C(uint32_t, line_number)
-
-PERFETTO_TP_TABLE(PERFETTO_TP_SYMBOL_DEF);
+PERFETTO_TP_TABLE(PERFETTO_TP_PACKAGES_LIST_DEF);
 
 #define PERFETTO_TP_STACK_PROFILE_MAPPING_DEF(NAME, PARENT, C) \
   NAME(StackProfileMappingTable, "stack_profile_mapping")      \
@@ -68,31 +63,59 @@ PERFETTO_TP_TABLE(PERFETTO_TP_STACK_PROFILE_MAPPING_DEF);
   NAME(StackProfileFrameTable, "stack_profile_frame")        \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                          \
   C(StringPool::Id, name)                                    \
-  C(int64_t, mapping)                                        \
+  C(StackProfileMappingTable::Id, mapping)                   \
   C(int64_t, rel_pc)                                         \
   C(base::Optional<uint32_t>, symbol_set_id)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_STACK_PROFILE_FRAME_DEF);
+
+#define PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF(NAME, PARENT, C) \
+  NAME(StackProfileCallsiteTable, "stack_profile_callsite")     \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                             \
+  C(uint32_t, depth)                                            \
+  C(base::Optional<StackProfileCallsiteTable::Id>, parent_id)   \
+  C(StackProfileFrameTable::Id, frame_id)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_STACK_PROFILE_CALLSITE_DEF);
+
+#define PERFETTO_TP_CPU_PROFILE_STACK_SAMPLE_DEF(NAME, PARENT, C) \
+  NAME(CpuProfileStackSampleTable, "cpu_profile_stack_sample")    \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                               \
+  C(int64_t, ts, Column::Flag::kSorted)                           \
+  C(StackProfileCallsiteTable::Id, callsite_id)                   \
+  C(uint32_t, utid)                                               \
+  C(int32_t, process_priority)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_CPU_PROFILE_STACK_SAMPLE_DEF);
+
+#define PERFETTO_TP_SYMBOL_DEF(NAME, PARENT, C) \
+  NAME(SymbolTable, "stack_profile_symbol")     \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)             \
+  C(uint32_t, symbol_set_id)                    \
+  C(StringPool::Id, name)                       \
+  C(StringPool::Id, source_file)                \
+  C(uint32_t, line_number)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_SYMBOL_DEF);
 
 #define PERFETTO_TP_HEAP_PROFILE_ALLOCATION_DEF(NAME, PARENT, C) \
   NAME(HeapProfileAllocationTable, "heap_profile_allocation")    \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                              \
   C(int64_t, ts, Column::Flag::kSorted)                          \
   C(uint32_t, upid)                                              \
-  C(int64_t, callsite_id)                                        \
+  C(StackProfileCallsiteTable::Id, callsite_id)                  \
   C(int64_t, count)                                              \
   C(int64_t, size)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_PROFILE_ALLOCATION_DEF);
 
-// This will eventually go away, when we also pre-compute the cumulative
-// sizes for native heap profiles.
 #define PERFETTO_TP_EXPERIMENTAL_FLAMEGRAPH_NODES(NAME, PARENT, C)        \
   NAME(ExperimentalFlamegraphNodesTable, "experimental_flamegraph_nodes") \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                                       \
-  C(int64_t, ts, Column::Flag::kSorted)                                   \
-  C(uint32_t, upid)                                                       \
-  C(StringPool::Id, profile_type)                                         \
+  C(int64_t, ts, Column::Flag::kSorted | Column::Flag::kHidden)           \
+  C(uint32_t, upid, Column::Flag::kHidden)                                \
+  C(StringPool::Id, profile_type, Column::Flag::kHidden)                  \
+  C(StringPool::Id, focus_str, Column::Flag::kHidden)                     \
   C(uint32_t, depth)                                                      \
   C(StringPool::Id, name)                                                 \
   C(StringPool::Id, map_name)                                             \
@@ -104,23 +127,31 @@ PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_PROFILE_ALLOCATION_DEF);
   C(int64_t, cumulative_alloc_count)                                      \
   C(int64_t, alloc_size)                                                  \
   C(int64_t, cumulative_alloc_size)                                       \
-  C(base::Optional<uint32_t>, parent_id)
+  C(base::Optional<ExperimentalFlamegraphNodesTable::Id>, parent_id)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_EXPERIMENTAL_FLAMEGRAPH_NODES);
 
-#define PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF(NAME, PARENT, C)  \
-  NAME(HeapGraphObjectTable, "heap_graph_object")           \
-  PERFETTO_TP_ROOT_TABLE(PARENT, C)                         \
-  C(int64_t, upid)                                          \
-  C(int64_t, graph_sample_ts)                               \
-  C(int64_t, object_id)                                     \
-  C(int64_t, self_size)                                     \
-  C(int64_t, retained_size)                                 \
-  C(int64_t, unique_retained_size)                          \
-  C(int64_t, reference_set_id)                              \
-  C(int32_t, reachable)                                     \
-  C(StringPool::Id, type_name)                              \
-  C(base::Optional<StringPool::Id>, deobfuscated_type_name) \
+#define PERFETTO_TP_HEAP_GRAPH_CLASS_DEF(NAME, PARENT, C) \
+  NAME(HeapGraphClassTable, "heap_graph_class")           \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                       \
+  C(StringPool::Id, name)                                 \
+  C(base::Optional<StringPool::Id>, deobfuscated_name)    \
+  C(base::Optional<StringPool::Id>, location)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_CLASS_DEF);
+
+#define PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF(NAME, PARENT, C) \
+  NAME(HeapGraphObjectTable, "heap_graph_object")          \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                        \
+  C(uint32_t, upid)                                        \
+  C(int64_t, graph_sample_ts)                              \
+  C(int64_t, object_id)                                    \
+  C(int64_t, self_size)                                    \
+  C(int64_t, retained_size)                                \
+  C(int64_t, unique_retained_size)                         \
+  C(base::Optional<uint32_t>, reference_set_id)            \
+  C(int32_t, reachable)                                    \
+  C(HeapGraphClassTable::Id, type_id)                      \
   C(base::Optional<StringPool::Id>, root_type)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF);
@@ -128,10 +159,11 @@ PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_OBJECT_DEF);
 #define PERFETTO_TP_HEAP_GRAPH_REFERENCE_DEF(NAME, PARENT, C) \
   NAME(HeapGraphReferenceTable, "heap_graph_reference")       \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                           \
-  C(int64_t, reference_set_id, Column::Flag::kSorted)         \
+  C(uint32_t, reference_set_id, Column::Flag::kSorted)        \
   C(int64_t, owner_id)                                        \
   C(int64_t, owned_id)                                        \
   C(StringPool::Id, field_name)                               \
+  C(StringPool::Id, field_type_name)                          \
   C(base::Optional<StringPool::Id>, deobfuscated_field_name)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_HEAP_GRAPH_REFERENCE_DEF);

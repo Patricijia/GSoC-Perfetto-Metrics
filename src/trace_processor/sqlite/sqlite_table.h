@@ -20,6 +20,7 @@
 #include <sqlite3.h>
 
 #include <functional>
+#include <limits>
 #include <memory>
 #include <string>
 #include <vector>
@@ -212,7 +213,7 @@ class SqliteTable : public sqlite3_vtab {
     auto create_fn = [](sqlite3* xdb, void* arg, int argc,
                         const char* const* argv, sqlite3_vtab** tab,
                         char** pzErr) {
-      const auto* xdesc = static_cast<const TableDescriptor<Context>*>(arg);
+      auto* xdesc = static_cast<TableDescriptor<Context>*>(arg);
       auto table = xdesc->factory(xdb, std::move(xdesc->context));
       table->name_ = xdesc->name;
 
@@ -257,6 +258,13 @@ class SqliteTable : public sqlite3_vtab {
     };
     module->xFilter = [](sqlite3_vtab_cursor* vc, int i, const char* s, int a,
                          sqlite3_value** v) {
+      // If the idxNum is equal to kSqliteConstraintBestIndexNum, that means
+      // in BestIndexInternal, we tried to discourage the query planner from
+      // chosing this plan. As the subclass has informed us that it cannot
+      // handle this plan, just return the error now.
+      if (i == kInvalidConstraintsInBestIndexNum)
+        return SQLITE_CONSTRAINT;
+
       auto* c = static_cast<Cursor*>(vc);
       bool is_cached = c->table_->ReadConstraints(i, s, a);
 
@@ -333,6 +341,9 @@ class SqliteTable : public sqlite3_vtab {
   const std::string& name() const { return name_; }
 
  private:
+  static constexpr int kInvalidConstraintsInBestIndexNum =
+      std::numeric_limits<int>::max();
+
   template <typename TableType, typename Context>
   static Factory<Context> GetFactory() {
     return [](sqlite3* db, Context ctx) {

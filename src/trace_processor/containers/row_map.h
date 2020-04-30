@@ -205,13 +205,22 @@ class RowMap {
     const RowMap* rm_ = nullptr;
   };
 
+  // Enum to allow users of RowMap to decide whether they want to optimize for
+  // memory usage or for speed of lookups.
+  enum class OptimizeFor {
+    kMemory,
+    kLookupSpeed,
+  };
+
   // Creates an empty RowMap.
   // By default this will be implemented using a range.
   RowMap();
 
   // Creates a RowMap containing the range of rows between |start| and |end|
   // i.e. all rows between |start| (inclusive) and |end| (exclusive).
-  explicit RowMap(uint32_t start, uint32_t end);
+  explicit RowMap(uint32_t start,
+                  uint32_t end,
+                  OptimizeFor optimize_for = OptimizeFor::kMemory);
 
   // Creates a RowMap backed by a BitVector.
   explicit RowMap(BitVector bit_vector);
@@ -250,11 +259,11 @@ class RowMap {
     PERFETTO_DCHECK(idx < size());
     switch (mode_) {
       case Mode::kRange:
-        return start_idx_ + idx;
+        return GetRange(idx);
       case Mode::kBitVector:
-        return bit_vector_.IndexOfNthSet(idx);
+        return GetBitVector(idx);
       case Mode::kIndexVector:
-        return index_vector_[idx];
+        return GetIndexVector(idx);
     }
     PERFETTO_FATAL("For GCC");
   }
@@ -395,7 +404,7 @@ class RowMap {
     }
 
     // TODO(lalitm): improve efficiency of this if we end up needing it.
-    RemoveIf([&other](uint32_t row) { return !other.Contains(row); });
+    Filter([&other](uint32_t row) { return other.Contains(row); });
   }
 
   // Filters the current RowMap into the RowMap given by |out| based on the
@@ -441,38 +450,49 @@ class RowMap {
     // cases where |out| has only a few entries so we can scan |out| instead of
     // scanning |this|.
 
-    // TODO(lalit): investigate whether we should also scan |out| if |this| is
-    // a range or index vector as, in those cases, it would be fast to lookup
-    // |this| by index.
-
-    // We choose to full scan |this| rather than |out| as the performance
-    // penalty of incorrectly scanning |out| is much worse than mistakely
-    // scanning |this|.
-    // This is because scans on |out| involve an indexed lookup on |this| which
-    // (in the case of a bitvector) can be very expensive. On the other hand,
-    // scanning |this| means we never have to do indexed lookups but we may
-    // scan many more rows than necessary (as they may have already been
-    // excluded in out).
-    FilterIntoScanSelf(out, p);
-  }
-
-  template <typename Comparator>
-  void StableSort(std::vector<uint32_t>* out, Comparator c) const {
+    // Ideally, we'd always just scan the rows in |out| and keep those which
+    // meet |p|. However, if |this| is a BitVector, we end up needing expensive
+    // |IndexOfNthSet| calls (as we need to lookup the row before passing it to
+    // |p|).
     switch (mode_) {
       case Mode::kRange: {
-        StableSort(out, c, [this](uint32_t off) { return start_idx_ + off; });
+        auto ip = [this, p](uint32_t idx) { return p(GetRange(idx)); };
+        out->Filter(ip);
         break;
       }
       case Mode::kBitVector: {
-        StableSort(out, c, [this](uint32_t off) {
-          return bit_vector_.IndexOfNthSet(off);
-        });
+        FilterIntoScanSelfBv(out, p);
         break;
       }
       case Mode::kIndexVector: {
-        StableSort(out, c, [this](uint32_t off) { return index_vector_[off]; });
+        auto ip = [this, p](uint32_t row) { return p(GetIndexVector(row)); };
+        out->Filter(ip);
         break;
       }
+    }
+  }
+
+  template <typename Comparator = bool(uint32_t, uint32_t)>
+  void StableSort(std::vector<uint32_t>* out, Comparator c) const {
+    switch (mode_) {
+      case Mode::kRange:
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetRange(a), GetRange(b));
+                         });
+        break;
+      case Mode::kBitVector:
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetBitVector(a), GetBitVector(b));
+                         });
+        break;
+      case Mode::kIndexVector:
+        std::stable_sort(out->begin(), out->end(),
+                         [this, c](uint32_t a, uint32_t b) {
+                           return c(GetIndexVector(a), GetIndexVector(b));
+                         });
+        break;
     }
   }
 
@@ -489,29 +509,35 @@ class RowMap {
     kIndexVector,
   };
 
-  // Filters the current RowMap into |out| by performing a full scan on |this|.
-  // See |FilterInto| for a full breakdown of the semantics of this function.
+  // Filters the indices in |out| by keeping those which meet |p|.
   template <typename Predicate>
-  void FilterIntoScanSelf(RowMap* out, Predicate p) const {
+  void Filter(Predicate p) {
     switch (mode_) {
       case Mode::kRange:
-        FilterIntoScanSelf(out, RangeIterator(this), p);
+        FilterRange(p);
         break;
-      case Mode::kBitVector:
-        FilterIntoScanSelf(out, bit_vector_.IterateSetBits(), p);
+      case Mode::kBitVector: {
+        for (auto it = bit_vector_.IterateSetBits(); it; it.Next()) {
+          if (!p(it.index()))
+            it.Clear();
+        }
         break;
-      case Mode::kIndexVector:
-        FilterIntoScanSelf(out, IndexVectorIterator(this), p);
+      }
+      case Mode::kIndexVector: {
+        auto ret = std::remove_if(index_vector_.begin(), index_vector_.end(),
+                                  [p](uint32_t i) { return !p(i); });
+        index_vector_.erase(ret, index_vector_.end());
         break;
+      }
     }
   }
 
   // Filters the current RowMap into |out| by performing a full scan on |this|
-  // using the |it|, a strongly typed iterator on |this| (a strongly typed
-  // iterator is used for performance reasons).
+  // where |this| is a BitVector.
   // See |FilterInto| for a full breakdown of the semantics of this function.
-  template <typename Iterator, typename Predicate>
-  void FilterIntoScanSelf(RowMap* out, Iterator it, Predicate p) const {
+  template <typename Predicate>
+  void FilterIntoScanSelfBv(RowMap* out, Predicate p) const {
+    auto it = bit_vector_.IterateSetBits();
     switch (out->mode_) {
       case Mode::kRange: {
         // TODO(lalitm): investigate whether we can reuse the data inside
@@ -559,6 +585,55 @@ class RowMap {
     }
   }
 
+  template <typename Predicate>
+  void FilterRange(Predicate p) {
+    uint32_t count = end_idx_ - start_idx_;
+
+    // Optimization: if we are only going to scan a few rows, it's not
+    // worth the haslle of working with a BitVector.
+    constexpr uint32_t kSmallRangeLimit = 2048;
+    bool is_small_range = count < kSmallRangeLimit;
+
+    // Optimization: weif the cost of a BitVector is more than the highest
+    // possible cost an index vector could have, use the index vector.
+    uint32_t bit_vector_cost = BitVector::ApproxBytesCost(end_idx_);
+    uint32_t index_vector_cost_ub = sizeof(uint32_t) * count;
+
+    // If either of the conditions hold which make it better to use an
+    // index vector, use it instead. Alternatively, if we are optimizing for
+    // lookup speed, we also want to use an index vector.
+    if (is_small_range || index_vector_cost_ub <= bit_vector_cost ||
+        optimize_for_ == OptimizeFor::kLookupSpeed) {
+      // Try and strike a good balance between not making the vector too
+      // big and good performance.
+      std::vector<uint32_t> iv(std::min(kSmallRangeLimit, count));
+
+      uint32_t out_idx = 0;
+      for (uint32_t i = 0; i < count; ++i) {
+        // If we reach the capacity add another small set of indices.
+        if (PERFETTO_UNLIKELY(out_idx == iv.size()))
+          iv.resize(iv.size() + kSmallRangeLimit);
+
+        // We keep this branch free by always writing the index but only
+        // incrementing the out index if the return value is true.
+        bool value = p(i + start_idx_);
+        iv[out_idx] = i + start_idx_;
+        out_idx += value;
+      }
+
+      // Make the vector the correct size and as small as possible.
+      iv.resize(out_idx);
+      iv.shrink_to_fit();
+
+      *this = RowMap(std::move(iv));
+      return;
+    }
+
+    // Otherwise, create a bitvector which spans the full range using
+    // |p| as the filler for the bits between start and end.
+    *this = RowMap(BitVector::Range(start_idx_, end_idx_, p));
+  }
+
   void InsertIntoBitVector(uint32_t row) {
     PERFETTO_DCHECK(mode_ == Mode::kBitVector);
 
@@ -567,41 +642,17 @@ class RowMap {
     bit_vector_.Set(row);
   }
 
-  // Removes any row where |p(row)| returns false from this RowMap.
-  template <typename Predicate>
-  void RemoveIf(Predicate p) {
-    switch (mode_) {
-      case Mode::kRange: {
-        bit_vector_.Resize(start_idx_, false);
-        for (uint32_t i = start_idx_; i < end_idx_; ++i) {
-          if (p(i))
-            bit_vector_.AppendFalse();
-          else
-            bit_vector_.AppendTrue();
-        }
-        *this = RowMap(std::move(bit_vector_));
-        break;
-      }
-      case Mode::kBitVector: {
-        for (auto it = bit_vector_.IterateSetBits(); it; it.Next()) {
-          if (p(it.index()))
-            it.Clear();
-        }
-        break;
-      }
-      case Mode::kIndexVector: {
-        auto it = std::remove_if(index_vector_.begin(), index_vector_.end(), p);
-        index_vector_.erase(it, index_vector_.end());
-        break;
-      }
-    }
+  PERFETTO_ALWAYS_INLINE uint32_t GetRange(uint32_t idx) const {
+    PERFETTO_DCHECK(mode_ == Mode::kRange);
+    return start_idx_ + idx;
   }
-
-  template <typename Comparator, typename Indexer>
-  void StableSort(std::vector<uint32_t>* out, Comparator c, Indexer i) const {
-    std::stable_sort(
-        out->begin(), out->end(),
-        [&c, &i](uint32_t a, uint32_t b) { return c(i(a), i(b)); });
+  PERFETTO_ALWAYS_INLINE uint32_t GetBitVector(uint32_t idx) const {
+    PERFETTO_DCHECK(mode_ == Mode::kBitVector);
+    return bit_vector_.IndexOfNthSet(idx);
+  }
+  PERFETTO_ALWAYS_INLINE uint32_t GetIndexVector(uint32_t idx) const {
+    PERFETTO_DCHECK(mode_ == Mode::kIndexVector);
+    return index_vector_[idx];
   }
 
   RowMap SelectRowsSlow(const RowMap& selector) const;
@@ -617,6 +668,8 @@ class RowMap {
 
   // Only valid when |mode_| == Mode::kIndexVector.
   std::vector<uint32_t> index_vector_;
+
+  OptimizeFor optimize_for_ = OptimizeFor::kMemory;
 };
 
 }  // namespace trace_processor

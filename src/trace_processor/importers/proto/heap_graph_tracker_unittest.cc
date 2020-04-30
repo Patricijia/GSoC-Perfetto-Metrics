@@ -25,6 +25,15 @@ namespace {
 
 using ::testing::UnorderedElementsAre;
 
+TEST(HeapGraphTrackerTest, PackageFromLocationApp) {
+  TraceProcessorContext context;
+  HeapGraphTracker tracker(&context);
+  EXPECT_EQ(tracker.PackageFromLocation(
+                "/data/app/~~ASDFGH1234QWerT==/"
+                "com.twitter.android-MNBVCX7890SDTst6==/test.apk"),
+            "com.twitter.android");
+}
+
 TEST(HeapGraphTrackerTest, BuildFlamegraph) {
   //           4@A 5@B
   //             \ /
@@ -48,7 +57,7 @@ TEST(HeapGraphTrackerTest, BuildFlamegraph) {
   constexpr uint64_t kA = 3;
   constexpr uint64_t kB = 4;
 
-  StringPool::Id field = context.storage->InternString("foo");
+  base::StringView field = base::StringView("foo");
   StringPool::Id x = context.storage->InternString("X");
   StringPool::Id y = context.storage->InternString("Y");
   StringPool::Id a = context.storage->InternString("A");
@@ -140,6 +149,52 @@ TEST(HeapGraphTrackerTest, BuildFlamegraph) {
 
   auto counts = flame->count().ToVectorForTesting();
   EXPECT_THAT(counts, UnorderedElementsAre(1, 2, 1, 1));
+}
+
+static const char kArray[] = "X[]";
+static const char kDoubleArray[] = "X[][]";
+static const char kNoArray[] = "X";
+static const char kLongNoArray[] = "ABCDE";
+static const char kStaticClassNoArray[] = "java.lang.Class<abc>";
+static const char kStaticClassArray[] = "java.lang.Class<abc[]>";
+
+TEST(HeapGraphTrackerTest, NormalizeTypeName) {
+  // sizeof(...) - 1 below to get rid of the null-byte.
+  EXPECT_EQ(NormalizeTypeName(base::StringView(kArray, sizeof(kArray) - 1))
+                .ToStdString(),
+            "X");
+  EXPECT_EQ(NormalizeTypeName(
+                base::StringView(kDoubleArray, sizeof(kDoubleArray) - 1))
+                .ToStdString(),
+            "X");
+  EXPECT_EQ(NormalizeTypeName(base::StringView(kNoArray, sizeof(kNoArray) - 1))
+                .ToStdString(),
+            "X");
+  EXPECT_EQ(NormalizeTypeName(
+                base::StringView(kLongNoArray, sizeof(kLongNoArray) - 1))
+                .ToStdString(),
+            "ABCDE");
+  EXPECT_EQ(NormalizeTypeName(base::StringView(kStaticClassNoArray,
+                                               sizeof(kStaticClassNoArray) - 1))
+                .ToStdString(),
+            "abc");
+  EXPECT_EQ(NormalizeTypeName(base::StringView(kStaticClassArray,
+                                               sizeof(kStaticClassArray) - 1))
+                .ToStdString(),
+            "abc");
+}
+
+TEST(HeapGraphTrackerTest, NumberOfArray) {
+  // sizeof(...) - 1 below to get rid of the null-byte.
+  EXPECT_EQ(NumberOfArrays(base::StringView(kArray, sizeof(kArray) - 1)), 1u);
+  EXPECT_EQ(
+      NumberOfArrays(base::StringView(kDoubleArray, sizeof(kDoubleArray) - 1)),
+      2u);
+  EXPECT_EQ(NumberOfArrays(base::StringView(kNoArray, sizeof(kNoArray) - 1)),
+            0u);
+  EXPECT_EQ(
+      NumberOfArrays(base::StringView(kLongNoArray, sizeof(kLongNoArray) - 1)),
+      0u);
 }
 
 }  // namespace

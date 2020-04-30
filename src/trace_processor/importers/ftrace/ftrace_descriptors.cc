@@ -24,7 +24,7 @@ namespace perfetto {
 namespace trace_processor {
 namespace {
 
-std::array<MessageDescriptor, 334> descriptors{{
+std::array<MessageDescriptor, 335> descriptors{{
     {nullptr, 0, {}},
     {nullptr, 0, {}},
     {nullptr, 0, {}},
@@ -3357,11 +3357,13 @@ std::array<MessageDescriptor, 334> descriptors{{
     },
     {
         "rss_stat",
-        2,
+        4,
         {
             {},
             {"member", ProtoSchemaType::kInt32},
             {"size", ProtoSchemaType::kInt64},
+            {"curr", ProtoSchemaType::kUint32},
+            {"mm_id", ProtoSchemaType::kUint32},
         },
     },
     {
@@ -3565,6 +3567,14 @@ std::array<MessageDescriptor, 334> descriptors{{
             {"trace_begin", ProtoSchemaType::kUint32},
         },
     },
+    {
+        "mark_victim",
+        1,
+        {
+            {},
+            {"pid", ProtoSchemaType::kInt32},
+        },
+    },
 }};
 
 }  // namespace
@@ -3572,6 +3582,14 @@ std::array<MessageDescriptor, 334> descriptors{{
 MessageDescriptor* GetMessageDescriptorForId(size_t id) {
   PERFETTO_CHECK(id < descriptors.size());
   return &descriptors[id];
+}
+
+MessageDescriptor* GetMessageDescriptorForName(base::StringView name) {
+  for (MessageDescriptor& descriptor : descriptors) {
+    if (descriptor.name != nullptr && descriptor.name == name)
+      return &descriptor;
+  }
+  return nullptr;
 }
 
 size_t GetDescriptorsSize() {

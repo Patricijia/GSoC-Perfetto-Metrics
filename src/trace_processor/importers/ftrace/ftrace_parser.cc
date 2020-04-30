@@ -18,19 +18,20 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/protozero/proto_decoder.h"
-#include "src/trace_processor/args_tracker.h"
+#include "src/trace_processor/importers/common/args_tracker.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/ftrace/binder_tracker.h"
+#include "src/trace_processor/importers/syscalls/syscall_tracker.h"
 #include "src/trace_processor/importers/systrace/systrace_parser.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/stats.h"
-#include "src/trace_processor/syscall_tracker.h"
-#include "src/trace_processor/trace_storage.h"
+#include "src/trace_processor/storage/stats.h"
+#include "src/trace_processor/storage/trace_storage.h"
 
 #include "protos/perfetto/trace/ftrace/binder.pbzero.h"
 #include "protos/perfetto/trace/ftrace/ftrace.pbzero.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
 #include "protos/perfetto/trace/ftrace/ftrace_stats.pbzero.h"
 #include "protos/perfetto/trace/ftrace/generic.pbzero.h"
+#include "protos/perfetto/trace/ftrace/ion.pbzero.h"
 #include "protos/perfetto/trace/ftrace/kmem.pbzero.h"
 #include "protos/perfetto/trace/ftrace/lowmemorykiller.pbzero.h"
 #include "protos/perfetto/trace/ftrace/mm_event.pbzero.h"
@@ -67,6 +68,8 @@ FtraceParser::FtraceParser(TraceProcessorContext* context)
       cpu_freq_name_id_(context->storage->InternString("cpufreq")),
       gpu_freq_name_id_(context->storage->InternString("gpufreq")),
       cpu_idle_name_id_(context->storage->InternString("cpuidle")),
+      ion_total_id_(context->storage->InternString("mem.ion")),
+      ion_change_id_(context->storage->InternString("mem.ion_change")),
       ion_total_unknown_id_(context->storage->InternString("mem.ion.unknown")),
       ion_change_unknown_id_(
           context->storage->InternString("mem.ion_change.unknown")),
@@ -75,7 +78,8 @@ FtraceParser::FtraceParser(TraceProcessorContext* context)
       oom_score_adj_id_(context->storage->InternString("oom_score_adj")),
       lmk_id_(context->storage->InternString("mem.lmk")),
       comm_name_id_(context->storage->InternString("comm")),
-      signal_name_id_(context_->storage->InternString("signal.sig")) {
+      signal_name_id_(context_->storage->InternString("signal.sig")),
+      oom_kill_id_(context_->storage->InternString("mem.oom_kill")) {
   // Build the lookup table for the strings inside ftrace events (e.g. the
   // name of ftrace event fields and the names of their args).
   for (size_t i = 0; i < GetDescriptorsSize(); i++) {
@@ -278,6 +282,10 @@ util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
         ParseIonHeapGrowOrShrink(ts, pid, data, false);
         break;
       }
+      case FtraceEvent::kIonStatFieldNumber: {
+        ParseIonStat(ts, pid, data);
+        break;
+      }
       case FtraceEvent::kSignalGenerateFieldNumber: {
         ParseSignalGenerate(ts, data);
         break;
@@ -292,6 +300,10 @@ util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
       }
       case FtraceEvent::kOomScoreAdjUpdateFieldNumber: {
         ParseOOMScoreAdjUpdate(ts, data);
+        break;
+      }
+      case FtraceEvent::kMarkVictimFieldNumber: {
+        ParseOOMKill(ts, data);
         break;
       }
       case FtraceEvent::kMmEventRecordFieldNumber: {
@@ -358,8 +370,9 @@ void FtraceParser::ParseGenericFtrace(int64_t ts,
   protos::pbzero::GenericFtraceEvent::Decoder evt(blob.data, blob.size);
   StringId event_id = context_->storage->InternString(evt.event_name());
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(tid);
-  RawId id =
-      context_->storage->mutable_raw_table()->Insert({ts, event_id, cpu, utid});
+  RawId id = context_->storage->mutable_raw_table()
+                 ->Insert({ts, event_id, cpu, utid})
+                 .id;
   auto inserter = context_->args_tracker->AddArgsTo(id);
 
   for (auto it = evt.field(); it; ++it) {
@@ -396,8 +409,9 @@ void FtraceParser::ParseTypedFtraceToRaw(uint32_t ftrace_id,
   MessageDescriptor* m = GetMessageDescriptorForId(ftrace_id);
   const auto& message_strings = ftrace_message_strings_[ftrace_id];
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(tid);
-  RawId id = context_->storage->mutable_raw_table()->Insert(
-      {ts, message_strings.message_name_id, cpu, utid});
+  RawId id = context_->storage->mutable_raw_table()
+                 ->Insert({ts, message_strings.message_name_id, cpu, utid})
+                 .id;
   auto inserter = context_->args_tracker->AddArgsTo(id);
 
   for (auto fld = decoder.ReadField(); fld.valid(); fld = decoder.ReadField()) {
@@ -545,6 +559,7 @@ void FtraceParser::ParseSdeTracingMarkWrite(int64_t ts,
       evt.trace_name(), tgid, evt.value());
 }
 
+/** Parses ion heap events present in Pixel kernels. */
 void FtraceParser::ParseIonHeapGrowOrShrink(int64_t ts,
                                             uint32_t pid,
                                             ConstBytes blob,
@@ -597,6 +612,24 @@ void FtraceParser::ParseIonHeapGrowOrShrink(int64_t ts,
               static_cast<int>(protos::pbzero::IonHeapShrinkFtraceEvent::
                                    kHeapNameFieldNumber),
       "ION field mismatch");
+}
+
+/** Parses ion heap events (introduced in 4.19 kernels). */
+void FtraceParser::ParseIonStat(int64_t ts,
+                                uint32_t pid,
+                                protozero::ConstBytes data) {
+  protos::pbzero::IonStatFtraceEvent::Decoder ion(data.data, data.size);
+  // Push the global counter.
+  TrackId track =
+      context_->track_tracker->InternGlobalCounterTrack(ion_total_id_);
+  context_->event_tracker->PushCounter(ts, ion.total_allocated(), track);
+
+  // Push the change counter.
+  // TODO(b/121331269): these should really be instant events.
+  UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
+  track =
+      context_->track_tracker->InternThreadCounterTrack(ion_change_id_, utid);
+  context_->event_tracker->PushCounter(ts, ion.len(), track);
 }
 
 // This event has both the pid of the thread that sent the signal and the
@@ -659,6 +692,14 @@ void FtraceParser::ParseOOMScoreAdjUpdate(int64_t ts, ConstBytes blob) {
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(tid);
   context_->event_tracker->PushProcessCounterForThread(ts, oom_adj,
                                                        oom_score_adj_id_, utid);
+}
+
+void FtraceParser::ParseOOMKill(int64_t ts, ConstBytes blob) {
+  protos::pbzero::MarkVictimFtraceEvent::Decoder evt(blob.data, blob.size);
+  UniqueTid utid = context_->process_tracker->GetOrCreateThread(
+      static_cast<uint32_t>(evt.pid()));
+  context_->event_tracker->PushInstant(ts, oom_kill_id_, utid,
+                                       RefType::kRefUtid, true);
 }
 
 void FtraceParser::ParseMmEventRecord(int64_t ts,

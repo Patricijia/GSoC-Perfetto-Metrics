@@ -19,6 +19,7 @@ import {Actions} from '../common/actions';
 import {QueryResponse} from '../common/queries';
 import {EngineMode} from '../common/state';
 
+import {Animation} from './animation';
 import {globals} from './globals';
 import {toggleHelp} from './help_modal';
 import {
@@ -141,6 +142,7 @@ const SECTIONS = [
         a: dispatchCreatePermalink,
         i: 'share',
         checkDownloadDisabled: true,
+        internalUserOnly: true,
       },
       {
         t: 'Download',
@@ -215,7 +217,7 @@ const SECTIONS = [
     items: [
       {
         t: 'Controls',
-        a: toggleHelp,
+        a: openHelp,
         i: 'help',
       },
       {
@@ -242,6 +244,11 @@ const vidSection = {
   ],
 };
 
+function openHelp(e: Event) {
+  e.preventDefault();
+  toggleHelp();
+}
+
 function getFileElement(): HTMLInputElement {
   return document.querySelector('input[type=file]')! as HTMLInputElement;
 }
@@ -260,7 +267,8 @@ function popupFileSelectionDialogOldUI(e: Event) {
   getFileElement().click();
 }
 
-function openCurrentTraceWithOldUI() {
+function openCurrentTraceWithOldUI(e: Event) {
+  e.preventDefault();
   console.assert(isTraceLoaded());
   if (!isTraceLoaded) return;
   const engine = Object.values(globals.state.engines)[0];
@@ -311,12 +319,7 @@ function onInputElementFileSelectionChanged(e: Event) {
   globals.frontendLocalState.localOnlyMode = false;
 
   if (e.target.dataset['useCatapultLegacyUi'] === '1') {
-    // Switch back to the old catapult UI.
-    if (isLegacyTrace(file.name)) {
-      openFileWithLegacyTraceViewer(file);
-      return;
-    }
-    openInOldUIWithSizeCheck(file);
+    openWithLegacyUi(file);
     return;
   }
 
@@ -343,7 +346,15 @@ function onInputElementFileSelectionChanged(e: Event) {
   }
 
   globals.dispatch(Actions.openTraceFromFile({file}));
+}
 
+async function openWithLegacyUi(file: File) {
+  // Switch back to the old catapult UI.
+  if (await isLegacyTrace(file)) {
+    openFileWithLegacyTraceViewer(file);
+    return;
+  }
+  openInOldUIWithSizeCheck(file);
 }
 
 function openInOldUIWithSizeCheck(trace: Blob) {
@@ -606,6 +617,8 @@ const SidebarFooter: m.Component = {
 
 
 export class Sidebar implements m.ClassComponent {
+  private _redrawWhileAnimating =
+      new Animation(() => globals.rafScheduler.scheduleFullRedraw());
   view() {
     const vdomSections = [];
     for (const section of SECTIONS) {
@@ -615,14 +628,19 @@ export class Sidebar implements m.ClassComponent {
         let attrs = {
           onclick: typeof item.a === 'function' ? item.a : null,
           href: typeof item.a === 'string' ? item.a : '#',
+          target: typeof item.a === 'string' ? '_blank' : null,
           disabled: false,
         };
+        if ((item as {internalUserOnly: boolean}).internalUserOnly === true) {
+          if (!globals.isInternalUser) continue;
+        }
         if (isDownloadAndShareDisabled() &&
             item.hasOwnProperty('checkDownloadDisabled')) {
           attrs = {
             onclick: () => alert('Can not download or share external trace.'),
             href: '#',
-            disabled: true
+            target: null,
+            disabled: true,
           };
         }
         vdomItems.push(
@@ -671,11 +689,14 @@ export class Sidebar implements m.ClassComponent {
         'nav.sidebar',
         {
           class: globals.frontendLocalState.sidebarVisible ? 'show-sidebar' :
-                                                             'hide-sidebar'
+                                                             'hide-sidebar',
+          // 150 here matches --sidebar-timing in the css.
+          ontransitionstart: () => this._redrawWhileAnimating.start(150),
+          ontransitionend: () => this._redrawWhileAnimating.stop(),
         },
         m(
             'header',
-            'Perfetto',
+            m('img[src=assets/brand.png].brand'),
             m('button.sidebar-button',
               {
                 onclick: () => {

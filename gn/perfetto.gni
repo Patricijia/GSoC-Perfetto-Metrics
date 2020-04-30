@@ -153,13 +153,19 @@ declare_args() {
 
   # Build the perf event profiler (traced_perf).
   # TODO(b/144281346): under development.
-  enable_perfetto_traced_perf = perfetto_build_with_android
+  # TODO(rsavitski): figure out how to make the android-core dependencies build
+  # under gcc (_Atomic and other issues).
+  enable_perfetto_traced_perf =
+      perfetto_build_with_android ||
+      (perfetto_build_standalone && is_clang && is_linux)
 
   # The Trace Processor: offline analytical engine to process traces and compute
   # metrics using a SQL engine.
-  enable_perfetto_trace_processor =
-      perfetto_build_standalone || build_with_chromium ||
-      is_perfetto_build_generator
+  if (!defined(enable_perfetto_trace_processor)) {
+    enable_perfetto_trace_processor =
+        perfetto_build_standalone || build_with_chromium ||
+        is_perfetto_build_generator
+  }
 
   # Enables base::Watchdog. Is supported only on Linux-based platforms.
   # gn/BUILD.gn further restricts this to OS_LINUX || OS_ANDROID when generating
@@ -219,14 +225,9 @@ declare_args() {
       (is_linux || is_android || is_mac)
 
   # Enables JSON support in the trace processor. Required for JSON trace import
-  # and export. Importer support can also be disabled using
-  # |enable_perfetto_trace_processor_json_import|.
+  # and export.
   enable_perfetto_trace_processor_json =
       enable_perfetto_trace_processor && !perfetto_build_with_android
-
-  # Enables Fuchsia trace format support in trace processor.
-  enable_perfetto_trace_processor_fuchsia =
-      enable_perfetto_trace_processor && !(build_with_chromium && is_android)
 
   # Enables httpd RPC support in the trace processor.
   # Further per-OS conditionals are applied in gn/BUILD.gn.
@@ -240,11 +241,6 @@ declare_args() {
 }
 
 declare_args() {
-  # Enables importer support for JSON traces in the trace processor.
-  enable_perfetto_trace_processor_json_import =
-      enable_perfetto_trace_processor_json &&
-      !(build_with_chromium && is_android)
-
   # Enables the trace_to_text tool.
   enable_perfetto_tools_trace_to_text =
       enable_perfetto_tools && enable_perfetto_trace_processor_sqlite
@@ -252,6 +248,13 @@ declare_args() {
   # Allows to build the UI (TypeScript/ HTML / WASM)
   enable_perfetto_ui =
       perfetto_build_standalone && enable_perfetto_trace_processor_sqlite
+
+  # Skip buildtools dependency checks (needed for ChromeOS).
+  skip_buildtools_check = false
+
+  # Used by CrOS system builds. Uses the system version of protobuf
+  # from /usr/include instead of the hermetic one.
+  perfetto_use_system_protobuf = false
 }
 
 # +---------------------------------------------------------------------------+

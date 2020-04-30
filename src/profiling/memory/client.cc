@@ -56,8 +56,12 @@ inline bool IsMainThread() {
   return getpid() == base::GetThreadId();
 }
 
-// TODO(b/117203899): Remove this after making bionic implementation safe to
-// use.
+// The implementation of pthread_getattr_np for the main thread uses malloc,
+// so we cannot use it in GetStackBase, which we use inside of RecordMalloc
+// (which is called from malloc). We would re-enter malloc if we used it.
+//
+// This is why we find the stack base for the main-thread when constructing
+// the client and remember it.
 char* FindMainThreadStack() {
   base::ScopedFstream maps(fopen("/proc/self/maps", "r"));
   if (!maps) {
@@ -170,7 +174,7 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
 
   base::ScopedFile page_idle(base::OpenFile("/proc/self/page_idle", O_RDWR));
   if (!page_idle) {
-    PERFETTO_LOG("Failed to open /proc/self/page_idle. Continuing.");
+    PERFETTO_DLOG("Failed to open /proc/self/page_idle. Continuing.");
     num_send_fds = kHandshakeSize - 1;
   }
 
@@ -273,6 +277,26 @@ const char* Client::GetStackBase() {
   return GetThreadStackBase();
 }
 
+bool Client::IsPostFork() {
+  if (PERFETTO_UNLIKELY(getpid() != pid_at_creation_)) {
+    // Only print the message once, even if we do not shut down the client.
+    if (!detected_fork_) {
+      detected_fork_ = true;
+      postfork_return_value_ = client_config_.disable_fork_teardown;
+      const char* action =
+          postfork_return_value_ ? "Not shutting down" : "Shutting down";
+      const char* force =
+          postfork_return_value_ ? "fork teardown disabled" : "";
+      PERFETTO_LOG(
+          "Detected post-fork child situation. Not profiling the child. "
+          "%s client (%s)",
+          action, force);
+    }
+    return true;
+  }
+  return false;
+}
+
 // The stack grows towards numerically smaller addresses, so the stack layout
 // of main calling malloc is as follows.
 //
@@ -288,10 +312,8 @@ const char* Client::GetStackBase() {
 bool Client::RecordMalloc(uint64_t sample_size,
                           uint64_t alloc_size,
                           uint64_t alloc_address) {
-  if (PERFETTO_UNLIKELY(getpid() != pid_at_creation_)) {
-    PERFETTO_LOG(
-        "Detected post-fork child situation. Not profiling the child.");
-    return false;
+  if (PERFETTO_UNLIKELY(IsPostFork())) {
+    return postfork_return_value_;
   }
 
   AllocMetadata metadata;
@@ -371,9 +393,8 @@ bool Client::RecordFree(const uint64_t alloc_address) {
 }
 
 bool Client::FlushFreesLocked() {
-  if (PERFETTO_UNLIKELY(getpid() != pid_at_creation_)) {
-    PERFETTO_LOG("Detected post-fork child situation, stopping profiling.");
-    return false;
+  if (PERFETTO_UNLIKELY(IsPostFork())) {
+    return postfork_return_value_;
   }
 
   WireMessage msg = {};

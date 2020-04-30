@@ -18,14 +18,14 @@
 #define SRC_TRACE_PROCESSOR_IMPORTERS_FTRACE_FTRACE_PARSER_H_
 
 #include "perfetto/trace_processor/status.h"
-#include "src/trace_processor/event_tracker.h"
+#include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/ftrace/binder_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_descriptors.h"
 #include "src/trace_processor/importers/ftrace/rss_stat_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/trace_blob_view.h"
-#include "src/trace_processor/trace_processor_context.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -64,10 +64,12 @@ class FtraceParser {
                                 uint32_t pid,
                                 protozero::ConstBytes,
                                 bool grow);
+  void ParseIonStat(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseSignalGenerate(int64_t ts, protozero::ConstBytes);
   void ParseSignalDeliver(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseLowmemoryKill(int64_t ts, protozero::ConstBytes);
   void ParseOOMScoreAdjUpdate(int64_t ts, protozero::ConstBytes);
+  void ParseOOMKill(int64_t ts, protozero::ConstBytes);
   void ParseMmEventRecord(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseSysEvent(int64_t ts,
                      uint32_t pid,
@@ -87,6 +89,8 @@ class FtraceParser {
   const StringId cpu_freq_name_id_;
   const StringId gpu_freq_name_id_;
   const StringId cpu_idle_name_id_;
+  const StringId ion_total_id_;
+  const StringId ion_change_id_;
   const StringId ion_total_unknown_id_;
   const StringId ion_change_unknown_id_;
   const StringId signal_generate_id_;
@@ -95,6 +99,7 @@ class FtraceParser {
   const StringId lmk_id_;
   const StringId comm_name_id_;
   const StringId signal_name_id_;
+  const StringId oom_kill_id_;
 
   struct FtraceMessageStrings {
     // The string id of name of the event field (e.g. sched_switch's id).

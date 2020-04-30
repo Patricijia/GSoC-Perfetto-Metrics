@@ -21,12 +21,12 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_view.h"
-#include "src/trace_processor/ftrace_utils.h"
+#include "src/trace_processor/importers/common/process_tracker.h"
+#include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_record.h"
-#include "src/trace_processor/process_tracker.h"
-#include "src/trace_processor/slice_tracker.h"
-#include "src/trace_processor/trace_processor_context.h"
 #include "src/trace_processor/trace_sorter.h"
+#include "src/trace_processor/types/task_state.h"
+#include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -542,9 +542,13 @@ void FuchsiaTraceTokenizer::ParseRecord(TraceBlobView tbv) {
           }
         }
 
-        storage->mutable_slices()->AddSlice(cpu, previous_thread.start_ts,
-                                            ts - previous_thread.start_ts, utid,
-                                            end_state, outgoing_priority);
+        auto id =
+            end_state.is_valid()
+                ? context_->storage->InternString(end_state.ToString().data())
+                : kNullStringId;
+        storage->mutable_sched_slice_table()->Insert(
+            {previous_thread.start_ts, ts - previous_thread.start_ts, cpu, utid,
+             id, outgoing_priority});
       }
 
       RunningThread new_running;
@@ -567,6 +571,8 @@ void FuchsiaTraceTokenizer::RegisterProvider(uint32_t provider_id,
   current_provider_ = provider.get();
   providers_[provider_id] = std::move(provider);
 }
+
+void FuchsiaTraceTokenizer::NotifyEndOfFile() {}
 
 }  // namespace trace_processor
 }  // namespace perfetto

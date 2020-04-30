@@ -16,35 +16,7 @@
 
 -- Create all the views used to generate the Android Cpu metrics proto.
 SELECT RUN_METRIC('android/android_cpu_agg.sql');
-
-CREATE VIEW core_layout_mapping AS
-SELECT
-  CASE
-    WHEN (
-      str_value LIKE '%flame%' OR
-      str_value LIKE '%coral%'
-    ) THEN 'big_little_bigger'
-    WHEN (
-      str_value LIKE '%taimen%' OR
-      str_value LIKE '%walleye%' OR
-      str_value LIKE '%bonito%' OR
-      str_value LIKE '%sargo%' OR
-      str_value LIKE '%blueline%' OR
-      str_value LIKE '%crosshatch%'
-    ) THEN 'big_little'
-    ELSE 'unknown'
-  END AS layout
-FROM metadata
-WHERE name = 'android_build_fingerprint';
-
-CREATE TABLE core_layout_type AS
-SELECT *
-FROM (
-  SELECT layout from core_layout_mapping
-  UNION
-  SELECT 'unknown'
-)
-LIMIT 1;
+SELECT RUN_METRIC('android/cpu_info.sql');
 
 CREATE TABLE raw_metrics_per_core AS
 SELECT
@@ -62,12 +34,21 @@ SELECT
       END
     FROM core_layout_type
   ) AS core_type,
-  CAST(SUM(dur * freq) AS INT) AS cycles,
-  CAST(SUM(dur * freq / 1000000) AS INT) AS mcycles,
-  CAST(SUM(dur) AS INT) AS runtime_ns,
-  CAST(MIN(freq) AS INT) AS min_freq_khz,
-  CAST(MAX(freq) AS INT) AS max_freq_khz,
-  CAST((SUM(dur * freq) / SUM(dur)) AS INT) AS avg_freq_khz
+  -- We divide by 1e3 here as dur is in ns and freq_khz in khz. In total
+  -- this means we need to divide the duration by 1e9 and multiply the
+  -- frequency by 1e3 then multiply again by 1e3 to get millicycles
+  -- i.e. divide by 1e3 in total.
+  -- We use millicycles as we want to preserve this level of precision
+  -- for future calculations.
+  SUM(dur * freq_khz / 1000) AS millicycles,
+  CAST(SUM(dur * freq_khz / 1000000 / 1000000) AS INT) AS mcycles,
+  SUM(dur) AS runtime_ns,
+  MIN(freq_khz) AS min_freq_khz,
+  MAX(freq_khz) AS max_freq_khz,
+  -- We choose to work in micros space in both the numerator and
+  -- denominator as this gives us good enough precision without risking
+  -- overflows.
+  CAST(SUM(dur * freq_khz / 1000) / SUM(dur / 1000) AS INT) AS avg_freq_khz
 FROM cpu_freq_sched_per_thread
 GROUP BY utid, cpu;
 
@@ -80,7 +61,11 @@ SELECT
     'runtime_ns', SUM(runtime_ns),
     'min_freq_khz', MIN(min_freq_khz),
     'max_freq_khz', MAX(max_freq_khz),
-    'avg_freq_khz', (SUM(cycles) / SUM(runtime_ns))
+    -- In total here, we need to divide the denominator by 1e9 (to convert
+    -- ns to s) and divide the numerator by 1e6 (to convert millicycles to
+    -- kcycles). In total, this means we need to multiply the expression as
+    -- a whole by 1e3.
+    'avg_freq_khz', CAST((SUM(millicycles) / SUM(runtime_ns)) * 1000 AS INT)
   ) AS proto
 FROM raw_metrics_per_core
 GROUP BY utid, core_type;
@@ -124,7 +109,9 @@ SELECT
     'runtime_ns', SUM(runtime_ns),
     'min_freq_khz', MIN(min_freq_khz),
     'max_freq_khz', MAX(max_freq_khz),
-    'avg_freq_khz', (SUM(cycles) / SUM(runtime_ns))
+    -- See above for a breakdown of the maths used to compute the
+    -- multiplicative factor.
+    'avg_freq_khz', CAST((SUM(millicycles) / SUM(runtime_ns)) * 1000 AS INT)
   ) AS proto
 FROM raw_metrics_per_core
 GROUP BY utid;
@@ -147,6 +134,68 @@ LEFT JOIN core_type_proto_per_thread USING (utid)
 LEFT JOIN metrics_proto_per_thread USING(utid)
 GROUP BY upid;
 
+CREATE VIEW core_metrics_per_process AS
+SELECT
+  upid,
+  cpu,
+  AndroidCpuMetric_Metrics(
+    'mcycles', SUM(mcycles),
+    'runtime_ns', SUM(runtime_ns),
+    'min_freq_khz', MIN(min_freq_khz),
+    'max_freq_khz', MAX(max_freq_khz),
+    -- In total here, we need to divide the denominator by 1e9 (to convert
+    -- ns to s) and divide the numerator by 1e6 (to convert millicycles to
+    -- kcycles). In total, this means we need to multiply the expression as
+    -- a whole by 1e3.
+    'avg_freq_khz', CAST((SUM(millicycles) / SUM(runtime_ns)) * 1000 AS INT)
+  ) AS proto
+FROM raw_metrics_per_core
+JOIN thread USING (utid)
+GROUP BY upid, cpu;
+
+CREATE VIEW core_proto_per_process AS
+SELECT
+  upid,
+  RepeatedField(
+    AndroidCpuMetric_CoreData(
+      'id', cpu,
+      'metrics', core_metrics_per_process.proto
+    )
+  ) as proto
+FROM core_metrics_per_process
+GROUP BY upid;
+
+CREATE VIEW core_type_metrics_per_process AS
+SELECT
+  upid,
+  core_type,
+  AndroidCpuMetric_Metrics(
+    'mcycles', SUM(mcycles),
+    'runtime_ns', SUM(runtime_ns),
+    'min_freq_khz', MIN(min_freq_khz),
+    'max_freq_khz', MAX(max_freq_khz),
+    -- In total here, we need to divide the denominator by 1e9 (to convert
+    -- ns to s) and divide the numerator by 1e6 (to convert millicycles to
+    -- kcycles). In total, this means we need to multiply the expression as
+    -- a whole by 1e3.
+    'avg_freq_khz', CAST((SUM(millicycles) / SUM(runtime_ns)) * 1000 AS INT)
+  ) AS proto
+FROM raw_metrics_per_core
+JOIN thread USING (utid)
+GROUP BY upid, core_type;
+
+CREATE VIEW core_type_proto_per_process AS
+SELECT
+  upid,
+  RepeatedField(
+    AndroidCpuMetric_CoreTypeData(
+      'type', core_type,
+      'metrics', core_type_metrics_per_process.proto
+    )
+  ) as proto
+FROM core_type_metrics_per_process
+GROUP BY upid;
+
 CREATE VIEW metrics_proto_per_process AS
 SELECT
   upid,
@@ -155,7 +204,9 @@ SELECT
     'runtime_ns', SUM(runtime_ns),
     'min_freq_khz', MIN(min_freq_khz),
     'max_freq_khz', MAX(max_freq_khz),
-    'avg_freq_khz', (SUM(cycles) / SUM(runtime_ns))
+    -- See above for a breakdown of the maths used to compute the
+    -- multiplicative factor.
+    'avg_freq_khz', CAST((SUM(millicycles) / SUM(runtime_ns)) * 1000 AS INT)
   ) AS proto
 FROM raw_metrics_per_core
 JOIN thread USING (utid)
@@ -168,11 +219,15 @@ SELECT AndroidCpuMetric(
       AndroidCpuMetric_Process(
         'name', process.name,
         'metrics', metrics_proto_per_process.proto,
-        'threads', thread_proto_per_process.proto
+        'threads', thread_proto_per_process.proto,
+        'core', core_proto_per_process.proto,
+        'core_type', core_type_proto_per_process.proto
       )
     )
     FROM process
     JOIN metrics_proto_per_process USING(upid)
     JOIN thread_proto_per_process USING (upid)
+    JOIN core_proto_per_process USING (upid)
+    JOIN core_type_proto_per_process USING (upid)
   )
 );

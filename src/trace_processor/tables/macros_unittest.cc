@@ -50,6 +50,11 @@ PERFETTO_TP_TABLE(PERFETTO_TP_TEST_SLICE_TABLE_DEF);
   C(StringPool::Id, end_state)
 PERFETTO_TP_TABLE(PERFETTO_TP_TEST_CPU_SLICE_TABLE_DEF);
 
+TestEventTable::~TestEventTable() = default;
+TestCounterTable::~TestCounterTable() = default;
+TestSliceTable::~TestSliceTable() = default;
+TestCpuSliceTable::~TestCpuSliceTable() = default;
+
 class TableMacrosUnittest : public ::testing::Test {
  protected:
   StringPool pool_;
@@ -67,13 +72,13 @@ TEST_F(TableMacrosUnittest, Name) {
 }
 
 TEST_F(TableMacrosUnittest, InsertParent) {
-  auto id = event_.Insert(TestEventTable::Row(100, 0));
+  auto id = event_.Insert(TestEventTable::Row(100, 0)).id;
   ASSERT_EQ(id.value, 0u);
   ASSERT_EQ(event_.type().GetString(0), "event");
   ASSERT_EQ(event_.ts()[0], 100);
   ASSERT_EQ(event_.arg_set_id()[0], 0);
 
-  id = slice_.Insert(TestSliceTable::Row(200, 123, 10, 0));
+  id = slice_.Insert(TestSliceTable::Row(200, 123, 10, 0)).id;
   ASSERT_EQ(id.value, 1u);
 
   ASSERT_EQ(event_.type().GetString(1), "slice");
@@ -85,7 +90,7 @@ TEST_F(TableMacrosUnittest, InsertParent) {
   ASSERT_EQ(slice_.dur()[0], 10);
   ASSERT_EQ(slice_.depth()[0], 0);
 
-  id = slice_.Insert(TestSliceTable::Row(210, 456, base::nullopt, 0));
+  id = slice_.Insert(TestSliceTable::Row(210, 456, base::nullopt, 0)).id;
   ASSERT_EQ(id.value, 2u);
 
   ASSERT_EQ(event_.type().GetString(2), "slice");
@@ -103,8 +108,9 @@ TEST_F(TableMacrosUnittest, InsertChild) {
   slice_.Insert(TestSliceTable::Row(200, 123, 10, 0));
 
   auto reason = pool_.InternString("R");
-  auto id = cpu_slice_.Insert(
-      TestCpuSliceTable::Row(205, 456, 5, 1, 4, 1024, reason));
+  auto id =
+      cpu_slice_.Insert(TestCpuSliceTable::Row(205, 456, 5, 1, 4, 1024, reason))
+          .id;
   ASSERT_EQ(id.value, 2u);
   ASSERT_EQ(event_.type().GetString(2), "cpu_slice");
   ASSERT_EQ(event_.ts()[2], 205);

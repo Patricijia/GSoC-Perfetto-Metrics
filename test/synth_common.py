@@ -59,10 +59,11 @@ class Trace(object):
     if curr is not None:
       rss_stat.curr = curr
 
-  def add_ion_event(self, ts, tid, heap_name, size):
+  def add_ion_event(self, ts, tid, heap_name, len, size=0):
     ftrace = self.__add_ftrace_event(ts, tid)
     ion = ftrace.ion_heap_grow
     ion.heap_name = heap_name
+    ion.len = len
     ion.total_allocated = size
 
   def add_oom_score_update(self, ts, oom_score_adj, pid):
@@ -343,6 +344,18 @@ class Trace(object):
     debug_marker.object_type = obj_type
     debug_marker.object = obj
     debug_marker.object_name = obj_name
+
+  def add_vk_queue_submit(self, ts, dur, pid, tid, vk_queue, vk_command_buffers,
+                          submission_id):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    submit = (self.packet.vulkan_api_event.vk_queue_submit)
+    submit.duration_ns = dur
+    submit.pid = pid
+    submit.tid = tid
+    for cmd in vk_command_buffers:
+      submit.vk_command_buffers.append(cmd)
+    submit.submission_id = submission_id
 
   def add_gpu_log(self, ts, severity, tag, message):
     packet = self.add_packet()

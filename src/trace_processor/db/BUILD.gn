@@ -22,6 +22,7 @@ source_set("lib") {
     "table.cc",
     "table.h",
     "typed_column.h",
+    "typed_column_internal.h",
   ]
   deps = [
     "../../../gn:default_deps",
@@ -36,10 +37,13 @@ perfetto_unittest_source_set("unittests") {
   testonly = true
   sources = [
     "compare_unittest.cc",
+    "table_unittest.cc",
   ]
   deps = [
     ":lib",
     "../../../gn:default_deps",
     "../../../gn:gtest_and_gmock",
+    "../../base:base",
+    "../tables:tables",
   ]
 }
