@@ -767,6 +767,7 @@ genrule(
         "src/trace_processor/metrics/android/unmapped_java_symbols.sql",
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
         "src/trace_processor/metrics/android/upid_span_view.sql",
+        "src/trace_processor/metrics/chrome/chrome_processes.sql",
         "src/trace_processor/metrics/trace_metadata.sql",
     ],
     outs = [
@@ -3212,9 +3213,9 @@ perfetto_java_proto_library(
 )
 
 perfetto_java_proto_library(
-    name = "protos_perfetto_trace_merged_config_java",
+    name = "protos_perfetto_config_merged_config_java",
     deps = [
-        ":protos_perfetto_trace_merged_config_protos",
+        ":protos_perfetto_config_merged_config_protos",
     ],
 )
 
