@@ -613,6 +613,11 @@ cc_library_static {
     "-DGOOGLE_PROTOBUF_NO_RTTI",
     "-DGOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
   ],
+  apex_available: [
+    "//apex_available:platform",
+    "com.android.art.debug",
+    "com.android.art.release",
+  ],
 }
 
 // GN: //src/perfetto_cmd:perfetto
@@ -1798,6 +1803,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_cpp_gen",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1807,6 +1813,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.gen.cc",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.gen.cc",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.gen.cc",
   ],
 }
@@ -1816,6 +1823,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_cpp_gen_headers",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1825,6 +1833,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.gen.h",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.gen.h",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.gen.h",
   ],
   export_include_dirs: [
@@ -1838,6 +1847,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_lite_gen",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1846,6 +1856,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.pb.cc",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.pb.cc",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.pb.cc",
   ],
 }
@@ -1855,6 +1866,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_lite_gen_headers",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1863,6 +1875,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.pb.h",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.pb.h",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.pb.h",
   ],
   export_include_dirs: [
@@ -1876,6 +1889,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_zero_gen",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1885,6 +1899,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.pbzero.cc",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.pbzero.cc",
   ],
 }
@@ -1894,6 +1909,7 @@ genrule {
   name: "perfetto_protos_perfetto_config_android_zero_gen_headers",
   srcs: [
     "protos/perfetto/config/android/android_log_config.proto",
+    "protos/perfetto/config/android/android_polled_state_config.proto",
     "protos/perfetto/config/android/packages_list_config.proto",
   ],
   tools: [
@@ -1903,6 +1919,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/config/android/android_log_config.pbzero.h",
+    "external/perfetto/protos/perfetto/config/android/android_polled_state_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/android/packages_list_config.pbzero.h",
   ],
   export_include_dirs: [
@@ -7489,6 +7506,11 @@ cc_library_static {
   cflags: [
     "-DGOOGLE_PROTOBUF_NO_RTTI",
     "-DGOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
+  ],
+  apex_available: [
+    "//apex_available:platform",
+    "com.android.art.debug",
+    "com.android.art.release",
   ],
 }
 
