@@ -28,6 +28,7 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/string_view.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/tp_metatrace.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -158,6 +159,15 @@ util::Status SpanJoinOperatorTable::Init(int argc,
 
   CreateSchemaColsForDefn(t1_defn_, &cols);
   CreateSchemaColsForDefn(t2_defn_, &cols);
+
+  // Check if any column has : in its name. This often happens when SELECT *
+  // is used to create a view with the same column name in two joined tables.
+  for (const auto& col : cols) {
+    if (col.name().find(':') != std::string::npos) {
+      return util::ErrStatus("SPAN_JOIN: column %s has illegal character :",
+                             col.name().c_str());
+    }
+  }
 
   if (auto opt_dupe_col = HasDuplicateColumns(cols)) {
     return util::ErrStatus(
@@ -323,6 +333,8 @@ SpanJoinOperatorTable::Cursor::Cursor(SpanJoinOperatorTable* table, sqlite3* db)
 int SpanJoinOperatorTable::Cursor::Filter(const QueryConstraints& qc,
                                           sqlite3_value** argv,
                                           FilterHistory) {
+  PERFETTO_TP_TRACE("SPAN_JOIN_XFILTER");
+
   util::Status status = t1_.Initialize(qc, argv);
   if (!status.ok())
     return SQLITE_ERROR;

@@ -39,6 +39,8 @@ CounterTable::~CounterTable() = default;
 RawTable::~RawTable() = default;
 ArgTable::~ArgTable() = default;
 MetadataTable::~MetadataTable() = default;
+CpuTable::~CpuTable() = default;
+CpuFreqTable::~CpuFreqTable() = default;
 ThreadTable::~ThreadTable() = default;
 ProcessTable::~ProcessTable() = default;
 
@@ -56,6 +58,7 @@ HeapGraphReferenceTable::~HeapGraphReferenceTable() = default;
 VulkanMemoryAllocationsTable::~VulkanMemoryAllocationsTable() = default;
 PackageListTable::~PackageListTable() = default;
 ProfilerSmapsTable::~ProfilerSmapsTable() = default;
+GpuCounterGroupTable::~GpuCounterGroupTable() = default;
 
 // slice_tables.h
 SliceTable::~SliceTable() = default;

@@ -68,6 +68,7 @@
 #include "src/tracing/core/shared_memory_arbiter_impl.h"
 #include "src/tracing/core/trace_buffer.h"
 
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/common/trace_stats.pbzero.h"
 #include "protos/perfetto/config/trace_config.pbzero.h"
 #include "protos/perfetto/trace/clock_snapshot.pbzero.h"
@@ -89,6 +90,7 @@ constexpr base::TimeMillis kSnapshotsInterval(10 * 1000);
 constexpr int kDefaultWriteIntoFilePeriodMs = 5000;
 constexpr int kMaxConcurrentTracingSessions = 15;
 constexpr int kMaxConcurrentTracingSessionsPerUid = 5;
+constexpr int kMaxConcurrentTracingSessionsForStatsdUid = 10;
 constexpr int64_t kMinSecondsBetweenTracesGuardrail = 5 * 60;
 
 constexpr uint32_t kMillisPerHour = 3600000;
@@ -591,9 +593,15 @@ bool TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
       [consumer](const decltype(tracing_sessions_)::value_type& s) {
         return s.second.consumer_uid == consumer->uid_;
       });
-  if (sessions_for_uid >= kMaxConcurrentTracingSessionsPerUid) {
-    PERFETTO_ELOG("Too many concurrent tracing sesions (%ld) for uid %d",
-                  sessions_for_uid, static_cast<int>(consumer->uid_));
+
+  int per_uid_limit = kMaxConcurrentTracingSessionsPerUid;
+  if (consumer->uid_ == 1066 /* AID_STATSD*/) {
+    per_uid_limit = kMaxConcurrentTracingSessionsForStatsdUid;
+  }
+  if (sessions_for_uid >= per_uid_limit) {
+    PERFETTO_ELOG(
+        "Too many concurrent tracing sesions (%ld) for uid %d limit is %d",
+        sessions_for_uid, static_cast<int>(consumer->uid_), per_uid_limit);
     return false;
   }
 
@@ -894,8 +902,10 @@ bool TracingServiceImpl::StartTracing(TracingSessionID tsid) {
 
   if (!tracing_session->config.builtin_data_sources()
            .disable_clock_snapshotting()) {
-    SnapshotClocks(&tracing_session->initial_clock_snapshot_,
-                   /*set_root_timestamp=*/true);
+    SnapshotClocks(
+        &tracing_session->initial_clock_snapshot_,
+        tracing_session->config.builtin_data_sources().primary_trace_clock(),
+        /*set_root_timestamp=*/true);
   }
 
   // Trigger delayed task if the trace is time limited.
@@ -1690,7 +1700,10 @@ bool TracingServiceImpl::ReadBuffers(TracingSessionID tsid,
       // We don't want to put a root timestamp in this snapshot as the packet
       // may be very out of order with respect to the actual trace packets
       // since consuming the trace may happen at any point after it starts.
-      SnapshotClocks(&packets, /*set_root_timestamp=*/false);
+      SnapshotClocks(
+          &packets,
+          tracing_session->config.builtin_data_sources().primary_trace_clock(),
+          /*set_root_timestamp=*/false);
     }
   }
   if (!tracing_session->config.builtin_data_sources().disable_trace_config()) {
@@ -2396,38 +2409,36 @@ void TracingServiceImpl::SnapshotSyncMarker(std::vector<TracePacket>* packets) {
 }
 
 void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
+                                        protos::gen::BuiltinClock trace_clock,
                                         bool set_root_timestamp) {
   protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
   uint64_t root_timestamp_ns = 0;
   auto* clock_snapshot = packet->set_clock_snapshot();
+
+  if (!trace_clock)
+    trace_clock = protos::gen::BUILTIN_CLOCK_BOOTTIME;
+  clock_snapshot->set_primary_trace_clock(
+      static_cast<protos::pbzero::BuiltinClock>(trace_clock));
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) &&    \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct {
     clockid_t id;
-    protos::pbzero::ClockSnapshot::Clock::BuiltinClocks type;
+    protos::pbzero::BuiltinClock type;
     struct timespec ts;
   } clocks[] = {
-      {CLOCK_BOOTTIME, protos::pbzero::ClockSnapshot::Clock::BOOTTIME, {0, 0}},
+      {CLOCK_BOOTTIME, protos::pbzero::BUILTIN_CLOCK_BOOTTIME, {0, 0}},
       {CLOCK_REALTIME_COARSE,
-       protos::pbzero::ClockSnapshot::Clock::REALTIME_COARSE,
+       protos::pbzero::BUILTIN_CLOCK_REALTIME_COARSE,
        {0, 0}},
       {CLOCK_MONOTONIC_COARSE,
-       protos::pbzero::ClockSnapshot::Clock::MONOTONIC_COARSE,
+       protos::pbzero::BUILTIN_CLOCK_MONOTONIC_COARSE,
        {0, 0}},
-      {CLOCK_REALTIME, protos::pbzero::ClockSnapshot::Clock::REALTIME, {0, 0}},
-      {CLOCK_MONOTONIC,
-       protos::pbzero::ClockSnapshot::Clock::MONOTONIC,
-       {0, 0}},
+      {CLOCK_REALTIME, protos::pbzero::BUILTIN_CLOCK_REALTIME, {0, 0}},
+      {CLOCK_MONOTONIC, protos::pbzero::BUILTIN_CLOCK_MONOTONIC, {0, 0}},
       {CLOCK_MONOTONIC_RAW,
-       protos::pbzero::ClockSnapshot::Clock::MONOTONIC_RAW,
-       {0, 0}},
-      {CLOCK_PROCESS_CPUTIME_ID,
-       protos::pbzero::ClockSnapshot::Clock::PROCESS_CPUTIME,
-       {0, 0}},
-      {CLOCK_THREAD_CPUTIME_ID,
-       protos::pbzero::ClockSnapshot::Clock::THREAD_CPUTIME,
+       protos::pbzero::BUILTIN_CLOCK_MONOTONIC_RAW,
        {0, 0}},
   };
   // First snapshot all the clocks as atomically as we can.
@@ -2437,7 +2448,7 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
   }
   for (auto& clock : clocks) {
     if (set_root_timestamp &&
-        clock.type == protos::pbzero::ClockSnapshot::Clock::BOOTTIME) {
+        clock.type == protos::pbzero::BUILTIN_CLOCK_BOOTTIME) {
       root_timestamp_ns =
           static_cast<uint64_t>(base::FromPosixTimespec(clock.ts).count());
     }
@@ -2453,13 +2464,13 @@ void TracingServiceImpl::SnapshotClocks(std::vector<TracePacket>* packets,
   if (set_root_timestamp)
     root_timestamp_ns = wall_time_ns;
   auto* c = clock_snapshot->add_clocks();
-  c->set_clock_id(protos::pbzero::ClockSnapshot::Clock::MONOTONIC);
+  c->set_clock_id(protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
   c->set_timestamp(wall_time_ns);
   // The default trace clock is boot time, so we always need to emit a path to
   // it. However since we don't actually have a boot time source on these
   // platforms, pretend that wall time equals boot time.
   c = clock_snapshot->add_clocks();
-  c->set_clock_id(protos::pbzero::ClockSnapshot::Clock::BOOTTIME);
+  c->set_clock_id(protos::pbzero::BUILTIN_CLOCK_BOOTTIME);
   c->set_timestamp(wall_time_ns);
 #endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) &&
         // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)

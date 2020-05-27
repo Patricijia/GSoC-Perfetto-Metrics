@@ -193,6 +193,7 @@ export interface HeapProfileFlamegraph {
 export interface ChromeSliceSelection {
   kind: 'CHROME_SLICE';
   id: number;
+  table: string;
 }
 
 export interface ThreadStateSelection {
@@ -291,6 +292,7 @@ export interface State {
   recordingStatus?: string;
 
   chromeCategories: string[]|undefined;
+  analyzePageQuery?: string;
 }
 
 export const defaultTraceTime = {

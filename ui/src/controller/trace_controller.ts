@@ -280,7 +280,7 @@ export class TraceController extends Controller<States> {
     globals.dispatchMultiple(actions);
 
     // Make sure the helper views are available before we start adding tracks.
-    await this.initaliseHelperViews();
+    await this.initialiseHelperViews();
 
     {
       // When we reload from a permalink don't create extra tracks:
@@ -384,6 +384,38 @@ export class TraceController extends Controller<States> {
       }
     }
 
+    const rawGlobalAsyncTracks = await engine.query(`
+      SELECT
+        t.name,
+        t.track_ids,
+        MAX(experimental_slice_layout.layout_depth) as max_depth
+      FROM (
+        SELECT name, GROUP_CONCAT(track.id) AS track_ids
+        FROM track
+        WHERE track.type = "track"
+        GROUP BY name
+      ) AS t CROSS JOIN experimental_slice_layout
+      WHERE t.track_ids = experimental_slice_layout.filter_track_ids
+      GROUP BY t.track_ids;
+    `);
+    for (let i = 0; i < rawGlobalAsyncTracks.numRecords; i++) {
+      const name = rawGlobalAsyncTracks.columns[0].stringValues![i];
+      const rawTrackIds = rawGlobalAsyncTracks.columns[1].stringValues![i];
+      const trackIds = rawTrackIds.split(',').map(v => Number(v));
+      const maxDepth = +rawGlobalAsyncTracks.columns[2].longValues![i];
+      const track = {
+        engineId: this.engineId,
+        kind: 'AsyncSliceTrack',
+        trackGroup: SCROLLING_TRACK_GROUP,
+        name,
+        config: {
+          maxDepth,
+          trackIds,
+        },
+      };
+      tracksToAdd.push(track);
+    }
+
     const upidToProcessTracks = new Map();
     const rawProcessTracks = await engine.query(`
       SELECT
@@ -485,32 +517,6 @@ export class TraceController extends Controller<States> {
           name,
           trackId,
         }
-      });
-    }
-
-    // Add global slice tracks.
-    const globalSliceTracks = await engine.query(`
-      select
-        track.name as track_name,
-        track.id as track_id,
-        max(depth) as max_depth
-      from track
-      join slice on track.id = slice.track_id
-      where track.type = 'track'
-      group by track_id
-    `);
-
-    for (let i = 0; i < globalSliceTracks.numRecords; i++) {
-      const name = globalSliceTracks.columns[0].stringValues![i];
-      const trackId = +globalSliceTracks.columns[1].longValues![i];
-      const maxDepth = +globalSliceTracks.columns[2].longValues![i];
-
-      tracksToAdd.push({
-        engineId: this.engineId,
-        kind: SLICE_TRACK_KIND,
-        name: `${name}`,
-        trackGroup: SCROLLING_TRACK_GROUP,
-        config: {maxDepth, trackId},
       });
     }
 
@@ -782,15 +788,16 @@ export class TraceController extends Controller<States> {
     }
 
     const annotationSliceRows = await engine.query(`
-      SELECT id, name FROM annotation_slice_track`);
+      SELECT id, name, upid FROM annotation_slice_track`);
     for (let i = 0; i < annotationSliceRows.numRecords; i++) {
       const id = annotationSliceRows.columns[0].longValues![i];
       const name = annotationSliceRows.columns[1].stringValues![i];
+      const upid = annotationSliceRows.columns[2].longValues![i] as number;
       tracksToAdd.push({
         engineId: this.engineId,
         kind: SLICE_TRACK_KIND,
         name,
-        trackGroup: SCROLLING_TRACK_GROUP,
+        trackGroup: upid === 0 ? SCROLLING_TRACK_GROUP : upidToUuid.get(upid),
         config: {
           maxDepth: 0,
           namespace: 'annotation',
@@ -800,19 +807,25 @@ export class TraceController extends Controller<States> {
     }
 
     const annotationCounterRows = await engine.query(`
-      SELECT id, name FROM annotation_counter_track`);
+      SELECT id, name, upid, min_value, max_value
+      FROM annotation_counter_track`);
     for (let i = 0; i < annotationCounterRows.numRecords; i++) {
       const id = annotationCounterRows.columns[0].longValues![i];
       const name = annotationCounterRows.columns[1].stringValues![i];
+      const upid = annotationCounterRows.columns[2].longValues![i] as number;
+      const minimumValue = annotationCounterRows.columns[3].doubleValues![i];
+      const maximumValue = annotationCounterRows.columns[4].doubleValues![i];
       tracksToAdd.push({
         engineId: this.engineId,
         kind: 'CounterTrack',
         name,
-        trackGroup: SCROLLING_TRACK_GROUP,
+        trackGroup: upid === 0 ? SCROLLING_TRACK_GROUP : upidToUuid.get(upid),
         config: {
           name,
           namespace: 'annotation',
           trackId: id,
+          minimumValue,
+          maximumValue,
         }
       });
     }
@@ -914,7 +927,7 @@ export class TraceController extends Controller<States> {
     globals.publish('OverviewData', slicesData);
   }
 
-  async initaliseHelperViews() {
+  async initialiseHelperViews() {
     const engine = assertExists<Engine>(this.engine);
     this.updateStatus('Creating helper views');
     let event = 'sched_waking';
@@ -981,14 +994,18 @@ export class TraceController extends Controller<States> {
       CREATE TABLE annotation_counter_track(
         id INTEGER PRIMARY KEY,
         name STRING,
-        __metric_name STRING
+        __metric_name STRING,
+        upid INTEGER,
+        min_value DOUBLE,
+        max_value DOUBLE
       );
     `);
     await engine.query(`
       CREATE TABLE annotation_slice_track(
         id INTEGER PRIMARY KEY,
         name STRING,
-        __metric_name STRING
+        __metric_name STRING,
+        upid INTEGER
       );
     `);
 
@@ -1008,12 +1025,16 @@ export class TraceController extends Controller<States> {
         ts BIG INT,
         dur BIG INT,
         depth INT,
+        cat STRING,
         name STRING,
         PRIMARY KEY (track_id, ts)
       ) WITHOUT ROWID;
     `);
 
-    for (const metric of ['android_startup', 'android_ion']) {
+    for (const metric
+             of ['android_startup',
+                 'android_ion',
+                 'android_thread_time_in_state']) {
       // We don't care about the actual result of metric here as we are just
       // interested in the annotation tracks.
       const metricResult = await engine.computeMetric([metric]);
@@ -1025,22 +1046,28 @@ export class TraceController extends Controller<States> {
       const hasSliceName =
           result.columnDescriptors.some(x => x.name === 'slice_name');
       const hasDur = result.columnDescriptors.some(x => x.name === 'dur');
+      const hasUpid = result.columnDescriptors.some(x => x.name === 'upid');
 
+      const upidColumn = hasUpid ? 'upid' : '0 AS upid';
       if (hasSliceName && hasDur) {
         await engine.query(`
-          INSERT INTO annotation_slice_track(name, __metric_name)
-          SELECT DISTINCT track_name, '${metric}' as metric_name
+          INSERT INTO annotation_slice_track(name, __metric_name, upid)
+          SELECT DISTINCT
+            track_name,
+            '${metric}' as metric_name,
+            ${upidColumn}
           FROM ${metric}_annotations
           WHERE track_type = 'slice'
         `);
         await engine.query(`
-          INSERT INTO annotation_slice(id, track_id, ts, dur, depth, name)
+          INSERT INTO annotation_slice(id, track_id, ts, dur, depth, cat, name)
           SELECT
-            -1 as id,
+            row_number() over (order by ts) as id,
             t.id AS track_id,
             ts,
             dur,
             0 AS depth,
+            a.track_name as cat,
             slice_name AS name
           FROM ${metric}_annotations a
           JOIN annotation_slice_track t
@@ -1052,10 +1079,17 @@ export class TraceController extends Controller<States> {
       const hasValue = result.columnDescriptors.some(x => x.name === 'value');
       if (hasValue) {
         await engine.query(`
-          INSERT INTO annotation_counter_track(name, __metric_name)
-          SELECT DISTINCT track_name, '${metric}' as metric_name
+          INSERT INTO annotation_counter_track(
+            name, __metric_name, min_value, max_value, upid)
+          SELECT
+            track_name,
+            '${metric}' as metric_name,
+            IFNULL(MIN(value), 0) as min_value,
+            IFNULL(MAX(value), 0) as max_value,
+            ${upidColumn}
           FROM ${metric}_annotations
           WHERE track_type = 'counter'
+          GROUP BY track_name, upid
         `);
         await engine.query(`
           INSERT INTO annotation_counter(id, track_id, ts, value)
