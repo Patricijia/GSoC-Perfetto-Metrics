@@ -16,11 +16,14 @@
 
 #include "src/trace_processor/importers/proto/system_probes_parser.h"
 
+#include <set>
+
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/traced/sys_stats_counters.h"
 #include "perfetto/protozero/proto_decoder.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
+#include "src/trace_processor/importers/common/system_info_tracker.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/syscalls/syscall_tracker.h"
 #include "src/trace_processor/storage/metadata.h"
@@ -30,6 +33,7 @@
 #include "protos/perfetto/trace/ps/process_tree.pbzero.h"
 #include "protos/perfetto/trace/sys_stats/sys_stats.pbzero.h"
 #include "protos/perfetto/trace/system_info.pbzero.h"
+#include "protos/perfetto/trace/system_info/cpu_info.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -63,7 +67,11 @@ SystemProbesParser::SystemProbesParser(TraceProcessorContext* context)
       cpu_times_irq_ns_id_(context->storage->InternString("cpu.times.irq_ns")),
       cpu_times_softirq_ns_id_(
           context->storage->InternString("cpu.times.softirq_ns")),
-      oom_score_adj_id_(context->storage->InternString("oom_score_adj")) {
+      oom_score_adj_id_(context->storage->InternString("oom_score_adj")),
+      thread_time_in_state_id_(context->storage->InternString("time_in_state")),
+      thread_time_in_state_cpu_id_(
+          context_->storage->InternString("time_in_state_cpu_id")),
+      cpu_freq_id_(context_->storage->InternString("freq")) {
   for (const auto& name : BuildMeminfoCounterNames()) {
     meminfo_strs_id_.emplace_back(context->storage->InternString(name));
   }
@@ -253,6 +261,17 @@ void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
         pid = fld.as_uint32();
         continue;
       }
+      if (fld.id() ==
+          protos::pbzero::ProcessStats::Process::kThreadsFieldNumber) {
+        if (PERFETTO_UNLIKELY(ms_per_tick_ == 0 ||
+                              thread_time_in_state_cpus_.empty())) {
+          context_->storage->IncrementStats(
+              stats::thread_time_in_state_out_of_order);
+          continue;
+        }
+        ParseThreadStats(ts, pid, fld.as_bytes());
+        continue;
+      }
       bool is_counter_field = fld.id() < proc_stats_process_names_.size() &&
                               !proc_stats_process_names_[fld.id()].is_null();
       if (is_counter_field) {
@@ -284,6 +303,48 @@ void SystemProbesParser::ParseProcessStats(int64_t ts, ConstBytes blob) {
   }
 }
 
+void SystemProbesParser::ParseThreadStats(int64_t ts,
+                                          uint32_t pid,
+                                          ConstBytes blob) {
+  protos::pbzero::ProcessStats::Thread::Decoder stats(blob.data, blob.size);
+  UniqueTid utid = context_->process_tracker->UpdateThread(
+      static_cast<uint32_t>(stats.tid()), pid);
+  TrackId track_id = context_->track_tracker->InternThreadCounterTrack(
+      thread_time_in_state_id_, utid);
+
+  std::vector<uint64_t> ticks(thread_time_in_state_cpu_freqs_.size());
+  auto index_it = stats.cpu_freq_indices();
+  auto tick_it = stats.cpu_freq_ticks();
+  for (; index_it && tick_it; index_it++, tick_it++) {
+    auto freq_index = *index_it;
+    if (PERFETTO_UNLIKELY(!IsValidCpuFreqIndex(freq_index))) {
+      context_->storage->IncrementStats(
+          stats::thread_time_in_state_unknown_cpu_freq);
+      continue;
+    }
+    ticks[freq_index] = *tick_it;
+  }
+
+  for (uint32_t cpu : thread_time_in_state_cpus_) {
+    size_t start = thread_time_in_state_freq_index_[cpu];
+    size_t end = thread_time_in_state_freq_index_[cpu + 1];
+    for (size_t freq_index = start; freq_index < end; freq_index++) {
+      if (stats.cpu_freq_full() || ticks[freq_index] > 0) {
+        context_->event_tracker->PushCounter(
+            ts, ticks[freq_index] * ms_per_tick_, track_id,
+            [cpu, freq_index, this](ArgsTracker::BoundInserter* args_table) {
+              args_table->AddArg(thread_time_in_state_cpu_id_,
+                                 Variadic::UnsignedInteger(cpu));
+              args_table->AddArg(
+                  cpu_freq_id_,
+                  Variadic::UnsignedInteger(
+                      thread_time_in_state_cpu_freqs_[freq_index]));
+            });
+      }
+    }
+  }
+}
+
 void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
   protos::pbzero::SystemInfo::Decoder packet(blob.data, blob.size);
   if (packet.has_utsname()) {
@@ -301,6 +362,10 @@ void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
     } else {
       PERFETTO_ELOG("Unknown architecture %s", machine.ToStdString().c_str());
     }
+
+    SystemInfoTracker* system_info_tracker =
+        SystemInfoTracker::GetOrCreate(context_);
+    system_info_tracker->SetKernelVersion(utsname.sysname(), utsname.release());
 
     StringPool::Id sysname_id =
         context_->storage->InternString(utsname.sysname());
@@ -327,6 +392,61 @@ void SystemProbesParser::ParseSystemInfo(ConstBytes blob) {
         Variadic::String(context_->storage->InternString(
             packet.android_build_fingerprint())));
   }
+
+  int64_t hz = packet.hz();
+  if (hz > 0)
+    ms_per_tick_ = 1000u / static_cast<uint64_t>(hz);
+}
+
+void SystemProbesParser::ParseCpuInfo(ConstBytes blob) {
+  // invalid_freq is used as the guard in thread_time_in_state_cpu_freq_ids_,
+  // see IsValidCpuFreqIndex.
+  uint32_t invalid_freq = 0;
+  thread_time_in_state_cpu_freqs_.push_back(invalid_freq);
+
+  protos::pbzero::CpuInfo::Decoder packet(blob.data, blob.size);
+  uint32_t cpu_index = 0;
+  uint32_t time_in_state_cpu_index = 0;
+  size_t freq_index = 1;
+  std::vector<uint32_t> last_cpu_freqs;
+  for (auto it = packet.cpus(); it; it++) {
+    thread_time_in_state_freq_index_.push_back(freq_index);
+
+    protos::pbzero::CpuInfo::Cpu::Decoder cpu(*it);
+    tables::CpuTable::Row cpu_row;
+    if (cpu.has_processor())
+      cpu_row.processor = context_->storage->InternString(cpu.processor());
+    std::vector<uint32_t> freqs;
+    for (auto freq_it = cpu.frequencies(); freq_it; freq_it++)
+      freqs.push_back(*freq_it);
+    if (freqs != last_cpu_freqs) {
+      time_in_state_cpu_index = cpu_index;
+      thread_time_in_state_cpus_.insert(cpu_index);
+    }
+    cpu_row.time_in_state_cpu_id = time_in_state_cpu_index;
+    last_cpu_freqs = freqs;
+    tables::CpuTable::Id cpu_row_id =
+        context_->storage->mutable_cpu_table()->Insert(cpu_row).id;
+
+    for (auto freq_it = cpu.frequencies(); freq_it; freq_it++) {
+      uint32_t freq = *freq_it;
+      tables::CpuFreqTable::Row cpu_freq_row;
+      cpu_freq_row.cpu_id = cpu_row_id;
+      cpu_freq_row.freq = freq;
+      context_->storage->mutable_cpu_freq_table()->Insert(cpu_freq_row);
+      thread_time_in_state_cpu_freqs_.push_back(freq);
+      freq_index++;
+    }
+
+    cpu_index++;
+  }
+  thread_time_in_state_freq_index_.push_back(freq_index);
+  thread_time_in_state_cpu_freqs_.push_back(invalid_freq);
+}
+
+bool SystemProbesParser::IsValidCpuFreqIndex(uint32_t freq_index) const {
+  // Frequency index 0 is invalid.
+  return freq_index > 0 && freq_index < thread_time_in_state_cpu_freqs_.size();
 }
 
 }  // namespace trace_processor

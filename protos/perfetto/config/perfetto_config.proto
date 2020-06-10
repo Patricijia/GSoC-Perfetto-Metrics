@@ -17,6 +17,18 @@ package perfetto.protos;
 // This message is sent by a GPU counter producer to specify the counters
 // available in the hardware.
 message GpuCounterDescriptor {
+  // Logical groups for a counter.  This is used in the UI to present the
+  // related counters together.
+  enum GpuCounterGroup {
+    UNCLASSIFIED = 0;
+    SYSTEM = 1;
+    VERTICES = 2;
+    FRAGMENTS = 3;
+    PRIMITIVES = 4;
+    MEMORY = 5;  // Includes counters relating to caching and bandwidth.
+    COMPUTE = 6;
+  }
+
   message GpuCounterSpec {
     optional uint32 counter_id = 1;
     optional string name = 2;
@@ -29,6 +41,7 @@ message GpuCounterDescriptor {
     repeated MeasureUnit numerator_units = 7;
     repeated MeasureUnit denominator_units = 8;
     optional bool select_by_default = 9;
+    repeated GpuCounterGroup groups = 10;
   }
   repeated GpuCounterSpec specs = 1;
 
@@ -165,6 +178,61 @@ message DataSourceDescriptor {
 
 // End of protos/perfetto/common/data_source_descriptor.proto
 
+// Begin of protos/perfetto/common/tracing_service_state.proto
+
+// Reports the state of the tracing service. Used to gather details about the
+// data sources connected.
+// See ConsumerPort::QueryServiceState().
+message TracingServiceState {
+  // Describes a producer process.
+  message Producer {
+    optional int32 id = 1;     // Unique ID of the producer (monotonic counter).
+    optional string name = 2;  // Typically matches the process name.
+    optional int32 uid = 3;    // Unix uid of the remote process.
+  }
+
+  // Describes a data source registered by a producer. Data sources are listed
+  // regardless of the fact that they are being used or not.
+  message DataSource {
+    // Descriptor passed by the data source when calling RegisterDataSource().
+    optional DataSourceDescriptor ds_descriptor = 1;
+
+    // ID of the producer, as per Producer.id.
+    optional int32 producer_id = 2;
+  }
+
+  // Lists all the producers connected.
+  repeated Producer producers = 1;
+
+  // Lists the data sources available.
+  repeated DataSource data_sources = 2;
+
+  // Total number of tracing sessions.
+  optional int32 num_sessions = 3;
+
+  // Number of tracing sessions in the started state. Always <= num_sessions.
+  optional int32 num_sessions_started = 4;
+}
+
+// End of protos/perfetto/common/tracing_service_state.proto
+
+// Begin of protos/perfetto/common/builtin_clock.proto
+
+enum BuiltinClock {
+  BUILTIN_CLOCK_UNKNOWN = 0;
+  BUILTIN_CLOCK_REALTIME = 1;
+  BUILTIN_CLOCK_REALTIME_COARSE = 2;
+  BUILTIN_CLOCK_MONOTONIC = 3;
+  BUILTIN_CLOCK_MONOTONIC_COARSE = 4;
+  BUILTIN_CLOCK_MONOTONIC_RAW = 5;
+  BUILTIN_CLOCK_BOOTTIME = 6;
+  BUILTIN_CLOCK_MAX_ID = 63;
+
+  reserved 7, 8;
+}
+
+// End of protos/perfetto/common/builtin_clock.proto
+
 // Begin of protos/perfetto/common/android_log_constants.proto
 
 // Values from NDK's android/log.h.
@@ -208,6 +276,18 @@ message AndroidLogConfig {
 }
 
 // End of protos/perfetto/config/android/android_log_config.proto
+
+// Begin of protos/perfetto/config/android/android_polled_state_config.proto
+
+// Data source that polls for display state.
+message AndroidPolledStateConfig {
+  // Frequency of polling. If absent the state will be recorded once, at the
+  // start of the trace.
+  // This is required to be > 100ms to avoid excessive CPU usage.
+  optional uint32 poll_ms = 1;
+}
+
+// End of protos/perfetto/config/android/android_polled_state_config.proto
 
 // Begin of protos/perfetto/config/android/packages_list_config.proto
 
@@ -391,7 +471,7 @@ message ProcessStatsConfig {
 // Begin of protos/perfetto/config/profiling/heapprofd_config.proto
 
 // Configuration for go/heapprofd.
-// Next id: 17
+// Next id: 19
 message HeapprofdConfig {
   message ContinuousDumpConfig {
     // ms to wait before first dump.
@@ -432,13 +512,16 @@ message HeapprofdConfig {
   optional bool all = 5;
 
   // Do not profile processes whose anon RSS + swap < given value.
+  // Introduced in Android 11.
   optional uint32 min_anonymous_memory_kb = 15;
 
   // Stop profile if heapprofd memory usage goes beyond the given value.
+  // Introduced in Android 11.
   optional uint32 max_heapprofd_memory_kb = 16;
 
   // Stop profile if heapprofd CPU time since start of this data-source
   // goes beyond given value.
+  // Introduced in Android 11.
   optional uint64 max_heapprofd_cpu_secs = 17;
 
   // Do not emit function names for mappings starting with this prefix.
@@ -465,17 +548,20 @@ message HeapprofdConfig {
 
   // If set, stop the trace session after blocking the client for this
   // timeout. Needs to be larger than 100 us, otherwise no retries are done.
+  // Introduced in Android 11.
   optional uint32 block_client_timeout_us = 14;
 
   // Do not profile processes from startup, only match already running
   // processes.
   //
   // Can not be set at the same time as no_running.
+  // Introduced in Android 11.
   optional bool no_startup = 10;
 
   // Do not profile running processes. Only match processes on startup.
   //
   // Can not be set at the same time as no_startup.
+  // Introduced in Android 11.
   optional bool no_running = 11;
 
   // Gather information on how many bytes of allocations are on non-referenced
@@ -494,7 +580,22 @@ message HeapprofdConfig {
   // at the point in time when the sampled heap usage of the process was at its
   // maximum. This causes ProfilePacket.HeapSample.self_max to be set, and
   // self_allocated and self_freed to not be set.
+  // Introduced in Android 11.
   optional bool dump_at_max = 13;
+
+  // FEATURE FLAGS. THERE BE DRAGONS.
+
+  // Escape hatch if the session is being torn down because of a forked child
+  // that shares memory space, but is not correctly identified as a vforked
+  // child.
+  // Introduced in Android 11.
+  optional bool disable_fork_teardown = 18;
+
+  // We try to automatically detect when a target applicatation vforks but then
+  // does a memory allocation (or free). This auto-detection can be disabled
+  // with this.
+  // Introduced in Android 11.
+  optional bool disable_vfork_detection = 19;
 }
 
 // End of protos/perfetto/config/profiling/heapprofd_config.proto
@@ -938,8 +1039,10 @@ message DataSourceConfig {
   // Data source name: linux.sys_stats
   optional SysStatsConfig sys_stats_config = 104 [lazy = true];
   // Data source name: android.heapprofd
+  // Introduced in Android 10.
   optional HeapprofdConfig heapprofd_config = 105 [lazy = true];
   // Data source name: android.java_hprof
+  // Introduced in Android 11.
   optional JavaHprofConfig java_hprof_config = 110 [lazy = true];
   // Data source name: android.power
   optional AndroidPowerConfig android_power_config = 106 [lazy = true];
@@ -955,6 +1058,9 @@ message DataSourceConfig {
   optional VulkanMemoryConfig vulkan_memory_config = 112 [lazy = true];
   // Data source name: track_event
   optional TrackEventConfig track_event_config = 113 [lazy = true];
+  // Data source name: android.polled_state
+  optional AndroidPolledStateConfig android_polled_state_config = 114
+      [lazy = true];
 
   // Chrome is special as it doesn't use the perfetto IPC layer. We want to
   // avoid proto serialization and de-serialization there because that would
@@ -1046,6 +1152,20 @@ message TraceConfig {
     // Disable emitting events for data-source state changes (e.g. the marker
     // for all data sources having ACKed the start of the trace).
     optional bool disable_service_events = 4;
+
+    // The authoritative clock domain for the trace. Defaults to BOOTTIME. See
+    // also ClockSnapshot's primary_trace_clock. The configured value is written
+    // into the trace as part of the ClockSnapshots emitted by the service.
+    // Trace processor will attempt to translate packet/event timestamps from
+    // various data sources (and their chosen clock domains) to this domain
+    // during import. Added in Android R.
+    optional BuiltinClock primary_trace_clock = 5;
+
+    // Time interval in between snapshotting of sync markers, clock snapshots,
+    // stats, and other periodic service-emitted events. Note that the service
+    // only keeps track of the first and the most recent snapshot until
+    // ReadBuffers() is called.
+    optional uint32 snapshot_interval_ms = 6;
   }
   optional BuiltinDataSource builtin_data_sources = 20;
 

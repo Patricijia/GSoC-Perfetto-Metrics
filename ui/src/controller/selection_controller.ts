@@ -14,7 +14,9 @@
 
 import {Engine} from '../common/engine';
 import {fromNs, toNs} from '../common/time';
-import {CounterDetails, SliceDetails} from '../frontend/globals';
+import {Arg, Args, CounterDetails, SliceDetails} from '../frontend/globals';
+import {SLICE_TRACK_KIND} from '../tracks/chrome_slices/common';
+
 import {Controller} from './controller';
 import {globals} from './globals';
 
@@ -43,6 +45,7 @@ export class SelectionController extends Controller<'main'> {
         if (result.columns[0].longValues!.length === 0) return;
         this.sliceDetails(+result.columns[0].longValues![0]);
       });
+      this.lastSelectedKind = selection.kind;
       return;
     }
 
@@ -71,14 +74,23 @@ export class SelectionController extends Controller<'main'> {
               globals.publish('CounterDetails', selected);
             }
           });
-    } else if (selectedKind === 'SLICE') {
+    } else if (selection.kind === 'SLICE') {
       this.sliceDetails(selectedId as number);
-    } else if (selectedKind === 'CHROME_SLICE') {
-      const sqlQuery = `
+    } else if (selection.kind === 'CHROME_SLICE') {
+      const table = selection.table;
+      let sqlQuery = `
         SELECT ts, dur, name, cat, arg_set_id
         FROM slice
         WHERE id = ${selectedId}
       `;
+      // TODO(b/155483804): This is a hack to ensure annotation slices are
+      // selectable for now. We should tidy this up when improving this class.
+      if (table === 'annotation') {
+        sqlQuery = `
+        select ts, dur, name, cat, -1
+        from annotation_slice
+        where id = ${selectedId}`;
+      }
       this.args.engine.query(sqlQuery).then(result => {
         // Check selection is still the same on completion of query.
         const selection = globals.state.currentSelection;
@@ -91,7 +103,9 @@ export class SelectionController extends Controller<'main'> {
           const category = result.columns[3].stringValues![0];
           const argId = result.columns[4].longValues![0] as number;
           const argsAsync = this.getArgs(argId);
-          const descriptionAsync = this.describeSlice(selectedId);
+          // Don't fetch descriptions for annotation slices.
+          const describeId = table === 'annotation' ? -1 : selectedId as number;
+          const descriptionAsync = this.describeSlice(describeId);
           Promise.all([argsAsync, descriptionAsync])
               .then(([args, description]) => {
                 const selected: SliceDetails = {
@@ -99,7 +113,7 @@ export class SelectionController extends Controller<'main'> {
                   dur,
                   category,
                   name,
-                  id: selectedId,
+                  id: selectedId as number,
                   args,
                   description,
                 };
@@ -112,6 +126,7 @@ export class SelectionController extends Controller<'main'> {
 
   async describeSlice(id: number): Promise<Map<string, string>> {
     const map = new Map<string, string>();
+    if (id === -1) return map;
     const query = `
       select description, doc_link
       from describe_slice
@@ -127,8 +142,8 @@ export class SelectionController extends Controller<'main'> {
     return map;
   }
 
-  async getArgs(argId: number): Promise<Map<string, string>> {
-    const args = new Map<string, string>();
+  async getArgs(argId: number): Promise<Args> {
+    const args = new Map<string, Arg>();
     const query = `
       select
         flat_key AS name,
@@ -140,9 +155,34 @@ export class SelectionController extends Controller<'main'> {
     for (let i = 0; i < result.numRecords; i++) {
       const name = result.columns[0].stringValues![i];
       const value = result.columns[1].stringValues![i];
-      args.set(name, value);
+      if (name === 'destination slice id' && !isNaN(Number(value))) {
+        const destTrackId = await this.getDestTrackId(value);
+        args.set(
+            'Destination Slice',
+            {kind: 'SLICE', trackId: destTrackId, sliceId: Number(value)});
+      } else {
+        args.set(name, value);
+      }
     }
     return args;
+  }
+
+  async getDestTrackId(sliceId: string): Promise<string> {
+    const trackIdQuery = `select track_id from slice
+    where slice_id = ${sliceId}`;
+    const destResult = await this.args.engine.query(trackIdQuery);
+    const trackIdTp = destResult.columns[0].longValues![0];
+    // TODO(taylori): If we had a consistent mapping from TP track_id
+    // UI track id for slice tracks this would be unnecessary.
+    let trackId = '';
+    for (const track of Object.values(globals.state.tracks)) {
+      if (track.kind === SLICE_TRACK_KIND &&
+          (track.config as {trackId: number}).trackId === Number(trackIdTp)) {
+        trackId = track.id;
+        break;
+      }
+    }
+    return trackId;
   }
 
   async sliceDetails(id: number) {

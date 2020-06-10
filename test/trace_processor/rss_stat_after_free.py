@@ -1,5 +1,4 @@
 #!/usr/bin/python
-#!/usr/bin/python
 # Copyright (C) 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -24,7 +23,7 @@ import synth_common
 
 trace = synth_common.create_trace()
 
-trace.add_process_tree_packet(ts=1)
+trace.add_packet(ts=1)
 trace.add_process(10, 1, "parent_process")
 trace.add_process(11, 1, "other_process")
 

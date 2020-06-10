@@ -45,7 +45,12 @@
 #include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/sqlite/stats_table.h"
 #include "src/trace_processor/sqlite/window_operator_table.h"
+#include "src/trace_processor/tp_metatrace.h"
 #include "src/trace_processor/types/variadic.h"
+
+#include "protos/perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
+#include "protos/perfetto/trace/trace.pbzero.h"
+#include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
@@ -121,6 +126,14 @@ void CreateBuiltinTables(sqlite3* db) {
   sqlite3_exec(db,
                "CREATE TABLE trace_bounds(start_ts BIG INT, end_ts BIG INT)", 0,
                0, &error);
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+  sqlite3_exec(db,
+               "CREATE TABLE power_profile"
+               "(device STRING, cpu INT, cluster INT, freq INT, power DOUBLE);",
+               0, 0, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
@@ -553,8 +566,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   WindowOperatorTable::RegisterTable(*db_, storage);
 
   // New style tables but with some custom logic.
-  SqliteRawTable::RegisterTable(*db_, query_cache_.get(),
-                                context_.storage.get());
+  SqliteRawTable::RegisterTable(*db_, query_cache_.get(), &context_);
 
   // Tables dynamically generated at query time.
   RegisterDynamicTable(std::unique_ptr<ExperimentalFlamegraphGenerator>(
@@ -592,6 +604,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->irq_counter_track_table());
   RegisterDbTable(storage->softirq_counter_track_table());
   RegisterDbTable(storage->gpu_counter_track_table());
+  RegisterDbTable(storage->gpu_counter_group_table());
 
   RegisterDbTable(storage->heap_graph_object_table());
   RegisterDbTable(storage->heap_graph_reference_table());
@@ -611,9 +624,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->vulkan_memory_allocations_table());
 
   RegisterDbTable(storage->graphics_frame_slice_table());
-  RegisterDbTable(storage->graphics_frame_stats_table());
 
   RegisterDbTable(storage->metadata_table());
+  RegisterDbTable(storage->cpu_table());
+  RegisterDbTable(storage->cpu_freq_table());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() {
@@ -695,8 +709,13 @@ TraceProcessor::Iterator TraceProcessorImpl::ExecuteQuery(
     const std::string& sql,
     int64_t time_queued) {
   sqlite3_stmt* raw_stmt;
-  int err = sqlite3_prepare_v2(*db_, sql.c_str(), static_cast<int>(sql.size()),
-                               &raw_stmt, nullptr);
+  int err;
+  {
+    PERFETTO_TP_TRACE("QUERY_PREPARE");
+    err = sqlite3_prepare_v2(*db_, sql.c_str(), static_cast<int>(sql.size()),
+                             &raw_stmt, nullptr);
+  }
+
   util::Status status;
   uint32_t col_count = 0;
   if (err != SQLITE_OK) {
@@ -801,6 +820,38 @@ util::Status TraceProcessorImpl::ComputeMetric(
   const auto& root_descriptor = pool_.descriptors()[opt_idx.value()];
   return metrics::ComputeMetrics(this, metric_names, sql_metrics_,
                                  root_descriptor, metrics_proto);
+}
+
+void TraceProcessorImpl::EnableMetatrace() {
+  metatrace::Enable();
+}
+
+util::Status TraceProcessorImpl::DisableAndReadMetatrace(
+    std::vector<uint8_t>* trace_proto) {
+  protozero::HeapBuffered<protos::pbzero::Trace> trace;
+  metatrace::DisableAndReadBuffer([&trace](metatrace::Record* record) {
+    auto packet = trace->add_packet();
+    packet->set_timestamp(record->timestamp_ns);
+    auto* evt = packet->set_perfetto_metatrace();
+    evt->set_event_name(record->event_name);
+    evt->set_event_duration_ns(record->duration_ns);
+    evt->set_thread_id(1);  // Not really important, just required for the ui.
+
+    if (record->args_buffer_size == 0)
+      return;
+
+    base::StringSplitter s(record->args_buffer, record->args_buffer_size, '\0');
+    for (; s.Next();) {
+      auto* arg_proto = evt->add_args();
+      arg_proto->set_key(s.cur_token());
+
+      bool has_next = s.Next();
+      PERFETTO_CHECK(has_next);
+      arg_proto->set_value(s.cur_token());
+    }
+  });
+  *trace_proto = trace.SerializeAsArray();
+  return util::OkStatus();
 }
 
 TraceProcessor::IteratorImpl::IteratorImpl(TraceProcessorImpl* trace_processor,

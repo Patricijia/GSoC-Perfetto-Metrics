@@ -26,7 +26,6 @@ import zipfile
 from collections import namedtuple
 from platform import system
 
-from compat import urlretrieve
 
 # The format for the deps below is the following:
 # (target_folder, source_url, sha1, target_platform)
@@ -105,8 +104,8 @@ BUILD_DEPS_HOST = [
 
     # Benchmarking tool.
     ('buildtools/benchmark.zip',
-     'https://github.com/google/benchmark/archive/v1.3.0.zip',
-     'f387e0df37d54bfd5be239e8d0d3ea2e2c3e34f4', 'all'),
+     'https://github.com/google/benchmark/archive/v1.5.0.zip',
+     'a9c9bd8a28db82f5ba02998197cfcc4db5a67507', 'all'),
 
     # Libbacktrace, for stacktraces in Linux/Android debug builds.
     ('buildtools/libbacktrace.zip',
@@ -146,8 +145,8 @@ BUILD_DEPS_HOST = [
     # Example traces for regression tests.
     (
         'buildtools/test_data.zip',
-        'https://storage.googleapis.com/perfetto/test-data-20200331-130927.zip',
-        '80632f754293e47e1cfa1ff6bcf15d11d589a126',
+        'https://storage.googleapis.com/perfetto/test-data-20200604-140632.zip',
+        '2c0a3307f25730d0060d7554d0e59c078c80a366',
         'all',
     ),
 
@@ -193,7 +192,7 @@ TEST_DEPS_ANDROID = [
 ]
 
 # This variable is updated by tools/roll-catapult-trace-viewer.
-CATAPULT_SHA1 = '4d292db280e546ac8ab35acf249214e0979ab781'
+CATAPULT_SHA1 = '5f77256e1b24851a05e8580438b532e2480dd7fd'
 
 TYPEFACES_SHA1 = '4fb455de506f8a2859dc5264b8448c2559b08ab8'
 
@@ -230,6 +229,10 @@ UI_DEPS = [
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 UI_DIR = os.path.join(ROOT_DIR, 'ui')
 NODE_MODULES_STATUS_FILE = os.path.join(UI_DIR, 'node_modules', '.last_install')
+
+
+def DownloadURL(url, out_file):
+  subprocess.check_call(['curl', '-L', '-#', '-o', out_file, url])
 
 
 def ReadFile(path):
@@ -315,7 +318,7 @@ def CheckHashes():
       logging.info('Downloading %s from %s', rel_path, url)
       with tempfile.NamedTemporaryFile(delete=False) as f:
         f.close()
-        urlretrieve(url, f.name)
+        DownloadURL(url, f.name)
         actual_sha1 = HashLocalFile(f.name)
         os.unlink(f.name)
         if (actual_sha1 != expected_sha1):
@@ -361,7 +364,7 @@ def Main():
     if HashLocalFile(local_path) != expected_sha1:
       download_path = local_path + '.tmp'
       logging.info('Downloading %s from %s', local_path, url)
-      urlretrieve(url, download_path)
+      DownloadURL(url, download_path)
       os.chmod(download_path, 0o755)
       actual_sha1 = HashLocalFile(download_path)
       if (actual_sha1 != expected_sha1):

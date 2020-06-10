@@ -69,6 +69,7 @@ rss_stat_after_free.py rss_stat_after_free.sql rss_stat_after_free.out
 ../data/memory_counters.pb args_string_is_not_null.sql memory_counters_args_string_is_not_null.out
 ../data/memory_counters.pb b120605557.sql memory_counters_b120605557.out
 ../data/memory_counters.pb global_memory_counter.sql global_memory_counter_memory_counters.out
+ion_stat.textproto ion_stat.sql ion_stat.out
 
 # Stats
 ../data/android_sched_and_ps.pb stats.sql android_sched_and_ps_stats.out
@@ -133,6 +134,7 @@ print_systrace_unsigned.py print_systrace.sql print_systrace_unsigned.out
 
 # GPU trace tests.
 gpu_counters.py gpu_counters.sql gpu_counters.out
+gpu_counter_specs.textproto gpu_counter_specs.sql gpu_counter_specs.out
 gpu_render_stages.py gpu_render_stages.sql gpu_render_stages.out
 vulkan_api_events.py vulkan_api_events.sql vulkan_api_events.out
 gpu_log.py gpu_log.sql gpu_log.out
@@ -188,6 +190,7 @@ track_event_with_atrace.textproto track_event_slices.sql track_event_with_atrace
 track_event_merged_debug_annotations.textproto track_event_args.sql track_event_merged_debug_annotations_args.out
 track_event_counters.textproto track_event_slices.sql track_event_counters_slices.out
 track_event_counters.textproto track_event_counters.sql track_event_counters_counters.out
+track_event_monotonic_trace_clock.textproto track_event_slices.sql track_event_monotonic_trace_clock_slices.out
 
 # Parsing systrace files
 ../data/systrace.html systrace_html.sql systrace_html.out
@@ -207,3 +210,20 @@ process_metadata_matching.textproto process_metadata_matching.sql process_metada
 
 # Trace size
 ../data/android_sched_and_ps.pb trace_size.sql android_sched_and_ps_trace_size.out
+
+# Thread time_in_state
+thread_time_in_state.textproto thread_time_in_state.sql thread_time_in_state.out
+thread_time_in_state_annotations.py thread_time_in_state_annotations.sql thread_time_in_state_annotations.out
+
+# Initial display state
+initial_display_state.textproto initial_display_state.sql initial_display_state.out
+
+# CPU info
+cpu_info.textproto cpu.sql cpu.out
+cpu_info.textproto cpu_freq.sql cpu_freq.out
+
+# Thread table
+thread_main_thread.textproto thread_main_thread.sql thread_main_thread.out
+
+# Missed frames.
+frame_missed.py frame_missed_derived_events.sql frame_missed_derived_events_frame_missed.out

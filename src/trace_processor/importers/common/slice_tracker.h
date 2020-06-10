@@ -61,8 +61,8 @@ class SliceTracker {
   void ScopedGpu(const tables::GpuSliceTable::Row& row,
                  SetArgsCallback args_callback = SetArgsCallback());
 
-  void ScopedFrameEvent(const tables::GraphicsFrameSliceTable::Row& row,
-                        SetArgsCallback args_callback = SetArgsCallback());
+  SliceId ScopedFrameEvent(const tables::GraphicsFrameSliceTable::Row& row,
+                           SetArgsCallback args_callback = SetArgsCallback());
 
   // virtual for testing
   virtual base::Optional<uint32_t> End(
@@ -71,6 +71,14 @@ class SliceTracker {
       StringId opt_category = {},
       StringId opt_name = {},
       SetArgsCallback args_callback = SetArgsCallback());
+
+  // Usually args should be added in the Begin or End args_callback but this
+  // method is for the situation where new args need to be added to an
+  // in-progress slice.
+  base::Optional<uint32_t> AddArgs(TrackId track_id,
+                                   StringId category,
+                                   StringId name,
+                                   SetArgsCallback args_callback);
 
   // TODO(lalitm): eventually this method should become End and End should
   // be renamed EndChrome.

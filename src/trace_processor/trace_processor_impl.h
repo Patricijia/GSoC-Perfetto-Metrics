@@ -71,6 +71,11 @@ class TraceProcessorImpl : public TraceProcessor,
   std::string GetCurrentTraceName() override;
   void SetCurrentTraceName(const std::string&) override;
 
+  void EnableMetatrace() override;
+
+  util::Status DisableAndReadMetatrace(
+      std::vector<uint8_t>* trace_proto) override;
+
  private:
   // Needed for iterators to be able to delete themselves from the vector.
   friend class IteratorImpl;
@@ -127,8 +132,7 @@ class TraceProcessor::IteratorImpl {
 
   // Methods called by TraceProcessor::Iterator.
   bool Next() {
-    // Delegate to the cc file to prevent trace_storage.h include in this
-    // file.
+    // Delegate to the cc file to prevent trace_storage.h include in this file.
     if (!called_next_) {
       RecordFirstNextInSqlStats();
       called_next_ = true;
