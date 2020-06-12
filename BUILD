@@ -452,6 +452,7 @@ filegroup(
 filegroup(
     name = "include_perfetto_trace_processor_trace_processor",
     srcs = [
+        "include/perfetto/trace_processor/iterator.h",
         "include/perfetto/trace_processor/read_trace.h",
         "include/perfetto/trace_processor/trace_processor.h",
     ],
@@ -778,6 +779,7 @@ genrule(
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
         "src/trace_processor/metrics/chrome/chrome_processes.sql",
         "src/trace_processor/metrics/trace_metadata.sql",
+        "src/trace_processor/metrics/webview/webview_cpu_usage.sql",
     ],
     outs = [
         "src/trace_processor/metrics/sql_metrics.h",
@@ -936,6 +938,8 @@ filegroup(
         "src/trace_processor/dynamic/experimental_flamegraph_generator.h",
         "src/trace_processor/dynamic/experimental_slice_layout_generator.cc",
         "src/trace_processor/dynamic/experimental_slice_layout_generator.h",
+        "src/trace_processor/iterator_impl.cc",
+        "src/trace_processor/iterator_impl.h",
         "src/trace_processor/read_trace.cc",
         "src/trace_processor/trace_processor.cc",
         "src/trace_processor/trace_processor_impl.cc",
