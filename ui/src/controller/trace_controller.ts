@@ -159,7 +159,7 @@ export class TraceController extends Controller<States> {
 
         const selectionArgs: SelectionControllerArgs = {engine};
         childControllers.push(
-          Child('selection', SelectionController, selectionArgs));
+            Child('selection', SelectionController, selectionArgs));
 
         const cpuProfileArgs: CpuProfileControllerArgs = {engine};
         childControllers.push(
@@ -540,6 +540,7 @@ export class TraceController extends Controller<States> {
     const threadCounters = await engine.query(`
       select thread_counter_track.name, utid, thread_counter_track.id,
       start_ts, end_ts from thread_counter_track join thread using(utid)
+      where thread_counter_track.name not in ('time_in_state')
     `);
     for (let i = 0; i < threadCounters.numRecords; i++) {
       const name = threadCounters.columns[0].stringValues![i];
@@ -637,7 +638,7 @@ export class TraceController extends Controller<States> {
               group by upid
             ) using(upid)
           left join (select upid, sum(value) as total_cycles
-              from android_thread_time_in_state_annotations
+              from android_thread_time_in_state_event
               group by upid
             ) using(upid)
         where utid != 0
@@ -1077,7 +1078,7 @@ export class TraceController extends Controller<States> {
       assertTrue(metricResult.error.length === 0);
 
       const result = await engine.query(`
-        SELECT * FROM ${metric}_annotations LIMIT 1`);
+        SELECT * FROM ${metric}_event LIMIT 1`);
 
       const hasSliceName =
           result.columnDescriptors.some(x => x.name === 'slice_name');
@@ -1093,7 +1094,7 @@ export class TraceController extends Controller<States> {
             track_name,
             '${metric}' as metric_name,
             ${upidColumnSelect}
-          FROM ${metric}_annotations
+          FROM ${metric}_event
           WHERE track_type = 'slice'
         `);
         await engine.query(`
@@ -1106,7 +1107,7 @@ export class TraceController extends Controller<States> {
             0 AS depth,
             a.track_name as cat,
             slice_name AS name
-          FROM ${metric}_annotations a
+          FROM ${metric}_event a
           JOIN annotation_slice_track t
           ON a.track_name = t.name AND t.__metric_name = '${metric}'
           ORDER BY t.id, ts
@@ -1117,7 +1118,7 @@ export class TraceController extends Controller<States> {
       if (hasValue) {
         const minMax = await engine.query(`
           SELECT MIN(value) as min_value, MAX(value) as max_value
-          FROM ${metric}_annotations
+          FROM ${metric}_event
           WHERE ${upidColumnWhere} != 0`);
         const min = minMax.columns[0].longValues![0] as number;
         const max = minMax.columns[1].longValues![0] as number;
@@ -1130,7 +1131,7 @@ export class TraceController extends Controller<States> {
             CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${min} END,
             CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${max} END,
             ${upidColumnSelect}
-          FROM ${metric}_annotations
+          FROM ${metric}_event
           WHERE track_type = 'counter'
         `);
         await engine.query(`
@@ -1140,7 +1141,7 @@ export class TraceController extends Controller<States> {
             t.id AS track_id,
             ts,
             value
-          FROM ${metric}_annotations a
+          FROM ${metric}_event a
           JOIN annotation_counter_track t
           ON a.track_name = t.name AND t.__metric_name = '${metric}'
           ORDER BY t.id, ts

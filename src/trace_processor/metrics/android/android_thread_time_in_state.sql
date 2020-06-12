@@ -57,7 +57,8 @@ CREATE TABLE android_thread_time_in_state_counters AS
 SELECT
   utid,
   core_type,
-  SUM(runtime_ms_diff) AS runtime_ms
+  SUM(runtime_ms_diff) AS runtime_ms,
+  SUM(freq * runtime_ms_diff / 1000000) AS mcycles
 FROM android_thread_time_in_state_raw
 GROUP BY utid, core_type
 HAVING runtime_ms > 0;
@@ -67,7 +68,8 @@ SELECT
   utid,
   RepeatedField(AndroidThreadTimeInStateMetric_MetricsByCoreType(
     'core_type', core_type,
-    'runtime_ms', runtime_ms
+    'runtime_ms', runtime_ms,
+    'mcycles', CAST(mcycles AS INT)
   )) metrics
 FROM android_thread_time_in_state_counters
 GROUP BY utid;
@@ -92,7 +94,8 @@ WITH process_counters AS (
   SELECT
     upid,
     core_type,
-    SUM(runtime_ms) runtime_ms
+    SUM(runtime_ms) AS runtime_ms,
+    SUM(mcycles) AS mcycles
   FROM android_thread_time_in_state_counters
   JOIN thread USING (utid)
   GROUP BY upid, core_type
@@ -101,7 +104,8 @@ SELECT
   upid,
   RepeatedField(AndroidThreadTimeInStateMetric_MetricsByCoreType(
     'core_type', core_type,
-    'runtime_ms', runtime_ms
+    'runtime_ms', runtime_ms,
+    'mcycles', CAST(mcycles AS INT)
   )) metrics
 FROM process_counters
 GROUP BY upid;
@@ -124,8 +128,8 @@ SELECT AndroidThreadTimeInStateMetric(
 );
 
 -- Ensure we always get the previous clock tick for duration in
--- android_thread_time_in_state_annotations_raw.
-CREATE VIEW android_thread_time_in_state_annotations_clock AS
+-- android_thread_time_in_state_event_raw.
+CREATE VIEW android_thread_time_in_state_event_clock AS
 SELECT
   ts,
   LAG(ts) OVER (ORDER BY ts) AS lag_ts
@@ -133,7 +137,7 @@ FROM (
   SELECT DISTINCT ts from android_thread_time_in_state_base
 );
 
-CREATE VIEW android_thread_time_in_state_annotations_raw AS
+CREATE VIEW android_thread_time_in_state_event_raw AS
 SELECT
   ts,
   ts - lag_ts AS dur,
@@ -149,10 +153,10 @@ SELECT
   runtime_ms_counter - LAG(runtime_ms_counter)
       OVER (PARTITION BY core_type, utid, freq ORDER BY ts) AS runtime_ms
 FROM android_thread_time_in_state_base
-    JOIN android_thread_time_in_state_annotations_clock USING(ts)
+    JOIN android_thread_time_in_state_event_clock USING(ts)
     JOIN thread using (utid);
 
-CREATE VIEW android_thread_time_in_state_annotations_thread AS
+CREATE VIEW android_thread_time_in_state_event_thread AS
 SELECT
   'counter' AS track_type,
   thread_track_name || ' (' || core_type || ' core)' as track_name,
@@ -160,12 +164,12 @@ SELECT
   dur,
   upid,
   sum(runtime_ms * freq) as ms_freq
-FROM android_thread_time_in_state_annotations_raw
+FROM android_thread_time_in_state_event_raw
 WHERE runtime_ms IS NOT NULL
   AND dur != 0
 GROUP BY track_type, track_name, ts, dur, upid;
 
-CREATE VIEW android_thread_time_in_state_annotations_global AS
+CREATE VIEW android_thread_time_in_state_event_global AS
 SELECT
   'counter' AS track_type,
   'Total ' || core_type || ' core cycles / sec' as track_name,
@@ -173,15 +177,15 @@ SELECT
   dur,
   0 AS upid,
   SUM(runtime_ms * freq) AS ms_freq
-FROM android_thread_time_in_state_annotations_raw
+FROM android_thread_time_in_state_event_raw
 WHERE runtime_ms IS NOT NULL
 GROUP BY ts, track_name;
 
-CREATE VIEW android_thread_time_in_state_annotations AS
+CREATE VIEW android_thread_time_in_state_event AS
 SELECT track_type, track_name, ts, dur, upid, ms_freq * 1000000 / dur AS value
-FROM android_thread_time_in_state_annotations_thread
+FROM android_thread_time_in_state_event_thread
 UNION
 SELECT track_type, track_name, ts, dur, upid, ms_freq * 1000000 / dur AS value
-FROM android_thread_time_in_state_annotations_global
+FROM android_thread_time_in_state_event_global
 -- Biggest values at top of list in UI.
 ORDER BY value DESC;
