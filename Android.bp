@@ -57,6 +57,7 @@ genrule {
     "src/trace_processor/metrics/chrome/chrome_processes.sql",
     "src/trace_processor/metrics/trace_metadata.sql",
     "src/trace_processor/metrics/webview/webview_cpu_usage.sql",
+    "src/trace_processor/metrics/webview/webview_power_usage.sql",
   ],
   cmd: "$(location tools/gen_merged_sql_metrics.py) --cpp_out=$(out) $(in)",
   out: [
@@ -209,12 +210,45 @@ cc_library_shared {
   srcs: [
     ":perfetto_include_perfetto_base_base",
     ":perfetto_include_perfetto_ext_base_base",
+    ":perfetto_src_base_base",
+    ":perfetto_src_profiling_memory_malloc_hooks",
+  ],
+  shared_libs: [
+    "heapprofd_client_api",
+  ],
+  static_libs: [
+    "libasync_safe",
+  ],
+  export_include_dirs: [
+    "include",
+    "include/perfetto/base/build_configs/android_tree",
+  ],
+  defaults: [
+    "perfetto_defaults",
+  ],
+  cflags: [
+    "-DPERFETTO_ANDROID_ASYNC_SAFE_LOG",
+  ],
+  include_dirs: [
+    "bionic/libc",
+  ],
+  header_libs: [
+    "bionic_libc_platform_headers",
+  ],
+}
+
+// GN: //src/profiling/memory:heapprofd_client_api
+cc_library_shared {
+  name: "heapprofd_client_api",
+  srcs: [
+    ":perfetto_include_perfetto_base_base",
+    ":perfetto_include_perfetto_ext_base_base",
     ":perfetto_include_perfetto_profiling_normalize",
     ":perfetto_src_base_base",
     ":perfetto_src_base_unix_socket",
     ":perfetto_src_profiling_common_proc_utils",
     ":perfetto_src_profiling_memory_client",
-    ":perfetto_src_profiling_memory_malloc_hooks",
+    ":perfetto_src_profiling_memory_client_ext",
     ":perfetto_src_profiling_memory_ring_buffer",
     ":perfetto_src_profiling_memory_scoped_spinlock",
     ":perfetto_src_profiling_memory_wire_protocol",
@@ -3658,6 +3692,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -3700,6 +3735,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.gen.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.gen.cc",
@@ -3742,6 +3778,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -3784,6 +3821,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.gen.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.gen.h",
@@ -3830,6 +3868,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -3871,6 +3910,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.pb.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.pb.cc",
@@ -3913,6 +3953,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -3954,6 +3995,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.pb.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.pb.h",
@@ -4000,6 +4042,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -4042,6 +4085,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.pbzero.cc",
@@ -4084,6 +4128,7 @@ genrule {
     "protos/perfetto/trace/ftrace/raw_syscalls.proto",
     "protos/perfetto/trace/ftrace/regulator.proto",
     "protos/perfetto/trace/ftrace/sched.proto",
+    "protos/perfetto/trace/ftrace/scm.proto",
     "protos/perfetto/trace/ftrace/sde.proto",
     "protos/perfetto/trace/ftrace/signal.proto",
     "protos/perfetto/trace/ftrace/sync.proto",
@@ -4126,6 +4171,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/raw_syscalls.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/regulator.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sched.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/scm.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sde.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/signal.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/sync.pbzero.h",
@@ -6129,6 +6175,14 @@ filegroup {
   name: "perfetto_src_profiling_memory_client",
   srcs: [
     "src/profiling/memory/client.cc",
+  ],
+}
+
+// GN: //src/profiling/memory:client_ext
+filegroup {
+  name: "perfetto_src_profiling_memory_client_ext",
+  srcs: [
+    "src/profiling/memory/client_ext.cc",
   ],
 }
 
