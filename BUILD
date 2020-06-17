@@ -781,6 +781,7 @@ genrule(
         "src/trace_processor/metrics/chrome/chrome_processes.sql",
         "src/trace_processor/metrics/trace_metadata.sql",
         "src/trace_processor/metrics/webview/webview_cpu_usage.sql",
+        "src/trace_processor/metrics/webview/webview_power_usage.sql",
     ],
     outs = [
         "src/trace_processor/metrics/sql_metrics.h",
@@ -2203,6 +2204,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/raw_syscalls.proto",
         "protos/perfetto/trace/ftrace/regulator.proto",
         "protos/perfetto/trace/ftrace/sched.proto",
+        "protos/perfetto/trace/ftrace/scm.proto",
         "protos/perfetto/trace/ftrace/sde.proto",
         "protos/perfetto/trace/ftrace/signal.proto",
         "protos/perfetto/trace/ftrace/sync.proto",
