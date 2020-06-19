@@ -60,7 +60,10 @@ class GpuEventParser {
   explicit GpuEventParser(TraceProcessorContext*);
 
   void ParseGpuCounterEvent(int64_t ts, ConstBytes);
-  void ParseGpuRenderStageEvent(int64_t ts, ConstBytes);
+  void ParseGpuRenderStageEvent(int64_t ts,
+                                PacketSequenceStateGeneration*,
+                                ConstBytes);
+  void ParseGraphicsFrameEvent(int64_t timestamp, ConstBytes);
   void ParseGpuLog(int64_t ts, ConstBytes);
 
   void ParseVulkanMemoryEvent(PacketSequenceStateGeneration*, ConstBytes);
@@ -71,12 +74,15 @@ class GpuEventParser {
 
  private:
   const StringId GetFullStageName(
+      PacketSequenceStateGeneration* sequence_state,
       const protos::pbzero::GpuRenderStageEvent_Decoder& event) const;
   void InsertGpuTrack(
       const protos::pbzero::
           GpuRenderStageEvent_Specifications_Description_Decoder& hw_queue);
   base::Optional<std::string> FindDebugName(int32_t vk_object_type,
                                             uint64_t vk_handle) const;
+  const StringId ParseRenderSubpasses(
+      const protos::pbzero::GpuRenderStageEvent_Decoder& event) const;
 
   TraceProcessorContext* const context_;
   VulkanMemoryTracker vulkan_memory_tracker_;
