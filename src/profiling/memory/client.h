@@ -98,6 +98,8 @@ class Client {
 
   const ClientConfiguration& client_config() { return client_config_; }
 
+  bool IsConnected();
+
  private:
   const char* GetStackBase();
   // Flush the contents of free_batch_. Must hold free_batch_lock_.
@@ -108,9 +110,6 @@ class Client {
 
   bool IsPostFork();
 
-  // This is only valid for non-blocking sockets. This is when
-  // client_config_.block_client is true.
-  bool IsConnected();
 
   ClientConfiguration client_config_;
   uint64_t max_shmem_tries_;
@@ -123,7 +122,8 @@ class Client {
   std::timed_mutex free_batch_lock_;
 
   const char* main_thread_stack_base_{nullptr};
-  std::atomic<uint64_t> sequence_number_{0};
+  std::atomic<uint64_t>
+      sequence_number_[base::ArraySize(ClientConfiguration{}.heaps)] = {};
   SharedRingBuffer shmem_;
 
   // Used to detect (during the slow path) the situation where the process has
