@@ -27,6 +27,7 @@ load(
     "perfetto_java_lite_proto_library",
     "perfetto_proto_library",
     "perfetto_py_binary",
+    "perfetto_py_library",
     "perfetto_gensignature_internal_only",
 )
 
@@ -770,6 +771,7 @@ genrule(
         "src/trace_processor/metrics/android/java_heap_histogram.sql",
         "src/trace_processor/metrics/android/java_heap_stats.sql",
         "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
+        "src/trace_processor/metrics/android/power_profile_data.sql",
         "src/trace_processor/metrics/android/process_counter_span_view.sql",
         "src/trace_processor/metrics/android/process_mem.sql",
         "src/trace_processor/metrics/android/process_metadata.sql",
@@ -815,6 +817,8 @@ filegroup(
 filegroup(
     name = "src_trace_processor_rpc_rpc",
     srcs = [
+        "src/trace_processor/rpc/query_result_serializer.cc",
+        "src/trace_processor/rpc/query_result_serializer.h",
         "src/trace_processor/rpc/rpc.cc",
         "src/trace_processor/rpc/rpc.h",
     ],
@@ -3278,5 +3282,20 @@ perfetto_gensignature_internal_only(
     tags = [
         "__TRACE_PROCESSOR_SIG_TAG1",
         "__TRACE_PROCESSOR_SIG_TAG2",
+    ],
+)
+
+perfetto_py_binary(
+    name = "api_main",
+    srcs = ["src/trace_processor/python/api_main.py"],
+    deps = [":api_main_lib"],
+    main = "src/trace_processor/python/api_main.py",
+    python_version = "PY3",
+)
+
+perfetto_py_library(
+    name = "api_main_lib",
+    srcs = [
+        "src/trace_processor/python/trace_processor_http.py",
     ],
 )

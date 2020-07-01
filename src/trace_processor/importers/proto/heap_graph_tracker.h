@@ -100,13 +100,10 @@ class HeapGraphTracker : public Destructible {
 
   void AddRoot(uint32_t seq_id, UniquePid upid, int64_t ts, SourceRoot root);
   void AddObject(uint32_t seq_id, UniquePid upid, int64_t ts, SourceObject obj);
-  void AddInternedTypeName(uint32_t seq_id,
-                           uint64_t intern_id,
-                           StringPool::Id strid);
   void AddInternedType(uint32_t seq_id,
                        uint64_t intern_id,
                        StringPool::Id strid,
-                       uint64_t location_id);
+                       base::Optional<uint64_t> location_id = {});
   void AddInternedFieldName(uint32_t seq_id,
                             uint64_t intern_id,
                             base::StringView str);
@@ -177,6 +174,7 @@ class HeapGraphTracker : public Destructible {
   tables::HeapGraphClassTable::Id GetOrInsertType(SequenceState* sequence_state,
                                                   uint64_t type_id);
   bool SetPidAndTimestamp(SequenceState* seq, UniquePid upid, int64_t ts);
+  void PopulateSuperClasses(const SequenceState& seq);
 
   TraceProcessorContext* const context_;
   std::map<uint32_t, SequenceState> sequence_state_;

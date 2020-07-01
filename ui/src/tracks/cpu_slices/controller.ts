@@ -21,11 +21,6 @@ import {
 
 import {Config, CPU_SLICE_TRACK_KIND, Data, SliceData} from './common';
 
-
-// Allow to override via devtools for testing (note, needs to be done in the
-// controller-thread).
-(self as {} as {quantPx: number}).quantPx = 1;
-
 class CpuSliceTrackController extends TrackController<Config, Data> {
   static readonly kind = CPU_SLICE_TRACK_KIND;
   private maxDurNs = 0;
@@ -35,7 +30,7 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
     const startNs = toNs(start);
     const endNs = toNs(end);
 
-    const pxSize = (self as {} as {quantPx: number}).quantPx;
+    const pxSize = this.pxSize();
 
     // ns per quantization bucket (i.e. ns per pixel). /2 * 2 is to force it to
     // be an even number, so we can snap in the middle.
@@ -45,7 +40,7 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
       const query = `SELECT max(dur) FROM sched WHERE cpu = ${this.config.cpu}`;
       const rawResult = await this.query(query);
       if (rawResult.numRecords === 1) {
-        this.maxDurNs = +rawResult.columns![0].longValues![0];
+        this.maxDurNs = rawResult.columns[0].longValues![0];
       }
     }
 

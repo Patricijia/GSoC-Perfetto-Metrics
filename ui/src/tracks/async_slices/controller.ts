@@ -20,11 +20,6 @@ import {
 
 import {ASYNC_SLICE_TRACK_KIND, Config, Data} from './common';
 
-
-// Allow to override via devtools for testing (note, needs to be done in the
-// controller-thread).
-(self as {} as {quantPx: number}).quantPx = 1;
-
 class AsyncSliceTrackController extends TrackController<Config, Data> {
   static readonly kind = ASYNC_SLICE_TRACK_KIND;
   private maxDurNs = 0;
@@ -34,7 +29,7 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
     const startNs = toNs(start);
     const endNs = toNs(end);
 
-    const pxSize = (self as {} as {quantPx: number}).quantPx;
+    const pxSize = this.pxSize();
 
     // ns per quantization bucket (i.e. ns per pixel). /2 * 2 is to force it to
     // be an even number, so we can snap in the middle.
@@ -47,7 +42,7 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
         where filter_track_ids = '${this.config.trackIds.join(',')}'
       `);
       if (maxDurResult.numRecords === 1) {
-        this.maxDurNs = +maxDurResult.columns![0].longValues![0];
+        this.maxDurNs = maxDurResult.columns[0].longValues![0];
       }
     }
 
