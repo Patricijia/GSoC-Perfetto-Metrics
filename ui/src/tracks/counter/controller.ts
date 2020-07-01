@@ -25,11 +25,6 @@ import {
   Data,
 } from './common';
 
-
-// Allow to override via devtools for testing (note, needs to be done in the
-// controller-thread).
-(self as {} as {quantPx: number}).quantPx = 1;
-
 class CounterTrackController extends TrackController<Config, Data> {
   static readonly kind = COUNTER_TRACK_KIND;
   private setup = false;
@@ -42,7 +37,7 @@ class CounterTrackController extends TrackController<Config, Data> {
     const startNs = toNs(start);
     const endNs = toNs(end);
 
-    const pxSize = (self as {} as {quantPx: number}).quantPx;
+    const pxSize = this.pxSize();
 
     // ns per quantization bucket (i.e. ns per pixel). /2 * 2 is to force it to
     // be an even number, so we can snap in the middle.
@@ -76,7 +71,7 @@ class CounterTrackController extends TrackController<Config, Data> {
       const maxDurResult = await this.query(
           `select max(dur) from ${this.tableName('counter_view')}`);
       if (maxDurResult.numRecords === 1) {
-        this.maxDurNs = +maxDurResult.columns![0].longValues![0];
+        this.maxDurNs = maxDurResult.columns[0].longValues![0];
       }
 
       const result = await this.query(`
