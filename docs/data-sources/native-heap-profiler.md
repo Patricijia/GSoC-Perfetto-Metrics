@@ -233,7 +233,7 @@ enumerated in the output directory.
 
 ## Symbolization
 
-NOTE: Symbolization is currently only available on Linux
+NOTE: Symbolization is currently only available on Linux and MacOS.
 
 ### Set up llvm-symbolizer
 
@@ -277,7 +277,7 @@ The symbol file is the first with matching Build ID in the following order:
 4. basename of library file relative to binary path, but with base.apk!
     removed from filename.
 5. in the subdirectory .build-id: the first two hex digits of the build-id
-    as subdirectory, then the rest of the hex digits, with ".debug"appended.
+    as subdirectory, then the rest of the hex digits, with ".debug" appended.
     See
     https://fedoraproject.org/wiki/RolandMcGrath/BuildID#Find_files_by_build_ID
 
@@ -371,6 +371,10 @@ to not strip them.
   domain. You will not be able to profile any processes unless you disable
   SELinux enforcement.
   Run `restorecon /dev/socket/heapprofd` in a root shell to resolve.
+* Using `vfork(2)` or `clone(2)` with `CLONE_VM` and allocating / freeing
+  memory in the child process will prematurely end the profile.
+  `java.lang.Runtime.exec` does this, calling it will prematurely end
+  the profile. Note that this is in violation of the POSIX standard.
 
 ## Heapprofd vs malloc_info() vs RSS
 

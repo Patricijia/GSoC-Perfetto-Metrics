@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <errno.h>
 #include <fcntl.h>
 #include <inttypes.h>
 #include <stdio.h>
@@ -147,7 +148,17 @@ struct LineDeleter {
 using ScopedLine = std::unique_ptr<char, LineDeleter>;
 
 ScopedLine GetLine(const char* prompt) {
-  return ScopedLine(linenoise(prompt));
+  errno = 0;
+  auto line = ScopedLine(linenoise(prompt));
+  // linenoise returns a nullptr both for CTRL-C and CTRL-D, however in the
+  // former case it sets errno to EAGAIN.
+  // If the user press CTRL-C return "" instead of nullptr. We don't want the
+  // main loop to quit in that case as that is inconsistent with the behavior
+  // "CTRL-C interrupts the current query" and frustrating when hitting that
+  // a split second after the query is done.
+  if (!line && errno == EAGAIN)
+    return ScopedLine(strdup(""));
+  return line;
 }
 
 #else
@@ -426,7 +437,7 @@ util::Status RunMetrics(const std::vector<std::string>& metric_names,
   return util::OkStatus();
 }
 
-void PrintQueryResultInteractively(TraceProcessor::Iterator* it,
+void PrintQueryResultInteractively(Iterator* it,
                                    base::TimeNanos t_start,
                                    uint32_t column_width) {
   base::TimeNanos t_end = t_start;
@@ -502,8 +513,10 @@ util::Status StartInteractiveShell(uint32_t column_width) {
     ScopedLine line = GetLine("> ");
     if (!line)
       break;
-    if (strcmp(line.get(), "") == 0)
+    if (strcmp(line.get(), "") == 0) {
+      printf("If you want to quit either type .q or press CTRL-D (EOF)\n");
       continue;
+    }
     if (line.get()[0] == '.') {
       char command[32] = {};
       char arg[1024] = {};
@@ -530,7 +543,7 @@ util::Status StartInteractiveShell(uint32_t column_width) {
   return util::OkStatus();
 }
 
-util::Status PrintQueryResultAsCsv(TraceProcessor::Iterator* it, FILE* output) {
+util::Status PrintQueryResultAsCsv(Iterator* it, FILE* output) {
   for (uint32_t c = 0; c < it->ColumnCount(); c++) {
     if (c > 0)
       fprintf(output, ",");
@@ -614,6 +627,22 @@ util::Status LoadQueries(FILE* input, std::vector<std::string>* output) {
   return util::OkStatus();
 }
 
+util::Status RunQueryWithoutOutput(const std::vector<std::string>& queries) {
+  for (const auto& sql_query : queries) {
+    PERFETTO_DLOG("Executing query: %s", sql_query.c_str());
+
+    auto it = g_tp->ExecuteQuery(sql_query);
+    util::Status status = it.Status();
+    if (!status.ok()) {
+      return status;
+    }
+    if (it.Next()) {
+      return util::ErrStatus("Unexpected result from a query.");
+    }
+  }
+  return util::OkStatus();
+}
+
 util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
                                     FILE* output) {
   bool is_first_query = true;
@@ -682,6 +711,7 @@ util::Status PrintPerfFile(const std::string& perf_file_path,
 struct CommandLineOptions {
   std::string perf_file_path;
   std::string query_file_path;
+  std::string pre_metrics_path;
   std::string sqlite_file_path;
   std::string metric_names;
   std::string metric_output;
@@ -704,6 +734,9 @@ Options:
                                       If used with --run-metrics, the query is
                                       executed after the selected metrics and
                                       the metrics output is suppressed.
+ --pre-metrics FILE                   Read and execute an SQL query from a file.
+                                      This query is executed before the selected
+                                      metrics and can't output any results.
  --run-metrics x,y,z                  Runs a comma separated list of metrics and
                                       prints the result as a TraceMetrics proto
                                       to stdout. The specified can either be
@@ -727,6 +760,8 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
   for (int i = 1; i < argc - 1; i += 2) {
     if (strcmp(argv[i], "-q") == 0 || strcmp(argv[i], "--query-file") == 0) {
       command_line_options.query_file_path = argv[i + 1];
+    } else if (strcmp(argv[i], "--pre-metrics") == 0) {
+      command_line_options.pre_metrics_path = argv[i + 1];
     } else if (strcmp(argv[i], "--run-metrics") == 0) {
       command_line_options.metric_names = argv[i + 1];
     } else if (strcmp(argv[i], "--metrics-output") == 0) {
@@ -765,6 +800,9 @@ Options:
                                       If used with --run-metrics, the query is
                                       executed after the selected metrics and
                                       the metrics output is suppressed.
+ --pre-metrics FILE                   Read and execute an SQL query from a file.
+                                      This query is executed before the selected
+                                      metrics and can't output any results.
  -D, --httpd                          Enables the HTTP RPC server.
  -i, --interactive                    Starts interactive mode even after a query
                                       file is specified with -q or
@@ -793,6 +831,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
   CommandLineOptions command_line_options;
   enum LongOption {
     OPT_RUN_METRICS = 1000,
+    OPT_PRE_METRICS,
     OPT_METRICS_OUTPUT,
     OPT_FORCE_FULL_SORT,
   };
@@ -809,6 +848,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
       {"export", required_argument, nullptr, 'e'},
       {"metatrace", required_argument, nullptr, 'm'},
       {"run-metrics", required_argument, nullptr, OPT_RUN_METRICS},
+      {"pre-metrics", required_argument, nullptr, OPT_PRE_METRICS},
       {"metrics-output", required_argument, nullptr, OPT_METRICS_OUTPUT},
       {"full-sort", no_argument, nullptr, OPT_FORCE_FULL_SORT},
       {nullptr, 0, nullptr, 0}};
@@ -871,6 +911,11 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
       continue;
     }
 
+    if (option == OPT_PRE_METRICS) {
+      command_line_options.pre_metrics_path = optarg;
+      continue;
+    }
+
     if (option == OPT_RUN_METRICS) {
       command_line_options.metric_names = optarg;
       continue;
@@ -891,7 +936,8 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
   }
 
   command_line_options.launch_shell =
-      explicit_interactive || (command_line_options.metric_names.empty() &&
+      explicit_interactive || (command_line_options.pre_metrics_path.empty() &&
+                               command_line_options.metric_names.empty() &&
                                command_line_options.query_file_path.empty() &&
                                command_line_options.sqlite_file_path.empty());
 
@@ -964,15 +1010,20 @@ util::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
   return util::OkStatus();
 }
 
-util::Status RunQueries(const CommandLineOptions& options) {
+util::Status RunQueries(const std::string& query_file_path,
+                        bool expect_output) {
   std::vector<std::string> queries;
-  base::ScopedFstream file(fopen(options.query_file_path.c_str(), "r"));
+  base::ScopedFstream file(fopen(query_file_path.c_str(), "r"));
   if (!file) {
     return util::ErrStatus("Could not open query file (path: %s)",
-                           options.query_file_path.c_str());
+                           query_file_path.c_str());
   }
   RETURN_IF_ERROR(LoadQueries(file.get(), &queries));
-  return RunQueryAndPrintResult(queries, stdout);
+  if (expect_output) {
+    return RunQueryAndPrintResult(queries, stdout);
+  } else {
+    return RunQueryWithoutOutput(queries);
+  }
 }
 
 util::Status RunMetrics(const CommandLineOptions& options) {
@@ -1070,12 +1121,16 @@ util::Status TraceProcessorMain(int argc, char** argv) {
 #endif
 
   base::TimeNanos t_query_start = base::GetWallTimeNs();
+  if (!options.pre_metrics_path.empty()) {
+    RETURN_IF_ERROR(RunQueries(options.pre_metrics_path, false));
+  }
+
   if (!options.metric_names.empty()) {
     RETURN_IF_ERROR(RunMetrics(options));
   }
 
   if (!options.query_file_path.empty()) {
-    RETURN_IF_ERROR(RunQueries(options));
+    RETURN_IF_ERROR(RunQueries(options.query_file_path, true));
   }
   base::TimeNanos t_query = base::GetWallTimeNs() - t_query_start;
 

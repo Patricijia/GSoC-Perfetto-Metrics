@@ -161,7 +161,10 @@ class TraceStorage {
     void UpdateThreadDeltasForSliceId(uint32_t slice_id,
                                       int64_t end_thread_timestamp_ns,
                                       int64_t end_thread_instruction_count) {
-      uint32_t row = *FindRowForSliceId(slice_id);
+      auto opt_row = FindRowForSliceId(slice_id);
+      if (!opt_row)
+        return;
+      uint32_t row = *opt_row;
       int64_t begin_ns = thread_timestamp_ns_[row];
       thread_duration_ns_[row] = end_thread_timestamp_ns - begin_ns;
       int64_t begin_ticount = thread_instruction_counts_[row];
@@ -222,7 +225,10 @@ class TraceStorage {
     void UpdateThreadDeltasForSliceId(uint32_t slice_id,
                                       int64_t end_thread_timestamp_ns,
                                       int64_t end_thread_instruction_count) {
-      uint32_t row = *FindRowForSliceId(slice_id);
+      auto opt_row = FindRowForSliceId(slice_id);
+      if (!opt_row)
+        return;
+      uint32_t row = *opt_row;
       int64_t begin_ns = thread_timestamp_ns_[row];
       thread_duration_ns_[row] = end_thread_timestamp_ns - begin_ns;
       int64_t begin_ticount = thread_instruction_counts_[row];
@@ -535,12 +541,26 @@ class TraceStorage {
     return &profiler_smaps_table_;
   }
 
+  const tables::StackSampleTable& stack_sample_table() const {
+    return stack_sample_table_;
+  }
+  tables::StackSampleTable* mutable_stack_sample_table() {
+    return &stack_sample_table_;
+  }
+
   const tables::CpuProfileStackSampleTable& cpu_profile_stack_sample_table()
       const {
     return cpu_profile_stack_sample_table_;
   }
   tables::CpuProfileStackSampleTable* mutable_cpu_profile_stack_sample_table() {
     return &cpu_profile_stack_sample_table_;
+  }
+
+  const tables::PerfSampleTable& perf_sample_table() const {
+    return perf_sample_table_;
+  }
+  tables::PerfSampleTable* mutable_perf_sample_table() {
+    return &perf_sample_table_;
   }
 
   const tables::SymbolTable& symbol_table() const { return symbol_table_; }
@@ -591,14 +611,6 @@ class TraceStorage {
 
   tables::GraphicsFrameSliceTable* mutable_graphics_frame_slice_table() {
     return &graphics_frame_slice_table_;
-  }
-
-  const tables::GraphicsFrameStatsTable& graphics_frame_stats_table() const {
-    return graphics_frame_stats_table_;
-  }
-
-  tables::GraphicsFrameStatsTable* mutable_graphics_frame_stats_table() {
-    return &graphics_frame_stats_table_;
   }
 
   const StringPool& string_pool() const { return string_pool_; }
@@ -796,10 +808,13 @@ class TraceStorage {
                                                             nullptr};
   tables::StackProfileCallsiteTable stack_profile_callsite_table_{&string_pool_,
                                                                   nullptr};
+  tables::StackSampleTable stack_sample_table_{&string_pool_, nullptr};
   tables::HeapProfileAllocationTable heap_profile_allocation_table_{
       &string_pool_, nullptr};
   tables::CpuProfileStackSampleTable cpu_profile_stack_sample_table_{
-      &string_pool_, nullptr};
+      &string_pool_, &stack_sample_table_};
+  tables::PerfSampleTable perf_sample_table_{&string_pool_,
+                                             &stack_sample_table_};
   tables::PackageListTable package_list_table_{&string_pool_, nullptr};
   tables::ProfilerSmapsTable profiler_smaps_table_{&string_pool_, nullptr};
 
@@ -815,8 +830,6 @@ class TraceStorage {
 
   tables::GraphicsFrameSliceTable graphics_frame_slice_table_{&string_pool_,
                                                               &slice_table_};
-  tables::GraphicsFrameStatsTable graphics_frame_stats_table_{&string_pool_,
-                                                              nullptr};
 
   // The below array allow us to map between enums and their string
   // representations.

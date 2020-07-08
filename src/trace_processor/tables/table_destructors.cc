@@ -48,7 +48,9 @@ ProcessTable::~ProcessTable() = default;
 StackProfileMappingTable::~StackProfileMappingTable() = default;
 StackProfileFrameTable::~StackProfileFrameTable() = default;
 StackProfileCallsiteTable::~StackProfileCallsiteTable() = default;
+StackSampleTable::~StackSampleTable() = default;
 CpuProfileStackSampleTable::~CpuProfileStackSampleTable() = default;
+PerfSampleTable::~PerfSampleTable() = default;
 SymbolTable::~SymbolTable() = default;
 HeapProfileAllocationTable::~HeapProfileAllocationTable() = default;
 ExperimentalFlamegraphNodesTable::~ExperimentalFlamegraphNodesTable() = default;
@@ -66,7 +68,6 @@ InstantTable::~InstantTable() = default;
 SchedSliceTable::~SchedSliceTable() = default;
 GpuSliceTable::~GpuSliceTable() = default;
 GraphicsFrameSliceTable::~GraphicsFrameSliceTable() = default;
-GraphicsFrameStatsTable::~GraphicsFrameStatsTable() = default;
 DescribeSliceTable::~DescribeSliceTable() = default;
 
 // track_tables.h

@@ -29,6 +29,7 @@
 #include <unwindstack/MachineX86.h>
 #include <unwindstack/MachineX86_64.h>
 
+#include "perfetto/profiling/memory/client_ext.h"
 #include "src/profiling/memory/shared_ring_buffer.h"
 
 namespace perfetto {
@@ -48,6 +49,10 @@ struct ClientConfiguration {
   uint64_t block_client_timeout_us;
   bool disable_fork_teardown;
   bool disable_vfork_detection;
+  char heaps[64][HEAPPROFD_HEAP_NAME_SZ];
+  uint64_t num_heaps;
+  // Just double check that the array sizes are in correct order.
+  static_assert(sizeof(heaps[0]) == HEAPPROFD_HEAP_NAME_SZ, "");
 };
 
 // Types needed for the wire format used for communication between the client
@@ -81,8 +86,6 @@ constexpr size_t kMaxRegisterDataSize =
   );
 // clang-format on
 
-constexpr size_t kFreeBatchSize = 1024;
-
 enum class RecordType : uint64_t {
   Free = 0,
   Malloc = 1,
@@ -98,25 +101,17 @@ struct AllocMetadata {
   uint64_t alloc_address;
   // Current value of the stack pointer.
   uint64_t stack_pointer;
-  // Offset of the data at stack_pointer from the start of this record.
-  uint64_t stack_pointer_offset;
   uint64_t clock_monotonic_coarse_timestamp;
   alignas(uint64_t) char register_data[kMaxRegisterDataSize];
   // CPU architecture of the client.
   unwindstack::ArchEnum arch;
+  uint32_t heap_id;
 };
 
-struct FreeBatchEntry {
+struct FreeEntry {
   uint64_t sequence_number;
   uint64_t addr;
-};
-
-struct FreeBatch {
-  uint64_t num_entries;
-  uint64_t clock_monotonic_coarse_timestamp;
-  FreeBatchEntry entries[kFreeBatchSize];
-
-  FreeBatch() { num_entries = 0; }
+  uint32_t heap_id;
 };
 
 enum HandshakeFDs : size_t {
@@ -130,13 +125,13 @@ struct WireMessage {
   RecordType record_type;
 
   AllocMetadata* alloc_header;
-  FreeBatch* free_header;
+  FreeEntry* free_header;
 
   char* payload;
   size_t payload_size;
 };
 
-bool SendWireMessage(SharedRingBuffer* buf, const WireMessage& msg);
+int64_t SendWireMessage(SharedRingBuffer* buf, const WireMessage& msg);
 
 // Parse message received over the wire.
 // |buf| has to outlive |out|.

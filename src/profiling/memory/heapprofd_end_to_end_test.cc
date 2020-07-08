@@ -14,6 +14,12 @@
  * limitations under the License.
  */
 
+// End to end tests for heapprofd.
+// None of these tests currently pass on non-Android, but we still build most
+// of it as a best-effort way to maintain the out-of-tree build.
+
+#include <atomic>
+
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -24,6 +30,7 @@
 #include "perfetto/ext/base/pipe.h"
 #include "perfetto/ext/base/subprocess.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
+#include "perfetto/profiling/memory/client_ext.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/profiling/memory/heapprofd_producer.h"
 #include "test/gtest_and_gmock.h"
@@ -89,6 +96,13 @@ base::ScopedResource<std::string*, SetModeProperty, nullptr> DisableFork() {
       new std::string(prev_property_value));
 }
 
+void CustomAllocateAndFree(size_t bytes) {
+  HeapprofdHeapInfo info{"test", nullptr};
+  static uint32_t heap_id = heapprofd_register_heap(&info, sizeof(info));
+  heapprofd_report_allocation(heap_id, 0x1234abc, bytes);
+  heapprofd_report_free(heap_id, 0x1234abc);
+}
+
 #else
 std::string ReadProperty(const std::string&, std::string) {
   PERFETTO_FATAL("Only works on Android.");
@@ -106,6 +120,10 @@ base::ScopedResource<std::string*, SetModeProperty, nullptr> DisableFork() {
   PERFETTO_FATAL("Only works on Android.");
 }
 
+void __attribute__((noreturn)) CustomAllocateAndFree(size_t) {
+  PERFETTO_FATAL("Only works on Android.");
+}
+
 #endif
 
 constexpr size_t kStartupAllocSize = 10;
@@ -120,23 +138,31 @@ void AllocateAndFree(size_t bytes) {
   }
 }
 
-void __attribute__((noreturn)) ContinuousMalloc(size_t bytes) {
+void __attribute__((noreturn))
+ContinuousMalloc(size_t malloc_bytes, size_t custom_bytes) {
   for (;;) {
-    AllocateAndFree(bytes);
+    // We need to run malloc(0) even if we want to test the custom allocator,
+    // as the init mechanism assumes the application uses malloc.
+    AllocateAndFree(malloc_bytes);
+    if (custom_bytes)
+      CustomAllocateAndFree(custom_bytes);
     usleep(10 * kMsToUs);
   }
 }
 
-base::Subprocess ForkContinuousMalloc(size_t bytes) {
+base::Subprocess ForkContinuousMalloc(size_t malloc_bytes,
+                                      size_t custom_bytes = 0) {
   base::Subprocess proc;
-  proc.args.entrypoint_for_testing = [bytes] { ContinuousMalloc(bytes); };
+  proc.args.entrypoint_for_testing = [malloc_bytes, custom_bytes] {
+    ContinuousMalloc(malloc_bytes, custom_bytes);
+  };
   proc.Start();
   return proc;
 }
 
 void __attribute__((constructor)) RunContinuousMalloc() {
   if (getenv("HEAPPROFD_TESTING_RUN_MALLOC") != nullptr)
-    ContinuousMalloc(kStartupAllocSize);
+    ContinuousMalloc(kStartupAllocSize, 0);
 }
 
 std::unique_ptr<TestHelper> GetHelper(base::TestTaskRunner* task_runner) {
@@ -222,12 +248,15 @@ class HeapprofdEndToEnd : public ::testing::TestWithParam<bool> {
 
   void ValidateSampleSizes(TestHelper* helper,
                            uint64_t pid,
-                           uint64_t alloc_size) {
+                           uint64_t alloc_size,
+                           const std::string& heap_name = "") {
     const auto& packets = helper->trace();
     for (const protos::gen::TracePacket& packet : packets) {
       for (const auto& dump : packet.profile_packet().process_dumps()) {
-        if (dump.pid() != pid)
+        if (dump.pid() != pid ||
+            (!heap_name.empty() && heap_name != dump.heap_name())) {
           continue;
+        }
         for (const auto& sample : dump.samples()) {
           EXPECT_EQ(sample.self_allocated() % alloc_size, 0u);
           EXPECT_EQ(sample.self_freed() % alloc_size, 0u);
@@ -264,7 +293,22 @@ class HeapprofdEndToEnd : public ::testing::TestWithParam<bool> {
     }
   }
 
-  void ValidateHasSamples(TestHelper* helper, uint64_t pid) {
+  void ValidateNoSamples(TestHelper* helper, uint64_t pid) {
+    const auto& packets = helper->trace();
+    size_t samples = 0;
+    for (const protos::gen::TracePacket& packet : packets) {
+      for (const auto& dump : packet.profile_packet().process_dumps()) {
+        if (dump.pid() != pid)
+          continue;
+        samples += dump.samples().size();
+      }
+    }
+    EXPECT_EQ(samples, 0u);
+  }
+
+  void ValidateHasSamples(TestHelper* helper,
+                          uint64_t pid,
+                          const std::string& heap_name) {
     const auto& packets = helper->trace();
     ASSERT_GT(packets.size(), 0u);
     size_t profile_packets = 0;
@@ -273,7 +317,7 @@ class HeapprofdEndToEnd : public ::testing::TestWithParam<bool> {
     uint64_t last_freed = 0;
     for (const protos::gen::TracePacket& packet : packets) {
       for (const auto& dump : packet.profile_packet().process_dumps()) {
-        if (dump.pid() != pid)
+        if (dump.pid() != pid || dump.heap_name() != heap_name)
           continue;
         for (const auto& sample : dump.samples()) {
           last_allocated = sample.self_allocated();
@@ -283,10 +327,10 @@ class HeapprofdEndToEnd : public ::testing::TestWithParam<bool> {
         profile_packets++;
       }
     }
-    EXPECT_GT(profile_packets, 0u);
-    EXPECT_GT(samples, 0u);
-    EXPECT_GT(last_allocated, 0u);
-    EXPECT_GT(last_freed, 0u);
+    EXPECT_GT(profile_packets, 0u) << heap_name;
+    EXPECT_GT(samples, 0u) << heap_name;
+    EXPECT_GT(last_allocated, 0u) << heap_name;
+    EXPECT_GT(last_freed, 0u) << heap_name;
   }
 
   void ValidateOnlyPID(TestHelper* helper, uint64_t pid) {
@@ -309,6 +353,37 @@ void KillAssertRunning(base::Subprocess* child) {
   child->KillAndWaitForTermination();
 }
 
+TEST_P(HeapprofdEndToEnd, MallocDisabled) {
+  constexpr size_t kAllocSize = 1024;
+
+  base::Subprocess child = ForkContinuousMalloc(kAllocSize);
+  const auto pid = child.pid();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  heapprofd_config.add_heaps("invalid");
+  auto* cont_config = heapprofd_config.mutable_continuous_dump_config();
+  cont_config->set_dump_phase_ms(0);
+  cont_config->set_dump_interval_ms(100);
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+
+  ValidateNoSamples(helper.get(), static_cast<uint64_t>(pid));
+  KillAssertRunning(&child);
+}
 TEST_P(HeapprofdEndToEnd, Smoke) {
   constexpr size_t kAllocSize = 1024;
 
@@ -335,9 +410,179 @@ TEST_P(HeapprofdEndToEnd, Smoke) {
 
   auto helper = Trace(trace_config);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize);
+
+  KillAssertRunning(&child);
+}
+
+TEST_P(HeapprofdEndToEnd, SmokeCustomAndMalloc) {
+  constexpr size_t kCustomAllocSize = 1024;
+  constexpr size_t kAllocSize = 7;
+
+  base::Subprocess child = ForkContinuousMalloc(kAllocSize, kCustomAllocSize);
+  const auto pid = child.pid();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  heapprofd_config.add_heaps("test");
+  heapprofd_config.add_heaps("malloc");
+  auto* cont_config = heapprofd_config.mutable_continuous_dump_config();
+  cont_config->set_dump_phase_ms(0);
+  cont_config->set_dump_interval_ms(100);
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "test");
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
+  ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
+  ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid),
+                      kCustomAllocSize, "test");
+  ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize,
+                      "malloc");
+
+  KillAssertRunning(&child);
+}
+
+TEST_P(HeapprofdEndToEnd, AccurateCustom) {
+  base::Subprocess child;
+  child.args.entrypoint_for_testing = [] {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+    static std::atomic<bool> initialized{false};
+    HeapprofdHeapInfo info{"test", [](bool) { initialized = true; }};
+
+    static uint32_t heap_id = heapprofd_register_heap(&info, sizeof(info));
+    // heapprofd_client needs malloc to see the signal.
+    while (!initialized)
+      AllocateAndFree(1);
+    // We call the callback before setting enabled=true on the heap, so we
+    // wait a bit for the assignment to happen.
+    usleep(100000);
+    heapprofd_report_allocation(heap_id, 0x1, 10u);
+    heapprofd_report_free(heap_id, 0x1);
+    heapprofd_report_allocation(heap_id, 0x2, 15u);
+    heapprofd_report_allocation(heap_id, 0x3, 15u);
+    heapprofd_report_free(heap_id, 0x2);
+
+    // Wait around so we can verify it did't crash.
+    for (;;) {
+    }
+#else
+    PERFETTO_FATAL("Only supported on Android.");
+#endif
+  };
+  child.Start();
+  const auto pid = child.pid();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  heapprofd_config.add_heaps("test");
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
+
+  size_t total_alloc = 0;
+  size_t total_freed = 0;
+  for (const protos::gen::TracePacket& packet : helper->trace()) {
+    for (const auto& dump : packet.profile_packet().process_dumps()) {
+      for (const auto& sample : dump.samples()) {
+        total_alloc += sample.self_allocated();
+        total_freed += sample.self_freed();
+      }
+    }
+  }
+  EXPECT_EQ(total_alloc, 40u);
+  EXPECT_EQ(total_freed, 25u);
+  KillAssertRunning(&child);
+}
+
+TEST_P(HeapprofdEndToEnd, SmokeCustom) {
+  constexpr size_t kAllocSize = 1024;
+
+  base::Subprocess child = ForkContinuousMalloc(0, kAllocSize);
+  const auto pid = child.pid();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  heapprofd_config.add_heaps("test");
+  auto* cont_config = heapprofd_config.mutable_continuous_dump_config();
+  cont_config->set_dump_phase_ms(0);
+  cont_config->set_dump_interval_ms(100);
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "test");
+  ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
+  ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize);
+
+  KillAssertRunning(&child);
+}
+
+TEST_P(HeapprofdEndToEnd, CustomDisabled) {
+  constexpr size_t kAllocSize = 1024;
+
+  base::Subprocess child = ForkContinuousMalloc(0, kAllocSize);
+  const auto pid = child.pid();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  auto* cont_config = heapprofd_config.mutable_continuous_dump_config();
+  cont_config->set_dump_phase_ms(0);
+  cont_config->set_dump_interval_ms(100);
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateNoSamples(helper.get(), static_cast<uint64_t>(pid));
 
   KillAssertRunning(&child);
 }
@@ -369,9 +614,9 @@ TEST_P(HeapprofdEndToEnd, TwoProcesses) {
 
   auto helper = Trace(trace_config);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize);
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid2));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid2), "malloc");
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid2), kAllocSize2);
 
   KillAssertRunning(&child);
@@ -401,7 +646,7 @@ TEST_P(HeapprofdEndToEnd, FinalFlush) {
 
   auto helper = Trace(trace_config);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize);
 
@@ -726,7 +971,7 @@ TEST_P(HeapprofdEndToEnd, ReInit) {
 
   auto helper = Trace(trace_config);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid),
                       kFirstIterationBytes);
@@ -744,7 +989,91 @@ TEST_P(HeapprofdEndToEnd, ReInit) {
   PERFETTO_LOG("HeapprofdEndToEnd::Reinit: Starting second");
   helper = Trace(trace_config);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
+  ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
+  ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid),
+                      kSecondIterationBytes);
+
+  KillAssertRunning(&child);
+}
+
+TEST_P(HeapprofdEndToEnd, ReInitAfterInvalid) {
+  constexpr size_t kFirstIterationBytes = 5;
+  constexpr size_t kSecondIterationBytes = 7;
+
+  base::Pipe signal_pipe = base::Pipe::Create(base::Pipe::kBothNonBlock);
+  base::Pipe ack_pipe = base::Pipe::Create(base::Pipe::kBothBlock);
+
+  base::Subprocess child;
+  int signal_pipe_rd = *signal_pipe.rd;
+  int ack_pipe_wr = *ack_pipe.wr;
+  child.args.preserve_fds.push_back(signal_pipe_rd);
+  child.args.preserve_fds.push_back(ack_pipe_wr);
+  child.args.entrypoint_for_testing = [signal_pipe_rd, ack_pipe_wr] {
+    // The Subprocess harness takes care of closing all the unused pipe ends.
+    size_t bytes = kFirstIterationBytes;
+    bool signalled = false;
+    for (;;) {
+      AllocateAndFree(bytes);
+      char buf[1];
+      if (!signalled && read(signal_pipe_rd, buf, sizeof(buf)) == 1) {
+        signalled = true;
+        close(signal_pipe_rd);
+
+        // make sure the client has noticed that the session has stopped
+        AllocateAndFree(bytes);
+
+        bytes = kSecondIterationBytes;
+        PERFETTO_CHECK(PERFETTO_EINTR(write(ack_pipe_wr, "1", 1)) == 1);
+        close(ack_pipe_wr);
+      }
+      usleep(10 * kMsToUs);
+    }
+    PERFETTO_FATAL("Should be unreachable");
+  };
+  child.Start();
+  auto pid = child.pid();
+
+  signal_pipe.rd.reset();
+  ack_pipe.wr.reset();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(10 * 1024);
+  trace_config.set_duration_ms(2000);
+  trace_config.set_data_source_stop_timeout_ms(10000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.heapprofd");
+  ds_config->set_target_buffer(0);
+
+  protos::gen::HeapprofdConfig heapprofd_config;
+  heapprofd_config.set_sampling_interval_bytes(1);
+  heapprofd_config.add_pid(static_cast<uint64_t>(pid));
+  heapprofd_config.set_all(false);
+  heapprofd_config.add_heaps("invalid");
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  auto helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateNoSamples(helper.get(), static_cast<uint64_t>(pid));
+
+  PERFETTO_CHECK(PERFETTO_EINTR(write(*signal_pipe.wr, "1", 1)) == 1);
+  signal_pipe.wr.reset();
+  char buf[1];
+  ASSERT_EQ(PERFETTO_EINTR(read(*ack_pipe.rd, buf, sizeof(buf))), 1);
+  ack_pipe.rd.reset();
+
+  // A brief sleep to allow the client to notice that the profiling session is
+  // to be torn down (as it rejects concurrent sessions).
+  usleep(500 * kMsToUs);
+
+  heapprofd_config.add_heaps("malloc");
+  ds_config->set_heapprofd_config_raw(heapprofd_config.SerializeAsString());
+
+  PERFETTO_LOG("HeapprofdEndToEnd::ReinitAfterInvalid: Starting second");
+  helper = Trace(trace_config);
+  PrintStats(helper.get());
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid),
                       kSecondIterationBytes);
@@ -786,7 +1115,7 @@ TEST_P(HeapprofdEndToEnd, ConcurrentSession) {
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid));
+  ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid), "malloc");
   ValidateOnlyPID(helper.get(), static_cast<uint64_t>(pid));
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid), kAllocSize);
   ValidateRejectedConcurrent(helper_concurrent.get(),

@@ -37,7 +37,6 @@ class GlobalArgsTracker;
 class HeapGraphTracker;
 class HeapProfileTracker;
 class MetadataTracker;
-class PerfSampleTracker;
 class ProtoImporterModule;
 class ProcessTracker;
 class SliceTracker;
@@ -72,7 +71,6 @@ class TraceProcessorContext {
   std::unique_ptr<ClockTracker> clock_tracker;
   std::unique_ptr<HeapProfileTracker> heap_profile_tracker;
   std::unique_ptr<MetadataTracker> metadata_tracker;
-  std::unique_ptr<PerfSampleTracker> perf_sample_tracker;
 
   // These fields are stored as pointers to Destructible objects rather than
   // their actual type (a subclass of Destructible), as the concrete subclass
@@ -86,6 +84,7 @@ class TraceProcessorContext {
   std::unique_ptr<Destructible> systrace_parser;         // SystraceParser
   std::unique_ptr<Destructible> heap_graph_tracker;      // HeapGraphTracker
   std::unique_ptr<Destructible> json_tracker;            // JsonTracker
+  std::unique_ptr<Destructible> system_info_tracker;     // SystemInfoTracker
 
   // These fields are trace readers which will be called by |forwarding_parser|
   // once the format of the trace is discovered. They are placed here as they

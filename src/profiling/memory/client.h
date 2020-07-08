@@ -35,8 +35,10 @@
 namespace perfetto {
 namespace profiling {
 
+uint64_t GetMaxTries(const ClientConfiguration& client_config);
 const char* GetThreadStackBase();
 
+constexpr uint64_t kInfiniteTries = 0;
 constexpr uint32_t kClientSockTimeoutMs = 1000;
 
 // Profiling client, used to sample and record the malloc/free family of calls,
@@ -66,12 +68,14 @@ class Client {
   static base::Optional<base::UnixSocketRaw> ConnectToHeapprofd(
       const std::string& sock_name);
 
-  bool RecordMalloc(uint64_t sample_size,
+  bool RecordMalloc(uint32_t heap_id,
+                    uint64_t sample_size,
                     uint64_t alloc_size,
                     uint64_t alloc_address) PERFETTO_WARN_UNUSED_RESULT;
 
   // Add address to buffer of deallocations. Flushes the buffer if necessary.
-  bool RecordFree(uint64_t alloc_address) PERFETTO_WARN_UNUSED_RESULT;
+  bool RecordFree(uint32_t heap_id,
+                  uint64_t alloc_address) PERFETTO_WARN_UNUSED_RESULT;
 
   // Returns the number of bytes to assign to an allocation with the given
   // |alloc_size|, based on the current sampling rate. A return value of zero
@@ -94,21 +98,18 @@ class Client {
 
   ~Client();
 
-  ClientConfiguration client_config_for_testing() { return client_config_; }
+  const ClientConfiguration& client_config() { return client_config_; }
+
+  bool IsConnected();
 
  private:
   const char* GetStackBase();
-  // Flush the contents of free_batch_. Must hold free_batch_lock_.
-  bool FlushFreesLocked() PERFETTO_WARN_UNUSED_RESULT;
   bool SendControlSocketByte() PERFETTO_WARN_UNUSED_RESULT;
-  bool SendWireMessageWithRetriesIfBlocking(const WireMessage&)
+  int64_t SendWireMessageWithRetriesIfBlocking(const WireMessage&)
       PERFETTO_WARN_UNUSED_RESULT;
 
   bool IsPostFork();
 
-  // This is only valid for non-blocking sockets. This is when
-  // client_config_.block_client is true.
-  bool IsConnected();
 
   ClientConfiguration client_config_;
   uint64_t max_shmem_tries_;
@@ -116,12 +117,9 @@ class Client {
   Sampler sampler_;
   base::UnixSocketRaw sock_;
 
-  // Protected by free_batch_lock_.
-  FreeBatch free_batch_;
-  std::timed_mutex free_batch_lock_;
-
   const char* main_thread_stack_base_{nullptr};
-  std::atomic<uint64_t> sequence_number_{0};
+  std::atomic<uint64_t>
+      sequence_number_[base::ArraySize(ClientConfiguration{}.heaps)] = {};
   SharedRingBuffer shmem_;
 
   // Used to detect (during the slow path) the situation where the process has

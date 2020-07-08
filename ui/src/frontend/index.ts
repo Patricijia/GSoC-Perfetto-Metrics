@@ -34,6 +34,7 @@ import {AnalyzePage} from './analyze_page';
 import {maybeShowErrorDialog} from './error_dialog';
 import {
   CounterDetails,
+  CpuProfileDetails,
   globals,
   HeapProfileDetails,
   QuantizedLoad,
@@ -131,6 +132,11 @@ class FrontendApi {
     this.redraw();
   }
 
+  publishCpuProfileDetails(details: CpuProfileDetails) {
+    globals.cpuProfileDetails = details;
+    this.redraw();
+  }
+
   publishFileDownload(args: {file: File, name?: string}) {
     const url = URL.createObjectURL(args.file);
     const a = document.createElement('a');
@@ -173,6 +179,11 @@ class FrontendApi {
 
   publishRecordingLog(args: {logs: string}) {
     globals.setRecordingLog(args.logs);
+    this.redraw();
+  }
+
+  publishTraceErrors(arg: string[]) {
+    globals.traceErrors = arg;
     this.redraw();
   }
 
@@ -248,7 +259,7 @@ function main() {
         '/': HomePage,
         '/viewer': ViewerPage,
         '/record': RecordPage,
-        '/analyze': AnalyzePage,
+        '/query': AnalyzePage,
       },
       dispatch);
   forwardRemoteCalls(frontendChannel.port2, new FrontendApi(router));

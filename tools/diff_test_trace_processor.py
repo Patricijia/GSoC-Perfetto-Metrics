@@ -13,6 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from __future__ import absolute_import
+from __future__ import division
+from __future__ import print_function
+
 import argparse
 import datetime
 import difflib
@@ -26,8 +30,9 @@ import sys
 import tempfile
 
 from itertools import chain
-from google.protobuf import descriptor, descriptor_pb2, message_factory
 from google.protobuf import reflection, text_format
+
+from proto_utils import create_message_factory, serialize_textproto_trace, serialize_python_trace
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -52,44 +57,12 @@ class PerfResult(object):
     self.real_time_ns = int(real_time_ns_str)
 
 
-def create_message_factory(descriptor_file_path, proto_type):
-  with open(descriptor_file_path, 'rb') as descriptor_file:
-    descriptor_content = descriptor_file.read()
-
-  file_desc_set_pb2 = descriptor_pb2.FileDescriptorSet()
-  file_desc_set_pb2.MergeFromString(descriptor_content)
-
-  desc_by_path = {}
-  for f_desc_pb2 in file_desc_set_pb2.file:
-    f_desc_pb2_encode = f_desc_pb2.SerializeToString()
-    f_desc = descriptor.FileDescriptor(
-        name=f_desc_pb2.name,
-        package=f_desc_pb2.package,
-        serialized_pb=f_desc_pb2_encode)
-
-    for desc in f_desc.message_types_by_name.values():
-      desc_by_path[desc.full_name] = desc
-
-  return message_factory.MessageFactory().GetPrototype(desc_by_path[proto_type])
-
-
-def create_trace_message_factory(trace_descriptor_path):
-  return create_message_factory(trace_descriptor_path, 'perfetto.protos.Trace')
-
-
 def create_metrics_message_factory(metrics_descriptor_path):
   return create_message_factory(metrics_descriptor_path,
                                 'perfetto.protos.TraceMetrics')
 
 
-def serialize_text_proto_to_file(proto_descriptor_path, text_proto_path,
-                                 output_file):
-  trace_message_factory = create_trace_message_factory(proto_descriptor_path)
-  proto = trace_message_factory()
-  with open(text_proto_path, 'r') as text_proto_file:
-    text_format.Merge(text_proto_file.read(), proto)
-  output_file.write(proto.SerializeToString())
-  output_file.flush()
+
 
 
 def write_diff(expected, actual):
@@ -135,7 +108,7 @@ def run_metrics_test(trace_processor_path, gen_trace_path, metric,
 
   if json_output:
     expected_text = expected
-    actual_text = stdout
+    actual_text = stdout.decode('utf8')
   else:
     # Expected will be in text proto format and we'll need to parse it to a real
     # proto.
@@ -152,7 +125,7 @@ def run_metrics_test(trace_processor_path, gen_trace_path, metric,
     actual_text = text_format.MessageToString(actual_message)
 
   return TestResult('metric', metric, gen_trace_path, cmd, expected_text,
-                    actual_text, stderr, tp.returncode)
+                    actual_text, stderr.decode('utf8'), tp.returncode)
 
 
 def run_query_test(trace_processor_path, gen_trace_path, query_path,
@@ -171,8 +144,8 @@ def run_query_test(trace_processor_path, gen_trace_path, query_path,
 
   tp = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   (stdout, stderr) = tp.communicate()
-  return TestResult('query', query_path, gen_trace_path, cmd, expected, stdout,
-                    stderr, tp.returncode)
+  return TestResult('query', query_path, gen_trace_path, cmd, expected,
+                    stdout.decode('utf8'), stderr.decode('utf8'), tp.returncode)
 
 
 def run_all_tests(trace_processor, trace_descriptor_path,
@@ -193,13 +166,12 @@ def run_all_tests(trace_processor, trace_descriptor_path,
 
     if trace_path.endswith('.py'):
       gen_trace_file = tempfile.NamedTemporaryFile(delete=False)
-      python_cmd = ['python', trace_path, trace_descriptor_path]
-      subprocess.check_call(python_cmd, stdout=gen_trace_file)
+      serialize_python_trace(trace_descriptor_path, trace_path, gen_trace_file)
       gen_trace_path = os.path.realpath(gen_trace_file.name)
     elif trace_path.endswith('.textproto'):
       gen_trace_file = tempfile.NamedTemporaryFile(delete=False)
-      serialize_text_proto_to_file(trace_descriptor_path, trace_path,
-                                   gen_trace_file)
+      serialize_textproto_trace(trace_descriptor_path, trace_path,
+                                gen_trace_file)
       gen_trace_path = os.path.realpath(gen_trace_file.name)
     else:
       gen_trace_file = None
@@ -228,11 +200,11 @@ def run_all_tests(trace_processor, trace_descriptor_path,
       else:
         assert False
 
-      perf_lines = tmp_perf_file.readlines()
+      perf_lines = [line.decode('utf8') for line in tmp_perf_file.readlines()]
 
     if gen_trace_file:
       if keep_input:
-        print "Saving generated input trace: ", gen_trace_path
+        print("Saving generated input trace: {}".format(gen_trace_path))
       else:
         gen_trace_file.close()
         os.remove(gen_trace_path)

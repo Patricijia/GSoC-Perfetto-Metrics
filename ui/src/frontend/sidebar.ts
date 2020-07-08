@@ -154,7 +154,7 @@ const SECTIONS = [
         checkDownloadDisabled: true,
       },
       {t: 'Legacy UI', a: openCurrentTraceWithOldUI, i: 'filter_none'},
-      {t: 'Analyze', a: navigateAnalyze, i: 'control_camera'},
+      {t: 'Query (SQL)', a: navigateAnalyze, i: 'control_camera'},
     ],
   },
   {
@@ -426,7 +426,7 @@ function navigateRecord(e: Event) {
 
 function navigateAnalyze(e: Event) {
   e.preventDefault();
-  globals.dispatch(Actions.navigate({route: '/analyze'}));
+  globals.dispatch(Actions.navigate({route: '/query'}));
 }
 
 function navigateViewer(e: Event) {
@@ -646,7 +646,10 @@ export class Sidebar implements m.ClassComponent {
         if (isDownloadAndShareDisabled() &&
             item.hasOwnProperty('checkDownloadDisabled')) {
           attrs = {
-            onclick: () => alert('Can not download or share external trace.'),
+            onclick: e => {
+              e.preventDefault();
+              alert('Can not download or share external trace.');
+            },
             href: '#',
             target: null,
             disabled: true,
@@ -670,7 +673,7 @@ export class Sidebar implements m.ClassComponent {
               traceTitle = engines[0].source.url.split('/').pop()!;
               break;
             case 'ARRAY_BUFFER':
-              traceTitle = 'External trace';
+              traceTitle = engines[0].source.title;
               break;
             case 'HTTP_RPC':
               traceTitle = 'External trace (RPC)';

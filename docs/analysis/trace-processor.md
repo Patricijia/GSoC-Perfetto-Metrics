@@ -244,6 +244,110 @@ WHERE slice.name = 'measure'
 GROUP BY thread_name
 ```
 
+## Operator tables
+SQL queries are usually sufficient to retrieive data from trace processor.
+Sometimes though, certain constructs can be difficult to express pure SQL.
+
+In these situations, trace processor has special "operator tables" which solve
+a particular problem in C++ but expose an SQL interface for queries to take
+advantage of.
+
+### Span join
+Span join is a custom operator table which computes the intersection of
+spans of time from two tables or views. A column (called the *partition*)
+can optionally be specified which divides the rows from each table into
+partitions before computing the intersection.
+
+![Span join block diagram](/docs/images/span-join.png)
+
+```sql
+-- Get all the scheduling slices
+CREATE VIEW sp_sched AS
+SELECT ts, dur, cpu, utid
+FROM sched
+
+-- Get all the cpu frequency slices
+CREATE VIEW sp_frequency AS
+SELECT
+  ts,
+  lead(ts) OVER (PARTITION BY cpu ORDER BY ts) - ts as dur,
+  cpu,
+  value as freq
+FROM counter
+
+-- Create the span joined table which combines cpu frequency with
+-- scheduling slices.
+CREATE VIRTUAL TABLE sched_with_frequency
+USING SPAN_JOIN(sp_sched PARTITIONED cpu, sp_frequency PARTITIONED cpu)
+
+-- This span joined table can be queried as normal and has the columns from both
+-- tables.
+SELECT ts, dur, cpu, utid, freq
+FROM sched_with_frequency
+```
+
+NOTE: A partition can be specified on neither, either or both tables. If
+specified on both, the same column name has to be specified on each table.
+
+WARNING: An important restriction on span joined tables is that spans from
+the same table in the same partition *cannot* overlap. For performance
+reasons, span join does attempt to dectect and error out in this situation;
+instead, incorrect rows will silently be produced.
+
+### Ancestor slice
+ancestor_slice is a custom operator table that takes a
+[slice table's id column](/docs/analysis/sql-tables#slice) and computes all
+slices on the same track that are direct parents above that id (i.e. given a
+slice id it will return as rows all slices that can be found by following the
+parent_id column to the top slice (depth = 0)).
+
+The returned format is the same as the
+[slice table](/docs/analysis/sql-tables#slice)
+
+For example, the following finds the top level slice given a bunch of slices of
+interest.
+
+```sql
+CREATE VIEW interesting_slices AS
+SELECT id, ts, dur, track_id
+FROM slice WHERE name LIKE "%interesting slice name%";
+
+SELECT
+  *
+FROM
+  interesting_slices LEFT JOIN
+  ancestor_slice(interesting_slices.id) AS ancestor ON ancestor.depth = 0
+```
+
+### Descendant slice
+descendant_slice is a custom operator table that takes a
+[slice table's id column](/docs/analysis/sql-tables#slice) and computes all
+slices on the same track that are nested under that id (i.e. all slices that
+are on the same track at the same time frame with a depth greater than the given
+slice's depth.
+
+The returned format is the same as the
+[slice table](/docs/analysis/sql-tables#slice)
+
+For example, the following finds the number of slices under each slice of
+interest.
+
+```sql
+CREATE VIEW interesting_slices AS
+SELECT id, ts, dur, track_id
+FROM slice WHERE name LIKE "%interesting slice name%";
+
+SELECT
+  *
+  (
+    SELECT
+      COUNT(*) AS total_descendants
+    FROM descendant_slice(interesting_slice.id)
+  )
+FROM interesting_slices
+```
+
+
 ## Metrics
 
 TIP: To see how to add to add a new metric to trace processor, see the checklist
