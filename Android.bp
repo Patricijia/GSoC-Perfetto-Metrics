@@ -56,6 +56,7 @@ genrule {
     "src/trace_processor/metrics/android/unmapped_java_symbols.sql",
     "src/trace_processor/metrics/android/unsymbolized_frames.sql",
     "src/trace_processor/metrics/chrome/chrome_processes.sql",
+    "src/trace_processor/metrics/chrome/scroll_jank.sql",
     "src/trace_processor/metrics/trace_metadata.sql",
     "src/trace_processor/metrics/webview/webview_power_usage.sql",
   ],
@@ -6246,6 +6247,7 @@ filegroup {
   name: "perfetto_src_profiling_memory_client_ext",
   srcs: [
     "src/profiling/memory/client_ext.cc",
+    "src/profiling/memory/client_ext_android.cc",
   ],
 }
 
