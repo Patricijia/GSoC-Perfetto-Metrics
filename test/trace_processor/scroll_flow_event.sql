@@ -12,13 +12,18 @@
 -- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
-
-SELECT RUN_METRIC('chrome/scroll_jank.sql') AS suppress_query_output;
+SELECT RUN_METRIC('chrome/scroll_flow_event.sql') AS suppress_query_output;
 
 SELECT
-  gesture_scroll_id,
   trace_id,
-  jank,
   ts,
-  dur
-FROM scroll_jank;
+  dur,
+  jank,
+  step,
+  ancestor_end,
+  maybe_next_ancestor_ts,
+  next_ts,
+  next_trace_id,
+  next_step
+FROM scroll_flow_event
+ORDER BY gesture_scroll_id, trace_id, ts;
