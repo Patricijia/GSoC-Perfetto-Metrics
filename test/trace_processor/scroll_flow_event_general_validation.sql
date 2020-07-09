@@ -12,13 +12,20 @@
 -- WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
-
-SELECT RUN_METRIC('chrome/scroll_jank.sql') AS suppress_query_output;
+SELECT RUN_METRIC('chrome/scroll_flow_event.sql') AS suppress_query_output;
 
 SELECT
-  gesture_scroll_id,
-  trace_id,
-  jank,
-  ts,
-  dur
-FROM scroll_jank;
+  -- Each trace_id (in our example trace not true in general) has 8 steps. There
+  -- are 139 scrolls. So we expect 1112 rows in total 72 of which are janky.
+  (
+    SELECT COUNT(*) FROM scroll_jank
+  ) AS total_scroll_updates,
+  (
+    SELECT COUNT(*) FROM scroll_flow_event
+  ) AS total_flow_event_steps,
+  (
+    SELECT COUNT(*) FROM scroll_flow_event WHERE jank
+  ) AS total_janky_flow_event_steps,
+  (
+    SELECT COUNT(*) FROM (SELECT step FROM scroll_flow_event GROUP BY step)
+  ) AS number_of_unique_steps;
