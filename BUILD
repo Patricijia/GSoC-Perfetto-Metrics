@@ -2375,6 +2375,7 @@ perfetto_cc_proto_library(
 perfetto_proto_library(
     name = "protos_perfetto_trace_non_minimal_protos",
     srcs = [
+        "protos/perfetto/trace/extension_descriptor.proto",
         "protos/perfetto/trace/test_event.proto",
         "protos/perfetto/trace/trace.proto",
         "protos/perfetto/trace/trace_packet.proto",
@@ -3289,12 +3290,27 @@ perfetto_gensignature_internal_only(
     ],
 )
 
+# Noop targets used to represent targets of the protobuf library.
+# These will be rewritten in Google3 to be dependencies on the real targets.
+
+perfetto_py_library(
+    name = "pyglib_noop",
+    srcs = [],
+)
+
+perfetto_py_library(
+    name = "protobuf_noop",
+    srcs = [],
+)
+
+perfetto_py_library(
+    name = "protobuf_descriptor_pb2_noop",
+    srcs = [],
+)
+
 perfetto_py_binary(
     name = "trace_processor_py_example",
     srcs = ["src/trace_processor/python/example.py"],
-    data = [
-        "src/trace_processor/python/trace_processor/trace_processor.descriptor"
-    ],
     deps = [":trace_processor_py"],
     main = "src/trace_processor/python/example.py",
     python_version = "PY3",
@@ -3303,4 +3319,12 @@ perfetto_py_binary(
 perfetto_py_library(
     name = "trace_processor_py",
     srcs = glob(['src/trace_processor/python/trace_processor/*.py']),
+    data = [
+        "src/trace_processor/python/trace_processor/trace_processor.descriptor"
+    ],
+    deps = [
+        ":protobuf_noop",
+        ":protobuf_descriptor_pb2_noop",
+        ":pyglib_noop",
+    ]
 )
