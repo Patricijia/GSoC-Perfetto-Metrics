@@ -17,6 +17,7 @@
 #include "src/trace_processor/importers/proto/args_table_utils.h"
 #include "protos/perfetto/common/descriptor.pbzero.h"
 #include "src/trace_processor/util/descriptors.h"
+#include "src/trace_processor/util/status_macros.h"
 
 #include "protos/perfetto/common/descriptor.pbzero.h"
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
@@ -40,27 +41,10 @@ util::Status ProtoToArgsTable::AddProtoFileDescriptor(
                                         proto_descriptor_array_size);
 }
 
-void ProtoToArgsTable::AddExtensionFileDescriptor(
-    const uint8_t* descriptor_array,
-    size_t descriptor_array_size) {
-  // TODO(ddrone): parse message and enum definitions as well.
-  protos::pbzero::FileDescriptorProto::Decoder file_decoder(
-      descriptor_array, descriptor_array_size);
-  for (auto type = file_decoder.message_type(); type; ++type) {
-    protos::pbzero::DescriptorProto::Decoder message_decoder(*type);
-    for (auto field = message_decoder.extension(); field; ++field) {
-      protos::pbzero::FieldDescriptorProto::Decoder decoder(*field);
-
-      auto descriptor = CreateFieldFromDecoder(decoder);
-      extension_fields_.emplace(descriptor.number(), descriptor);
-    }
-  }
-}
-
 util::Status ProtoToArgsTable::InternProtoFieldsIntoArgsTable(
     const protozero::ConstBytes& cb,
     const std::string& type,
-    const std::vector<uint16_t>& fields,
+    const std::vector<uint16_t>* fields,
     ArgsTracker::BoundInserter* inserter,
     PacketSequenceStateGeneration* sequence_state) {
   auto idx = pool_.FindDescriptorIdx(type);
@@ -75,68 +59,33 @@ util::Status ProtoToArgsTable::InternProtoFieldsIntoArgsTable(
   protozero::ProtoDecoder decoder(cb);
   for (protozero::Field f = decoder.ReadField(); f.valid();
        f = decoder.ReadField()) {
-    auto it = std::find(fields.begin(), fields.end(), f.id());
-    if (it == fields.end()) {
-      // Unknown field in the base message. Checking whether it is a known
-      // extension field.
-      auto extensions_it = extension_fields_.find(f.id());
-      if (extensions_it == extension_fields_.end()) {
-        continue;
-      }
-
-      auto field = extensions_it->second;
-      if (field.type() ==
-          perfetto::protos::pbzero::FieldDescriptorProto::TYPE_MESSAGE) {
-        return util::Status(
-            "Nested messages in extensions are not yet supported");
-      }
-      ParsingOverrideState state{context_, sequence_state};
-
-      auto status = InternFieldIntoArgsTable(
-          field, repeated_field_index[f.id()], state, inserter, f);
-      if (!status.ok()) {
-        return status;
-      }
-
-      if (field.is_repeated()) {
-        repeated_field_index[f.id()]++;
-      }
-
+    auto field_idx = descriptor.FindFieldIdxByTag(f.id());
+    if (!field_idx) {
+      // Unknown field, possibly an unknown extension.
       continue;
     }
-
-    auto field_idx = descriptor.FindFieldIdxByTag(*it);
-    if (!field_idx) {
-      return util::Status("Failed to find proto descriptor");
-    }
     auto field = descriptor.fields()[*field_idx];
-    auto status =
-        InternProtoIntoArgsTable(f.as_bytes(), field.resolved_type_name(),
-                                 inserter, sequence_state, field.name());
 
-    if (!status.ok()) {
-      return status;
+    // If allowlist is not provided, reflect all fields. Otherwise, check if the
+    // current field either an extension or is in allowlist.
+    bool is_allowed =
+        field.is_extension() || fields == nullptr ||
+        std::find(fields->begin(), fields->end(), f.id()) != fields->end();
+
+    if (!is_allowed) {
+      // Field is neither an extension, nor is allowed to be
+      // reflected.
+      continue;
+    }
+    ParsingOverrideState state{context_, sequence_state};
+    RETURN_IF_ERROR(InternFieldIntoArgsTable(
+        field, repeated_field_index[f.id()], state, inserter, f));
+    if (field.is_repeated()) {
+      repeated_field_index[f.id()]++;
     }
   }
 
   return util::OkStatus();
-}
-
-util::Status ProtoToArgsTable::InternProtoIntoArgsTable(
-    const protozero::ConstBytes& cb,
-    const std::string& type,
-    ArgsTracker::BoundInserter* inserter,
-    PacketSequenceStateGeneration* sequence_state,
-    const std::string& key_prefix) {
-  key_prefix_.assign(key_prefix);
-  flat_key_prefix_.assign(key_prefix);
-
-  ParsingOverrideState state{context_, sequence_state};
-  auto result = InternProtoIntoArgsTableInternal(cb, type, inserter, state);
-
-  key_prefix_.clear();
-  flat_key_prefix_.clear();
-  return result;
 }
 
 util::Status ProtoToArgsTable::InternFieldIntoArgsTable(
