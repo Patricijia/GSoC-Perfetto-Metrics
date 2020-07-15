@@ -188,12 +188,9 @@ util::Status ProtoTraceTokenizer::ParseExtensionDescriptor(
   protos::pbzero::ExtensionDescriptor::Decoder decoder(descriptor.data,
                                                        descriptor.size);
 
-  for (auto extension = decoder.extension_file(); extension; extension++) {
-    context_->proto_to_args_table_->AddExtensionFileDescriptor(
-        extension->data(), extension->size());
-  }
-
-  return util::OkStatus();
+  auto extension = decoder.extension_set();
+  return context_->proto_to_args_table_->AddProtoFileDescriptor(extension.data,
+                                                                extension.size);
 }
 
 util::Status ProtoTraceTokenizer::ParsePacket(TraceBlobView packet) {
