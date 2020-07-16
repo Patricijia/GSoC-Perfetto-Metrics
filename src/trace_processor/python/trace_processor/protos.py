@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from google.protobuf import descriptor_pb2, message_factory
+from google.protobuf import descriptor_pb2
+from google.protobuf import message_factory
 from google.protobuf.descriptor_pool import DescriptorPool
 
 from .descriptor import read_descriptor
@@ -40,3 +41,5 @@ class ProtoFactory:
         'perfetto.protos.ComputeMetricArgs')
     self.ComputeMetricResult = create_message_factory(
         'perfetto.protos.ComputeMetricResult')
+    self.RawQueryArgs = create_message_factory('perfetto.protos.RawQueryArgs')
+    self.QueryResult = create_message_factory('perfetto.protos.QueryResult')

@@ -691,6 +691,8 @@ message AndroidThreadTimeInStateMetric {
     optional int64 runtime_ms = 2;
     // CPU megacycles (i.e. cycles divided by 1e6).
     optional int64 mcycles = 3;
+    // Power cost as predicted by the power profile.
+    optional double power_profile_mah = 4;
   }
 
   message Thread {
@@ -832,6 +834,9 @@ message TraceMetrics {
 
   // Vendor extensions.
   extensions 500 to 1000;
+
+  // Chrome metrics.
+  extensions 1001 to 2000;
 }
 
 // End of protos/perfetto/metrics/metrics.proto

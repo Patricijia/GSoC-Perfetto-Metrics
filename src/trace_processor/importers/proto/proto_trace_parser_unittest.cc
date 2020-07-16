@@ -28,6 +28,7 @@
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/default_modules.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
+#include "src/trace_processor/importers/proto/args_table_utils.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
@@ -139,10 +140,11 @@ class MockProcessTracker : public ProcessTracker {
   MockProcessTracker(TraceProcessorContext* context)
       : ProcessTracker(context) {}
 
-  MOCK_METHOD3(SetProcessMetadata,
+  MOCK_METHOD4(SetProcessMetadata,
                UniquePid(uint32_t pid,
                          base::Optional<uint32_t> ppid,
-                         base::StringView process_name));
+                         base::StringView process_name,
+                         base::StringView cmdline));
 
   MOCK_METHOD2(UpdateThreadName,
                UniqueTid(uint32_t tid, StringId thread_name_id));
@@ -218,6 +220,7 @@ class ProtoTraceParserTest : public ::testing::Test {
     clock_ = new ClockTracker(&context_);
     context_.clock_tracker.reset(clock_);
     context_.sorter.reset(new TraceSorter(CreateParser(), 0 /*window size*/));
+    context_.proto_to_args_table_.reset(new ProtoToArgsTable(&context_));
 
     RegisterDefaultModules(&context_);
     RegisterAdditionalModules(&context_);
@@ -599,7 +602,8 @@ TEST_F(ProtoTraceParserTest, LoadProcessPacket) {
   process->set_ppid(3);
 
   EXPECT_CALL(*process_,
-              SetProcessMetadata(1, Eq(3u), base::StringView(kProcName1)));
+              SetProcessMetadata(1, Eq(3u), base::StringView(kProcName1),
+                                 base::StringView(kProcName1)));
   Tokenize();
 }
 
@@ -615,7 +619,8 @@ TEST_F(ProtoTraceParserTest, LoadProcessPacket_FirstCmdline) {
   process->set_ppid(3);
 
   EXPECT_CALL(*process_,
-              SetProcessMetadata(1, Eq(3u), base::StringView(kProcName1)));
+              SetProcessMetadata(1, Eq(3u), base::StringView(kProcName1),
+                                 base::StringView("proc1 proc2")));
   Tokenize();
 }
 

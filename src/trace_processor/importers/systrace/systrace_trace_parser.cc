@@ -107,9 +107,11 @@ util::Status SystraceTraceParser::Parse(std::unique_ptr<uint8_t[]> owned_buf,
       } else if (!base::StartsWith(buffer, "#") && !buffer.empty()) {
         SystraceLine line;
         util::Status status = line_tokenizer_.Tokenize(buffer, &line);
-        if (!status.ok())
-          return status;
-        line_parser_.ParseLine(std::move(line));
+        if (status.ok()) {
+          line_parser_.ParseLine(std::move(line));
+        } else {
+          ctx_->storage->IncrementStats(stats::systrace_parse_failure);
+        }
       }
     } else if (state_ == ParseState::kProcessDumpLong ||
                state_ == ParseState::kProcessDumpShort) {
@@ -140,7 +142,8 @@ util::Status SystraceTraceParser::Parse(std::unique_ptr<uint8_t[]> owned_buf,
             PERFETTO_ELOG("Could not parse line '%s'", buffer.c_str());
             return util::ErrStatus("Could not parse PROCESS DUMP line");
           }
-          ctx_->process_tracker->SetProcessMetadata(pid.value(), ppid, name);
+          ctx_->process_tracker->SetProcessMetadata(pid.value(), ppid, name,
+                                                    base::StringView());
         } else if (state_ == ParseState::kProcessDumpShort &&
                    tokens.size() >= 4) {
           // Format is:

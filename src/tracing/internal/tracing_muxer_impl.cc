@@ -157,6 +157,8 @@ void TracingMuxerImpl::ConsumerImpl::OnConnect() {
     muxer_->SetupTracingSession(session_id_, trace_config_);
     if (start_pending_)
       muxer_->StartTracingSession(session_id_);
+    if (get_trace_stats_pending_)
+      muxer_->GetTraceStats(session_id_, std::move(get_trace_stats_callback_));
     if (stop_pending_)
       muxer_->StopTracingSession(session_id_);
   }
@@ -205,6 +207,10 @@ void TracingMuxerImpl::ConsumerImpl::OnTracingDisabled() {
 
 void TracingMuxerImpl::ConsumerImpl::NotifyStartComplete() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
+  if (start_complete_callback_) {
+    muxer_->task_runner_->PostTask(std::move(start_complete_callback_));
+    start_complete_callback_ = nullptr;
+  }
   if (blocking_start_complete_callback_) {
     muxer_->task_runner_->PostTask(
         std::move(blocking_start_complete_callback_));
@@ -277,7 +283,7 @@ void TracingMuxerImpl::ConsumerImpl::OnObservableEvents(
     // Data sources are first reported as being stopped before starting, so once
     // all the data sources we know about have started we can declare tracing
     // begun.
-    if (blocking_start_complete_callback_) {
+    if (start_complete_callback_ || blocking_start_complete_callback_) {
       bool all_data_sources_started = std::all_of(
           data_source_states_.cbegin(), data_source_states_.cend(),
           [](std::pair<DataSourceHandle, bool> state) { return state.second; });
@@ -395,6 +401,17 @@ void TracingMuxerImpl::TracingSessionImpl::ReadTrace(ReadTraceCallback cb) {
   auto session_id = session_id_;
   muxer->task_runner_->PostTask([muxer, session_id, cb] {
     muxer->ReadTracingSessionData(session_id, std::move(cb));
+  });
+}
+
+// Can be called from any thread.
+void TracingMuxerImpl::TracingSessionImpl::SetOnStartCallback(
+    std::function<void()> cb) {
+  auto* muxer = muxer_;
+  auto session_id = session_id_;
+  muxer->task_runner_->PostTask([muxer, session_id, cb] {
+    auto* consumer = muxer->FindConsumer(session_id);
+    consumer->start_complete_callback_ = cb;
   });
 }
 
@@ -893,6 +910,11 @@ void TracingMuxerImpl::GetTraceStats(
   }
   PERFETTO_DCHECK(!consumer->get_trace_stats_callback_);
   consumer->get_trace_stats_callback_ = std::move(callback);
+  if (!consumer->connected_) {
+    consumer->get_trace_stats_pending_ = true;
+    return;
+  }
+  consumer->get_trace_stats_pending_ = false;
   consumer->service_->GetTraceStats();
 }
 

@@ -56,6 +56,8 @@ sql_files = [
   "android/unsymbolized_frames.sql",
   "chrome/chrome_processes.sql",
   "chrome/scroll_jank.sql",
+  "chrome/scroll_flow_event.sql",
+  "chrome/console_error_metric.sql",
   "webview/webview_power_usage.sql",
 ]
 
@@ -78,7 +80,7 @@ action("gen_merged_sql_metrics") {
 if (enable_perfetto_trace_processor_sqlite) {
   source_set("lib") {
     sources = [
-      "custom_options.descriptor.h",
+      "chrome/all_chrome_metrics.descriptor.h",
       "metrics.cc",
       "metrics.descriptor.h",
       "metrics.h",

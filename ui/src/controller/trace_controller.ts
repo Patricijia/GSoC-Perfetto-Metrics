@@ -866,7 +866,8 @@ export class TraceController extends Controller<States> {
     const sqlQuery = `select utid, tid, pid, thread.name,
         ifnull(
           case when length(process.name) > 0 then process.name else null end,
-          thread.name)
+          thread.name),
+        process.cmdline
         from (select * from thread order by upid) as thread
         left join (select * from process order by upid) as process
         using(upid)`;
@@ -878,7 +879,8 @@ export class TraceController extends Controller<States> {
       const pid = threadRows.columns[2].longValues![i];
       const threadName = threadRows.columns[3].stringValues![i];
       const procName = threadRows.columns[4].stringValues![i];
-      threads.push({utid, tid, threadName, pid, procName});
+      const cmdline = threadRows.columns[5].stringValues![i];
+      threads.push({utid, tid, threadName, pid, procName, cmdline});
     }  // for (record ...)
     globals.publish('Threads', threads);
   }
@@ -1054,15 +1056,15 @@ export class TraceController extends Controller<States> {
     this.updateStatus('Creating annotation slice table');
     await engine.query(`
       CREATE TABLE annotation_slice(
-        id BIG INT,
+        id INTEGER PRIMARY KEY,
         track_id INT,
         ts BIG INT,
         dur BIG INT,
         depth INT,
         cat STRING,
         name STRING,
-        PRIMARY KEY (track_id, ts)
-      ) WITHOUT ROWID;
+        UNIQUE(track_id, ts)
+      );
     `);
 
     for (const metric
@@ -1098,9 +1100,8 @@ export class TraceController extends Controller<States> {
           WHERE track_type = 'slice'
         `);
         await engine.query(`
-          INSERT INTO annotation_slice(id, track_id, ts, dur, depth, cat, name)
+          INSERT INTO annotation_slice(track_id, ts, dur, depth, cat, name)
           SELECT
-            row_number() over (order by ts) as id,
             t.id AS track_id,
             ts,
             dur,

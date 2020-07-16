@@ -16,6 +16,7 @@
 
 #include "src/trace_processor/importers/proto/track_event_parser.h"
 
+#include <iostream>
 #include <string>
 
 #include "perfetto/base/logging.h"
@@ -830,9 +831,10 @@ class TrackEventParser::EventImporter {
       log_errors(ParseLogMessage(event_.log_message(), inserter));
     }
 
-    log_errors(parser_->proto_to_args_.InternProtoFieldsIntoArgsTable(
-        blob_, ".perfetto.protos.TrackEvent", parser_->reflect_fields_,
-        inserter, sequence_state_));
+    log_errors(
+        parser_->context_->proto_to_args_table_->InternProtoFieldsIntoArgsTable(
+            blob_, ".perfetto.protos.TrackEvent", &parser_->reflect_fields_,
+            inserter, sequence_state_));
 
     if (legacy_passthrough_utid_) {
       inserter->AddArg(parser_->legacy_event_passthrough_utid_id_,
@@ -1083,7 +1085,6 @@ class TrackEventParser::EventImporter {
 
 TrackEventParser::TrackEventParser(TraceProcessorContext* context)
     : context_(context),
-      proto_to_args_(context_),
       counter_name_thread_time_id_(
           context->storage->InternString("thread_time")),
       counter_name_thread_instruction_count_id_(
@@ -1208,26 +1209,27 @@ TrackEventParser::TrackEventParser(TraceProcessorContext* context)
       counter_unit_ids_{{kNullStringId, context_->storage->InternString("ns"),
                          context_->storage->InternString("count"),
                          context_->storage->InternString("bytes")}} {
-  auto status = proto_to_args_.AddProtoFileDescriptor(
+  auto status = context_->proto_to_args_table_->AddProtoFileDescriptor(
       kTrackEventDescriptor.data(), kTrackEventDescriptor.size());
+
   PERFETTO_DCHECK(status.ok());
 
   // Switch |source_location_iid| into its interned data variant.
-  proto_to_args_.AddParsingOverride(
+  context_->proto_to_args_table_->AddParsingOverride(
       "begin_impl_frame_args.current_args.source_location_iid",
       [](const ProtoToArgsTable::ParsingOverrideState& state,
          const protozero::Field& field, BoundInserter* inserter) {
         return MaybeParseSourceLocation("begin_impl_frame_args.current_args",
                                         state, field, inserter);
       });
-  proto_to_args_.AddParsingOverride(
+  context_->proto_to_args_table_->AddParsingOverride(
       "begin_impl_frame_args.last_args.source_location_iid",
       [](const ProtoToArgsTable::ParsingOverrideState& state,
          const protozero::Field& field, BoundInserter* inserter) {
         return MaybeParseSourceLocation("begin_impl_frame_args.last_args",
                                         state, field, inserter);
       });
-  proto_to_args_.AddParsingOverride(
+  context_->proto_to_args_table_->AddParsingOverride(
       "begin_frame_observer_state.last_begin_frame_args.source_location_iid",
       [](const ProtoToArgsTable::ParsingOverrideState& state,
          const protozero::Field& field, BoundInserter* inserter) {
@@ -1363,25 +1365,30 @@ void TrackEventParser::ParseCounterDescriptor(
   if (unit_index >= counter_unit_ids_.size())
     unit_index = CounterDescriptor::UNIT_UNSPECIFIED;
 
+  auto opt_track_idx = counter_tracks->id().IndexOf(track_id);
+  if (!opt_track_idx) {
+    context_->storage->IncrementStats(stats::track_event_parser_errors);
+    return;
+  }
+
+  auto track_idx = *opt_track_idx;
+
   switch (decoder.type()) {
     case CounterDescriptor::COUNTER_UNSPECIFIED:
       break;
     case CounterDescriptor::COUNTER_THREAD_TIME_NS:
       unit_index = CounterDescriptor::UNIT_TIME_NS;
-      counter_tracks->mutable_name()->Set(
-          *counter_tracks->id().IndexOf(track_id),
-          counter_name_thread_time_id_);
+      counter_tracks->mutable_name()->Set(track_idx,
+                                          counter_name_thread_time_id_);
       break;
     case CounterDescriptor::COUNTER_THREAD_INSTRUCTION_COUNT:
       unit_index = CounterDescriptor::UNIT_COUNT;
       counter_tracks->mutable_name()->Set(
-          *counter_tracks->id().IndexOf(track_id),
-          counter_name_thread_instruction_count_id_);
+          track_idx, counter_name_thread_instruction_count_id_);
       break;
   }
 
-  counter_tracks->mutable_unit()->Set(*counter_tracks->id().IndexOf(track_id),
-                                      counter_unit_ids_[unit_index]);
+  counter_tracks->mutable_unit()->Set(track_idx, counter_unit_ids_[unit_index]);
 }
 
 void TrackEventParser::ParseTrackEvent(int64_t ts,

@@ -55,6 +55,7 @@
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
+#include "src/trace_processor/metrics/chrome/all_chrome_metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql_metrics.h"
@@ -213,11 +214,29 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 
   sqlite3_exec(db,
-               "CREATE VIEW sched AS "
-               "SELECT "
-               "*, "
-               "ts + dur as ts_end "
-               "FROM sched_slice;",
+               R"(
+                  CREATE VIEW sched AS
+                  SELECT
+                    *,
+                    ts + dur as ts_end
+                  FROM (
+                    SELECT
+                      id,
+                      type,
+                      ts,
+                      case dur
+                        when -1 then (select end_ts from trace_bounds) - ts
+                        else dur
+                      end as dur,
+                      cpu,
+                      utid,
+                      case dur
+                        when -1 then 'R'
+                        else end_state
+                      end as end_state,
+                      priority
+                    FROM internal_sched_slice
+                  );)",
                0, 0, &error);
 
   if (error) {
@@ -503,6 +522,8 @@ void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
                   std::vector<metrics::SqlMetricFile>* sql_metrics) {
   tp->ExtendMetricsProto(kMetricsDescriptor.data(), kMetricsDescriptor.size());
+  tp->ExtendMetricsProto(kAllChromeMetricsDescriptor.data(),
+                         kAllChromeMetricsDescriptor.size());
 
   for (const auto& file_to_sql : metrics::sql_metrics::kFileToSql) {
     tp->RegisterMetric(file_to_sql.path, file_to_sql.sql);
