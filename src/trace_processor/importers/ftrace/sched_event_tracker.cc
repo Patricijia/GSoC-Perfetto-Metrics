@@ -73,8 +73,10 @@ void SchedEventTracker::PushSchedSwitch(uint32_t cpu,
                                         int32_t next_prio) {
   // At this stage all events should be globally timestamp ordered.
   if (ts < context_->event_tracker->max_timestamp()) {
-    PERFETTO_ELOG("sched_switch event out of order by %.4f ms, skipping",
-                  (context_->event_tracker->max_timestamp() - ts) / 1e6);
+    PERFETTO_ELOG(
+        "sched_switch event out of order by %.4f ms, skipping",
+        static_cast<double>(context_->event_tracker->max_timestamp() - ts) /
+            1e6);
     context_->storage->IncrementStats(stats::sched_switch_out_of_order);
     return;
   }
@@ -125,8 +127,10 @@ void SchedEventTracker::PushSchedSwitchCompact(uint32_t cpu,
                                                StringId next_comm_id) {
   // At this stage all events should be globally timestamp ordered.
   if (ts < context_->event_tracker->max_timestamp()) {
-    PERFETTO_ELOG("sched_switch event out of order by %.4f ms, skipping",
-                  (context_->event_tracker->max_timestamp() - ts) / 1e6);
+    PERFETTO_ELOG(
+        "sched_switch event out of order by %.4f ms, skipping",
+        static_cast<double>(context_->event_tracker->max_timestamp() - ts) /
+            1e6);
     context_->storage->IncrementStats(stats::sched_switch_out_of_order);
     return;
   }
@@ -263,8 +267,10 @@ void SchedEventTracker::PushSchedWakingCompact(uint32_t cpu,
                                                StringId comm_id) {
   // At this stage all events should be globally timestamp ordered.
   if (ts < context_->event_tracker->max_timestamp()) {
-    PERFETTO_ELOG("sched_waking event out of order by %.4f ms, skipping",
-                  (context_->event_tracker->max_timestamp() - ts) / 1e6);
+    PERFETTO_ELOG(
+        "sched_waking event out of order by %.4f ms, skipping",
+        static_cast<double>(context_->event_tracker->max_timestamp() - ts) /
+            1e6);
     context_->storage->IncrementStats(stats::sched_waking_out_of_order);
     return;
   }
@@ -318,14 +324,21 @@ void SchedEventTracker::FlushPendingEvents() {
   // TODO(lalitm): the day this method is called before end of trace, don't
   // flush the sched events as they will probably be pushed in the next round
   // of ftrace events.
+  int64_t end_ts = context_->storage->GetTraceTimestampBoundsNs().second;
   auto* slices = context_->storage->mutable_sched_slice_table();
   for (const auto& pending_sched : pending_sched_per_cpu_) {
     uint32_t row = pending_sched.pending_slice_storage_idx;
     if (row == std::numeric_limits<uint32_t>::max())
       continue;
-    slices->mutable_dur()->Set(row, -1);
-    slices->mutable_end_state()->Set(row, kNullStringId);
+
+    int64_t duration = end_ts - slices->ts()[row];
+    slices->mutable_dur()->Set(row, duration);
+
+    auto state = ftrace_utils::TaskState(ftrace_utils::TaskState::kRunnable);
+    auto id = context_->storage->InternString(state.ToString().data());
+    slices->mutable_end_state()->Set(row, id);
   }
+
   pending_sched_per_cpu_ = {};
 }
 

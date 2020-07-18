@@ -205,8 +205,28 @@ void FtraceParser::ParseFtraceStats(ConstBytes blob) {
 PERFETTO_ALWAYS_INLINE
 util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
                                             const TimestampedTracePiece& ttp) {
-  using protos::pbzero::FtraceEvent;
   int64_t ts = ttp.timestamp;
+
+  // On the first ftrace packet, check the metadata table for the tracing start
+  // ts. If it exists we can use it to filter out ftrace packets which happen
+  // earlier than it.
+  if (PERFETTO_UNLIKELY(!has_seen_first_ftrace_packet_)) {
+    const auto& metadata = context_->storage->metadata_table();
+    base::Optional<uint32_t> opt_row =
+        metadata.name().IndexOf(metadata::kNames[metadata::tracing_started_ns]);
+    if (opt_row) {
+      tracing_start_ts_ = *metadata.int_value()[*opt_row];
+    }
+    has_seen_first_ftrace_packet_ = true;
+  }
+
+  if (PERFETTO_UNLIKELY(ts < tracing_start_ts_)) {
+    context_->storage->IncrementStats(
+        stats::ftrace_packet_before_tracing_start);
+    return util::OkStatus();
+  }
+
+  using protos::pbzero::FtraceEvent;
   SchedEventTracker* sched_tracker = SchedEventTracker::GetOrCreate(context_);
 
   // Handle the (optional) alternative encoding format for sched_switch.
@@ -653,14 +673,16 @@ void FtraceParser::ParseIonHeapGrowOrShrink(int64_t ts,
   // Push the global counter.
   TrackId track =
       context_->track_tracker->InternGlobalCounterTrack(global_name_id);
-  context_->event_tracker->PushCounter(ts, total_bytes, track);
+  context_->event_tracker->PushCounter(ts, static_cast<double>(total_bytes),
+                                       track);
 
   // Push the change counter.
   // TODO(b/121331269): these should really be instant events.
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
   track =
       context_->track_tracker->InternThreadCounterTrack(change_name_id, utid);
-  context_->event_tracker->PushCounter(ts, change_bytes, track);
+  context_->event_tracker->PushCounter(ts, static_cast<double>(change_bytes),
+                                       track);
 
   // We are reusing the same function for ion_heap_grow and ion_heap_shrink.
   // It is fine as the arguments are the same, but we need to be sure that the
@@ -689,14 +711,16 @@ void FtraceParser::ParseIonStat(int64_t ts,
   // Push the global counter.
   TrackId track =
       context_->track_tracker->InternGlobalCounterTrack(ion_total_id_);
-  context_->event_tracker->PushCounter(ts, ion.total_allocated(), track);
+  context_->event_tracker->PushCounter(
+      ts, static_cast<double>(ion.total_allocated()), track);
 
   // Push the change counter.
   // TODO(b/121331269): these should really be instant events.
   UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
   track =
       context_->track_tracker->InternThreadCounterTrack(ion_change_id_, utid);
-  context_->event_tracker->PushCounter(ts, ion.len(), track);
+  context_->event_tracker->PushCounter(ts, static_cast<double>(ion.len()),
+                                       track);
 }
 
 // This event has both the pid of the thread that sent the signal and the
@@ -944,7 +968,8 @@ void FtraceParser::ClockRate(int64_t timestamp,
            subtitle.data());
   StringId name = context_->storage->InternString(counter_name);
   TrackId track = context_->track_tracker->InternGlobalCounterTrack(name);
-  context_->event_tracker->PushCounter(timestamp, rate, track);
+  context_->event_tracker->PushCounter(timestamp, static_cast<double>(rate),
+                                       track);
 }
 
 void FtraceParser::ParseScmCallStart(int64_t timestamp,
@@ -1070,11 +1095,13 @@ void FtraceParser::ParseGpuMemTotal(int64_t ts, protozero::ConstBytes data) {
     // Pid 0 is used to indicate the global total
     TrackId track = context_->track_tracker->InternGlobalCounterTrack(
         gpu_mem_total_global_id_);
-    context_->event_tracker->PushCounter(ts, gpu_mem_total.size(), track);
+    context_->event_tracker->PushCounter(
+        ts, static_cast<double>(gpu_mem_total.size()), track);
   } else {
     UniqueTid utid = context_->process_tracker->GetOrCreateThread(pid);
     context_->event_tracker->PushProcessCounterForThread(
-        ts, gpu_mem_total.size(), gpu_mem_total_process_id_, utid);
+        ts, static_cast<double>(gpu_mem_total.size()),
+        gpu_mem_total_process_id_, utid);
   }
 }
 
