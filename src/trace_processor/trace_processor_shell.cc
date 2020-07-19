@@ -494,7 +494,8 @@ void PrintQueryResultInteractively(Iterator* it,
   if (!status.ok()) {
     PERFETTO_ELOG("SQLite error: %s", status.c_message());
   }
-  printf("\nQuery executed in %.3f ms\n\n", (t_end - t_start).count() / 1E6);
+  printf("\nQuery executed in %.3f ms\n\n",
+         static_cast<double>((t_end - t_start).count()) / 1E6);
 }
 
 void PrintShellUsage() {
@@ -627,15 +628,12 @@ util::Status LoadQueries(FILE* input, std::vector<std::string>* output) {
   return util::OkStatus();
 }
 
-util::Status RunQueryWithoutOutput(const std::vector<std::string>& queries) {
+util::Status RunQueriesWithoutOutput(const std::vector<std::string>& queries) {
   for (const auto& sql_query : queries) {
     PERFETTO_DLOG("Executing query: %s", sql_query.c_str());
 
     auto it = g_tp->ExecuteQuery(sql_query);
-    util::Status status = it.Status();
-    if (!status.ok()) {
-      return status;
-    }
+    RETURN_IF_ERROR(it.Status());
     if (it.Next()) {
       return util::ErrStatus("Unexpected result from a query.");
     }
@@ -643,8 +641,8 @@ util::Status RunQueryWithoutOutput(const std::vector<std::string>& queries) {
   return util::OkStatus();
 }
 
-util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
-                                    FILE* output) {
+util::Status RunQueriesAndPrintResult(const std::vector<std::string>& queries,
+                                      FILE* output) {
   bool is_first_query = true;
   bool has_output = false;
   for (const auto& sql_query : queries) {
@@ -656,11 +654,7 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
     PERFETTO_ILOG("Executing query: %s", sql_query.c_str());
 
     auto it = g_tp->ExecuteQuery(sql_query);
-    util::Status status = it.Status();
-    if (!status.ok()) {
-      return util::ErrStatus("Encountered error while running queries: %s",
-                             status.c_message());
-    }
+    RETURN_IF_ERROR(it.Status());
     if (it.ColumnCount() == 0) {
       bool it_has_more = it.Next();
       PERFETTO_DCHECK(!it_has_more);
@@ -676,17 +670,13 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
       // as SELECT RUN_METRIC(<metric file>) as suppress_query_output and
       // RUN_METRIC returns a single null.
       bool has_next = it.Next();
+      RETURN_IF_ERROR(it.Status());
       PERFETTO_DCHECK(has_next);
       PERFETTO_DCHECK(it.Get(0).is_null());
 
       has_next = it.Next();
+      RETURN_IF_ERROR(it.Status());
       PERFETTO_DCHECK(!has_next);
-
-      status = it.Status();
-      if (!status.ok()) {
-        return util::ErrStatus("Encountered error while running queries: %s",
-                               status.c_message());
-      }
       continue;
     }
 
@@ -694,13 +684,8 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
       return util::ErrStatus(
           "More than one query generated result rows. This is unsupported.");
     }
-    status = PrintQueryResultAsCsv(&it, output);
     has_output = true;
-
-    if (!status.ok()) {
-      return util::ErrStatus("Encountered error while running queries: %s",
-                             status.c_message());
-    }
+    RETURN_IF_ERROR(PrintQueryResultAsCsv(&it, output));
   }
   return util::OkStatus();
 }
@@ -991,7 +976,7 @@ void ExtendPoolWithBinaryDescriptor(google::protobuf::DescriptorPool& pool,
 util::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
   util::Status read_status =
       ReadTrace(g_tp, trace_file_path.c_str(), [&size_mb](size_t parsed_size) {
-        *size_mb = parsed_size / 1E6;
+        *size_mb = static_cast<double>(parsed_size) / 1E6;
         fprintf(stderr, "\rLoading trace: %.2f MB\r", *size_mb);
       });
   if (!read_status.ok()) {
@@ -1035,11 +1020,18 @@ util::Status RunQueries(const std::string& query_file_path,
                            query_file_path.c_str());
   }
   RETURN_IF_ERROR(LoadQueries(file.get(), &queries));
+
+  util::Status status;
   if (expect_output) {
-    return RunQueryAndPrintResult(queries, stdout);
+    status = RunQueriesAndPrintResult(queries, stdout);
   } else {
-    return RunQueryWithoutOutput(queries);
+    status = RunQueriesWithoutOutput(queries);
   }
+  if (!status.ok()) {
+    return util::ErrStatus("Encountered error while running queries: %s",
+                           status.c_message());
+  }
+  return util::OkStatus();
 }
 
 util::Status RunMetrics(const CommandLineOptions& options) {
@@ -1118,7 +1110,7 @@ util::Status TraceProcessorMain(int argc, char** argv) {
     RETURN_IF_ERROR(LoadTrace(options.trace_file_path, &size_mb));
     t_load = base::GetWallTimeNs() - t_load_start;
 
-    double t_load_s = t_load.count() / 1E9;
+    double t_load_s = static_cast<double>(t_load.count()) / 1E9;
     PERFETTO_ILOG("Trace loaded: %.2f MB (%.1f MB/s)", size_mb,
                   size_mb / t_load_s);
 
