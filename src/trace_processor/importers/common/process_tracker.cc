@@ -25,7 +25,7 @@ namespace perfetto {
 namespace trace_processor {
 
 ProcessTracker::ProcessTracker(TraceProcessorContext* context)
-    : context_(context) {
+    : context_(context), args_tracker_(context) {
   // Reserve utid/upid 0. These are special as embedders (e.g. Perfetto UI)
   // exclude them by filtering them out. If the parsed trace contains ftrace
   // data, SetPidZeroIgnoredForIdleProcess will create a mapping
@@ -106,16 +106,22 @@ UniqueTid ProcessTracker::GetOrCreateThread(uint32_t tid) {
 UniqueTid ProcessTracker::UpdateThreadName(uint32_t tid,
                                            StringId thread_name_id,
                                            ThreadNamePriority priority) {
-  auto* thread_table = context_->storage->mutable_thread_table();
   auto utid = GetOrCreateThread(tid);
-  if (thread_name_id.is_null())
-    return utid;
+  UpdateThreadNameByUtid(utid, thread_name_id, priority);
+  return utid;
+}
 
+void ProcessTracker::UpdateThreadNameByUtid(UniqueTid utid,
+                                            StringId thread_name_id,
+                                            ThreadNamePriority priority) {
+  if (thread_name_id.is_null())
+    return;
+
+  auto* thread_table = context_->storage->mutable_thread_table();
   if (priority >= thread_name_priorities_[utid]) {
     thread_table->mutable_name()->Set(utid, thread_name_id);
     thread_name_priorities_[utid] = priority;
   }
-  return utid;
 }
 
 bool ProcessTracker::IsThreadAlive(UniqueTid utid) {
@@ -430,6 +436,14 @@ void ProcessTracker::SetPidZeroIgnoredForIdleProcess() {
 
   auto swapper_id = context_->storage->InternString("swapper");
   UpdateThreadName(0, swapper_id, ThreadNamePriority::kTraceProcessorConstant);
+}
+
+ArgsTracker::BoundInserter ProcessTracker::AddArgsTo(UniquePid upid) {
+  return args_tracker_.AddArgsTo(upid);
+}
+
+void ProcessTracker::NotifyEndOfFile() {
+  args_tracker_.Flush();
 }
 
 }  // namespace trace_processor
