@@ -175,13 +175,9 @@ using ::testing::StrEq;
 // ------------------------------
 // Declarations of helper classes
 // ------------------------------
-static constexpr auto kWaitEventTimeout = std::chrono::seconds(5);
 
-struct WaitableTestEvent {
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  bool notified_ = false;
-
+class WaitableTestEvent {
+ public:
   bool notified() {
     std::unique_lock<std::mutex> lock(mutex_);
     return notified_;
@@ -189,17 +185,25 @@ struct WaitableTestEvent {
 
   void Wait() {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (!cv_.wait_for(lock, kWaitEventTimeout, [this] { return notified_; })) {
-      fprintf(stderr, "Timed out while waiting for event\n");
-      abort();
-    }
+    // TSAN gets confused by wait_for, which we would use here in a perfect
+    // world.
+    cv_.wait(lock, [this] { return notified_; });
   }
 
   void Notify() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    notified_ = true;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      notified_ = true;
+    }
+    // Do not notify while holding the lock, because then we wake up the other
+    // end, only for it to fail to acquire the lock.
     cv_.notify_one();
   }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool notified_ = false;
 };
 
 class MockDataSource;
@@ -697,7 +701,7 @@ TEST_F(PerfettoApiTest, TrackEvent) {
   ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
 
   auto now = perfetto::TrackEvent::GetTraceTimeNs();
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   auto clock_id = perfetto::protos::pbzero::BUILTIN_CLOCK_BOOTTIME;
 #else
@@ -759,7 +763,7 @@ TEST_F(PerfettoApiTest, TrackEvent) {
 
     EXPECT_GT(packet.timestamp(), 0u);
     EXPECT_LE(packet.timestamp(), now);
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
     EXPECT_FALSE(packet.has_timestamp_clock_id());
 #else
