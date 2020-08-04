@@ -300,6 +300,7 @@ export interface State {
   lastRecordingError?: string;
   recordingStatus?: string;
 
+  updateChromeCategories: boolean;
   chromeCategories: string[]|undefined;
   analyzePageQuery?: string;
 }
@@ -348,7 +349,6 @@ export interface RecordConfig {
   fileWritePeriodMs: number;  // Only for mode == 'LONG_TRACE'.
 
   cpuSched: boolean;
-  cpuLatency: boolean;
   cpuFreq: boolean;
   cpuCoarse: boolean;
   cpuCoarsePollMs: number;
@@ -410,7 +410,6 @@ export function createEmptyRecordConfig(): RecordConfig {
     bufferSizeMb: 10.0,
 
     cpuSched: false,
-    cpuLatency: false,
     cpuFreq: false,
     cpuSyscall: false,
 
@@ -742,6 +741,7 @@ export function createEmptyState(): State {
     recordingTarget: getDefaultRecordingTargets()[0],
     availableAdbDevices: [],
 
+    updateChromeCategories: false,
     chromeCategories: undefined,
   };
 }
