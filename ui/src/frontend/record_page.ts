@@ -255,15 +255,6 @@ function CpuSettings(cssClass: string) {
         isEnabled: (cfg) => cfg.cpuFreq
       } as ProbeAttrs),
       m(Probe, {
-        title: 'Scheduling chains / latency analysis',
-        img: 'rec_cpu_wakeup.png',
-        descr: `Tracks causality of scheduling transitions. When a task
-                X transitions from blocked -> runnable, keeps track of the
-                task Y that X's transition (e.g. posting a semaphore).`,
-        setEnabled: (cfg, val) => cfg.cpuLatency = val,
-        isEnabled: (cfg) => cfg.cpuLatency
-      } as ProbeAttrs),
-      m(Probe, {
         title: 'Syscalls',
         img: null,
         descr: `Tracks the enter and exit of all syscalls.`,
@@ -820,6 +811,11 @@ function onTargetChange(target: string) {
       globals.state.availableAdbDevices.find(d => d.serial === target) ||
       getDefaultRecordingTargets().find(t => t.os === target) ||
       getDefaultRecordingTargets()[0];
+
+  if (isChromeTarget(recordingTarget)) {
+    globals.dispatch(Actions.setUpdateChromeCategories({update: true}));
+  }
+
   globals.dispatch(Actions.setRecordingTarget({target: recordingTarget}));
   globals.rafScheduler.scheduleFullRedraw();
 }
