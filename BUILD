@@ -783,7 +783,6 @@ genrule(
         "src/trace_processor/metrics/android/unmapped_java_symbols.sql",
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
         "src/trace_processor/metrics/chrome/chrome_processes.sql",
-        "src/trace_processor/metrics/chrome/console_error_metric.sql",
         "src/trace_processor/metrics/chrome/scroll_flow_event.sql",
         "src/trace_processor/metrics/chrome/scroll_flow_event_queuing_delay.sql",
         "src/trace_processor/metrics/chrome/scroll_jank.sql",
@@ -791,6 +790,7 @@ genrule(
         "src/trace_processor/metrics/chrome/scroll_jank_cause_blocking_task.sql",
         "src/trace_processor/metrics/chrome/scroll_jank_cause_blocking_touch_move.sql",
         "src/trace_processor/metrics/chrome/scroll_jank_cause_queuing_delay.sql",
+        "src/trace_processor/metrics/chrome/test_chrome_metric.sql",
         "src/trace_processor/metrics/trace_metadata.sql",
         "src/trace_processor/metrics/webview/webview_power_usage.sql",
     ],
@@ -3298,6 +3298,11 @@ perfetto_py_library(
     srcs = [],
 )
 
+perfetto_py_library(
+    name = "trace_processor_init_noop",
+    srcs = [],
+)
+
 perfetto_py_binary(
     name = "trace_processor_py_example",
     srcs = ["src/trace_processor/python/example.py"],
@@ -3308,8 +3313,9 @@ perfetto_py_binary(
 
 perfetto_py_library(
     name = "trace_processor_py",
-    srcs = glob(['src/trace_processor/python/trace_processor/*.py']),
+    srcs = glob(["src/trace_processor/python/trace_processor/*.py"]),
     data = [
+        ":trace_processor_init_noop",
         "src/trace_processor/python/trace_processor/trace_processor.descriptor",
         "src/trace_processor/python/trace_processor/metrics.descriptor",
         ":trace_processor_shell",
