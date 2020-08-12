@@ -210,6 +210,9 @@ cc_binary {
     "-DGOOGLE_PROTOBUF_NO_RTTI",
     "-DGOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
   ],
+  header_libs: [
+    "bionic_libc_platform_headers",
+  ],
 }
 
 // GN: //src/profiling/memory:heapprofd_client
@@ -433,6 +436,9 @@ cc_library_shared {
     "-DGOOGLE_PROTOBUF_NO_RTTI",
     "-DGOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
     "-DPERFETTO_ANDROID_ASYNC_SAFE_LOG",
+  ],
+  header_libs: [
+    "bionic_libc_platform_headers",
   ],
   stl: "libc++_static",
   version_script: "src/profiling/memory/heapprofd_client_api.map.txt",
@@ -1783,6 +1789,9 @@ cc_test {
   cflags: [
     "-DGOOGLE_PROTOBUF_NO_RTTI",
     "-DGOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
+  ],
+  header_libs: [
+    "bionic_libc_platform_headers",
   ],
 }
 
@@ -3707,6 +3716,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -3752,6 +3762,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.gen.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.gen.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.gen.cc",
@@ -3797,6 +3808,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -3842,6 +3854,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.gen.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.gen.h",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.gen.h",
@@ -3891,6 +3904,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -3935,6 +3949,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.pb.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.pb.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.pb.cc",
@@ -3980,6 +3995,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -4024,6 +4040,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.pb.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.pb.h",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.pb.h",
@@ -4073,6 +4090,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -4118,6 +4136,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.pbzero.cc",
@@ -4163,6 +4182,7 @@ genrule {
     "protos/perfetto/trace/ftrace/cgroup.proto",
     "protos/perfetto/trace/ftrace/clk.proto",
     "protos/perfetto/trace/ftrace/compaction.proto",
+    "protos/perfetto/trace/ftrace/cpuhp.proto",
     "protos/perfetto/trace/ftrace/ext4.proto",
     "protos/perfetto/trace/ftrace/f2fs.proto",
     "protos/perfetto/trace/ftrace/fence.proto",
@@ -4208,6 +4228,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/ftrace/cgroup.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/clk.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/compaction.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/ftrace/cpuhp.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/ext4.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/f2fs.pbzero.h",
     "external/perfetto/protos/perfetto/trace/ftrace/fence.pbzero.h",
@@ -6279,6 +6300,11 @@ filegroup {
   ],
 }
 
+// GN: //src/profiling/memory:bionic_libc_platform_headers_on_android
+filegroup {
+  name: "perfetto_src_profiling_memory_bionic_libc_platform_headers_on_android",
+}
+
 // GN: //src/profiling/memory:client
 filegroup {
   name: "perfetto_src_profiling_memory_client",
@@ -6859,6 +6885,7 @@ filegroup {
     "src/trace_processor/sqlite/query_constraints_unittest.cc",
     "src/trace_processor/sqlite/span_join_operator_table_unittest.cc",
     "src/trace_processor/sqlite/sqlite3_str_split_unittest.cc",
+    "src/trace_processor/sqlite/sqlite_utils_unittest.cc",
   ],
 }
 
@@ -8081,6 +8108,9 @@ cc_test {
   ],
   include_dirs: [
     "bionic/libc/kernel",
+  ],
+  header_libs: [
+    "bionic_libc_platform_headers",
   ],
   data: [
     "src/traced/probes/filesystem/testdata/**/*",
