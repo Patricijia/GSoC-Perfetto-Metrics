@@ -2374,6 +2374,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_non_minimal_protos",
     srcs = [
         "protos/perfetto/trace/extension_descriptor.proto",
+        "protos/perfetto/trace/memory_graph.proto",
         "protos/perfetto/trace/test_event.proto",
         "protos/perfetto/trace/trace.proto",
         "protos/perfetto/trace/trace_packet.proto",
@@ -2523,6 +2524,7 @@ perfetto_cc_proto_library(
 perfetto_proto_library(
     name = "protos_perfetto_trace_profiling_protos",
     srcs = [
+        "protos/perfetto/trace/profiling/deobfuscation.proto",
         "protos/perfetto/trace/profiling/heap_graph.proto",
         "protos/perfetto/trace/profiling/profile_common.proto",
         "protos/perfetto/trace/profiling/profile_packet.proto",
