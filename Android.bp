@@ -4664,6 +4664,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_cpp_gen",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4676,6 +4677,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.gen.cc",
+    "external/perfetto/protos/perfetto/trace/memory_graph.gen.cc",
     "external/perfetto/protos/perfetto/trace/test_event.gen.cc",
     "external/perfetto/protos/perfetto/trace/trace.gen.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.gen.cc",
@@ -4688,6 +4690,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_cpp_gen_headers",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4700,6 +4703,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.gen.h",
+    "external/perfetto/protos/perfetto/trace/memory_graph.gen.h",
     "external/perfetto/protos/perfetto/trace/test_event.gen.h",
     "external/perfetto/protos/perfetto/trace/trace.gen.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.gen.h",
@@ -4716,6 +4720,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_lite_gen",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4727,6 +4732,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pb.cc",
+    "external/perfetto/protos/perfetto/trace/memory_graph.pb.cc",
     "external/perfetto/protos/perfetto/trace/test_event.pb.cc",
     "external/perfetto/protos/perfetto/trace/trace.pb.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.pb.cc",
@@ -4739,6 +4745,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_lite_gen_headers",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4750,6 +4757,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pb.h",
+    "external/perfetto/protos/perfetto/trace/memory_graph.pb.h",
     "external/perfetto/protos/perfetto/trace/test_event.pb.h",
     "external/perfetto/protos/perfetto/trace/trace.pb.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.pb.h",
@@ -4766,6 +4774,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_zero_gen",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4778,6 +4787,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/memory_graph.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/test_event.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/trace.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.pbzero.cc",
@@ -4790,6 +4800,7 @@ genrule {
   name: "perfetto_protos_perfetto_trace_non_minimal_zero_gen_headers",
   srcs: [
     "protos/perfetto/trace/extension_descriptor.proto",
+    "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
@@ -4802,6 +4813,7 @@ genrule {
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/memory_graph.pbzero.h",
     "external/perfetto/protos/perfetto/trace/test_event.pbzero.h",
     "external/perfetto/protos/perfetto/trace/trace.pbzero.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.pbzero.h",
@@ -5125,6 +5137,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_cpp_gen",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5136,6 +5149,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.gen.cc",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.gen.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.gen.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.gen.cc",
@@ -5147,6 +5161,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_cpp_gen_headers",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5158,6 +5173,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location perfetto_src_protozero_protoc_plugin_cppgen_plugin) --plugin_out=wrapper_namespace=gen:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.gen.h",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.gen.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.gen.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.gen.h",
@@ -5173,6 +5189,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_lite_gen",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5183,6 +5200,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.pb.cc",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.pb.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.pb.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.pb.cc",
@@ -5194,6 +5212,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_lite_gen_headers",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5204,6 +5223,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --cpp_out=lite=true:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.pb.h",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.pb.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.pb.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.pb.h",
@@ -5219,6 +5239,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_zero_gen",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5230,6 +5251,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.pbzero.cc",
@@ -5241,6 +5263,7 @@ genrule {
 genrule {
   name: "perfetto_protos_perfetto_trace_profiling_zero_gen_headers",
   srcs: [
+    "protos/perfetto/trace/profiling/deobfuscation.proto",
     "protos/perfetto/trace/profiling/heap_graph.proto",
     "protos/perfetto/trace/profiling/profile_common.proto",
     "protos/perfetto/trace/profiling/profile_packet.proto",
@@ -5252,6 +5275,7 @@ genrule {
   ],
   cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --plugin=protoc-gen-plugin=$(location protozero_plugin) --plugin_out=wrapper_namespace=pbzero:$(genDir)/external/perfetto/ $(in)",
   out: [
+    "external/perfetto/protos/perfetto/trace/profiling/deobfuscation.pbzero.h",
     "external/perfetto/protos/perfetto/trace/profiling/heap_graph.pbzero.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_common.pbzero.h",
     "external/perfetto/protos/perfetto/trace/profiling/profile_packet.pbzero.h",
