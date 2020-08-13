@@ -159,7 +159,8 @@ class PERFETTO_EXPORT TracingSession {
   // TODO(primiano): add an error callback.
   virtual void Setup(const TraceConfig&, int fd = -1) = 0;
 
-  // Enable tracing asynchronously.
+  // Enable tracing asynchronously. Use SetOnStartCallback() to get a
+  // notification when the session has fully started.
   virtual void Start() = 0;
 
   // Enable tracing and block until tracing has started. Note that if data
@@ -169,6 +170,11 @@ class PERFETTO_EXPORT TracingSession {
   // notification support, this call may return before those data sources have
   // started.
   virtual void StartBlocking() = 0;
+
+  // This callback will be invoked when all data sources have acknowledged that
+  // tracing has started. This callback will be invoked on an internal perfetto
+  // thread.
+  virtual void SetOnStartCallback(std::function<void()>) = 0;
 
   // Disable tracing asynchronously.
   // Use SetOnStopCallback() to get a notification when the tracing session is
@@ -212,6 +218,29 @@ class PERFETTO_EXPORT TracingSession {
   // the trace contents are read. This is slow and inefficient (involves more
   // copies) and is mainly intended for testing.
   std::vector<char> ReadTraceBlocking();
+
+  // Struct passed as an argument to the callback for GetTraceStats(). Contains
+  // statistics about the tracing session.
+  struct GetTraceStatsCallbackArgs {
+    // Whether or not querying statistics succeeded.
+    bool success = false;
+    // Serialized TraceStats protobuf message. To decode:
+    //
+    //   perfetto::protos::gen::TraceStats trace_stats;
+    //   trace_stats.ParseFromArray(args.trace_stats_data.data(),
+    //                              args.trace_stats_data.size());
+    //
+    std::vector<uint8_t> trace_stats_data;
+  };
+
+  // Requests a snapshot of statistical data for this tracing session. Only one
+  // query may be active at a time. This callback will be invoked on an internal
+  // perfetto thread.
+  using GetTraceStatsCallback = std::function<void(GetTraceStatsCallbackArgs)>;
+  virtual void GetTraceStats(GetTraceStatsCallback) = 0;
+
+  // Synchronous version of GetTraceStats() for convenience.
+  GetTraceStatsCallbackArgs GetTraceStatsBlocking();
 };
 
 }  // namespace perfetto

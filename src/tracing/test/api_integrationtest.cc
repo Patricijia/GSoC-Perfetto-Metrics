@@ -45,9 +45,13 @@
 // production code).
 // yyy.gen.h includes are for the test readback path (the code in the test that
 // checks that the results are valid).
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
+#include "protos/perfetto/common/trace_stats.gen.h"
 #include "protos/perfetto/common/track_event_descriptor.gen.h"
 #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 #include "protos/perfetto/trace/clock_snapshot.pbzero.h"
+#include "protos/perfetto/trace/gpu/gpu_render_stage_event.gen.h"
+#include "protos/perfetto/trace/gpu/gpu_render_stage_event.pbzero.h"
 #include "protos/perfetto/trace/interned_data/interned_data.gen.h"
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_common.gen.h"
@@ -171,13 +175,9 @@ using ::testing::StrEq;
 // ------------------------------
 // Declarations of helper classes
 // ------------------------------
-static constexpr auto kWaitEventTimeout = std::chrono::seconds(5);
 
-struct WaitableTestEvent {
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  bool notified_ = false;
-
+class WaitableTestEvent {
+ public:
   bool notified() {
     std::unique_lock<std::mutex> lock(mutex_);
     return notified_;
@@ -185,17 +185,25 @@ struct WaitableTestEvent {
 
   void Wait() {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (!cv_.wait_for(lock, kWaitEventTimeout, [this] { return notified_; })) {
-      fprintf(stderr, "Timed out while waiting for event\n");
-      abort();
-    }
+    // TSAN gets confused by wait_for, which we would use here in a perfect
+    // world.
+    cv_.wait(lock, [this] { return notified_; });
   }
 
   void Notify() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    notified_ = true;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      notified_ = true;
+    }
+    // Do not notify while holding the lock, because then we wake up the other
+    // end, only for it to fail to acquire the lock.
     cv_.notify_one();
   }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool notified_ = false;
 };
 
 class MockDataSource;
@@ -695,9 +703,9 @@ TEST_F(PerfettoApiTest, TrackEvent) {
   auto now = perfetto::TrackEvent::GetTraceTimeNs();
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  auto clock_id = perfetto::protos::pbzero::ClockSnapshot::Clock::BOOTTIME;
+  auto clock_id = perfetto::protos::pbzero::BUILTIN_CLOCK_BOOTTIME;
 #else
-  auto clock_id = perfetto::protos::pbzero::ClockSnapshot::Clock::MONOTONIC;
+  auto clock_id = perfetto::protos::pbzero::BUILTIN_CLOCK_MONOTONIC;
 #endif
   EXPECT_EQ(clock_id, perfetto::TrackEvent::GetTraceClockId());
 
@@ -1140,6 +1148,49 @@ TEST_F(PerfettoApiTest, TrackEventProcessAndThreadDescriptors) {
   EXPECT_NE(0, thread_descs[1].thread().tid());
 }
 
+TEST_F(PerfettoApiTest, CustomTrackDescriptor) {
+  // Setup the trace config.
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("track_event");
+
+  // Create a new trace session.
+  auto* tracing_session = NewTrace(cfg);
+  tracing_session->get()->StartBlocking();
+
+  auto track = perfetto::ProcessTrack::Current();
+  auto desc = track.Serialize();
+  desc.mutable_process()->set_process_name("testing.exe");
+  desc.mutable_chrome_process()->set_process_priority(123);
+  perfetto::TrackEvent::SetTrackDescriptor(track, std::move(desc));
+  perfetto::TrackEvent::Flush();
+
+  tracing_session->get()->StopBlocking();
+
+  std::vector<char> raw_trace = tracing_session->get()->ReadTraceBlocking();
+  perfetto::protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
+
+  constexpr uint32_t kMainThreadSequence = 2;
+  bool found_desc = false;
+  for (const auto& packet : trace.packet()) {
+    if (packet.trusted_packet_sequence_id() != kMainThreadSequence)
+      continue;
+    if (packet.has_track_descriptor()) {
+      auto td = packet.track_descriptor();
+      EXPECT_TRUE(td.has_process());
+      EXPECT_NE(0, td.process().pid());
+      EXPECT_TRUE(td.has_chrome_process());
+      EXPECT_EQ("testing.exe", td.process().process_name());
+      EXPECT_EQ(123, td.chrome_process().process_priority());
+      found_desc = true;
+    }
+  }
+  EXPECT_TRUE(found_desc);
+}
+
 TEST_F(PerfettoApiTest, TrackEventCustomTrack) {
   // Create a new trace session.
   auto* tracing_session = NewTraceWithCategories({"bar"});
@@ -1262,6 +1313,46 @@ TEST_F(PerfettoApiTest, TrackEventCustomTrackAndTimestamp) {
   }
   EXPECT_EQ(event_count, 3);
   perfetto::TrackEvent::EraseTrackDescriptor(track);
+}
+
+TEST_F(PerfettoApiTest, TrackEventCustomTrackAndTimestampNoLambda) {
+  auto* tracing_session = NewTraceWithCategories({"bar"});
+  tracing_session->get()->StartBlocking();
+
+  perfetto::Track track(789);
+
+  constexpr uint64_t kBeginEventTime = 10;
+  constexpr uint64_t kEndEventTime = 15;
+  TRACE_EVENT_BEGIN("bar", "Event", track, kBeginEventTime);
+  TRACE_EVENT_END("bar", track, kEndEventTime);
+
+  perfetto::TrackEvent::Flush();
+  tracing_session->get()->StopBlocking();
+
+  std::vector<char> raw_trace = tracing_session->get()->ReadTraceBlocking();
+  perfetto::protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
+
+  int event_count = 0;
+  for (const auto& packet : trace.packet()) {
+    if (!packet.has_track_event())
+      continue;
+    event_count++;
+    switch (packet.track_event().type()) {
+      case perfetto::protos::gen::TrackEvent::TYPE_SLICE_BEGIN:
+        EXPECT_EQ(packet.timestamp(), kBeginEventTime);
+        break;
+      case perfetto::protos::gen::TrackEvent::TYPE_SLICE_END:
+        EXPECT_EQ(packet.timestamp(), kEndEventTime);
+        break;
+      case perfetto::protos::gen::TrackEvent::TYPE_INSTANT:
+      case perfetto::protos::gen::TrackEvent::TYPE_COUNTER:
+      case perfetto::protos::gen::TrackEvent::TYPE_UNSPECIFIED:
+        ADD_FAILURE();
+    }
+  }
+
+  EXPECT_EQ(event_count, 2);
 }
 
 TEST_F(PerfettoApiTest, TrackEventAnonymousCustomTrack) {
@@ -2238,6 +2329,53 @@ TEST_F(PerfettoApiTest, GetDataSourceLockedFromCallbacks) {
     packets_found |= packet.for_testing().str() == "on-stop-locked" ? 8 : 0;
   }
   EXPECT_EQ(packets_found, 1 | 2 | 4 | 8);
+}
+
+TEST_F(PerfettoApiTest, OnStartCallback) {
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(60000);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("track_event");
+  auto* tracing_session = NewTrace(cfg);
+
+  WaitableTestEvent got_start;
+  tracing_session->get()->SetOnStartCallback([&] { got_start.Notify(); });
+  tracing_session->get()->Start();
+  got_start.Wait();
+
+  tracing_session->get()->StopBlocking();
+}
+
+TEST_F(PerfettoApiTest, GetTraceStats) {
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("track_event");
+  auto* tracing_session = NewTrace(cfg);
+  tracing_session->get()->StartBlocking();
+
+  // Asynchronous read.
+  WaitableTestEvent got_stats;
+  tracing_session->get()->GetTraceStats(
+      [&got_stats](perfetto::TracingSession::GetTraceStatsCallbackArgs args) {
+        perfetto::protos::gen::TraceStats trace_stats;
+        EXPECT_TRUE(trace_stats.ParseFromArray(args.trace_stats_data.data(),
+                                               args.trace_stats_data.size()));
+        EXPECT_EQ(1, trace_stats.buffer_stats_size());
+        got_stats.Notify();
+      });
+  got_stats.Wait();
+
+  // Blocking read.
+  auto stats = tracing_session->get()->GetTraceStatsBlocking();
+  perfetto::protos::gen::TraceStats trace_stats;
+  EXPECT_TRUE(trace_stats.ParseFromArray(stats.trace_stats_data.data(),
+                                         stats.trace_stats_data.size()));
+  EXPECT_EQ(1, trace_stats.buffer_stats_size());
+
+  tracing_session->get()->StopBlocking();
 }
 
 TEST_F(PerfettoApiTest, LegacyTraceEvents) {

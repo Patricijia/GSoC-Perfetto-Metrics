@@ -90,7 +90,6 @@ export abstract class Engine {
       const result = RawQueryResult.decode(respEncoded);
       if (!result.error || userQuery) return result;
       // Query failed, throw an error since it was not a user query
-      console.error(`Query error "${sqlQuery}": ${result.error}`);
       throw new Error(`Query error "${sqlQuery}": ${result.error}`);
     } finally {
       this.loadingTracker.endLoading();
@@ -132,6 +131,7 @@ export abstract class Engine {
     if (!this._cpus) {
       const result =
           await this.query('select distinct(cpu) from sched order by cpu;');
+      if (result.numRecords === 0) return [];
       this._cpus = result.columns[0].longValues!.map(n => +n);
     }
     return this._cpus;

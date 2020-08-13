@@ -111,6 +111,10 @@ std::string ToHex(const char* data, size_t size);
 inline std::string ToHex(const std::string& s) {
   return ToHex(s.c_str(), s.size());
 }
+std::string IntToHexString(uint32_t number);
+std::string ReplaceAll(std::string str,
+                       const std::string& to_replace,
+                       const std::string& replacement);
 
 }  // namespace base
 }  // namespace perfetto

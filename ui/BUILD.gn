@@ -61,7 +61,7 @@ ui_dist_targets = [
   ":wasm_dist",
 ]
 
-# Buils the ui, but not service worker, tests and extensions.
+# Builds the ui, but not service worker, tests and extensions.
 group("dist") {
   deps = ui_dist_targets
 }
@@ -223,6 +223,7 @@ node_bin("protos_to_js") {
   outputs = [ "$ui_gen_dir/protos.js" ]
   node_cmd = "pbjs"
   args = [
+           "--force-number",
            "-t",
            "static-module",
            "-w",
@@ -318,13 +319,15 @@ node_bin("transpile_service_worker_ts") {
 
 scss_root = "src/assets/perfetto.scss"
 scss_srcs = [
-  "src/assets/typefaces.scss",
+  "src/assets/analyze_page.scss",
+  "src/assets/common.scss",
+  "src/assets/details.scss",
+  "src/assets/modal.scss",
+  "src/assets/record.scss",
   "src/assets/sidebar.scss",
   "src/assets/topbar.scss",
-  "src/assets/record.scss",
-  "src/assets/common.scss",
-  "src/assets/modal.scss",
-  "src/assets/details.scss",
+  "src/assets/trace_info_page.scss",
+  "src/assets/typefaces.scss",
 ]
 
 # Build css.

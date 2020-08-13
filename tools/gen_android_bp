@@ -57,7 +57,9 @@ default_targets = [
     '//src/perfetto_cmd:perfetto',
     '//src/perfetto_cmd:trigger_perfetto',
     '//src/profiling/memory:heapprofd_client',
+    '//src/profiling/memory:heapprofd_client_api',
     '//src/profiling/memory:heapprofd',
+    '//src/profiling/memory:heapprofd_standalone_client',
     '//src/profiling/perf:traced_perf',
     '//src/traced/probes:traced_probes',
     '//src/traced/service:traced',
@@ -160,10 +162,24 @@ def enumerate_data_deps():
 
 # Additional arguments to apply to Android.bp rules.
 additional_args = {
+    'heapprofd_client_api': [
+        ('include_dirs', {'bionic/libc'}),
+        ('static_libs', {'libasync_safe'}),
+        ('header_libs', {'bionic_libc_platform_headers'}),
+        # heapprofd_client_api MUST NOT have global constructors. Because it
+        # is loaded in an __attribute__((constructor)) of libc, we cannot
+        # guarantee that the global constructors get run before it is used.
+        ('cflags', {'-Wglobal-constructors', '-Werror=global-constructors'}),
+        ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
+    ],
     'heapprofd_client': [
         ('include_dirs', {'bionic/libc'}),
         ('static_libs', {'libasync_safe'}),
         ('header_libs', {'bionic_libc_platform_headers'}),
+    ],
+    'heapprofd_standalone_client': [
+        ('static_libs', {'libasync_safe'}),
+        ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
     ],
     'perfetto_unittests': [
         ('data', set(enumerate_data_deps())),
@@ -177,6 +193,18 @@ additional_args = {
     'libperfetto_android_internal': [('static_libs', {'libhealthhalutils'}),],
     'trace_processor_shell': [
       ('stl', 'libc++_static'),
+    ],
+    'libperfetto_client_experimental': [
+      ('apex_available', {
+        '//apex_available:platform',
+        'com.android.art.debug',
+        'com.android.art.release'}),
+    ],
+    'perfetto_trace_protos': [
+      ('apex_available', {
+        '//apex_available:platform',
+        'com.android.art.debug',
+        'com.android.art.release'}),
     ],
 }
 
@@ -204,9 +232,16 @@ def enable_protoc_lib(module):
 
 
 def enable_libunwindstack(module):
-  module.shared_libs.add('libunwindstack')
-  module.shared_libs.add('libprocinfo')
-  module.shared_libs.add('libbase')
+  if module.name != 'heapprofd_standalone_client':
+    module.shared_libs.add('libunwindstack')
+    module.shared_libs.add('libprocinfo')
+    module.shared_libs.add('libbase')
+  else:
+    module.static_libs.add('libunwindstack')
+    module.static_libs.add('libprocinfo')
+    module.static_libs.add('libbase')
+    module.static_libs.add('liblzma')
+    module.static_libs.add('libdexfile_support')
 
 
 def enable_libunwind(module):
@@ -367,11 +402,13 @@ class Module(object):
     self.dist = dict()
     self.strip = dict()
     self.data = set()
+    self.apex_available = set()
     # The genrule_XXX below are properties that must to be propagated back
     # on the module(s) that depend on the genrule.
     self.genrule_headers = set()
     self.genrule_srcs = set()
     self.genrule_shared_libs = set()
+    self.version_script = None
 
   def to_string(self, output):
     if self.comment:
@@ -400,6 +437,8 @@ class Module(object):
     self._output_field(output, 'tool_files')
     self._output_field(output, 'data')
     self._output_field(output, 'stl')
+    self._output_field(output, 'apex_available')
+    self._output_field(output, 'version_script')
 
     target_out = []
     self._output_field(target_out, 'android')

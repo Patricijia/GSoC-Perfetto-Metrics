@@ -39,6 +39,8 @@ CounterTable::~CounterTable() = default;
 RawTable::~RawTable() = default;
 ArgTable::~ArgTable() = default;
 MetadataTable::~MetadataTable() = default;
+CpuTable::~CpuTable() = default;
+CpuFreqTable::~CpuFreqTable() = default;
 ThreadTable::~ThreadTable() = default;
 ProcessTable::~ProcessTable() = default;
 
@@ -46,7 +48,9 @@ ProcessTable::~ProcessTable() = default;
 StackProfileMappingTable::~StackProfileMappingTable() = default;
 StackProfileFrameTable::~StackProfileFrameTable() = default;
 StackProfileCallsiteTable::~StackProfileCallsiteTable() = default;
+StackSampleTable::~StackSampleTable() = default;
 CpuProfileStackSampleTable::~CpuProfileStackSampleTable() = default;
+PerfSampleTable::~PerfSampleTable() = default;
 SymbolTable::~SymbolTable() = default;
 HeapProfileAllocationTable::~HeapProfileAllocationTable() = default;
 ExperimentalFlamegraphNodesTable::~ExperimentalFlamegraphNodesTable() = default;
@@ -56,6 +60,7 @@ HeapGraphReferenceTable::~HeapGraphReferenceTable() = default;
 VulkanMemoryAllocationsTable::~VulkanMemoryAllocationsTable() = default;
 PackageListTable::~PackageListTable() = default;
 ProfilerSmapsTable::~ProfilerSmapsTable() = default;
+GpuCounterGroupTable::~GpuCounterGroupTable() = default;
 
 // slice_tables.h
 SliceTable::~SliceTable() = default;
@@ -63,7 +68,6 @@ InstantTable::~InstantTable() = default;
 SchedSliceTable::~SchedSliceTable() = default;
 GpuSliceTable::~GpuSliceTable() = default;
 GraphicsFrameSliceTable::~GraphicsFrameSliceTable() = default;
-GraphicsFrameStatsTable::~GraphicsFrameStatsTable() = default;
 DescribeSliceTable::~DescribeSliceTable() = default;
 
 // track_tables.h

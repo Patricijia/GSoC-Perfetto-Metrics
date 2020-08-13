@@ -18,9 +18,9 @@ declare_args() {
   is_system_compiler = false
   is_lto = false
 
-  extra_cflags = ""
-  extra_cxxflags = ""
-  extra_ldflags = ""
+  # This is defined here because it's needed below for determining the value of
+  # |is_cross_compiling|.
+  target_triplet = ""
 }
 
 # Platform detection
@@ -52,7 +52,8 @@ if (current_cpu == "") {
   current_cpu = target_cpu
 }
 
-is_cross_compiling = target_cpu != host_cpu || target_os != host_os
+is_cross_compiling =
+    target_cpu != host_cpu || target_os != host_os || target_triplet != ""
 
 default_configs = [
   "//gn/standalone:debug_symbols",

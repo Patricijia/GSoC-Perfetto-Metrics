@@ -55,7 +55,7 @@ class TraceProcessorIntegrationTest : public ::testing::Test {
     return util::OkStatus();
   }
 
-  TraceProcessor::Iterator Query(const std::string& query) {
+  Iterator Query(const std::string& query) {
     return processor_->ExecuteQuery(query.c_str());
   }
 
@@ -214,9 +214,45 @@ TEST_F(TraceProcessorIntegrationTest, Clusterfuzz15252) {
 }
 
 TEST_F(TraceProcessorIntegrationTest, Clusterfuzz17805) {
-  // This trace fails to load as it's detected as a systrace but is full of
-  // garbage data.
-  ASSERT_TRUE(!LoadTrace("clusterfuzz_17805", 4096).ok());
+  // This trace is garbage but is detected as a systrace. However, it should
+  // still parse successfully as we try to be graceful with encountering random
+  // data in systrace as they can have arbitrary print events from the kernel.
+  ASSERT_TRUE(LoadTrace("clusterfuzz_17805", 4096).ok());
+}
+
+// Failing on DCHECKs during import because the traces aren't really valid.
+#if PERFETTO_DCHECK_IS_ON()
+#define MAYBE_Clusterfuzz20215 DISABLED_Clusterfuzz20215
+#define MAYBE_Clusterfuzz20292 DISABLED_Clusterfuzz20292
+#define MAYBE_Clusterfuzz21178 DISABLED_Clusterfuzz21178
+#define MAYBE_Clusterfuzz21890 DISABLED_Clusterfuzz21890
+#define MAYBE_Clusterfuzz23053 DISABLED_Clusterfuzz23053
+#else  // PERFETTO_DCHECK_IS_ON()
+#define MAYBE_Clusterfuzz20215 Clusterfuzz20215
+#define MAYBE_Clusterfuzz20292 Clusterfuzz20292
+#define MAYBE_Clusterfuzz21178 Clusterfuzz21178
+#define MAYBE_Clusterfuzz21890 Clusterfuzz21890
+#define MAYBE_Clusterfuzz23053 Clusterfuzz23053
+#endif  // PERFETTO_DCHECK_IS_ON()
+
+TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz20215) {
+  ASSERT_TRUE(LoadTrace("clusterfuzz_20215", 4096).ok());
+}
+
+TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz20292) {
+  ASSERT_TRUE(LoadTrace("clusterfuzz_20292", 4096).ok());
+}
+
+TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz21178) {
+  ASSERT_TRUE(LoadTrace("clusterfuzz_21178", 4096).ok());
+}
+
+TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz21890) {
+  ASSERT_TRUE(LoadTrace("clusterfuzz_21890", 4096).ok());
+}
+
+TEST_F(TraceProcessorIntegrationTest, MAYBE_Clusterfuzz23053) {
+  ASSERT_TRUE(LoadTrace("clusterfuzz_23053", 4096).ok());
 }
 
 TEST_F(TraceProcessorIntegrationTest, RestoreInitialTables) {

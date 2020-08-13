@@ -12,8 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
-
 import {AggregateData, Column, ColumnDef} from '../../common/aggregation_data';
 import {Engine} from '../../common/engine';
 import {Sorting, TimestampedAreaSelection} from '../../common/state';
@@ -64,9 +62,6 @@ export abstract class AggregationController extends Controller<'main'> {
           .then(
               data => globals.publish(
                   'AggregateData', {data, kind: this.args.kind}))
-          .catch(reason => {
-            console.error(reason);
-          })
           .finally(() => {
             this.requestingData = false;
             if (this.queuedRequest) {
@@ -121,7 +116,7 @@ export abstract class AggregationController extends Controller<'main'> {
           data.columns[col].data[row] =
               internString(cols[col].stringValues![row]);
         } else if (cols[col].longValues && cols[col].longValues!.length > 0) {
-          data.columns[col].data[row] = cols[col].longValues![row] as number;
+          data.columns[col].data[row] = cols[col].longValues![row];
         } else if (
             cols[col].doubleValues && cols[col].doubleValues!.length > 0) {
           data.columns[col].data[row] = cols[col].doubleValues![row];

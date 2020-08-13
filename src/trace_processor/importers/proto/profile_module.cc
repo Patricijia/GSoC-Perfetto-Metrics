@@ -28,7 +28,7 @@
 #include "src/trace_processor/trace_sorter.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
-#include "protos/perfetto/trace/clock_snapshot.pbzero.h"
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 
 namespace perfetto {
@@ -88,7 +88,7 @@ ModuleResult ProfileModule::TokenizeStreamingProfilePacket(
   auto packet_ts =
       sequence_state->IncrementAndGetTrackEventTimeNs(/*delta_ns=*/0);
   auto trace_ts = context_->clock_tracker->ToTraceTime(
-      protos::pbzero::ClockSnapshot::Clock::MONOTONIC, packet_ts);
+      protos::pbzero::BUILTIN_CLOCK_MONOTONIC, packet_ts);
   if (trace_ts)
     packet_ts = *trace_ts;
 
@@ -135,7 +135,6 @@ void ProfileModule::ParseStreamingProfilePacket(
         *callstack_it, &intern_lookup);
     if (!opt_cs_id) {
       context_->storage->IncrementStats(stats::stackprofile_parser_error);
-      PERFETTO_ELOG("StreamingProfilePacket referencing invalid callstack!");
       continue;
     }
 

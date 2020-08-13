@@ -30,9 +30,11 @@ import {
 } from '../common/logs';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 
+import {AnalyzePage} from './analyze_page';
 import {maybeShowErrorDialog} from './error_dialog';
 import {
   CounterDetails,
+  CpuProfileDetails,
   globals,
   HeapProfileDetails,
   QuantizedLoad,
@@ -45,6 +47,7 @@ import {postMessageHandler} from './post_message_handler';
 import {RecordPage, updateAvailableAdbDevices} from './record_page';
 import {Router} from './router';
 import {CheckHttpRpcConnection} from './rpc_http_dialog';
+import {TraceInfoPage} from './trace_info_page';
 import {ViewerPage} from './viewer_page';
 
 const EXTENSION_ID = 'lfmkphfpdbjijhpomgecfikhfohaoine';
@@ -130,6 +133,11 @@ class FrontendApi {
     this.redraw();
   }
 
+  publishCpuProfileDetails(details: CpuProfileDetails) {
+    globals.cpuProfileDetails = details;
+    this.redraw();
+  }
+
   publishFileDownload(args: {file: File, name?: string}) {
     const url = URL.createObjectURL(args.file);
     const a = document.createElement('a');
@@ -172,6 +180,11 @@ class FrontendApi {
 
   publishRecordingLog(args: {logs: string}) {
     globals.setRecordingLog(args.logs);
+    this.redraw();
+  }
+
+  publishTraceErrors(numErrors: number) {
+    globals.setTraceErrors(numErrors);
     this.redraw();
   }
 
@@ -247,6 +260,8 @@ function main() {
         '/': HomePage,
         '/viewer': ViewerPage,
         '/record': RecordPage,
+        '/query': AnalyzePage,
+        '/info': TraceInfoPage,
       },
       dispatch);
   forwardRemoteCalls(frontendChannel.port2, new FrontendApi(router));

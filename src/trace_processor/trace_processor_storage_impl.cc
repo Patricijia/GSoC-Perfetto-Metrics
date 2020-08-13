@@ -25,9 +25,9 @@
 #include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/default_modules.h"
+#include "src/trace_processor/importers/proto/args_table_utils.h"
 #include "src/trace_processor/importers/proto/heap_profile_tracker.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
-#include "src/trace_processor/importers/proto/perf_sample_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
@@ -49,7 +49,7 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
   context_.metadata_tracker.reset(new MetadataTracker(&context_));
   context_.global_args_tracker.reset(new GlobalArgsTracker(&context_));
-  context_.perf_sample_tracker.reset(new PerfSampleTracker(&context_));
+  context_.proto_to_args_table_.reset(new ProtoToArgsTable(&context_));
 
   RegisterDefaultModules(&context_);
 }
@@ -83,6 +83,7 @@ void TraceProcessorStorageImpl::NotifyEndOfFile() {
   context_.event_tracker->FlushPendingEvents();
   context_.slice_tracker->FlushPendingSlices();
   context_.heap_profile_tracker->NotifyEndOfFile();
+  context_.process_tracker->NotifyEndOfFile();
   for (std::unique_ptr<ProtoImporterModule>& module : context_.modules) {
     module->NotifyEndOfFile();
   }

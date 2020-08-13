@@ -31,14 +31,19 @@
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/gzip/gzip_utils.h"
+#include "src/trace_processor/importers/proto/args_table_utils.h"
+#include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/proto_incremental_state.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_sorter.h"
 
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/config/trace_config.pbzero.h"
 #include "protos/perfetto/trace/clock_snapshot.pbzero.h"
+#include "protos/perfetto/trace/extension_descriptor.pbzero.h"
+#include "protos/perfetto/trace/perfetto/tracing_service_event.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
@@ -180,6 +185,16 @@ util::Status ProtoTraceTokenizer::ParseInternal(
   return util::OkStatus();
 }
 
+util::Status ProtoTraceTokenizer::ParseExtensionDescriptor(
+    ConstBytes descriptor) {
+  protos::pbzero::ExtensionDescriptor::Decoder decoder(descriptor.data,
+                                                       descriptor.size);
+
+  auto extension = decoder.extension_set();
+  return context_->proto_to_args_table_->AddProtoFileDescriptor(extension.data,
+                                                                extension.size);
+}
+
 util::Status ProtoTraceTokenizer::ParsePacket(TraceBlobView packet) {
   protos::pbzero::TracePacket::Decoder decoder(packet.data(), packet.length());
   if (PERFETTO_UNLIKELY(decoder.bytes_left()))
@@ -218,6 +233,16 @@ util::Status ProtoTraceTokenizer::ParsePacket(TraceBlobView packet) {
                               decoder.trusted_packet_sequence_id());
   }
 
+  if (decoder.has_service_event()) {
+    PERFETTO_DCHECK(decoder.has_timestamp());
+    int64_t ts = static_cast<int64_t>(decoder.timestamp());
+    return ParseServiceEvent(ts, decoder.service_event());
+  }
+
+  if (decoder.has_extension_descriptor()) {
+    return ParseExtensionDescriptor(decoder.extension_descriptor());
+  }
+
   if (decoder.sequence_flags() &
       protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE) {
     if (!seq_id) {
@@ -247,8 +272,7 @@ util::Status ProtoTraceTokenizer::ParsePacket(TraceBlobView packet) {
 
     if ((decoder.has_chrome_events() || decoder.has_chrome_metadata()) &&
         (!timestamp_clock_id ||
-         timestamp_clock_id ==
-             protos::pbzero::ClockSnapshot::Clock::MONOTONIC)) {
+         timestamp_clock_id == protos::pbzero::BUILTIN_CLOCK_MONOTONIC)) {
       // Chrome event timestamps are in MONOTONIC domain, but may occur in
       // traces where (a) no clock snapshots exist or (b) no clock_id is
       // specified for their timestamps. Adjust to trace time if we have a clock
@@ -256,7 +280,7 @@ util::Status ProtoTraceTokenizer::ParsePacket(TraceBlobView packet) {
       // TODO(eseckler): Set timestamp_clock_id and emit ClockSnapshots in
       // chrome and then remove this.
       auto trace_ts = context_->clock_tracker->ToTraceTime(
-          protos::pbzero::ClockSnapshot::Clock::MONOTONIC, timestamp);
+          protos::pbzero::BUILTIN_CLOCK_MONOTONIC, timestamp);
       if (trace_ts.has_value())
         timestamp = trace_ts.value();
     } else if (timestamp_clock_id) {
@@ -449,6 +473,10 @@ util::Status ProtoTraceTokenizer::ParseClockSnapshot(ConstBytes blob,
                                                      uint32_t seq_id) {
   std::vector<ClockTracker::ClockValue> clocks;
   protos::pbzero::ClockSnapshot::Decoder evt(blob.data, blob.size);
+  if (evt.primary_trace_clock()) {
+    context_->clock_tracker->SetTraceTimeClock(
+        static_cast<ClockTracker::ClockId>(evt.primary_trace_clock()));
+  }
   for (auto it = evt.clocks(); it; ++it) {
     protos::pbzero::ClockSnapshot::Clock::Decoder clk(*it);
     ClockTracker::ClockId clock_id = clk.clock_id();
@@ -469,6 +497,24 @@ util::Status ProtoTraceTokenizer::ParseClockSnapshot(ConstBytes blob,
                         clk.is_incremental());
   }
   context_->clock_tracker->AddSnapshot(clocks);
+  return util::OkStatus();
+}
+
+util::Status ProtoTraceTokenizer::ParseServiceEvent(int64_t ts,
+                                                    ConstBytes blob) {
+  protos::pbzero::TracingServiceEvent::Decoder tse(blob);
+  if (tse.tracing_started()) {
+    context_->metadata_tracker->SetMetadata(metadata::tracing_started_ns,
+                                            Variadic::Integer(ts));
+  }
+  if (tse.tracing_disabled()) {
+    context_->metadata_tracker->SetMetadata(metadata::tracing_disabled_ns,
+                                            Variadic::Integer(ts));
+  }
+  if (tse.all_data_sources_started()) {
+    context_->metadata_tracker->SetMetadata(
+        metadata::all_data_source_started_ns, Variadic::Integer(ts));
+  }
   return util::OkStatus();
 }
 

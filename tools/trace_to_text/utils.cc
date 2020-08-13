@@ -37,7 +37,7 @@ namespace perfetto {
 namespace trace_to_text {
 namespace {
 
-using Iterator = trace_processor::TraceProcessor::Iterator;
+using trace_processor::Iterator;
 
 #if PERFETTO_BUILDFLAG(PERFETTO_ZLIB)
 constexpr size_t kCompressionBufferSize = 500 * 1024;
@@ -156,8 +156,8 @@ bool ReadTrace(trace_processor::TraceProcessor* tp, std::istream* input) {
 
   for (int i = 0;; i++) {
     if (i % kStderrRate == 0) {
-      fprintf(stderr, "Loading trace %.2f MB%c", file_size / 1.0e6,
-              kProgressChar);
+      fprintf(stderr, "Loading trace %.2f MB%c",
+              static_cast<double>(file_size) / 1.0e6, kProgressChar);
       fflush(stderr);
     }
 

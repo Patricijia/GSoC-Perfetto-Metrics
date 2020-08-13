@@ -19,7 +19,6 @@
 
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
-#include "src/trace_processor/importers/ftrace/binder_tracker.h"
 #include "src/trace_processor/importers/ftrace/ftrace_descriptors.h"
 #include "src/trace_processor/importers/ftrace/rss_stat_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
@@ -79,9 +78,53 @@ class FtraceParser {
                         uint32_t source_tid,
                         protozero::ConstBytes);
   void ParseTaskRename(protozero::ConstBytes);
-
+  void ParseBinderTransaction(int64_t timestamp,
+                              uint32_t pid,
+                              protozero::ConstBytes);
+  void ParseBinderTransactionReceived(int64_t timestamp,
+                                      uint32_t pid,
+                                      protozero::ConstBytes);
+  void ParseBinderTransactionAllocBuf(int64_t timestamp,
+                                      uint32_t pid,
+                                      protozero::ConstBytes);
+  void ParseBinderLocked(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
+  void ParseBinderLock(int64_t timestamp, uint32_t pid, protozero::ConstBytes);
+  void ParseBinderUnlock(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
+  void ParseClockSetRate(int64_t timestamp, protozero::ConstBytes);
+  void ParseClockEnable(int64_t timestamp, protozero::ConstBytes);
+  void ParseClockDisable(int64_t timestamp, protozero::ConstBytes);
+  void ClockRate(int64_t timestamp,
+                 base::StringView clock_name,
+                 base::StringView subtitle,
+                 uint64_t rate);
+  void ParseScmCallStart(int64_t timestamp,
+                         uint32_t pid,
+                         protozero::ConstBytes);
+  void ParseScmCallEnd(int64_t timestamp, uint32_t pid, protozero::ConstBytes);
+  void ParseWorkqueueExecuteStart(int64_t timestamp,
+                                  uint32_t pid,
+                                  protozero::ConstBytes);
+  void ParseWorkqueueExecuteEnd(int64_t timestamp,
+                                uint32_t pid,
+                                protozero::ConstBytes);
+  void ParseIrqHandlerEntry(uint32_t cpu,
+                            int64_t timestamp,
+                            protozero::ConstBytes);
+  void ParseIrqHandlerExit(uint32_t cpu,
+                           int64_t timestamp,
+                           protozero::ConstBytes);
+  void ParseSoftIrqEntry(uint32_t cpu,
+                         int64_t timestamp,
+                         protozero::ConstBytes);
+  void ParseSoftIrqExit(uint32_t cpu, int64_t timestamp, protozero::ConstBytes);
+  void ParseGpuMemTotal(int64_t timestamp, protozero::ConstBytes);
+  void ParseThermalTemperature(int64_t timestamp, protozero::ConstBytes);
+  void ParseCdevUpdate(int64_t timestamp, protozero::ConstBytes);
   TraceProcessorContext* context_;
-  BinderTracker binder_tracker_;
   RssStatTracker rss_stat_tracker_;
 
   const StringId sched_wakeup_name_id_;
@@ -100,6 +143,12 @@ class FtraceParser {
   const StringId comm_name_id_;
   const StringId signal_name_id_;
   const StringId oom_kill_id_;
+  const StringId workqueue_id_;
+  const StringId irq_id_;
+  const StringId ret_arg_id_;
+  const StringId vec_arg_id_;
+  const StringId gpu_mem_total_process_id_;
+  const StringId gpu_mem_total_global_id_;
 
   struct FtraceMessageStrings {
     // The string id of name of the event field (e.g. sched_switch's id).
@@ -121,6 +170,12 @@ class FtraceParser {
   // Keep kMmEventCounterSize equal to mm_event_type::MM_TYPE_NUM in the kernel.
   static constexpr size_t kMmEventCounterSize = 7;
   std::array<MmEventCounterNames, kMmEventCounterSize> mm_event_counter_names_;
+
+  bool has_seen_first_ftrace_packet_ = false;
+
+  // Stores information about the timestamp from the metadata table which is
+  // used to filter ftrace packets which happen before this point.
+  int64_t drop_ftrace_data_before_ts_ = 0;
 };
 
 }  // namespace trace_processor
