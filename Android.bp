@@ -6837,6 +6837,7 @@ filegroup {
     "src/trace_processor/dynamic/experimental_flamegraph_generator.cc",
     "src/trace_processor/dynamic/experimental_sched_upid_generator.cc",
     "src/trace_processor/dynamic/experimental_slice_layout_generator.cc",
+    "src/trace_processor/dynamic/thread_state_generator.cc",
     "src/trace_processor/iterator_impl.cc",
     "src/trace_processor/read_trace.cc",
     "src/trace_processor/trace_processor.cc",
@@ -6967,6 +6968,7 @@ filegroup {
     "src/trace_processor/importers/proto/packet_sequence_state.cc",
     "src/trace_processor/importers/proto/profile_module.cc",
     "src/trace_processor/importers/proto/profile_packet_utils.cc",
+    "src/trace_processor/importers/proto/profiler_util.cc",
     "src/trace_processor/importers/proto/proto_importer_module.cc",
     "src/trace_processor/importers/proto/proto_trace_parser.cc",
     "src/trace_processor/importers/proto/proto_trace_tokenizer.cc",
@@ -7036,6 +7038,7 @@ filegroup {
   srcs: [
     "src/trace_processor/dynamic/experimental_counter_dur_generator_unittest.cc",
     "src/trace_processor/dynamic/experimental_slice_layout_generator_unittest.cc",
+    "src/trace_processor/dynamic/thread_state_generator_unittest.cc",
     "src/trace_processor/forwarding_trace_parser_unittest.cc",
     "src/trace_processor/importers/ftrace/sched_event_tracker_unittest.cc",
     "src/trace_processor/importers/fuchsia/fuchsia_trace_utils_unittest.cc",

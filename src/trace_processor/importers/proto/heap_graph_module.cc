@@ -18,6 +18,7 @@
 
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/proto/heap_graph_tracker.h"
+#include "src/trace_processor/importers/proto/profiler_util.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
@@ -218,23 +219,22 @@ void HeapGraphModule::DeobfuscateClass(
                                       obfuscated_class_name_id);
 
   if (cls_objects) {
-    heap_graph_tracker->AddDeobfuscationMapping(
-        package_name_id, obfuscated_class_name_id,
-        context_->storage->InternString(
-            base::StringView(cls.deobfuscated_name())));
-
     for (tables::HeapGraphClassTable::Id id : *cls_objects) {
       uint32_t row =
           *context_->storage->heap_graph_class_table().id().IndexOf(id);
-      const StringPool::Id obfuscated_type_name =
+      const StringPool::Id obfuscated_type_name_id =
           context_->storage->heap_graph_class_table().name()[row];
-      StringPool::Id deobfuscated_type_name =
-          heap_graph_tracker->MaybeDeobfuscate(package_name_id,
-                                               obfuscated_type_name);
-      PERFETTO_CHECK(!deobfuscated_type_name.is_null());
+      const base::StringView obfuscated_type_name =
+          context_->storage->GetString(obfuscated_type_name_id);
+      NormalizedType normalized_type = GetNormalizedType(obfuscated_type_name);
+      std::string deobfuscated_type_name =
+          DenormalizeTypeName(normalized_type, cls.deobfuscated_name());
+      StringPool::Id deobfuscated_type_name_id =
+          context_->storage->InternString(
+              base::StringView(deobfuscated_type_name));
       context_->storage->mutable_heap_graph_class_table()
           ->mutable_deobfuscated_name()
-          ->Set(row, deobfuscated_type_name);
+          ->Set(row, deobfuscated_type_name_id);
     }
   } else {
     PERFETTO_DLOG("Class %s not found",
@@ -275,17 +275,8 @@ void HeapGraphModule::ParseDeobfuscationMapping(protozero::ConstBytes blob) {
       std::string merged_obfuscated = cls.obfuscated_name().ToStdString() +
                                       "." +
                                       member.obfuscated_name().ToStdString();
-      std::string merged_deobfuscated;
-      std::string member_deobfuscated_name =
-          member.deobfuscated_name().ToStdString();
-      if (member_deobfuscated_name.find('.') == std::string::npos) {
-        // Name relative to class.
-        merged_deobfuscated = cls.deobfuscated_name().ToStdString() + "." +
-                              member_deobfuscated_name;
-      } else {
-        // Fully qualified name.
-        merged_deobfuscated = std::move(member_deobfuscated_name);
-      }
+      std::string merged_deobfuscated =
+          FullyQualifiedDeobfuscatedName(cls, member);
 
       auto obfuscated_field_name_id = context_->storage->string_pool().GetId(
           base::StringView(merged_obfuscated));
