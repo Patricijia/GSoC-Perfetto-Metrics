@@ -798,7 +798,7 @@ genrule(
         "src/trace_processor/metrics/sql_metrics.h",
     ],
     cmd = "$(location gen_merged_sql_metrics_py) --cpp_out=$@ $(SRCS)",
-    tools = [
+    exec_tools = [
         ":gen_merged_sql_metrics_py",
     ],
 )
@@ -961,6 +961,8 @@ filegroup(
         "src/trace_processor/dynamic/experimental_sched_upid_generator.h",
         "src/trace_processor/dynamic/experimental_slice_layout_generator.cc",
         "src/trace_processor/dynamic/experimental_slice_layout_generator.h",
+        "src/trace_processor/dynamic/thread_state_generator.cc",
+        "src/trace_processor/dynamic/thread_state_generator.h",
         "src/trace_processor/iterator_impl.cc",
         "src/trace_processor/iterator_impl.h",
         "src/trace_processor/read_trace.cc",
@@ -1081,6 +1083,8 @@ filegroup(
         "src/trace_processor/importers/proto/profile_module.h",
         "src/trace_processor/importers/proto/profile_packet_utils.cc",
         "src/trace_processor/importers/proto/profile_packet_utils.h",
+        "src/trace_processor/importers/proto/profiler_util.cc",
+        "src/trace_processor/importers/proto/profiler_util.h",
         "src/trace_processor/importers/proto/proto_importer_module.cc",
         "src/trace_processor/importers/proto/proto_importer_module.h",
         "src/trace_processor/importers/proto/proto_incremental_state.h",
