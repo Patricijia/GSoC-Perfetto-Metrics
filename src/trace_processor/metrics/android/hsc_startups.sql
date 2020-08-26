@@ -69,8 +69,7 @@ SELECT
     frame_times.ts_end - launches.ts as ts_total
 FROM frame_times
 INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
-WHERE frame_times.ts > (SELECT ts + dur FROM functions WHERE function_name="ShutterButtonEnabled" AND process_name LIKE "%id.GoogleCamera%" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%id.GoogleCamera%" AND frame_times.launch_id = launches.id
-ORDER BY ts_total LIMIT 1;
+WHERE frame_times.frame_number=2 AND frame_times.name LIKE "%GoogleCamera%" AND frame_times.launch_id = launches.id;
 
 -- Chrome
 INSERT INTO hsc_based_startup_times
@@ -114,6 +113,28 @@ FROM frame_times
 INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
 WHERE frame_times.frame_number=2 AND frame_times.name LIKE "%id.dialer" AND frame_times.launch_id = launches.id;
 
+-- Facebook
+INSERT INTO hsc_based_startup_times
+SELECT
+    launches.package as package,
+    launches.id as id,
+    frame_times.ts_end - launches.ts as ts_total
+FROM frame_times
+INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
+WHERE frame_times.ts > (SELECT ts+dur FROM slices WHERE slices.name LIKE "fb_startup_complete" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%ok.katana" AND frame_times.launch_id = launches.id
+ORDER BY ts_total LIMIT 1;
+
+-- Facebook Messenger
+INSERT INTO hsc_based_startup_times
+SELECT
+    launches.package as package,
+    launches.id as id,
+    frame_times.ts_end - launches.ts as ts_total
+FROM frame_times
+INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
+WHERE frame_times.ts > (SELECT ts+dur FROM slices WHERE slices.name LIKE "msgr_cold_start_to_cached_content" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%book.orca" AND frame_times.launch_id = launches.id
+ORDER BY ts_total LIMIT 1;
+
 -- Gmail
 INSERT INTO hsc_based_startup_times
 SELECT
@@ -128,11 +149,13 @@ ORDER BY ts_total LIMIT 1;
 -- Instagram
 INSERT INTO hsc_based_startup_times
 SELECT
-    package as package,
-    id as id,
-    (SELECT ts + dur FROM slices WHERE slices.name LIKE "Start proc%mqtt" ORDER BY ts LIMIT 1) - launches.ts as ts_total
-FROM launches
-WHERE launches.package="com.instagram.android";
+    launches.package as package,
+    launches.id as id,
+    frame_times.ts_end - launches.ts as ts_total
+FROM frame_times
+INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
+WHERE frame_times.ts > (SELECT ts+dur FROM slices WHERE slices.name LIKE "ig_cold_start_to_cached_content" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%gram.android" AND frame_times.launch_id = launches.id
+ORDER BY ts_total LIMIT 1;
 
 -- Maps
 INSERT INTO hsc_based_startup_times
@@ -152,7 +175,7 @@ SELECT
     frame_times.ts_end - launches.ts as ts_total
 FROM frame_times
 INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
-WHERE frame_times.ts_end > (SELECT ts + dur FROM functions WHERE function_name="animator:translationZ" AND process_name LIKE "%apps.messaging%" ORDER BY ts DESC LIMIT 1) AND frame_times.name LIKE "%apps.messaging%" AND frame_times.launch_id = launches.id
+WHERE frame_times.ts_end > (SELECT ts + dur FROM functions WHERE function_name="animator:translationZ" AND process_name LIKE "%apps.messaging%" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%apps.messaging%" AND frame_times.launch_id = launches.id
 ORDER BY ts_total LIMIT 1;
 
 -- Netflix
@@ -204,7 +227,18 @@ SELECT
     frame_times.ts_end - launches.ts as ts_total
 FROM frame_times
 INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
-WHERE frame_times.ts > (SELECT ts + dur FROM functions WHERE function_name="animator:translationZ" AND process_name LIKE "%tter.android" ORDER BY ts DESC LIMIT 1) AND frame_times.name LIKE "%tter.android" AND frame_times.launch_id = launches.id
+WHERE frame_times.ts_end > (SELECT ts FROM functions WHERE function_name="animator" AND process_name LIKE "%tter.android" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%tter.android" AND frame_times.launch_id = launches.id
+ORDER BY ts_total LIMIT 1;
+
+-- WhatsApp
+INSERT INTO hsc_based_startup_times
+SELECT
+    launches.package as package,
+    launches.id as id,
+    frame_times.ts_end - launches.ts as ts_total
+FROM frame_times
+INNER JOIN launches on launches.package LIKE '%' || frame_times.name || '%'
+WHERE frame_times.ts > (SELECT ts+dur FROM slices WHERE slices.name LIKE "wa_startup_complete" ORDER BY ts LIMIT 1) AND frame_times.name LIKE "%om.whatsapp" AND frame_times.launch_id = launches.id
 ORDER BY ts_total LIMIT 1;
 
 -- Youtube

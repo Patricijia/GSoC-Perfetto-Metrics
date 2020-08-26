@@ -14,8 +14,8 @@
 
 import * as m from 'mithril';
 
+import {assertTrue} from '../base/logging';
 import {Actions} from '../common/actions';
-import {translateState} from '../common/thread_state';
 import {timeToCode, toNs} from '../common/time';
 
 import {globals} from './globals';
@@ -27,7 +27,7 @@ interface ThreadStateDetailsAttr {
   ts: number;
   dur: number;
   state: string;
-  cpu: number;
+  cpu: number|undefined;
 }
 
 export class ThreadStatePanel extends Panel<ThreadStateDetailsAttr> {
@@ -66,13 +66,16 @@ export class ThreadStatePanel extends Panel<ThreadStateDetailsAttr> {
 
   // If it is the running state, we want to show which CPU and a button to
   // go to the sched slice. Otherwise, just show the state.
-  getStateContent(state: string, cpu: number) {
+  getStateContent(state: string, cpu: number|undefined) {
     if (state !== 'Running') {
-      return [translateState(state)];
+      return [state];
     }
 
+    // We should always have a cpu for running slices.
+    assertTrue(cpu !== undefined);
+
     return [
-      `${translateState(state)} on CPU ${cpu}`,
+      `${state} on CPU ${cpu}`,
       m('i.material-icons.grey',
         {
           onclick: () => {

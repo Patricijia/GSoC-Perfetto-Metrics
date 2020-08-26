@@ -13,7 +13,6 @@
 // limitations under the License.
 
 import {hsl} from 'color-convert';
-import {translateState} from '../common/thread_state';
 import {ThreadDesc} from './globals';
 
 export interface Color {
@@ -65,6 +64,12 @@ export function hueForCpu(cpu: number): number {
   return (128 + (32 * cpu)) % 256;
 }
 
+const DESAT_RED: Color = {
+  c: 'desat red',
+  h: 3,
+  s: 30,
+  l: 49
+};
 const DARK_GREEN: Color = {
   c: 'dark green',
   h: 120,
@@ -97,18 +102,25 @@ const INDIGO: Color = {
   l: 48
 };
 
-export function colorForState(stateCode: string): Readonly<Color> {
-  const state = translateState(stateCode);
+export function colorForState(state: string): Readonly<Color> {
   if (state === 'Running') {
     return DARK_GREEN;
   } else if (state.startsWith('Runnable')) {
     return LIME_GREEN;
   } else if (state.includes('Uninterruptible Sleep')) {
+    if (state.includes('non-IO')) {
+      return DESAT_RED;
+    }
     return ORANGE;
   } else if (state.includes('Sleeping')) {
     return TRANSPARENT_WHITE;
   }
   return INDIGO;
+}
+
+export function textColorForState(stateCode: string): string {
+  const background = colorForState(stateCode);
+  return background.l > 80 ? '#404040' : '#fff';
 }
 
 export function colorForTid(tid: number): Color {

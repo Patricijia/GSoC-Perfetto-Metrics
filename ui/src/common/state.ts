@@ -101,7 +101,6 @@ export interface TrackGroupState {
   name: string;
   collapsed: boolean;
   tracks: string[];  // Child track ids.
-  summaryTrackId: string;
 }
 
 export interface EngineConfig {
@@ -211,7 +210,7 @@ export interface ThreadStateSelection {
   ts: number;
   dur: number;
   state: string;
-  cpu: number;
+  cpu: number|undefined;
 }
 
 type Selection = (NoteSelection|SliceSelection|CounterSelection|
@@ -300,6 +299,7 @@ export interface State {
   lastRecordingError?: string;
   recordingStatus?: string;
 
+  updateChromeCategories: boolean;
   chromeCategories: string[]|undefined;
   analyzePageQuery?: string;
 }
@@ -348,7 +348,6 @@ export interface RecordConfig {
   fileWritePeriodMs: number;  // Only for mode == 'LONG_TRACE'.
 
   cpuSched: boolean;
-  cpuLatency: boolean;
   cpuFreq: boolean;
   cpuCoarse: boolean;
   cpuCoarsePollMs: number;
@@ -357,6 +356,7 @@ export interface RecordConfig {
   screenRecord: boolean;
 
   gpuFreq: boolean;
+  gpuMemTotal: boolean;
 
   ftrace: boolean;
   atrace: boolean;
@@ -410,13 +410,13 @@ export function createEmptyRecordConfig(): RecordConfig {
     bufferSizeMb: 10.0,
 
     cpuSched: false,
-    cpuLatency: false,
     cpuFreq: false,
     cpuSyscall: false,
 
     screenRecord: false,
 
     gpuFreq: false,
+    gpuMemTotal: false,
 
     ftrace: false,
     atrace: false,
@@ -742,6 +742,7 @@ export function createEmptyState(): State {
     recordingTarget: getDefaultRecordingTargets()[0],
     availableAdbDevices: [],
 
+    updateChromeCategories: false,
     chromeCategories: undefined,
   };
 }

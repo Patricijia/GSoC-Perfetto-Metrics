@@ -179,8 +179,8 @@ either the profileable or the debuggable manifest flag set can be profiled.
 Profiling requests for non-profileable/debuggable processes will result in an
 empty profile.
 
-On userdebug builds, all processes except for a small blacklist of critical
-services can be profiled (to find the blacklist, look for
+On userdebug builds, all processes except for a small set of critical
+services can be profiled (to find the set of disallowed targets, look for
 `never_profile_heap` in [heapprofd.te](
 https://cs.android.com/android/platform/superproject/+/master:system/sepolicy/private/heapprofd.te?q=never_profile_heap).
 This restriction can be lifted by disabling SELinux by running
@@ -233,7 +233,7 @@ enumerated in the output directory.
 
 ## Symbolization
 
-NOTE: Symbolization is currently only available on Linux
+NOTE: Symbolization is currently only available on Linux and MacOS.
 
 ### Set up llvm-symbolizer
 
@@ -289,6 +289,11 @@ is looked for at:
 3. $PERFETTO_BINARY_PATH/base.apk!foo.so
 4. $PERFETTO_BINARY_PATH/foo.so
 5. $PERFETTO_BINARY_PATH/.build-id/ab/cd1234.debug
+
+Alternatively, you can set the `PERFETTO_SYMBOLIZER_MODE` environment variable
+to `index`, and the symbolizer will recursively search the given directory for
+an ELF file with the given build id. This way, you will not have to worry
+about correct filenames.
 
 ## Troubleshooting
 
@@ -371,6 +376,10 @@ to not strip them.
   domain. You will not be able to profile any processes unless you disable
   SELinux enforcement.
   Run `restorecon /dev/socket/heapprofd` in a root shell to resolve.
+* Using `vfork(2)` or `clone(2)` with `CLONE_VM` and allocating / freeing
+  memory in the child process will prematurely end the profile.
+  `java.lang.Runtime.exec` does this, calling it will prematurely end
+  the profile. Note that this is in violation of the POSIX standard.
 
 ## Heapprofd vs malloc_info() vs RSS
 

@@ -37,6 +37,9 @@ class TrackTracker {
   // Interns a Fuchsia async track into the storage.
   TrackId InternFuchsiaAsyncTrack(StringId name, int64_t correlation_id);
 
+  // Interns a global track keyed by CPU + name into the storage.
+  TrackId InternCpuTrack(StringId name, uint32_t cpu);
+
   // Interns a given GPU track into the storage.
   TrackId InternGpuTrack(const tables::GpuTrackTable::Row& row);
 
@@ -51,9 +54,6 @@ class TrackTracker {
   TrackId InternAndroidAsyncTrack(StringId name,
                                   UniquePid upid,
                                   int64_t cookie);
-
-  // Interns a track for perf event stack samples, with process-wide grouping.
-  TrackId InternPerfStackTrack(UniquePid upid);
 
   // Interns a track for legacy Chrome process-scoped instant events into the
   // storage.
@@ -143,7 +143,9 @@ class TrackTracker {
   TrackId GetOrCreateTriggerTrack();
 
   // Interns a global counter track into the storage.
-  TrackId InternGlobalCounterTrack(StringId name);
+  TrackId InternGlobalCounterTrack(StringId name,
+                                   StringId unit = kNullStringId,
+                                   StringId description = kNullStringId);
 
   // Interns a counter track associated with a cpu into the storage.
   TrackId InternCpuCounterTrack(StringId name, uint32_t cpu);
@@ -152,7 +154,10 @@ class TrackTracker {
   TrackId InternThreadCounterTrack(StringId name, UniqueTid utid);
 
   // Interns a counter track associated with a process into the storage.
-  TrackId InternProcessCounterTrack(StringId name, UniquePid upid);
+  TrackId InternProcessCounterTrack(StringId name,
+                                    UniquePid upid,
+                                    StringId unit = kNullStringId,
+                                    StringId description = kNullStringId);
 
   // Interns a counter track associated with an irq into the storage.
   TrackId InternIrqCounterTrack(StringId name, int32_t irq);
@@ -256,6 +261,9 @@ class TrackTracker {
   std::map<UniqueTid, TrackId> thread_tracks_;
   std::map<UniquePid, TrackId> process_tracks_;
   std::map<int64_t /* correlation_id */, TrackId> fuchsia_async_tracks_;
+
+  std::map<std::pair<StringId, uint32_t /* cpu */>, TrackId> cpu_tracks_;
+
   std::map<GpuTrackTuple, TrackId> gpu_tracks_;
   std::map<ChromeTrackTuple, TrackId> chrome_tracks_;
   std::map<AndroidAsyncTrackTuple, TrackId> android_async_tracks_;
