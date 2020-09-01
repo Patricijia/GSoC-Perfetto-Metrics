@@ -226,8 +226,8 @@ function GpuSettings(cssClass: string) {
       m(Probe, {
         title: 'GPU memory',
         img: 'rec_gpu_mem_total.png',
-        descr: `Allows to track per process and global gpu memory total updates
-                via ftrace. (Available on recent Android 11+ kernels)`,
+        descr: `Allows to track per process and global total GPU memory usages.
+                (Available on recent Android 12+ kernels)`,
         setEnabled: (cfg, val) => cfg.gpuMemTotal = val,
         isEnabled: (cfg) => cfg.gpuMemTotal
       } as ProbeAttrs));
@@ -837,6 +837,16 @@ function Instructions(cssClass: string) {
   return m(
       `.record-section.instructions${cssClass}`,
       m('header', 'Instructions'),
+      localStorage.hasOwnProperty(LOCAL_STORAGE_SHOW_CONFIG) ?
+          m('button.permalinkconfig',
+            {
+              onclick: () => {
+                globals.dispatch(
+                    Actions.createPermalink({isRecordingConfig: true}));
+              },
+            },
+            'Share recording settings') :
+          null,
       RecordingSnippet(),
       BufferUsageProgressBar(),
       m('.buttons', StopCancelButtons()),
@@ -1255,7 +1265,7 @@ function recordMenu(routePage: string) {
           m(`li${routePage === 'gpu' ? '.active' : ''}`,
             m('i.material-icons', 'aspect_ratio'),
             m('.title', 'GPU'),
-            m('.sub', 'GPU frequency'))),
+            m('.sub', 'GPU frequency, memory'))),
         m('a[href="#!/record?p=power"]',
           m(`li${routePage === 'power' ? '.active' : ''}`,
             m('i.material-icons', 'battery_charging_full'),
