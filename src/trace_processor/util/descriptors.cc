@@ -113,7 +113,9 @@ void DescriptorPool::AddNestedProtoDescriptors(
   auto full_name =
       parent_name + "." + base::StringView(decoder.name()).ToStdString();
 
-  CheckPreviousDefinition(file_name, full_name);
+  // TODO(lalitm): reenable this check when we have solved the duplicate proto
+  // definitions in G3.
+  // CheckPreviousDefinition(file_name, full_name);
 
   using FieldDescriptorProto = protos::pbzero::FieldDescriptorProto;
   ProtoDescriptor proto_descriptor(file_name, package_name, full_name,
@@ -191,7 +193,7 @@ util::Status DescriptorPool::AddFromFileDescriptorSet(
   }
 
   // Second pass: Add extension fields to the real protos.
-  for (auto extension : extensions) {
+  for (const auto& extension : extensions) {
     auto status = AddExtensionField(extension.first, extension.second);
     if (!status.ok())
       return status;
