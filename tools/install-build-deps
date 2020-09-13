@@ -166,8 +166,8 @@ BUILD_DEPS_HOST = [
     # Example traces for regression tests.
     Dependency(
         'buildtools/test_data.zip',
-        'https://storage.googleapis.com/perfetto/test-data-20200811-161047.zip',
-        'ffe5b473a3edfb94d1fa04610e86171d4cdc35de',
+        'https://storage.googleapis.com/perfetto/test-data-20200910-141649.zip',
+        '8439e07570cbae4114f6495c68c4490c207bff58',
         'all',
     ),
 
@@ -243,14 +243,6 @@ UI_DEPS = [
         'buildtools/emsdk/llvm.tgz',
         'https://storage.googleapis.com/perfetto/emscripten-llvm-e1.37.40-static-linux.tar.gz',
         '478501b9b7a14884e546c84efe209a90052cbb07', 'linux'),
-    Dependency(
-        'buildtools/d8.tgz',
-        'https://storage.googleapis.com/perfetto/d8-linux-5.7.492.65.tar.gz',
-        '95e82ad7faf0a6f74d950c2aa65e3858b7bdb6c6', 'linux'),
-    Dependency(
-        'buildtools/d8.tgz',
-        'https://storage.googleapis.com/perfetto/d8-darwin-6.6.346.32.tar.gz',
-        '1abd630619bb1977ab62095570a113d782a1545d', 'darwin'),
     Dependency(
         'buildtools/catapult_trace_viewer.tgz',
         'https://storage.googleapis.com/perfetto/catapult_trace_viewer-%s.tar.gz'
