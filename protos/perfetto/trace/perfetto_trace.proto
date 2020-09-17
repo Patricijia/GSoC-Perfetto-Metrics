@@ -329,6 +329,16 @@ message ChromeConfig {
   // TracePackets, but the embedded data will be JSON instead of serialized
   // protobuf.
   optional bool convert_to_legacy_json = 3;
+
+  // Priority of the tracing session client. A higher priority session may
+  // preempt a lower priority one in configurations where concurrent sessions
+  // aren't supported.
+  enum ClientPriority {
+    UNKNOWN = 0;
+    BACKGROUND = 1;
+    USER_INITIATED = 2;
+  }
+  optional ClientPriority client_priority = 4;
 }
 
 // End of protos/perfetto/config/chrome/chrome_config.proto
@@ -721,6 +731,11 @@ message PerfEventConfig {
   // List of excluded cmdlines. Normalized in the same way as |target_cmdline|.
   repeated string exclude_cmdline = 7;
 
+  // Number of additional command lines to sample. Only those which are neither
+  // explicitly included nor excluded will be considered. Processes are accepted
+  // on a first come, first served basis.
+  optional uint32 additional_cmdline_count = 11;
+
   ////////////////////
   // Uncommon options:
 
@@ -884,6 +899,39 @@ enum VmstatCounters {
   VMSTAT_NR_ZSPAGES = 93;
   VMSTAT_NR_ION_HEAP = 94;
   VMSTAT_NR_GPU_HEAP = 95;
+  VMSTAT_ALLOCSTALL_DMA = 96;
+  VMSTAT_ALLOCSTALL_MOVABLE = 97;
+  VMSTAT_ALLOCSTALL_NORMAL = 98;
+  VMSTAT_COMPACT_DAEMON_FREE_SCANNED = 99;
+  VMSTAT_COMPACT_DAEMON_MIGRATE_SCANNED = 100;
+  VMSTAT_NR_FASTRPC = 101;
+  VMSTAT_NR_INDIRECTLY_RECLAIMABLE = 102;
+  VMSTAT_NR_ION_HEAP_POOL = 103;
+  VMSTAT_NR_KERNEL_MISC_RECLAIMABLE = 104;
+  VMSTAT_NR_SHADOW_CALL_STACK_BYTES = 105;
+  VMSTAT_NR_SHMEM_HUGEPAGES = 106;
+  VMSTAT_NR_SHMEM_PMDMAPPED = 107;
+  VMSTAT_NR_UNRECLAIMABLE_PAGES = 108;
+  VMSTAT_NR_ZONE_ACTIVE_ANON = 109;
+  VMSTAT_NR_ZONE_ACTIVE_FILE = 110;
+  VMSTAT_NR_ZONE_INACTIVE_ANON = 111;
+  VMSTAT_NR_ZONE_INACTIVE_FILE = 112;
+  VMSTAT_NR_ZONE_UNEVICTABLE = 113;
+  VMSTAT_NR_ZONE_WRITE_PENDING = 114;
+  VMSTAT_OOM_KILL = 115;
+  VMSTAT_PGLAZYFREE = 116;
+  VMSTAT_PGLAZYFREED = 117;
+  VMSTAT_PGREFILL = 118;
+  VMSTAT_PGSCAN_DIRECT = 119;
+  VMSTAT_PGSCAN_KSWAPD = 120;
+  VMSTAT_PGSKIP_DMA = 121;
+  VMSTAT_PGSKIP_MOVABLE = 122;
+  VMSTAT_PGSKIP_NORMAL = 123;
+  VMSTAT_PGSTEAL_DIRECT = 124;
+  VMSTAT_PGSTEAL_KSWAPD = 125;
+  VMSTAT_SWAP_RA = 126;
+  VMSTAT_SWAP_RA_HIT = 127;
+  VMSTAT_WORKINGSET_RESTORE = 128;
 }
 // End of protos/perfetto/common/sys_stats_counters.proto
 
@@ -5758,6 +5806,11 @@ message ChromeFrameReporter {
 
   optional uint64 frame_source = 3;
   optional uint64 frame_sequence = 4;
+
+  // If this is a droped frame (i.e. if |state| is set to |STATE_DROPPED| or
+  // |STATE_PRESENTED_PARTIAL|), then indicates whether this frame impacts
+  // smoothness.
+  optional bool affects_smoothness = 5;
 }
 
 // End of protos/perfetto/trace/track_event/chrome_frame_reporter.proto
@@ -5999,7 +6052,7 @@ message TaskExecution {
 // their default track association) can be emitted as part of a
 // TrackEventDefaults message.
 //
-// Next reserved id: 13 (up to 15). Next id: 33.
+// Next reserved id: 13 (up to 15). Next id: 35.
 message TrackEvent {
   // Names of categories of the event. In the client library, categories are a
   // way to turn groups of individual events on or off.
@@ -6110,6 +6163,18 @@ message TrackEvent {
   optional ChromeHistogramSample chrome_histogram_sample = 28;
   optional ChromeLatencyInfo chrome_latency_info = 29;
   optional ChromeFrameReporter chrome_frame_reporter = 32;
+
+  // This field is used only if the source location represents the function that
+  // executes during this event.
+  oneof source_location_field {
+    // Non-interned field.
+    SourceLocation source_location = 33;
+    // TODO(ssid): The interned source locations are not parsed by trace
+    // processor.
+    // Interned field.
+    uint64 source_location_iid = 34;
+  }
+
   // New argument types go here :)
 
   // Extension range for typed events defined externally.
@@ -6798,6 +6863,7 @@ message ProfilePacket {
     optional uint64 map_reparses = 3;
     optional Histogram unwinding_time_us = 4;
     optional uint64 total_unwinding_time_us = 5;
+    optional uint64 client_spinlock_blocked_us = 6;
   }
 
   repeated ProcessHeapSamples process_dumps = 5;

@@ -15,10 +15,10 @@
 import {assertExists} from '../base/logging';
 import {DeferredAction} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
-import {Analytics} from '../common/analytics';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 import {CallsiteInfo, createEmptyState, State} from '../common/state';
 import {fromNs, toNs} from '../common/time';
+import {Analytics} from '../frontend/analytics';
 
 import {FrontendLocalState} from './frontend_local_state';
 import {RafScheduler} from './raf_scheduler';
@@ -38,6 +38,7 @@ export interface SliceDetails {
   endState?: string;
   cpu?: number;
   id?: number;
+  threadStateId?: number;
   utid?: number;
   wakeupTs?: number;
   wakerUtid?: number;
@@ -49,10 +50,14 @@ export interface SliceDetails {
 }
 
 export interface FlowPoint {
+  trackId: number;
+
   sliceName: string;
   sliceId: number;
-  trackId: number;
-  ts: number;
+  sliceStartTs: number;
+  sliceEndTs: number;
+
+  depth: number;
 }
 
 export interface Flow {
@@ -65,6 +70,15 @@ export interface CounterDetails {
   value?: number;
   delta?: number;
   duration?: number;
+}
+
+export interface ThreadStateDetails {
+  ts?: number;
+  dur?: number;
+  state?: string;
+  utid?: number;
+  cpu?: number;
+  sliceId?: number;
 }
 
 export interface HeapProfileDetails {
@@ -123,6 +137,7 @@ class Globals {
   private _aggregateDataStore?: AggregateDataStore = undefined;
   private _threadMap?: ThreadMap = undefined;
   private _sliceDetails?: SliceDetails = undefined;
+  private _threadStateDetails?: ThreadStateDetails = undefined;
   private _boundFlows?: Flow[] = undefined;
   private _counterDetails?: CounterDetails = undefined;
   private _heapProfileDetails?: HeapProfileDetails = undefined;
@@ -169,6 +184,7 @@ class Globals {
     this._sliceDetails = {};
     this._boundFlows = [];
     this._counterDetails = {};
+    this._threadStateDetails = {};
     this._heapProfileDetails = {};
     this._cpuProfileDetails = {};
   }
@@ -226,12 +242,20 @@ class Globals {
     this._sliceDetails = assertExists(click);
   }
 
+  get threadStateDetails() {
+    return assertExists(this._threadStateDetails);
+  }
+
+  set threadStateDetails(click: ThreadStateDetails) {
+    this._threadStateDetails = assertExists(click);
+  }
+
   get boundFlows() {
     return assertExists(this._boundFlows);
   }
 
-  set boundFlows(click: Flow[]) {
-    this._boundFlows = assertExists(click);
+  set boundFlows(boundFlows: Flow[]) {
+    this._boundFlows = assertExists(boundFlows);
   }
 
   get counterDetails() {
@@ -347,6 +371,7 @@ class Globals {
     this._overviewStore = undefined;
     this._threadMap = undefined;
     this._sliceDetails = undefined;
+    this._threadStateDetails = undefined;
     this._aggregateDataStore = undefined;
     this._numQueriesQueued = 0;
     this._currentSearchResults = {

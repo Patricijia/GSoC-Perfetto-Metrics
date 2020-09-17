@@ -20,9 +20,9 @@ import {
   Column,
   ThreadStateExtra
 } from '../common/aggregation_data';
+import {colorForState, textColorForState} from '../common/colorizer';
 import {translateState} from '../common/thread_state';
 
-import {colorForState, textColorForState} from './colorizer';
 import {globals} from './globals';
 import {Panel} from './panel';
 
@@ -44,7 +44,11 @@ export class AggregationPanel extends Panel<AggregationPanelAttrs> {
           m('table',
             m('tr',
               attrs.data.columns.map(
-                  col => this.formatColumnHeading(col, attrs.kind))))),
+                  col => this.formatColumnHeading(col, attrs.kind))),
+            m('tr.sum', attrs.data.columnSums.map(sum => {
+              const sumClass = sum === '' ? 'td' : 'td.sum-data';
+              return m(sumClass, sum);
+            })))),
         m(
             '.details-table.aggregation',
             m('table', this.getRows(attrs.data)),
@@ -104,9 +108,10 @@ export class AggregationPanel extends Panel<AggregationPanelAttrs> {
   }
 
   showTimeRange() {
-    const area = globals.state.frontendLocalState.selectedArea.area;
-    if (area === undefined) return undefined;
-    const rangeDurationMs = (area.endSec - area.startSec) * 1e3;
+    const selection = globals.state.currentSelection;
+    if (selection === null || selection.kind !== 'AREA') return undefined;
+    const selectedArea = globals.state.areas[selection.areaId];
+    const rangeDurationMs = (selectedArea.endSec - selectedArea.startSec) * 1e3;
     return m('.time-range', `Selected range: ${rangeDurationMs.toFixed(6)} ms`);
   }
 

@@ -12,27 +12,15 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-type TraceCategories = 'Trace Actions'|'Record Trace'|'User Actions';
-const ANALYTICS_ID = 'UA-137828855-1';
+import {globals} from './globals';
 
-export class Analytics {
-  constructor() {
-    gtag('js', new Date());
-  }
+export function isShareable() {
+  return (globals.isInternalUser && isDownloadable());
+}
 
-  updatePath(path: string) {
-    gtag('config', ANALYTICS_ID, {
-      'anonymize_ip': true,
-      'page_path': path,
-      'referrer': document.referrer.split('?')[0]
-    });
-  }
-
-  logEvent(category: TraceCategories|null, event: string) {
-    gtag('event', event, {'event_category': category});
-  }
-
-  logError(description: string, fatal = true) {
-    gtag('event', 'exception', {description, fatal});
-  }
+export function isDownloadable() {
+  if (globals.frontendLocalState.localOnlyMode) return false;
+  const engine = Object.values(globals.state.engines)[0];
+  if (engine && engine.source.type === 'HTTP_RPC') return false;
+  return true;
 }

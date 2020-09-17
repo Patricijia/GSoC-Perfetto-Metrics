@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-#include "perfetto/profiling/memory/client_ext.h"
+#include "perfetto/profiling/memory/heap_profile.h"
 
 #include <inttypes.h>
 #include <malloc.h>
@@ -268,6 +268,10 @@ AHeapProfile_reportAllocation(uint32_t heap_id, uint64_t id, uint64_t size) {
     if (!*g_client_ptr)  // no active client (most likely shutting down)
       return false;
 
+    if (s.blocked_us()) {
+      (*g_client_ptr)->AddClientSpinlockBlockedUs(s.blocked_us());
+    }
+
     sampled_alloc_sz =
         (*g_client_ptr)->GetSampleSizeLocked(static_cast<size_t>(size));
     if (sampled_alloc_sz == 0)  // not sampling
@@ -296,6 +300,10 @@ __attribute__((visibility("default"))) void AHeapProfile_reportFree(
       AbortOnSpinlockTimeout();
 
     client = *GetClientLocked();  // owning copy (or empty)
+
+    if (s.blocked_us()) {
+      client->AddClientSpinlockBlockedUs(s.blocked_us());
+    }
   }
 
   if (client) {

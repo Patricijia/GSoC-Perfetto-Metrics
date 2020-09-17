@@ -105,6 +105,8 @@ source_set("storage_minimal") {
     "importers/proto/proto_incremental_state.h",
     "importers/proto/proto_trace_parser.cc",
     "importers/proto/proto_trace_parser.h",
+    "importers/proto/proto_trace_reader.cc",
+    "importers/proto/proto_trace_reader.h",
     "importers/proto/proto_trace_tokenizer.cc",
     "importers/proto/proto_trace_tokenizer.h",
     "importers/proto/stack_profile_tracker.cc",
@@ -252,6 +254,7 @@ source_set("storage_full") {
     "storage",
     "tables",
     "types",
+    "util",
   ]
   if (enable_perfetto_trace_processor_json) {
     deps += [ "../../gn:jsoncpp" ]
@@ -310,6 +313,7 @@ if (enable_perfetto_trace_processor_sqlite) {
       "../../gn:default_deps",
       "../../protos/perfetto/trace/ftrace:zero",
       "../base",
+      "../protozero",
       "analysis",
       "db:lib",
       "importers:common",
@@ -329,11 +333,11 @@ if (enable_perfetto_trace_processor_sqlite) {
     }
   }
 
-  perfetto_host_executable("trace_processor_shell") {
+  executable("trace_processor_shell") {
     deps = [
       ":lib",
       "../../gn:default_deps",
-      "../../gn:protoc_lib",
+      "../../gn:protobuf_full",
       "../../src/profiling/symbolizer",
       "../../src/profiling/symbolizer:symbolize_database",
       "../base",
@@ -451,7 +455,9 @@ source_set("integrationtests") {
       ":lib",
       "../../gn:default_deps",
       "../../gn:gtest_and_gmock",
+      "../../protos/perfetto/common:zero",
       "../../protos/perfetto/trace:zero",
+      "../../protos/perfetto/trace_processor:zero",
       "../base",
       "../base:test_support",
       "sqlite",

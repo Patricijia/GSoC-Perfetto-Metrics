@@ -180,6 +180,14 @@ export class DetailsPanel implements m.ClassComponent {
                               id: curSelection.id,
                             }));
           break;
+        case 'AREA':
+          if (curSelection.noteId !== undefined) {
+            detailsPanels.set('current_selection', m(NotesEditorPanel, {
+                                key: 'area_notes',
+                                id: curSelection.noteId,
+                              }));
+          }
+          break;
         case 'SLICE':
           detailsPanels.set('current_selection', m(SliceDetailsPanel, {
                               key: 'slice',
@@ -201,34 +209,31 @@ export class DetailsPanel implements m.ClassComponent {
                             }));
           break;
         case 'CHROME_SLICE':
-          detailsPanels.set('current_selection', m(ChromeSliceDetailsPanel));
+          detailsPanels.set(
+              'current_selection',
+              m(ChromeSliceDetailsPanel, {key: 'chrome_slice'}));
           break;
         case 'THREAD_STATE':
-          detailsPanels.set('current_selection', m(ThreadStatePanel, {
-                              key: 'thread_state',
-                              ts: curSelection.ts,
-                              dur: curSelection.dur,
-                              utid: curSelection.utid,
-                              state: curSelection.state,
-                              cpu: curSelection.cpu
-                            }));
+          detailsPanels.set(
+              'current_selection', m(ThreadStatePanel, {key: 'thread_state'}));
           break;
         default:
           break;
       }
     }
     if (hasLogs()) {
-      detailsPanels.set('android_logs', m(LogPanel, {}));
+      detailsPanels.set('android_logs', m(LogPanel, {key: 'logs_panel'}));
     }
 
     if (globals.boundFlows.length > 0) {
-      detailsPanels.set('bound_flows', m(FlowEventsPanel));
+      detailsPanels.set(
+          'bound_flows', m(FlowEventsPanel, {key: 'flow_events'}));
     }
 
     for (const [key, value] of globals.aggregateDataStore.entries()) {
       if (value.columns.length > 0 && value.columns[0].data.length > 0) {
         detailsPanels.set(
-            value.tabName, m(AggregationPanel, {kind: key, data: value}));
+            value.tabName, m(AggregationPanel, {kind: key, key, data: value}));
       }
     }
 

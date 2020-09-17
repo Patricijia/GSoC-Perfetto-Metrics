@@ -40,7 +40,8 @@ import {
   HeapProfileDetails,
   QuantizedLoad,
   SliceDetails,
-  ThreadDesc
+  ThreadDesc,
+  ThreadStateDetails
 } from './globals';
 import {HomePage} from './home_page';
 import {openBufferWithLegacyTraceViewer} from './legacy_trace_viewer';
@@ -121,6 +122,11 @@ class FrontendApi {
 
   publishSliceDetails(click: SliceDetails) {
     globals.sliceDetails = click;
+    this.redraw();
+  }
+
+  publishThreadStateDetails(click: ThreadStateDetails) {
+    globals.threadStateDetails = click;
     this.redraw();
   }
 
@@ -312,11 +318,11 @@ function main() {
   // /?s=xxxx for permalinks.
   const stateHash = Router.param('s');
   const urlHash = Router.param('url');
-  if (stateHash) {
+  if (typeof stateHash === 'string' && stateHash) {
     globals.dispatch(Actions.loadPermalink({
       hash: stateHash,
     }));
-  } else if (urlHash) {
+  } else if (typeof urlHash === 'string' && urlHash) {
     globals.dispatch(Actions.openTraceFromUrl({
       url: urlHash,
     }));

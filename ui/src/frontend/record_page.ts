@@ -121,15 +121,14 @@ function RecSettings(cssClass: string) {
   const recButton = (mode: RecordMode, title: string, img: string) => {
     const checkboxArgs = {
       checked: cfg.mode === mode,
-      onchange: m.withAttr(
-          'checked',
-          (checked: boolean) => {
-            if (!checked) return;
-            const traceCfg = produce(globals.state.recordConfig, draft => {
-              draft.mode = mode;
-            });
-            globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
-          })
+      onchange: (e: InputEvent) => {
+        const checked = (e.target as HTMLInputElement).checked;
+        if (!checked) return;
+        const traceCfg = produce(globals.state.recordConfig, draft => {
+          draft.mode = mode;
+        });
+        globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
+      },
     };
     return m(
         `label${cfg.mode === mode ? '.selected' : ''}`,
@@ -312,8 +311,11 @@ function HeapSettings(cssClass: string) {
       `.${cssClass}`,
       m(Textarea, {
         title: 'Names or pids of the processes to track',
+        docsLink:
+            'https://perfetto.dev/docs/data-sources/native-heap-profiler#heapprofd-targets',
         placeholder: 'One per line, e.g.:\n' +
             'system_server\n' +
+            'com.google.android.apps.photos\n' +
             '1503',
         set: (cfg, val) => cfg.hpProcesses = val,
         get: (cfg) => cfg.hpProcesses
@@ -584,6 +586,7 @@ function AndroidSettings(cssClass: string) {
         } as ProbeAttrs,
         m(Dropdown, {
           title: 'Buffers',
+          cssClass: '.multicolumn',
           options: LOG_BUFFERS,
           set: (cfg, val) => cfg.androidLogBuffers = val,
           get: (cfg) => cfg.androidLogBuffers
@@ -797,7 +800,9 @@ function RecordingPlatformSelection() {
           m('select',
             {
               selectedIndex,
-              onchange: m.withAttr('value', onTargetChange),
+              onchange: (e: Event) => {
+                onTargetChange((e.target as HTMLSelectElement).value);
+              },
               onupdate: (select) => {
                 // Work around mithril bug
                 // (https://github.com/MithrilJS/mithril.js/issues/2107): We may
@@ -1307,7 +1312,8 @@ export const RecordPage = createPage({
     };
 
     const pages: m.Children = [];
-    let routePage = Router.param('p');
+    const routePageParam = Router.param('p');
+    let routePage = typeof routePageParam === 'string' ? routePageParam : '';
     if (!Object.keys(SECTIONS).includes(routePage)) {
       routePage = 'buffers';
     }

@@ -350,23 +350,6 @@ util::Status ExtendMetricsProto(const std::string& extend_metrics_proto,
   google::protobuf::compiler::Parser parser;
   parser.Parse(&tokenizer, file_desc);
 
-  // Go through all the imports (dependencies) and make the import
-  // paths relative to the Perfetto root. This allows trace processor embedders
-  // to have paths relative to their own root for imports when using metric
-  // proto extensions.
-  for (int i = 0; i < file_desc->dependency_size(); ++i) {
-    static constexpr char kPrefix[] = "protos/perfetto/metrics/";
-    auto* dep = file_desc->mutable_dependency(i);
-
-    // If the file being imported contains kPrefix, it is probably an import of
-    // a Perfetto metrics proto. Strip anything before kPrefix to ensure that
-    // we resolve the paths correctly.
-    size_t idx = dep->find(kPrefix);
-    if (idx != std::string::npos) {
-      *dep = dep->substr(idx);
-    }
-  }
-
   file_desc->set_name(BaseName(extend_metrics_proto));
   pool->BuildFile(*file_desc);
 
@@ -1061,15 +1044,17 @@ util::Status RunMetrics(const CommandLineOptions& options) {
       continue;
 
     std::string no_ext_name = metric_or_path.substr(0, ext_idx);
-    util::Status status = RegisterMetric(no_ext_name + ".sql");
+
+    // The proto must be extended before registering the metric.
+    util::Status status = ExtendMetricsProto(no_ext_name + ".proto", &pool);
     if (!status.ok()) {
-      return util::ErrStatus("Unable to register metric %s: %s",
+      return util::ErrStatus("Unable to extend metrics proto %s: %s",
                              metric_or_path.c_str(), status.c_message());
     }
 
-    status = ExtendMetricsProto(no_ext_name + ".proto", &pool);
+    status = RegisterMetric(no_ext_name + ".sql");
     if (!status.ok()) {
-      return util::ErrStatus("Unable to extend metrics proto %s: %s",
+      return util::ErrStatus("Unable to register metric %s: %s",
                              metric_or_path.c_str(), status.c_message());
     }
 

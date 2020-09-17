@@ -64,6 +64,8 @@ class TraceProcessorImpl : public TraceProcessor,
   util::Status ComputeMetric(const std::vector<std::string>& metric_names,
                              std::vector<uint8_t>* metrics) override;
 
+  std::vector<uint8_t> GetMetricDescriptors() override;
+
   void InterruptQuery() override;
 
   size_t RestoreInitialTables() override;
@@ -92,6 +94,7 @@ class TraceProcessorImpl : public TraceProcessor,
                                  std::move(generator));
   }
 
+  bool IsRootMetricField(const std::string& metric_name);
   ScopedDb db_;
   std::unique_ptr<QueryCache> query_cache_;
 

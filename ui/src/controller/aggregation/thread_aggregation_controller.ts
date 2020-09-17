@@ -14,7 +14,7 @@
 
 import {ColumnDef, ThreadStateExtra} from '../../common/aggregation_data';
 import {Engine} from '../../common/engine';
-import {Sorting, TimestampedAreaSelection} from '../../common/state';
+import {Area, Sorting} from '../../common/state';
 import {translateState} from '../../common/thread_state';
 import {toNs} from '../../common/time';
 import {
@@ -39,11 +39,8 @@ export class ThreadAggregationController extends AggregationController {
     }
   }
 
-  async createAggregateView(
-      engine: Engine, selectedArea: TimestampedAreaSelection) {
+  async createAggregateView(engine: Engine, area: Area) {
     await engine.query(`drop view if exists ${this.kind};`);
-    const area = selectedArea.area;
-    if (area === undefined) return false;
     this.setThreadStateUtids(area.tracks);
     if (this.utids === undefined || this.utids.length === 0) return false;
 
@@ -71,10 +68,7 @@ export class ThreadAggregationController extends AggregationController {
     return true;
   }
 
-  async getExtra(engine: Engine, selectedArea: TimestampedAreaSelection):
-      Promise<ThreadStateExtra|void> {
-    const area = selectedArea.area;
-    if (area === undefined) return;
+  async getExtra(engine: Engine, area: Area): Promise<ThreadStateExtra|void> {
     this.setThreadStateUtids(area.tracks);
     if (this.utids === undefined || this.utids.length === 0) return;
 
@@ -142,7 +136,8 @@ export class ThreadAggregationController extends AggregationController {
         title: 'Wall duration (ms)',
         kind: 'TIMESTAMP_NS',
         columnConstructor: Float64Array,
-        columnId: 'total_dur'
+        columnId: 'total_dur',
+        sum: true
       },
       {
         title: 'Avg Wall duration (ms)',
@@ -154,7 +149,8 @@ export class ThreadAggregationController extends AggregationController {
         title: 'Occurrences',
         kind: 'NUMBER',
         columnConstructor: Uint16Array,
-        columnId: 'occurrences'
+        columnId: 'occurrences',
+        sum: true
       }
     ];
   }

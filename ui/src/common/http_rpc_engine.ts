@@ -67,6 +67,12 @@ export class HttpRpcEngine extends Engine {
     return this.enqueueRequest('compute_metric', rawComputeMetricArgs);
   }
 
+  rawGetMetricDescriptors(rawGetMetricDescriptorsArgs: Uint8Array):
+      Promise<Uint8Array> {
+    return this.enqueueRequest(
+        'get_metric_descriptors', rawGetMetricDescriptorsArgs);
+  }
+
   async enableMetatrace(): Promise<void> {
     await this.enqueueRequest('enable_metatrace');
   }
@@ -136,6 +142,10 @@ export class HttpRpcEngine extends Engine {
 
   static async checkConnection(): Promise<HttpRpcState> {
     const httpRpcState: HttpRpcState = {connected: false};
+    console.info(
+        `It's safe to ignore the ERR_CONNECTION_REFUSED on ${RPC_URL} below. ` +
+        `That might happen while probing the exernal native accelerator. The ` +
+        `error is non-fatal and unlikely to be the culprit for any UI bug.`);
     try {
       const resp = await fetchWithTimeout(
           RPC_URL + 'status',
