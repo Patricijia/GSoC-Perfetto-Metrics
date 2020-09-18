@@ -55,8 +55,8 @@
 // See https://perfetto.dev/docs/data-sources/native-heap-profiler for more
 // information on heapprofd in general.
 
-#ifndef INCLUDE_PERFETTO_PROFILING_MEMORY_CLIENT_EXT_H_
-#define INCLUDE_PERFETTO_PROFILING_MEMORY_CLIENT_EXT_H_
+#ifndef INCLUDE_PERFETTO_PROFILING_MEMORY_HEAP_PROFILE_H_
+#define INCLUDE_PERFETTO_PROFILING_MEMORY_HEAP_PROFILE_H_
 
 #include <inttypes.h>
 #include <stdlib.h>
@@ -83,7 +83,7 @@ typedef struct AHeapInfo AHeapInfo;
 //
 // Takes name of the heap, up to 64 bytes including null terminator. To
 // guarantee uniqueness, this should include the caller's domain name,
-// e.g. "com.android.malloc".
+// e.g. "dev.perfetto.largeobjects".
 //
 // On error, returns NULL.
 // Errors are:
@@ -148,4 +148,4 @@ void AHeapProfile_reportFree(uint32_t heap_id, uint64_t alloc_id);
 
 #pragma GCC diagnostic pop
 
-#endif  // INCLUDE_PERFETTO_PROFILING_MEMORY_CLIENT_EXT_H_
+#endif  // INCLUDE_PERFETTO_PROFILING_MEMORY_HEAP_PROFILE_H_

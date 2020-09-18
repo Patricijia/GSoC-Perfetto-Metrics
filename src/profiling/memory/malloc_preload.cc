@@ -18,7 +18,7 @@
 #include <unistd.h>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/profiling/memory/client_ext.h"
+#include "perfetto/profiling/memory/heap_profile.h"
 #include "src/profiling/memory/wrap_allocators.h"
 
 namespace {
@@ -26,8 +26,7 @@ namespace {
 // constructors.
 #pragma GCC diagnostic push
 #pragma GCC diagnostic ignored "-Wglobal-constructors"
-uint32_t g_heap_id =
-    AHeapProfile_registerHeap(AHeapInfo_create("com.android.malloc"));
+uint32_t g_heap_id = AHeapProfile_registerHeap(AHeapInfo_create("libc.malloc"));
 #pragma GCC diagnostic pop
 }  // namespace
 
