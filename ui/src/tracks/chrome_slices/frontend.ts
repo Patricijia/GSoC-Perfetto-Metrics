@@ -98,8 +98,9 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const name = title.replace(/( )?\d+/g, '');
       const hue = hueForSlice(name);
       const saturation = isSelected ? 80 : 50;
-      const hovered = titleId === this.hoveredTitleId;
-      const color = `hsl(${hue}, ${saturation}%, ${hovered ? 30 : 65}%)`;
+      const highlighted = titleId === this.hoveredTitleId ||
+          globals.frontendLocalState.highlightedSliceId === sliceId;
+      const color = `hsl(${hue}, ${saturation}%, ${highlighted ? 30 : 65}%)`;
 
       ctx.fillStyle = color;
 
@@ -148,13 +149,12 @@ export class ChromeSliceTrack extends Track<Config, Data> {
 
   getSliceIndex({x, y}: {x: number, y: number}): number|void {
     const data = this.data();
-    this.hoveredTitleId = -1;
     if (data === undefined) return;
     const {timeScale} = globals.frontendLocalState;
     if (y < TRACK_PADDING) return;
     const instantWidthTime = timeScale.deltaPxToDuration(HALF_CHEVRON_WIDTH_PX);
     const t = timeScale.pxToTime(x);
-    const depth = Math.floor(y / SLICE_HEIGHT);
+    const depth = Math.floor((y - TRACK_PADDING) / SLICE_HEIGHT);
     for (let i = 0; i < data.starts.length; i++) {
       if (depth !== data.depths[i]) {
         continue;
@@ -177,16 +177,19 @@ export class ChromeSliceTrack extends Track<Config, Data> {
   }
 
   onMouseMove({x, y}: {x: number, y: number}) {
+    this.hoveredTitleId = -1;
+    globals.frontendLocalState.setHighlightedSliceId(-1);
     const sliceIndex = this.getSliceIndex({x, y});
     if (sliceIndex === undefined) return;
     const data = this.data();
     if (data === undefined) return;
-    const titleId = data.titles[sliceIndex];
-    this.hoveredTitleId = titleId;
+    this.hoveredTitleId = data.titles[sliceIndex];
+    globals.frontendLocalState.setHighlightedSliceId(data.sliceIds[sliceIndex]);
   }
 
   onMouseOut() {
     this.hoveredTitleId = -1;
+    globals.frontendLocalState.setHighlightedSliceId(-1);
   }
 
   onMouseClick({x, y}: {x: number, y: number}): boolean {

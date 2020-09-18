@@ -299,6 +299,7 @@ cc_library_shared {
     ":perfetto_src_profiling_common_unwind_support",
     ":perfetto_src_profiling_memory_client",
     ":perfetto_src_profiling_memory_client_ext",
+    ":perfetto_src_profiling_memory_client_ext_standalone",
     ":perfetto_src_profiling_memory_daemon",
     ":perfetto_src_profiling_memory_ring_buffer",
     ":perfetto_src_profiling_memory_scoped_spinlock",
@@ -308,7 +309,6 @@ cc_library_shared {
     ":perfetto_src_tracing_core_core",
     ":perfetto_src_tracing_ipc_common",
     ":perfetto_src_tracing_ipc_producer_producer",
-    "src/profiling/memory/client_ext_standalone.cc",
   ],
   shared_libs: [
     "liblog",
@@ -6318,6 +6318,14 @@ filegroup {
   ],
 }
 
+// GN: //src/profiling/memory:client_ext_standalone
+filegroup {
+  name: "perfetto_src_profiling_memory_client_ext_standalone",
+  srcs: [
+    "src/profiling/memory/client_ext_standalone.cc",
+  ],
+}
+
 // GN: //src/profiling/memory:daemon
 filegroup {
   name: "perfetto_src_profiling_memory_daemon",
@@ -8324,7 +8332,7 @@ cc_binary_host {
     "src/trace_processor/util/proto_to_json.cc",
   ],
   static_libs: [
-    "libprotoc",
+    "libprotobuf-cpp-full",
     "libsqlite",
     "libz",
   ],
@@ -8443,10 +8451,8 @@ cc_binary_host {
     ":perfetto_tools_trace_to_text_pprofbuilder",
     ":perfetto_tools_trace_to_text_utils",
   ],
-  shared_libs: [
-    "libprotobuf-cpp-full",
-  ],
   static_libs: [
+    "libprotobuf-cpp-full",
     "libsqlite",
     "libz",
   ],
