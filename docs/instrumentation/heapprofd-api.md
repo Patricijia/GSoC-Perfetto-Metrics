@@ -53,7 +53,7 @@ $ make heapprofd_standalone_client
 You will find the built library in
 `out/target/product/generic_arm64/system/lib64/heapprofd_standalone_client.so`.
 The header for the API can be found in
-`external/perfetto/include/perfetto/profiling/memory/client_ext.h`.
+`external/perfetto/include/perfetto/profiling/memory/heap_profile.h`.
 
 WARNING: Only use the header from the checkout you used to build the library,
          as the API is not stable yet.
@@ -86,7 +86,7 @@ To find out where in a program these two functions get called, we instrument
 the allocator using this API:
 
 ```
-#include "path/to/client_ext.h"
+#include "path/to/heap_profile.h"
 
 static uint32_t g_heap_id = AHeapProfile_registerHeap(
   AHeapInfo_create("invalid.example"));

@@ -23,7 +23,7 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/utils.h"
-#include "perfetto/profiling/memory/client_ext.h"
+#include "perfetto/profiling/memory/heap_profile.h"
 
 #include "src/profiling/memory/wrap_allocators.h"
 
@@ -97,8 +97,7 @@ void ProfileCallback(bool enabled) {
 }
 
 uint32_t g_heap_id = AHeapProfile_registerHeap(
-    AHeapInfo_setCallback(AHeapInfo_create("com.android.malloc"),
-                          ProfileCallback));
+    AHeapInfo_setCallback(AHeapInfo_create("libc.malloc"), ProfileCallback));
 
 }  // namespace
 
