@@ -38,7 +38,7 @@
 
 #include "src/profiling/common/proc_utils.h"
 #include "src/profiling/memory/client.h"
-#include "src/profiling/memory/client_ext_factory.h"
+#include "src/profiling/memory/client_api_factory.h"
 #include "src/profiling/memory/scoped_spinlock.h"
 #include "src/profiling/memory/unhooked_allocator.h"
 #include "src/profiling/memory/wire_protocol.h"
@@ -52,6 +52,7 @@ struct AHeapInfo {
   void (*callback)(bool enabled);
 
   // Internal fields.
+  perfetto::profiling::Sampler sampler;
   std::atomic<bool> ready;
   std::atomic<bool> enabled;
 };
@@ -115,7 +116,6 @@ AHeapInfo& GetHeap(uint32_t id) {
 std::atomic<bool> g_client_lock{false};
 
 std::atomic<uint32_t> g_next_heap_id{kMinHeapId};
-
 
 // Called only if |g_client_lock| acquisition fails, which shouldn't happen
 // unless we're in a completely unexpected state (which we won't know how to
@@ -253,7 +253,7 @@ __attribute__((visibility("default"))) uint32_t AHeapProfile_registerHeap(
 
 __attribute__((visibility("default"))) bool
 AHeapProfile_reportAllocation(uint32_t heap_id, uint64_t id, uint64_t size) {
-  const AHeapInfo& heap = GetHeap(heap_id);
+  AHeapInfo& heap = GetHeap(heap_id);
   if (!heap.enabled.load(std::memory_order_acquire)) {
     return false;
   }
@@ -272,8 +272,7 @@ AHeapProfile_reportAllocation(uint32_t heap_id, uint64_t id, uint64_t size) {
       (*g_client_ptr)->AddClientSpinlockBlockedUs(s.blocked_us());
     }
 
-    sampled_alloc_sz =
-        (*g_client_ptr)->GetSampleSizeLocked(static_cast<size_t>(size));
+    sampled_alloc_sz = heap.sampler.SampleSize(static_cast<size_t>(size));
     if (sampled_alloc_sz == 0)  // not sampling
       return false;
 
@@ -364,39 +363,42 @@ __attribute__((visibility("default"))) bool AHeapProfile_initSession(
   const perfetto::profiling::ClientConfiguration& cli_config =
       client->client_config();
 
-  for (uint32_t i = kMinHeapId; i < g_next_heap_id.load(); ++i) {
+  uint64_t heap_intervals[perfetto::base::ArraySize(g_heaps)] = {};
+  uint32_t max_heap = g_next_heap_id.load();
+  for (uint32_t i = kMinHeapId; i < max_heap; ++i) {
     AHeapInfo& heap = GetHeap(i);
     if (!heap.ready.load(std::memory_order_acquire))
       continue;
 
-    bool matched = cli_config.all_heaps;
-    for (uint32_t j = 0; !matched && j < cli_config.num_heaps; ++j) {
-      static_assert(sizeof(g_heaps[0].heap_name) == HEAPPROFD_HEAP_NAME_SZ,
-                    "correct heap name size");
-      static_assert(sizeof(cli_config.heaps[0]) == HEAPPROFD_HEAP_NAME_SZ,
-                    "correct heap name size");
-      if (strncmp(&cli_config.heaps[j][0], &heap.heap_name[0],
-                  HEAPPROFD_HEAP_NAME_SZ) == 0) {
-        matched = true;
-      }
-    }
-    if (matched) {
+    heap_intervals[i] = GetHeapSamplingInterval(cli_config, heap.heap_name);
+    // The callbacks must be called while NOT LOCKED. Because they run
+    // arbitrary code, it would be very easy to build a deadlock.
+    if (heap_intervals[i]) {
       if (!heap.enabled.load(std::memory_order_acquire) && heap.callback)
         heap.callback(true);
       heap.enabled.store(true, std::memory_order_release);
       client->RecordHeapName(i, &heap.heap_name[0]);
-    }
-    if (!matched && heap.enabled.load(std::memory_order_acquire)) {
+    } else if (heap.enabled.load(std::memory_order_acquire)) {
       heap.enabled.store(false, std::memory_order_release);
       if (heap.callback)
         heap.callback(false);
     }
   }
+
   PERFETTO_LOG("%s: heapprofd_client initialized.", getprogname());
   {
     ScopedSpinlock s(&g_client_lock, ScopedSpinlock::Mode::Try);
     if (PERFETTO_UNLIKELY(!s.locked()))
       AbortOnSpinlockTimeout();
+
+    // This needs to happen under the lock for mutual exclusion regarding the
+    // random engine.
+    for (uint32_t i = kMinHeapId; i < max_heap; ++i) {
+      AHeapInfo& heap = GetHeap(i);
+      if (heap_intervals[i]) {
+        heap.sampler.SetSamplingInterval(heap_intervals[i]);
+      }
+    }
 
     // This cannot have been set in the meantime. There are never two concurrent
     // calls to this function, as Bionic uses atomics to guard against that.

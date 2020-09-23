@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,20 +14,15 @@
  * limitations under the License.
  */
 
-#include "src/android_internal/dropbox_service.h"
-
-#include <android/os/DropBoxManager.h>
-#include <utils/StrongPointer.h>
+#include "src/profiling/memory/sampler.h"
 
 namespace perfetto {
-namespace android_internal {
+namespace profiling {
 
-bool SaveIntoDropbox(const char* tag, int fd) {
-  using android::os::DropBoxManager;
-  android::sp<DropBoxManager> dropbox(new DropBoxManager());
-  auto status = dropbox->addFile(android::String16(tag), fd, /*flags=*/0);
-  return status.isOk();
+std::default_random_engine& GetGlobalRandomEngineLocked() {
+  static std::default_random_engine engine;
+  return engine;
 }
 
-}  // namespace android_internal
+}  // namespace profiling
 }  // namespace perfetto
