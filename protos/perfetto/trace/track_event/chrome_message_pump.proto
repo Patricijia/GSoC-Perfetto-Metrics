@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 The Android Open Source Project
+ * Copyright (C) 2020 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,12 @@
  * limitations under the License.
  */
 
-#ifndef SRC_ANDROID_INTERNAL_DROPBOX_SERVICE_H_
-#define SRC_ANDROID_INTERNAL_DROPBOX_SERVICE_H_
+syntax = "proto2";
 
-namespace perfetto {
-namespace android_internal {
+package perfetto.protos;
 
-extern "C" {
-
-// Saves the passed file into Dropbox with the given tag.
-// Takes ownership of the passed file descriptor.
-bool __attribute__((visibility("default")))
-SaveIntoDropbox(const char* tag, int fd);
-
-}  // extern "C"
-
-}  // namespace android_internal
-}  // namespace perfetto
-
-#endif  // SRC_ANDROID_INTERNAL_DROPBOX_SERVICE_H_
+// Details about Chrome message pump events
+message ChromeMessagePump {
+  // True if there are sent messages in the queue.
+  optional bool sent_messages_in_queue = 1;
+}
