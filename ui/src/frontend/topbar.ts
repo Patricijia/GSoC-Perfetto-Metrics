@@ -19,6 +19,7 @@ import {EngineConfig} from '../common/state';
 
 import {globals} from './globals';
 import {executeSearch} from './search_handler';
+import {taskTracker} from './task_tracker';
 
 const SEARCH = Symbol('search');
 const COMMAND = Symbol('command');
@@ -30,8 +31,6 @@ const PLACEHOLDER = {
 };
 
 export const DISMISSED_PANNING_HINT_KEY = 'dismissedPanningHint';
-const TRACE_STATS =
-    'select * from stats WHERE severity = \'error\' and value > 0';
 
 let mode: Mode = SEARCH;
 let displayStepThrough = false;
@@ -112,17 +111,16 @@ class Omnibox implements m.ClassComponent {
         `.omnibox${commandMode ? '.command-mode' : ''}`,
         m('input', {
           placeholder: PLACEHOLDER[mode],
-          oninput: m.withAttr(
-              'value',
-              v => {
-                globals.frontendLocalState.setOmnibox(
-                    v, commandMode ? 'COMMAND' : 'SEARCH');
-                if (mode === SEARCH) {
-                  globals.frontendLocalState.setSearchIndex(-1);
-                  displayStepThrough = v.length >= 4;
-                  globals.rafScheduler.scheduleFullRedraw();
-                }
-              }),
+          oninput: (e: InputEvent) => {
+            const value = (e.target as HTMLInputElement).value;
+            globals.frontendLocalState.setOmnibox(
+                value, commandMode ? 'COMMAND' : 'SEARCH');
+            if (mode === SEARCH) {
+              globals.frontendLocalState.setSearchIndex(-1);
+              displayStepThrough = value.length >= 4;
+              globals.rafScheduler.scheduleFullRedraw();
+            }
+          },
           value: globals.frontendLocalState.omnibox,
         }),
         displayStepThrough ?
@@ -181,7 +179,7 @@ class Progress implements m.ClassComponent {
     if (this.progressBar === undefined) return;
     const engine: EngineConfig = globals.state.engines['0'];
     if ((engine !== undefined && !engine.ready) ||
-        globals.numQueuedQueries > 0) {
+        globals.numQueuedQueries > 0 || taskTracker.hasPendingTasks()) {
       this.progressBar.classList.add('progress-anim');
     } else {
       this.progressBar.classList.remove('progress-anim');
@@ -192,7 +190,12 @@ class Progress implements m.ClassComponent {
 
 class NewVersionNotification implements m.ClassComponent {
   view() {
-    if (!globals.frontendLocalState.newVersionAvailable) return;
+    const engine: EngineConfig = globals.state.engines['0'];
+    // Don't show the new version toast if a trace is loading (engine exists).
+    if (!globals.frontendLocalState.newVersionAvailable ||
+        engine !== undefined) {
+      return;
+    }
     return m(
         '.new-version-toast',
         'A new version of the UI is available!',
@@ -243,23 +246,17 @@ class HelpPanningNotification implements m.ClassComponent {
 class TraceErrorIcon implements m.ClassComponent {
   view() {
     const errors = globals.traceErrors;
-    if (!errors || mode === COMMAND) return;
+    if (!errors && !globals.metricError || mode === COMMAND) return;
+    const message = errors ? `${errors} import or data loss errors detected.` :
+                             `Metric error detected.`;
     return m(
-        '.error',
+        'a.error',
+        {href: '#!/info'},
         m('i.material-icons',
           {
-            onclick: () => {
-              globals.dispatch(Actions.executeQuery({
-                engineId: '0',
-                queryId: 'command',
-                query: TRACE_STATS,
-              }));
-            },
-            title: `${
-                globals
-                    .traceErrors} import errors detected. Click for more info.`,
+            title: message + ` Click for more info.`,
           },
-          'warning'));
+          'announcement'));
   }
 }
 

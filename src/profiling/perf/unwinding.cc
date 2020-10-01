@@ -305,11 +305,13 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
 
   struct UnwindResult {
     unwindstack::ErrorCode error_code;
+    uint64_t warnings;
     std::vector<unwindstack::FrameData> frames;
 
     UnwindResult(unwindstack::ErrorCode e,
+                 uint64_t w,
                  std::vector<unwindstack::FrameData> f)
-        : error_code(e), frames(std::move(f)) {}
+        : error_code(e), warnings(w), frames(std::move(f)) {}
     UnwindResult(const UnwindResult&) = delete;
     UnwindResult& operator=(const UnwindResult&) = delete;
     UnwindResult(UnwindResult&&) = default;
@@ -328,16 +330,20 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
     unwindstack::Unwinder unwinder(kUnwindingMaxFrames, &unwind_state->fd_maps,
                                    regs_copy.get(), overlay_memory);
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-    unwinder.SetJitDebug(unwind_state->jit_debug.get(), regs_copy->Arch());
-    unwinder.SetDexFiles(unwind_state->dex_files.get(), regs_copy->Arch());
+    unwinder.SetJitDebug(unwind_state->jit_debug.get());
+    unwinder.SetDexFiles(unwind_state->dex_files.get());
 #endif
     unwinder.Unwind(/*initial_map_names_to_skip=*/nullptr,
                     /*map_suffixes_to_ignore=*/nullptr);
-    return {unwinder.LastErrorCode(), unwinder.ConsumeFrames()};
+    return {unwinder.LastErrorCode(), unwinder.warnings(),
+            unwinder.ConsumeFrames()};
   };
 
   // first unwind attempt
   UnwindResult unwind = attempt_unwind();
+
+  bool should_retry = unwind.error_code == unwindstack::ERROR_INVALID_MAP ||
+                      unwind.warnings & unwindstack::WARNING_DEX_PC_NOT_IN_MAP;
 
   // ERROR_INVALID_MAP means that unwinding reached a point in memory without a
   // corresponding mapping. This is possible if the parsed /proc/pid/maps is
@@ -348,11 +354,10 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
   // error around the truncated part is not unexpected.
   //
   // TODO(rsavitski): consider rate-limiting unwind retries.
-  if (unwind.error_code == unwindstack::ERROR_INVALID_MAP &&
-      sample.stack_maxed) {
+  if (should_retry && sample.stack_maxed) {
     PERFETTO_DLOG("Skipping reparse/reunwind due to maxed stack for tid [%d]",
                   static_cast<int>(sample.tid));
-  } else if (unwind.error_code == unwindstack::ERROR_INVALID_MAP) {
+  } else if (should_retry) {
     {
       PERFETTO_METATRACE_SCOPED(TAG_PRODUCER, PROFILER_MAPS_REPARSE);
       PERFETTO_DLOG("Reparsing maps for pid [%d]",

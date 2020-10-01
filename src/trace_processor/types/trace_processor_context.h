@@ -34,12 +34,14 @@ class EventTracker;
 class ForwardingTraceParser;
 class FtraceModule;
 class GlobalArgsTracker;
+class GlobalStackProfileTracker;
 class HeapGraphTracker;
 class HeapProfileTracker;
 class MetadataTracker;
 class ProtoImporterModule;
 class ProcessTracker;
 class SliceTracker;
+class FlowTracker;
 class TraceParser;
 class TraceSorter;
 class TraceStorage;
@@ -67,10 +69,12 @@ class TraceProcessorContext {
 
   std::unique_ptr<TrackTracker> track_tracker;
   std::unique_ptr<SliceTracker> slice_tracker;
+  std::unique_ptr<FlowTracker> flow_tracker;
   std::unique_ptr<ProcessTracker> process_tracker;
   std::unique_ptr<EventTracker> event_tracker;
   std::unique_ptr<ClockTracker> clock_tracker;
   std::unique_ptr<HeapProfileTracker> heap_profile_tracker;
+  std::unique_ptr<GlobalStackProfileTracker> global_stack_profile_tracker;
   std::unique_ptr<MetadataTracker> metadata_tracker;
 
   // These fields are stored as pointers to Destructible objects rather than

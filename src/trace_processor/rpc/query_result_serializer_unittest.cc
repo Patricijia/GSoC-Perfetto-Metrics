@@ -140,7 +140,8 @@ void TestDeserializer::DeserializeBuffer(const uint8_t* start, size_t size) {
       pos = next_sep == std::string::npos ? next_sep : next_sep + 1;
     }
 
-    for (auto it = batch.cells(&parse_error); it; ++it) {
+    uint32_t num_cells = 0;
+    for (auto it = batch.cells(&parse_error); it; ++it, ++num_cells) {
       uint8_t cell_type = static_cast<uint8_t>(*it);
       switch (cell_type) {
         case BatchProto::CELL_INVALID:
@@ -183,6 +184,11 @@ void TestDeserializer::DeserializeBuffer(const uint8_t* start, size_t size) {
       }
 
       EXPECT_FALSE(parse_error);
+    }
+    if (columns.empty()) {
+      EXPECT_EQ(num_cells, 0u);
+    } else {
+      EXPECT_EQ(num_cells % columns.size(), 0u);
     }
   }
 }
@@ -343,7 +349,8 @@ TEST(QueryResultSerializerTest, RandomSizes) {
       expected.emplace_back(SqlValue::Long(static_cast<long>(rnd_engine())));
       insert_values += std::to_string(expected.back().long_value);
     } else if (type == 2) {
-      expected.emplace_back(SqlValue::Double(rnd_engine() * 1.0));
+      expected.emplace_back(
+          SqlValue::Double(static_cast<double>(rnd_engine())));
       insert_values += std::to_string(expected.back().double_value);
     } else if (type == 3 || type == 4) {
       size_t len = (rnd_engine() % 5) * 32;

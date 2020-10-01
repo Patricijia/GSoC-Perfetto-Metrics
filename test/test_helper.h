@@ -133,8 +133,7 @@ class FakeProducerThread {
   void CreateProducerProvidedSmb() {
     PosixSharedMemory::Factory factory;
     shm_ = factory.CreateSharedMemory(1024 * 1024);
-    shm_arbiter_ =
-        SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), base::kPageSize);
+    shm_arbiter_ = SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), 4096);
   }
 
   void ProduceStartupEventBatch(const protos::gen::TestConfig& config,
@@ -217,6 +216,9 @@ class TestHelper : public Consumer {
   base::ThreadTaskRunner* producer_thread() {
     return fake_producer_thread_.runner();
   }
+  const std::vector<protos::gen::TracePacket>& full_trace() {
+    return full_trace_;
+  }
   const std::vector<protos::gen::TracePacket>& trace() { return trace_; }
 
  private:
@@ -231,6 +233,7 @@ class TestHelper : public Consumer {
   std::function<void()> on_detach_callback_;
   std::function<void(bool)> on_attach_callback_;
 
+  std::vector<protos::gen::TracePacket> full_trace_;
   std::vector<protos::gen::TracePacket> trace_;
 
   ServiceThread service_thread_;

@@ -34,6 +34,8 @@
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
+#include "src/profiling/memory/unwound_messages.h"
+#include "src/profiling/memory/wire_protocol.h"
 
 namespace perfetto {
 namespace profiling {
@@ -96,38 +98,59 @@ size_t Log2LessThan(uint64_t value) {
 
 }  // namespace
 
-void HeapprofdConfigToClientConfiguration(
+bool HeapprofdConfigToClientConfiguration(
     const HeapprofdConfig& heapprofd_config,
     ClientConfiguration* cli_config) {
-  cli_config->interval = heapprofd_config.sampling_interval_bytes();
+  cli_config->default_interval = heapprofd_config.sampling_interval_bytes();
   cli_config->block_client = heapprofd_config.block_client();
   cli_config->disable_fork_teardown = heapprofd_config.disable_fork_teardown();
   cli_config->disable_vfork_detection =
       heapprofd_config.disable_vfork_detection();
   cli_config->block_client_timeout_us =
       heapprofd_config.block_client_timeout_us();
+  cli_config->all_heaps = heapprofd_config.all_heaps();
   size_t n = 0;
   std::vector<std::string> heaps = heapprofd_config.heaps();
+  std::vector<uint64_t> heap_intervals =
+      heapprofd_config.heap_sampling_intervals();
   if (heaps.empty()) {
-    heaps.push_back("malloc");
+    heaps.push_back("libc.malloc");
+  }
+
+  if (heap_intervals.empty()) {
+    heap_intervals.assign(heaps.size(),
+                          heapprofd_config.sampling_interval_bytes());
+  }
+  if (heap_intervals.size() != heaps.size()) {
+    PERFETTO_ELOG("heap_sampling_intervals and heaps length mismatch.");
+    return false;
+  }
+  if (std::find(heap_intervals.begin(), heap_intervals.end(), 0u) !=
+      heap_intervals.end()) {
+    PERFETTO_ELOG("zero sampling interval.");
+    return false;
   }
   if (heaps.size() > base::ArraySize(cli_config->heaps)) {
     heaps.resize(base::ArraySize(cli_config->heaps));
     PERFETTO_ELOG("Too many heaps requested. Truncating.");
   }
-  for (const std::string& heap : heaps) {
+  for (size_t i = 0; i < heaps.size(); ++i) {
+    const std::string& heap = heaps[i];
+    const uint64_t interval = heap_intervals[i];
     // -1 for the \0 byte.
     if (heap.size() > HEAPPROFD_HEAP_NAME_SZ - 1) {
       PERFETTO_ELOG("Invalid heap name %s (larger than %d)", heap.c_str(),
                     HEAPPROFD_HEAP_NAME_SZ - 1);
       continue;
     }
-    strncpy(&cli_config->heaps[n][0], heap.c_str(),
-            sizeof(cli_config->heaps[0]));
-    cli_config->heaps[n][sizeof(cli_config->heaps[0]) - 1] = '\0';
+    strncpy(&cli_config->heaps[n].name[0], heap.c_str(),
+            sizeof(cli_config->heaps[0].name));
+    cli_config->heaps[n].name[sizeof(cli_config->heaps[0].name) - 1] = '\0';
+    cli_config->heaps[n].interval = interval;
     n++;
   }
   cli_config->num_heaps = n;
+  return true;
 }
 
 const uint64_t LogHistogram::kMaxBucket = 0;
@@ -158,10 +181,10 @@ size_t LogHistogram::GetBucket(uint64_t value) {
 // thread.
 HeapprofdProducer::HeapprofdProducer(HeapprofdMode mode,
                                      base::TaskRunner* task_runner,
-                                     bool is_oneshot)
+                                     bool exit_when_done)
     : task_runner_(task_runner),
       mode_(mode),
-      is_oneshot_(is_oneshot),
+      exit_when_done_(exit_when_done),
       unwinding_workers_(MakeUnwindingWorkers(this, kUnwinderThreads)),
       socket_delegate_(this),
       weak_factory_(this) {
@@ -219,7 +242,7 @@ void HeapprofdProducer::OnDisconnect() {
   PERFETTO_LOG("Disconnected from tracing service");
 
   // Do not attempt to reconnect if we're a process-private process, just quit.
-  if (is_oneshot_) {
+  if (exit_when_done_) {
     TerminateProcess(/*exit_status=*/1);  // does not return
   }
 
@@ -281,17 +304,17 @@ void HeapprofdProducer::Restart() {
   // recreate it again.
 
   // Oneshot producer should not attempt restarts.
-  if (is_oneshot_)
+  if (exit_when_done_)
     PERFETTO_FATAL("Attempting to restart a one shot producer.");
 
   HeapprofdMode mode = mode_;
   base::TaskRunner* task_runner = task_runner_;
   const char* socket_name = producer_sock_name_;
-  const bool is_oneshot = is_oneshot_;
+  const bool exit_when_done = exit_when_done_;
 
   // Invoke destructor and then the constructor again.
   this->~HeapprofdProducer();
-  new (this) HeapprofdProducer(mode, task_runner, is_oneshot);
+  new (this) HeapprofdProducer(mode, task_runner, exit_when_done);
 
   ConnectWithRetries(socket_name);
 }
@@ -422,10 +445,13 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   DataSource data_source(endpoint_->CreateTraceWriter(buffer_id));
   data_source.id = id;
   auto& cli_config = data_source.client_configuration;
-  HeapprofdConfigToClientConfiguration(heapprofd_config, &cli_config);
+  if (!HeapprofdConfigToClientConfiguration(heapprofd_config, &cli_config))
+    return;
   data_source.config = heapprofd_config;
   data_source.normalized_cmdlines = std::move(normalized_cmdlines.value());
-  data_source.stop_timeout_ms = ds_config.stop_timeout_ms();
+  data_source.stop_timeout_ms = ds_config.stop_timeout_ms()
+                                    ? ds_config.stop_timeout_ms()
+                                    : 5000 /* kDataSourceStopTimeoutMs */;
   data_source.start_cputime_sec = start_cputime_sec;
 
   InterningOutputTracker::WriteFixedInterningsPacket(
@@ -652,13 +678,14 @@ void HeapprofdProducer::DumpProcessState(DataSource* data_source,
       dump_timestamp = heap_tracker.max_timestamp();
     else
       dump_timestamp = heap_tracker.committed_timestamp();
+
     const char* heap_name = nullptr;
-    const ClientConfiguration& cli_config = data_source->client_configuration;
-    if (heap_id < cli_config.num_heaps) {
-      heap_name = cli_config.heaps[heap_id];
-    } else {
+    auto it = process_state->heap_names.find(heap_id);
+    if (it != process_state->heap_names.end())
+      heap_name = it->second.c_str();
+    else
       PERFETTO_ELOG("Invalid heap id %" PRIu32, heap_id);
-    }
+
     auto new_heapsamples =
         [pid, from_startup, dump_timestamp, process_state, data_source,
          heap_name](ProfilePacket::ProcessHeapSamples* proto) {
@@ -677,6 +704,8 @@ void HeapprofdProducer::DumpProcessState(DataSource* data_source,
           stats->set_map_reparses(process_state->map_reparses);
           stats->set_total_unwinding_time_us(
               process_state->total_unwinding_time_us);
+          stats->set_client_spinlock_blocked_us(
+              process_state->client_spinlock_blocked_us);
           auto* unwinding_hist = stats->set_unwinding_time_us();
           for (const auto& p : process_state->unwinding_time_us.GetData()) {
             auto* bucket = unwinding_hist->add_buckets();
@@ -981,6 +1010,14 @@ void HeapprofdProducer::PostFreeRecord(std::vector<FreeRecord> free_recs) {
   });
 }
 
+void HeapprofdProducer::PostHeapNameRecord(HeapNameRecord rec) {
+  auto weak_this = weak_factory_.GetWeakPtr();
+  task_runner_->PostTask([weak_this, rec] {
+    if (weak_this)
+      weak_this->HandleHeapNameRecord(rec);
+  });
+}
+
 void HeapprofdProducer::PostSocketDisconnected(DataSourceInstanceID ds_id,
                                                pid_t pid,
                                                SharedRingBuffer::Stats stats) {
@@ -1064,6 +1101,45 @@ void HeapprofdProducer::HandleFreeRecord(FreeRecord free_rec) {
   heap_tracker.RecordFree(entry.addr, entry.sequence_number, 0);
 }
 
+void HeapprofdProducer::HandleHeapNameRecord(HeapNameRecord rec) {
+  auto it = data_sources_.find(rec.data_source_instance_id);
+  if (it == data_sources_.end()) {
+    PERFETTO_LOG("Invalid data source in free record.");
+    return;
+  }
+
+  DataSource& ds = it->second;
+  auto process_state_it = ds.process_states.find(rec.pid);
+  if (process_state_it == ds.process_states.end()) {
+    PERFETTO_LOG("Invalid PID in free record.");
+    return;
+  }
+
+  ProcessState& process_state = process_state_it->second;
+  const HeapName& entry = rec.entry;
+  std::string heap_name = entry.heap_name;
+  if (heap_name.empty()) {
+    PERFETTO_ELOG("Ignoring empty heap name.");
+    return;
+  }
+  if (entry.heap_id == 0) {
+    PERFETTO_ELOG("Invalid zero heap ID.");
+    return;
+  }
+  std::string& existing_heap_name = process_state.heap_names[entry.heap_id];
+  if (!existing_heap_name.empty() && existing_heap_name != heap_name) {
+    PERFETTO_ELOG("Overriding heap name %s with %s", existing_heap_name.c_str(),
+                  heap_name.c_str());
+  }
+  existing_heap_name = entry.heap_name;
+}
+
+void HeapprofdProducer::TerminateWhenDone() {
+  if (data_sources_.empty())
+    TerminateProcess(0);
+  exit_when_done_ = true;
+}
+
 bool HeapprofdProducer::MaybeFinishDataSource(DataSource* ds) {
   if (!ds->process_states.empty() || !ds->rejected_pids.empty() ||
       !ds->shutting_down) {
@@ -1073,8 +1149,8 @@ bool HeapprofdProducer::MaybeFinishDataSource(DataSource* ds) {
   bool was_stopped = ds->was_stopped;
   DataSourceInstanceID ds_id = ds->id;
   auto weak_producer = weak_factory_.GetWeakPtr();
-  bool is_oneshot = is_oneshot_;
-  ds->trace_writer->Flush([weak_producer, is_oneshot, ds_id, was_stopped] {
+  bool exit_when_done = exit_when_done_;
+  ds->trace_writer->Flush([weak_producer, exit_when_done, ds_id, was_stopped] {
     if (!weak_producer)
       return;
 
@@ -1082,7 +1158,7 @@ bool HeapprofdProducer::MaybeFinishDataSource(DataSource* ds) {
       weak_producer->endpoint_->NotifyDataSourceStopped(ds_id);
     weak_producer->data_sources_.erase(ds_id);
 
-    if (is_oneshot) {
+    if (exit_when_done) {
       // Post this as a task to allow NotifyDataSourceStopped to post tasks.
       weak_producer->task_runner_->PostTask([weak_producer] {
         if (!weak_producer)
@@ -1110,6 +1186,7 @@ void HeapprofdProducer::HandleSocketDisconnected(
   ProcessState& process_state = process_state_it->second;
   process_state.disconnected = !ds.shutting_down;
   process_state.buffer_overran = stats.hit_timeout;
+  process_state.client_spinlock_blocked_us = stats.client_spinlock_blocked_us;
   process_state.buffer_corrupted =
       stats.num_writes_corrupt > 0 || stats.num_reads_corrupt > 0;
 

@@ -98,11 +98,15 @@ source_set("storage_minimal") {
     "importers/proto/profile_module.h",
     "importers/proto/profile_packet_utils.cc",
     "importers/proto/profile_packet_utils.h",
+    "importers/proto/profiler_util.cc",
+    "importers/proto/profiler_util.h",
     "importers/proto/proto_importer_module.cc",
     "importers/proto/proto_importer_module.h",
     "importers/proto/proto_incremental_state.h",
     "importers/proto/proto_trace_parser.cc",
     "importers/proto/proto_trace_parser.h",
+    "importers/proto/proto_trace_reader.cc",
+    "importers/proto/proto_trace_reader.h",
     "importers/proto/proto_trace_tokenizer.cc",
     "importers/proto/proto_trace_tokenizer.h",
     "importers/proto/stack_profile_tracker.cc",
@@ -248,7 +252,9 @@ source_set("storage_full") {
     "../protozero",
     "importers:common",
     "storage",
+    "tables",
     "types",
+    "util",
   ]
   if (enable_perfetto_trace_processor_json) {
     deps += [ "../../gn:jsoncpp" ]
@@ -278,6 +284,8 @@ if (enable_perfetto_trace_processor_sqlite) {
     sources = [
       "dynamic/ancestor_slice_generator.cc",
       "dynamic/ancestor_slice_generator.h",
+      "dynamic/connected_flow_generator.cc",
+      "dynamic/connected_flow_generator.h",
       "dynamic/descendant_slice_generator.cc",
       "dynamic/descendant_slice_generator.h",
       "dynamic/describe_slice_generator.cc",
@@ -286,8 +294,12 @@ if (enable_perfetto_trace_processor_sqlite) {
       "dynamic/experimental_counter_dur_generator.h",
       "dynamic/experimental_flamegraph_generator.cc",
       "dynamic/experimental_flamegraph_generator.h",
+      "dynamic/experimental_sched_upid_generator.cc",
+      "dynamic/experimental_sched_upid_generator.h",
       "dynamic/experimental_slice_layout_generator.cc",
       "dynamic/experimental_slice_layout_generator.h",
+      "dynamic/thread_state_generator.cc",
+      "dynamic/thread_state_generator.h",
       "iterator_impl.cc",
       "iterator_impl.h",
       "read_trace.cc",
@@ -303,6 +315,7 @@ if (enable_perfetto_trace_processor_sqlite) {
       "../../gn:default_deps",
       "../../protos/perfetto/trace/ftrace:zero",
       "../base",
+      "../protozero",
       "analysis",
       "db:lib",
       "importers:common",
@@ -311,6 +324,8 @@ if (enable_perfetto_trace_processor_sqlite) {
       "storage",
       "tables",
       "types",
+      "util",
+      "util:protozero_to_text",
     ]
     public_deps = [
       "../../gn:sqlite",  # iterator_impl.h includes sqlite3.h.
@@ -321,11 +336,11 @@ if (enable_perfetto_trace_processor_sqlite) {
     }
   }
 
-  perfetto_host_executable("trace_processor_shell") {
+  executable("trace_processor_shell") {
     deps = [
       ":lib",
       "../../gn:default_deps",
-      "../../gn:protoc_lib",
+      "../../gn:protobuf_full",
       "../../src/profiling/symbolizer",
       "../../src/profiling/symbolizer:symbolize_database",
       "../base",
@@ -355,6 +370,9 @@ perfetto_unittest_source_set("unittests") {
     "forwarding_trace_parser_unittest.cc",
     "importers/ftrace/sched_event_tracker_unittest.cc",
     "importers/fuchsia/fuchsia_trace_utils_unittest.cc",
+    "importers/memory_tracker/graph_processor_unittest.cc",
+    "importers/memory_tracker/graph_unittest.cc",
+    "importers/memory_tracker/raw_process_memory_node_unittest.cc",
     "importers/proto/args_table_utils_unittest.cc",
     "importers/proto/heap_graph_tracker_unittest.cc",
     "importers/proto/heap_profile_tracker_unittest.cc",
@@ -385,6 +403,7 @@ perfetto_unittest_source_set("unittests") {
     "db:unittests",
     "importers:common",
     "importers:unittests",
+    "importers/memory_tracker:graph_processor",
     "rpc:unittests",
     "storage",
     "tables:unittests",
@@ -397,6 +416,7 @@ perfetto_unittest_source_set("unittests") {
     sources += [
       "dynamic/experimental_counter_dur_generator_unittest.cc",
       "dynamic/experimental_slice_layout_generator_unittest.cc",
+      "dynamic/thread_state_generator_unittest.cc",
     ]
     deps += [
       ":lib",
@@ -438,7 +458,9 @@ source_set("integrationtests") {
       ":lib",
       "../../gn:default_deps",
       "../../gn:gtest_and_gmock",
+      "../../protos/perfetto/common:zero",
       "../../protos/perfetto/trace:zero",
+      "../../protos/perfetto/trace_processor:zero",
       "../base",
       "../base:test_support",
       "sqlite",

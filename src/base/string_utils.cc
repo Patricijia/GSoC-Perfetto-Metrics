@@ -40,7 +40,7 @@ bool Contains(const std::string& haystack, const std::string& needle) {
 }
 
 size_t Find(const StringView& needle, const StringView& haystack) {
-  if (needle.size() == 0)
+  if (needle.empty())
     return 0;
   if (needle.size() > haystack.size())
     return std::string::npos;
@@ -159,6 +159,11 @@ std::string ReplaceAll(std::string str,
     pos += replacement.length();
   }
   return str;
+}
+
+std::string TrimLeading(const std::string& str) {
+  size_t idx = str.find_first_not_of(' ');
+  return idx == std::string::npos ? str : str.substr(idx);
 }
 
 }  // namespace base

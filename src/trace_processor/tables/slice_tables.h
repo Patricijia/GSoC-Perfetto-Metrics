@@ -56,11 +56,10 @@ PERFETTO_TP_TABLE(PERFETTO_TP_SLICE_TABLE_DEF);
 
 PERFETTO_TP_TABLE(PERFETTO_TP_INSTANT_TABLE_DEF);
 
-// @name sched
 // @tablegroup Events
 // @param utid {@joinable thread.utid}
 #define PERFETTO_TP_SCHED_SLICE_TABLE_DEF(NAME, PARENT, C) \
-  NAME(SchedSliceTable, "internal_sched_slice")            \
+  NAME(SchedSliceTable, "sched_slice")                     \
   PERFETTO_TP_ROOT_TABLE(PARENT, C)                        \
   C(int64_t, ts, Column::Flag::kSorted)                    \
   C(int64_t, dur)                                          \
@@ -70,6 +69,20 @@ PERFETTO_TP_TABLE(PERFETTO_TP_INSTANT_TABLE_DEF);
   C(int32_t, priority)
 
 PERFETTO_TP_TABLE(PERFETTO_TP_SCHED_SLICE_TABLE_DEF);
+
+// @tablegroup Events
+// @param utid {@joinable thread.utid}
+#define PERFETTO_TP_THREAD_STATE_TABLE_DEF(NAME, PARENT, C) \
+  NAME(ThreadStateTable, "thread_state")                    \
+  PERFETTO_TP_ROOT_TABLE(PARENT, C)                         \
+  C(int64_t, ts)                                            \
+  C(int64_t, dur)                                           \
+  C(base::Optional<uint32_t>, cpu)                          \
+  C(uint32_t, utid)                                         \
+  C(StringPool::Id, state)                                  \
+  C(base::Optional<uint32_t>, io_wait)
+
+PERFETTO_TP_TABLE(PERFETTO_TP_THREAD_STATE_TABLE_DEF);
 
 // @tablegroup Events
 #define PERFETTO_TP_GPU_SLICES_DEF(NAME, PARENT, C) \

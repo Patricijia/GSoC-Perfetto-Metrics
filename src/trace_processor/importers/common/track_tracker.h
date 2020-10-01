@@ -143,7 +143,9 @@ class TrackTracker {
   TrackId GetOrCreateTriggerTrack();
 
   // Interns a global counter track into the storage.
-  TrackId InternGlobalCounterTrack(StringId name);
+  TrackId InternGlobalCounterTrack(StringId name,
+                                   StringId unit = kNullStringId,
+                                   StringId description = kNullStringId);
 
   // Interns a counter track associated with a cpu into the storage.
   TrackId InternCpuCounterTrack(StringId name, uint32_t cpu);
@@ -152,7 +154,10 @@ class TrackTracker {
   TrackId InternThreadCounterTrack(StringId name, UniqueTid utid);
 
   // Interns a counter track associated with a process into the storage.
-  TrackId InternProcessCounterTrack(StringId name, UniquePid upid);
+  TrackId InternProcessCounterTrack(StringId name,
+                                    UniquePid upid,
+                                    StringId unit = kNullStringId,
+                                    StringId description = kNullStringId);
 
   // Interns a counter track associated with an irq into the storage.
   TrackId InternIrqCounterTrack(StringId name, int32_t irq);
@@ -179,7 +184,7 @@ class TrackTracker {
       uint32_t packet_sequence_id,
       int64_t value);
 
-  // Called by ProtoTraceTokenizer whenever incremental state is cleared on a
+  // Called by ProtoTraceReader whenever incremental state is cleared on a
   // packet sequence. Resets counter values for any incremental counters of
   // the sequence identified by |packet_sequence_id|.
   void OnIncrementalStateCleared(uint32_t packet_sequence_id);

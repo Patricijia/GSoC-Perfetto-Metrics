@@ -47,6 +47,7 @@
 // checks that the results are valid).
 #include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/common/trace_stats.gen.h"
+#include "protos/perfetto/common/tracing_service_state.gen.h"
 #include "protos/perfetto/common/track_event_descriptor.gen.h"
 #include "protos/perfetto/config/track_event/track_event_config.gen.h"
 #include "protos/perfetto/trace/clock_snapshot.pbzero.h"
@@ -175,13 +176,9 @@ using ::testing::StrEq;
 // ------------------------------
 // Declarations of helper classes
 // ------------------------------
-static constexpr auto kWaitEventTimeout = std::chrono::seconds(5);
 
-struct WaitableTestEvent {
-  std::mutex mutex_;
-  std::condition_variable cv_;
-  bool notified_ = false;
-
+class WaitableTestEvent {
+ public:
   bool notified() {
     std::unique_lock<std::mutex> lock(mutex_);
     return notified_;
@@ -189,17 +186,25 @@ struct WaitableTestEvent {
 
   void Wait() {
     std::unique_lock<std::mutex> lock(mutex_);
-    if (!cv_.wait_for(lock, kWaitEventTimeout, [this] { return notified_; })) {
-      fprintf(stderr, "Timed out while waiting for event\n");
-      abort();
-    }
+    // TSAN gets confused by wait_for, which we would use here in a perfect
+    // world.
+    cv_.wait(lock, [this] { return notified_; });
   }
 
   void Notify() {
-    std::unique_lock<std::mutex> lock(mutex_);
-    notified_ = true;
+    {
+      std::lock_guard<std::mutex> lock(mutex_);
+      notified_ = true;
+    }
+    // Do not notify while holding the lock, because then we wake up the other
+    // end, only for it to fail to acquire the lock.
     cv_.notify_one();
   }
+
+ private:
+  std::mutex mutex_;
+  std::condition_variable cv_;
+  bool notified_ = false;
 };
 
 class MockDataSource;
@@ -697,7 +702,7 @@ TEST_F(PerfettoApiTest, TrackEvent) {
   ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
 
   auto now = perfetto::TrackEvent::GetTraceTimeNs();
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   auto clock_id = perfetto::protos::pbzero::BUILTIN_CLOCK_BOOTTIME;
 #else
@@ -759,7 +764,7 @@ TEST_F(PerfettoApiTest, TrackEvent) {
 
     EXPECT_GT(packet.timestamp(), 0u);
     EXPECT_LE(packet.timestamp(), now);
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) && \
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
     EXPECT_FALSE(packet.has_timestamp_clock_id());
 #else
@@ -2357,6 +2362,7 @@ TEST_F(PerfettoApiTest, GetTraceStats) {
   tracing_session->get()->GetTraceStats(
       [&got_stats](perfetto::TracingSession::GetTraceStatsCallbackArgs args) {
         perfetto::protos::gen::TraceStats trace_stats;
+        EXPECT_TRUE(args.success);
         EXPECT_TRUE(trace_stats.ParseFromArray(args.trace_stats_data.data(),
                                                args.trace_stats_data.size()));
         EXPECT_EQ(1, trace_stats.buffer_stats_size());
@@ -2367,11 +2373,54 @@ TEST_F(PerfettoApiTest, GetTraceStats) {
   // Blocking read.
   auto stats = tracing_session->get()->GetTraceStatsBlocking();
   perfetto::protos::gen::TraceStats trace_stats;
+  EXPECT_TRUE(stats.success);
   EXPECT_TRUE(trace_stats.ParseFromArray(stats.trace_stats_data.data(),
                                          stats.trace_stats_data.size()));
   EXPECT_EQ(1, trace_stats.buffer_stats_size());
 
   tracing_session->get()->StopBlocking();
+}
+
+TEST_F(PerfettoApiTest, QueryServiceState) {
+  class QueryTestDataSource : public perfetto::DataSource<QueryTestDataSource> {
+  };
+  RegisterDataSource<QueryTestDataSource>("query_test_data_source");
+
+  auto tracing_session =
+      perfetto::Tracing::NewTrace(perfetto::BackendType::kInProcessBackend);
+  // Asynchronous read.
+  WaitableTestEvent got_state;
+  tracing_session->QueryServiceState(
+      [&got_state](
+          perfetto::TracingSession::QueryServiceStateCallbackArgs result) {
+        perfetto::protos::gen::TracingServiceState state;
+        EXPECT_TRUE(result.success);
+        EXPECT_TRUE(state.ParseFromArray(result.service_state_data.data(),
+                                         result.service_state_data.size()));
+        EXPECT_EQ(1, state.producers_size());
+        EXPECT_NE(std::string::npos,
+                  state.producers()[0].name().find("integrationtest"));
+        bool found_ds = false;
+        for (const auto& ds : state.data_sources())
+          found_ds |= ds.ds_descriptor().name() == "query_test_data_source";
+        EXPECT_TRUE(found_ds);
+        got_state.Notify();
+      });
+  got_state.Wait();
+
+  // Blocking read.
+  auto result = tracing_session->QueryServiceStateBlocking();
+  perfetto::protos::gen::TracingServiceState state;
+  EXPECT_TRUE(result.success);
+  EXPECT_TRUE(state.ParseFromArray(result.service_state_data.data(),
+                                   result.service_state_data.size()));
+  EXPECT_EQ(1, state.producers_size());
+  EXPECT_NE(std::string::npos,
+            state.producers()[0].name().find("integrationtest"));
+  bool found_ds = false;
+  for (const auto& ds : state.data_sources())
+    found_ds |= ds.ds_descriptor().name() == "query_test_data_source";
+  EXPECT_TRUE(found_ds);
 }
 
 TEST_F(PerfettoApiTest, LegacyTraceEvents) {

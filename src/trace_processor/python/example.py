@@ -15,7 +15,7 @@
 
 import argparse
 
-from trace_processor.api import TraceProcessor
+from perfetto.trace_processor import TraceProcessor
 
 
 def main():
@@ -24,21 +24,44 @@ def main():
   parser.add_argument(
       "-a",
       "--address",
-      help="Address at which trace_processor is being run, e.g. 127.0.0.1:9001",
-      required=True,
+      help="Address at which trace_processor is being run, e.g. localhost:9001",
       type=str)
   parser.add_argument(
-      "-f", "--file", help="Absolute path to trace", required=True, type=str)
+      "-b",
+      "--binary",
+      help="Absolute path to a trace processor binary",
+      type=str)
+  parser.add_argument("-f", "--file", help="Absolute path to trace", type=str)
   args = parser.parse_args()
 
-  # TODO(@aninditaghosh): Load trace into trace_processor_shell
+  # Pass arguments into api to construct the trace processor and load the trace
+  if args.address is None and args.file is None:
+    raise Exception("You must specify an address or a file path to trace")
+  elif args.address is None:
+    tp = TraceProcessor(file_path=args.file, bin_path=args.binary)
+  elif args.file is None:
+    tp = TraceProcessor(addr=args.address)
+  else:
+    tp = TraceProcessor(
+        addr=args.address, file_path=args.file, bin_path=args.binary)
 
-  # Call functions on the loaded trace
-  tp = TraceProcessor(args.address)
+  # Iterate through QueryResultIterator
   res_it = tp.query('select * from slice limit 10')
   for row in res_it:
     print(row.name)
+
+  # Convert QueryResultIterator into a pandas dataframe + iterate. This yields
+  # the same results as the function above.
+  try:
+    res_df = tp.query('select * from slice limit 10').as_pandas_dataframe()
+    for index, row in res_df.iterrows():
+      print(row['name'])
+  except Exception:
+    pass
+
+  # Call another function on the loaded trace
   am_metrics = tp.metric(['android_mem'])
+  tp.close()
 
 
 if __name__ == "__main__":

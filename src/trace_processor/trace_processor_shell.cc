@@ -48,14 +48,11 @@
 
 #include "src/profiling/symbolizer/symbolize_database.h"
 #include "src/profiling/symbolizer/symbolizer.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
 #include "src/profiling/symbolizer/local_symbolizer.h"
-#endif
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 #define PERFETTO_HAS_SIGNAL_H() 1
 #else
 #define PERFETTO_HAS_SIGNAL_H() 0
@@ -353,23 +350,6 @@ util::Status ExtendMetricsProto(const std::string& extend_metrics_proto,
   google::protobuf::compiler::Parser parser;
   parser.Parse(&tokenizer, file_desc);
 
-  // Go through all the imports (dependencies) and make the import
-  // paths relative to the Perfetto root. This allows trace processor embedders
-  // to have paths relative to their own root for imports when using metric
-  // proto extensions.
-  for (int i = 0; i < file_desc->dependency_size(); ++i) {
-    static constexpr char kPrefix[] = "protos/perfetto/metrics/";
-    auto* dep = file_desc->mutable_dependency(i);
-
-    // If the file being imported contains kPrefix, it is probably an import of
-    // a Perfetto metrics proto. Strip anything before kPrefix to ensure that
-    // we resolve the paths correctly.
-    size_t idx = dep->find(kPrefix);
-    if (idx != std::string::npos) {
-      *dep = dep->substr(idx);
-    }
-  }
-
   file_desc->set_name(BaseName(extend_metrics_proto));
   pool->BuildFile(*file_desc);
 
@@ -494,7 +474,8 @@ void PrintQueryResultInteractively(Iterator* it,
   if (!status.ok()) {
     PERFETTO_ELOG("SQLite error: %s", status.c_message());
   }
-  printf("\nQuery executed in %.3f ms\n\n", (t_end - t_start).count() / 1E6);
+  printf("\nQuery executed in %.3f ms\n\n",
+         static_cast<double>((t_end - t_start).count()) / 1E6);
 }
 
 void PrintShellUsage() {
@@ -598,7 +579,7 @@ util::Status LoadQueries(FILE* input, std::vector<std::string>* output) {
   while (!feof(input) && !ferror(input)) {
     std::string sql_query;
     while (fgets(buffer, sizeof(buffer), input)) {
-      std::string line = buffer;
+      std::string line = base::TrimLeading(buffer);
       if (IsBlankLine(line))
         break;
 
@@ -627,15 +608,12 @@ util::Status LoadQueries(FILE* input, std::vector<std::string>* output) {
   return util::OkStatus();
 }
 
-util::Status RunQueryWithoutOutput(const std::vector<std::string>& queries) {
+util::Status RunQueriesWithoutOutput(const std::vector<std::string>& queries) {
   for (const auto& sql_query : queries) {
     PERFETTO_DLOG("Executing query: %s", sql_query.c_str());
 
     auto it = g_tp->ExecuteQuery(sql_query);
-    util::Status status = it.Status();
-    if (!status.ok()) {
-      return status;
-    }
+    RETURN_IF_ERROR(it.Status());
     if (it.Next()) {
       return util::ErrStatus("Unexpected result from a query.");
     }
@@ -643,8 +621,8 @@ util::Status RunQueryWithoutOutput(const std::vector<std::string>& queries) {
   return util::OkStatus();
 }
 
-util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
-                                    FILE* output) {
+util::Status RunQueriesAndPrintResult(const std::vector<std::string>& queries,
+                                      FILE* output) {
   bool is_first_query = true;
   bool has_output = false;
   for (const auto& sql_query : queries) {
@@ -656,11 +634,7 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
     PERFETTO_ILOG("Executing query: %s", sql_query.c_str());
 
     auto it = g_tp->ExecuteQuery(sql_query);
-    util::Status status = it.Status();
-    if (!status.ok()) {
-      return util::ErrStatus("Encountered error while running queries: %s",
-                             status.c_message());
-    }
+    RETURN_IF_ERROR(it.Status());
     if (it.ColumnCount() == 0) {
       bool it_has_more = it.Next();
       PERFETTO_DCHECK(!it_has_more);
@@ -676,17 +650,13 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
       // as SELECT RUN_METRIC(<metric file>) as suppress_query_output and
       // RUN_METRIC returns a single null.
       bool has_next = it.Next();
+      RETURN_IF_ERROR(it.Status());
       PERFETTO_DCHECK(has_next);
       PERFETTO_DCHECK(it.Get(0).is_null());
 
       has_next = it.Next();
+      RETURN_IF_ERROR(it.Status());
       PERFETTO_DCHECK(!has_next);
-
-      status = it.Status();
-      if (!status.ok()) {
-        return util::ErrStatus("Encountered error while running queries: %s",
-                               status.c_message());
-      }
       continue;
     }
 
@@ -694,13 +664,8 @@ util::Status RunQueryAndPrintResult(const std::vector<std::string>& queries,
       return util::ErrStatus(
           "More than one query generated result rows. This is unsupported.");
     }
-    status = PrintQueryResultAsCsv(&it, output);
     has_output = true;
-
-    if (!status.ok()) {
-      return util::ErrStatus("Encountered error while running queries: %s",
-                             status.c_message());
-    }
+    RETURN_IF_ERROR(PrintQueryResultAsCsv(&it, output));
   }
   return util::OkStatus();
 }
@@ -732,6 +697,7 @@ struct CommandLineOptions {
   std::string metric_names;
   std::string metric_output;
   std::string trace_file_path;
+  std::string port_number;
   bool launch_shell = false;
   bool enable_httpd = false;
   bool wide = false;
@@ -820,6 +786,7 @@ Options:
                                       This query is executed before the selected
                                       metrics and can't output any results.
  -D, --httpd                          Enables the HTTP RPC server.
+ --http-port PORT                     Specify what port to run HTTP RPC server.
  -i, --interactive                    Starts interactive mode even after a query
                                       file is specified with -q or
                                       --run-metrics.
@@ -850,6 +817,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
     OPT_PRE_METRICS,
     OPT_METRICS_OUTPUT,
     OPT_FORCE_FULL_SORT,
+    OPT_HTTP_PORT,
   };
 
   static const struct option long_options[] = {
@@ -867,6 +835,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
       {"pre-metrics", required_argument, nullptr, OPT_PRE_METRICS},
       {"metrics-output", required_argument, nullptr, OPT_METRICS_OUTPUT},
       {"full-sort", no_argument, nullptr, OPT_FORCE_FULL_SORT},
+      {"http-port", required_argument, nullptr, OPT_HTTP_PORT},
       {nullptr, 0, nullptr, 0}};
 
   bool explicit_interactive = false;
@@ -947,6 +916,11 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
       continue;
     }
 
+    if (option == OPT_HTTP_PORT) {
+      command_line_options.port_number = optarg;
+      continue;
+    }
+
     PrintUsage(argv);
     exit(option == 'h' ? 0 : 1);
   }
@@ -991,7 +965,7 @@ void ExtendPoolWithBinaryDescriptor(google::protobuf::DescriptorPool& pool,
 util::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
   util::Status read_status =
       ReadTrace(g_tp, trace_file_path.c_str(), [&size_mb](size_t parsed_size) {
-        *size_mb = parsed_size / 1E6;
+        *size_mb = static_cast<double>(parsed_size) / 1E6;
         fprintf(stderr, "\rLoading trace: %.2f MB\r", *size_mb);
       });
   if (!read_status.ok()) {
@@ -999,15 +973,9 @@ util::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
                            trace_file_path.c_str(), read_status.c_message());
   }
 
-  std::unique_ptr<profiling::Symbolizer> symbolizer;
-  auto binary_path = profiling::GetPerfettoBinaryPath();
-  if (!binary_path.empty()) {
-#if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
-      symbolizer.reset(new profiling::LocalSymbolizer(std::move(binary_path)));
-#else
-      PERFETTO_FATAL("This build does not support local symbolization.");
-#endif
-  }
+  std::unique_ptr<profiling::Symbolizer> symbolizer =
+      profiling::LocalSymbolizerOrDie(profiling::GetPerfettoBinaryPath(),
+                                      getenv("PERFETTO_SYMBOLIZER_MODE"));
 
   if (symbolizer) {
     profiling::SymbolizeDatabase(
@@ -1035,11 +1003,18 @@ util::Status RunQueries(const std::string& query_file_path,
                            query_file_path.c_str());
   }
   RETURN_IF_ERROR(LoadQueries(file.get(), &queries));
+
+  util::Status status;
   if (expect_output) {
-    return RunQueryAndPrintResult(queries, stdout);
+    status = RunQueriesAndPrintResult(queries, stdout);
   } else {
-    return RunQueryWithoutOutput(queries);
+    status = RunQueriesWithoutOutput(queries);
   }
+  if (!status.ok()) {
+    return util::ErrStatus("Encountered error while running queries: %s",
+                           status.c_message());
+  }
+  return util::OkStatus();
 }
 
 util::Status RunMetrics(const CommandLineOptions& options) {
@@ -1069,15 +1044,17 @@ util::Status RunMetrics(const CommandLineOptions& options) {
       continue;
 
     std::string no_ext_name = metric_or_path.substr(0, ext_idx);
-    util::Status status = RegisterMetric(no_ext_name + ".sql");
+
+    // The proto must be extended before registering the metric.
+    util::Status status = ExtendMetricsProto(no_ext_name + ".proto", &pool);
     if (!status.ok()) {
-      return util::ErrStatus("Unable to register metric %s: %s",
+      return util::ErrStatus("Unable to extend metrics proto %s: %s",
                              metric_or_path.c_str(), status.c_message());
     }
 
-    status = ExtendMetricsProto(no_ext_name + ".proto", &pool);
+    status = RegisterMetric(no_ext_name + ".sql");
     if (!status.ok()) {
-      return util::ErrStatus("Unable to extend metrics proto %s: %s",
+      return util::ErrStatus("Unable to register metric %s: %s",
                              metric_or_path.c_str(), status.c_message());
     }
 
@@ -1118,7 +1095,7 @@ util::Status TraceProcessorMain(int argc, char** argv) {
     RETURN_IF_ERROR(LoadTrace(options.trace_file_path, &size_mb));
     t_load = base::GetWallTimeNs() - t_load_start;
 
-    double t_load_s = t_load.count() / 1E9;
+    double t_load_s = static_cast<double>(t_load.count()) / 1E9;
     PERFETTO_ILOG("Trace loaded: %.2f MB (%.1f MB/s)", size_mb,
                   size_mb / t_load_s);
 
@@ -1127,7 +1104,7 @@ util::Status TraceProcessorMain(int argc, char** argv) {
 
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_HTTPD)
   if (options.enable_httpd) {
-    RunHttpRPCServer(std::move(tp));
+    RunHttpRPCServer(std::move(tp), options.port_number);
     PERFETTO_FATAL("Should never return");
   }
 #endif
