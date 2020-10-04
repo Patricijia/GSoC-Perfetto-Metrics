@@ -59,7 +59,7 @@ namespace {
 
 constexpr base::TimeMillis kMapsReparseInterval{500};
 
-constexpr size_t kMaxFrames = 1000;
+constexpr size_t kMaxFrames = 200;
 
 // We assume average ~300us per unwind. If we handle up to 1000 unwinds, this
 // makes sure other tasks get to be run at least every 300ms if the unwinding
@@ -174,6 +174,7 @@ bool DoUnwind(WireMessage* msg, UnwindingMetadata* metadata, AllocRecord* out) {
     }
   }
   std::vector<unwindstack::FrameData> frames = unwinder.ConsumeFrames();
+  out->frames.reserve(frames.size() + 1);
   for (unwindstack::FrameData& fd : frames) {
     out->frames.emplace_back(metadata->AnnotateFrame(std::move(fd)));
   }
