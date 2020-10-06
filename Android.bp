@@ -2162,6 +2162,21 @@ genrule {
   ],
 }
 
+// GN: //protos/perfetto/config:descriptor
+genrule {
+  name: "perfetto_protos_perfetto_config_descriptor",
+  srcs: [
+    "protos/perfetto/config/trace_config.proto",
+  ],
+  tools: [
+    "aprotoc",
+  ],
+  cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --descriptor_set_out=$(out) --include_imports $(in)",
+  out: [
+    "perfetto_protos_perfetto_config_descriptor.bin",
+  ],
+}
+
 // GN: //protos/perfetto/config/ftrace:cpp
 genrule {
   name: "perfetto_protos_perfetto_config_ftrace_cpp_gen",
@@ -5605,6 +5620,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5631,6 +5647,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.gen.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.gen.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.gen.cc",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.gen.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.gen.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.gen.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.gen.cc",
@@ -5657,6 +5674,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5683,6 +5701,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.gen.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.gen.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.gen.h",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.gen.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.gen.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.gen.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.gen.h",
@@ -5713,6 +5732,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5738,6 +5758,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.pb.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.pb.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.pb.cc",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.pb.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.pb.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.pb.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.pb.cc",
@@ -5764,6 +5785,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5789,6 +5811,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.pb.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.pb.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.pb.h",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.pb.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.pb.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.pb.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.pb.h",
@@ -5819,6 +5842,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5845,6 +5869,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.pbzero.cc",
@@ -5871,6 +5896,7 @@ genrule {
     "protos/perfetto/trace/track_event/chrome_latency_info.proto",
     "protos/perfetto/trace/track_event/chrome_legacy_ipc.proto",
     "protos/perfetto/trace/track_event/chrome_message_pump.proto",
+    "protos/perfetto/trace/track_event/chrome_mojo_event_info.proto",
     "protos/perfetto/trace/track_event/chrome_process_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_thread_descriptor.proto",
     "protos/perfetto/trace/track_event/chrome_user_event.proto",
@@ -5897,6 +5923,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/track_event/chrome_latency_info.pbzero.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_legacy_ipc.pbzero.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_message_pump.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/track_event/chrome_mojo_event_info.pbzero.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_process_descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_thread_descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/trace/track_event/chrome_user_event.pbzero.h",
@@ -6808,6 +6835,21 @@ filegroup {
   ],
 }
 
+// GN: //src/trace_processor/importers:gen_cc_config_descriptor
+genrule {
+  name: "perfetto_src_trace_processor_importers_gen_cc_config_descriptor",
+  srcs: [
+    ":perfetto_protos_perfetto_config_descriptor",
+  ],
+  cmd: "$(location tools/gen_cc_proto_descriptor.py) --gen_dir=$(genDir) --cpp_out=$(out) $(in)",
+  out: [
+    "src/trace_processor/importers/config.descriptor.h",
+  ],
+  tool_files: [
+    "tools/gen_cc_proto_descriptor.py",
+  ],
+}
+
 // GN: //src/trace_processor/importers/memory_tracker:graph_processor
 filegroup {
   name: "perfetto_src_trace_processor_importers_memory_tracker_graph_processor",
@@ -6923,6 +6965,7 @@ genrule {
     "src/trace_processor/metrics/android/java_heap_histogram.sql",
     "src/trace_processor/metrics/android/java_heap_stats.sql",
     "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
+    "src/trace_processor/metrics/android/power_drain_in_watts.sql",
     "src/trace_processor/metrics/android/power_profile_data.sql",
     "src/trace_processor/metrics/android/process_counter_span_view.sql",
     "src/trace_processor/metrics/android/process_mem.sql",
@@ -6931,8 +6974,12 @@ genrule {
     "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
     "src/trace_processor/metrics/android/span_view_stats.sql",
     "src/trace_processor/metrics/android/unsymbolized_frames.sql",
+    "src/trace_processor/metrics/chrome/actual_power_by_rail_mode.sql",
     "src/trace_processor/metrics/chrome/chrome_processes.sql",
     "src/trace_processor/metrics/chrome/chrome_thread_slice_with_cpu_time.sql",
+    "src/trace_processor/metrics/chrome/cpu_time_by_rail_mode.sql",
+    "src/trace_processor/metrics/chrome/estimated_power_by_rail_mode.sql",
+    "src/trace_processor/metrics/chrome/rail_modes.sql",
     "src/trace_processor/metrics/chrome/scroll_flow_event.sql",
     "src/trace_processor/metrics/chrome/scroll_flow_event_queuing_delay.sql",
     "src/trace_processor/metrics/chrome/scroll_jank.sql",
@@ -8224,6 +8271,7 @@ cc_test {
     "perfetto_src_protozero_testing_messages_cpp_gen_headers",
     "perfetto_src_protozero_testing_messages_lite_gen_headers",
     "perfetto_src_protozero_testing_messages_zero_gen_headers",
+    "perfetto_src_trace_processor_importers_gen_cc_config_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_all_chrome_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_merged_sql_metrics",
@@ -8368,6 +8416,7 @@ cc_binary {
     "perfetto_protos_perfetto_trace_sys_stats_zero_gen_headers",
     "perfetto_protos_perfetto_trace_system_info_zero_gen_headers",
     "perfetto_protos_perfetto_trace_track_event_zero_gen_headers",
+    "perfetto_src_trace_processor_importers_gen_cc_config_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_all_chrome_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_merged_sql_metrics",
@@ -8509,6 +8558,7 @@ cc_binary_host {
     "perfetto_protos_perfetto_trace_system_info_zero_gen_headers",
     "perfetto_protos_perfetto_trace_track_event_zero_gen_headers",
     "perfetto_protos_third_party_pprof_zero_gen_headers",
+    "perfetto_src_trace_processor_importers_gen_cc_config_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_all_chrome_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_cc_metrics_descriptor",
     "perfetto_src_trace_processor_metrics_gen_merged_sql_metrics",
