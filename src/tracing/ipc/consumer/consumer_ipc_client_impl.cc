@@ -65,7 +65,7 @@ void ConsumerIPCClientImpl::OnConnect() {
 void ConsumerIPCClientImpl::OnDisconnect() {
   PERFETTO_DLOG("Tracing service connection failure");
   connected_ = false;
-  consumer_->OnDisconnect();
+  consumer_->OnDisconnect();  // Note: may delete |this|.
 }
 
 void ConsumerIPCClientImpl::EnableTracing(const TraceConfig& trace_config,
@@ -324,7 +324,7 @@ void ConsumerIPCClientImpl::ObserveEvents(uint32_t enabled_event_types) {
       [this](ipc::AsyncResult<protos::gen::ObserveEventsResponse> response) {
         // Skip empty response, which the service sends to close the stream.
         if (!response.has_more()) {
-          PERFETTO_DCHECK(!response->events().instance_state_changes().size());
+          PERFETTO_DCHECK(!response.success());
           return;
         }
         consumer_->OnObservableEvents(response->events());

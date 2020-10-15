@@ -97,7 +97,9 @@ ProducerIPCClientImpl::ProducerIPCClientImpl(
   PERFETTO_DCHECK_THREAD(thread_checker_);
 }
 
-ProducerIPCClientImpl::~ProducerIPCClientImpl() = default;
+ProducerIPCClientImpl::~ProducerIPCClientImpl() {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+}
 
 // Called by the IPC layer if the BindService() succeeds.
 void ProducerIPCClientImpl::OnConnect() {
@@ -171,8 +173,8 @@ void ProducerIPCClientImpl::OnDisconnect() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   PERFETTO_DLOG("Tracing service connection failure");
   connected_ = false;
-  producer_->OnDisconnect();
   data_sources_setup_.clear();
+  producer_->OnDisconnect();  // Note: may delete |this|.
 }
 
 void ProducerIPCClientImpl::OnConnectionInitialized(
