@@ -279,9 +279,12 @@ void TracingMuxerImpl::ConsumerImpl::Disconnect() {
   service_.reset();
 }
 
-void TracingMuxerImpl::ConsumerImpl::OnTracingDisabled() {
+void TracingMuxerImpl::ConsumerImpl::OnTracingDisabled(
+    const std::string& error) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   PERFETTO_DCHECK(!stopped_);
+  if (!error.empty())
+    PERFETTO_ELOG("Service error: %s", error.c_str());
   stopped_ = true;
   // If we're still waiting for the start event, fire it now. This may happen if
   // there are no active data sources in the session.
