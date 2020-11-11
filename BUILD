@@ -794,6 +794,7 @@ genrule(
         "src/trace_processor/metrics/android/android_startup.sql",
         "src/trace_processor/metrics/android/android_startup_launches.sql",
         "src/trace_processor/metrics/android/android_surfaceflinger.sql",
+        "src/trace_processor/metrics/android/android_sysui_cuj.sql",
         "src/trace_processor/metrics/android/android_task_names.sql",
         "src/trace_processor/metrics/android/android_task_state.sql",
         "src/trace_processor/metrics/android/android_thread_time_in_state.sql",
@@ -2132,6 +2133,7 @@ perfetto_proto_library(
         "protos/perfetto/metrics/android/process_metadata.proto",
         "protos/perfetto/metrics/android/startup_metric.proto",
         "protos/perfetto/metrics/android/surfaceflinger.proto",
+        "protos/perfetto/metrics/android/sysui_cuj_metrics.proto",
         "protos/perfetto/metrics/android/task_names.proto",
         "protos/perfetto/metrics/android/thread_time_in_state_metric.proto",
         "protos/perfetto/metrics/android/unsymbolized_frames.proto",
@@ -2224,6 +2226,7 @@ perfetto_proto_library(
     name = "protos_perfetto_trace_android_protos",
     srcs = [
         "protos/perfetto/trace/android/android_log.proto",
+        "protos/perfetto/trace/android/frame_timeline_event.proto",
         "protos/perfetto/trace/android/gpu_mem_event.proto",
         "protos/perfetto/trace/android/graphics_frame_event.proto",
         "protos/perfetto/trace/android/initial_display_state.proto",
