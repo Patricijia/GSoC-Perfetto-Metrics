@@ -173,6 +173,12 @@ protos::pbzero::Profiling::StackUnwindError ToProtoEnum(
       return Profiling::UNWIND_ERROR_REPEATED_FRAME;
     case unwindstack::ERROR_INVALID_ELF:
       return Profiling::UNWIND_ERROR_INVALID_ELF;
+    case unwindstack::ERROR_SYSTEM_CALL:
+      return Profiling::UNWIND_ERROR_SYSTEM_CALL;
+    case unwindstack::ERROR_THREAD_TIMEOUT:
+      return Profiling::UNWIND_ERROR_THREAD_TIMEOUT;
+    case unwindstack::ERROR_THREAD_DOES_NOT_EXIST:
+      return Profiling::UNWIND_ERROR_THREAD_DOES_NOT_EXIST;
   }
   return Profiling::UNWIND_ERROR_UNKNOWN;
 }
