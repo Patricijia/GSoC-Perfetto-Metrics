@@ -174,6 +174,7 @@ perfetto_cc_library(
     srcs = [
         ":src_android_internal_headers",
         ":src_android_internal_lazy_library_loader",
+        ":src_kallsyms_kallsyms",
         ":src_perfetto_cmd_perfetto_atoms",
         ":src_traced_probes_android_log_android_log",
         ":src_traced_probes_common_common",
@@ -181,7 +182,6 @@ perfetto_cc_library(
         ":src_traced_probes_filesystem_filesystem",
         ":src_traced_probes_ftrace_format_parser",
         ":src_traced_probes_ftrace_ftrace",
-        ":src_traced_probes_ftrace_kallsyms_kallsyms",
         ":src_traced_probes_initial_display_state_initial_display_state",
         ":src_traced_probes_metatrace_metatrace",
         ":src_traced_probes_packages_list_packages_list",
@@ -313,6 +313,7 @@ filegroup(
         "include/perfetto/ext/base/unix_task_runner.h",
         "include/perfetto/ext/base/utils.h",
         "include/perfetto/ext/base/uuid.h",
+        "include/perfetto/ext/base/version.h",
         "include/perfetto/ext/base/waitable_event.h",
         "include/perfetto/ext/base/watchdog.h",
         "include/perfetto/ext/base/watchdog_noop.h",
@@ -561,6 +562,7 @@ perfetto_cc_library(
         "src/base/unix_task_runner.cc",
         "src/base/utils.cc",
         "src/base/uuid.cc",
+        "src/base/version.cc",
         "src/base/virtual_destructors.cc",
         "src/base/waitable_event.cc",
         "src/base/watchdog_posix.cc",
@@ -569,6 +571,8 @@ perfetto_cc_library(
         ":include_perfetto_base_base",
         ":include_perfetto_ext_base_base",
     ],
+    deps = [
+    ] + PERFETTO_CONFIG.deps.version_header,
     linkstatic = True,
 )
 
@@ -583,6 +587,20 @@ perfetto_cc_library(
         ":include_perfetto_ext_base_base",
     ],
     linkstatic = True,
+)
+
+genrule(
+    name = "src_base_version_gen_h",
+    srcs = [
+        "CHANGELOG",
+    ],
+    outs = [
+        "perfetto_version.gen.h",
+    ],
+    cmd = "$(location gen_version_header_py) --cpp_out=$@",
+    exec_tools = [
+        ":gen_version_header_py",
+    ],
 )
 
 # GN target: //src/ipc:client
@@ -612,6 +630,17 @@ filegroup(
     srcs = [
         "src/ipc/host_impl.cc",
         "src/ipc/host_impl.h",
+    ],
+)
+
+# GN target: //src/kallsyms:kallsyms
+filegroup(
+    name = "src_kallsyms_kallsyms",
+    srcs = [
+        "src/kallsyms/kernel_symbol_map.cc",
+        "src/kallsyms/kernel_symbol_map.h",
+        "src/kallsyms/lazy_kernel_symbolizer.cc",
+        "src/kallsyms/lazy_kernel_symbolizer.h",
     ],
 )
 
@@ -822,10 +851,14 @@ genrule(
         "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
         "src/trace_processor/metrics/android/span_view_stats.sql",
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
+        "src/trace_processor/metrics/chrome/actual_power_by_category.sql",
         "src/trace_processor/metrics/chrome/actual_power_by_rail_mode.sql",
+        "src/trace_processor/metrics/chrome/chrome_event_metadata.sql",
         "src/trace_processor/metrics/chrome/chrome_processes.sql",
         "src/trace_processor/metrics/chrome/chrome_thread_slice_with_cpu_time.sql",
+        "src/trace_processor/metrics/chrome/cpu_time_by_category.sql",
         "src/trace_processor/metrics/chrome/cpu_time_by_rail_mode.sql",
+        "src/trace_processor/metrics/chrome/estimated_power_by_category.sql",
         "src/trace_processor/metrics/chrome/estimated_power_by_rail_mode.sql",
         "src/trace_processor/metrics/chrome/rail_modes.sql",
         "src/trace_processor/metrics/chrome/scroll_flow_event.sql",
@@ -1217,17 +1250,6 @@ filegroup(
         "src/traced/probes/filesystem/prefix_finder.h",
         "src/traced/probes/filesystem/range_tree.cc",
         "src/traced/probes/filesystem/range_tree.h",
-    ],
-)
-
-# GN target: //src/traced/probes/ftrace/kallsyms:kallsyms
-filegroup(
-    name = "src_traced_probes_ftrace_kallsyms_kallsyms",
-    srcs = [
-        "src/traced/probes/ftrace/kallsyms/kernel_symbol_map.cc",
-        "src/traced/probes/ftrace/kallsyms/kernel_symbol_map.h",
-        "src/traced/probes/ftrace/kallsyms/lazy_kernel_symbolizer.cc",
-        "src/traced/probes/ftrace/kallsyms/lazy_kernel_symbolizer.h",
     ],
 )
 
@@ -3449,6 +3471,21 @@ perfetto_gensignature_internal_only(
         "__TRACE_PROCESSOR_SIG_TAG1",
         "__TRACE_PROCESSOR_SIG_TAG2",
     ],
+)
+
+# This is overridden in google internal builds via
+# PERFETTO_CONFIG.deps.version_header (see perfetto_cfg.bzl).
+perfetto_cc_library(
+    name = "cc_perfetto_version_header",
+    hdrs = ["perfetto_version.gen.h"],
+)
+
+perfetto_py_binary(
+    name = "gen_version_header_py",
+    srcs = ["tools/write_version_header.py"],
+    data = ["CHANGELOG"],
+    main = "tools/write_version_header.py",
+    python_version = "PY3",
 )
 
 # Noop targets used to represent targets of the protobuf library.
