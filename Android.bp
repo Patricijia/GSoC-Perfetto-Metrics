@@ -77,6 +77,7 @@ cc_binary {
     ":perfetto_src_profiling_common_interner",
     ":perfetto_src_profiling_common_interning_output",
     ":perfetto_src_profiling_common_proc_utils",
+    ":perfetto_src_profiling_common_profiler_guardrails",
     ":perfetto_src_profiling_common_unwind_support",
     ":perfetto_src_profiling_memory_daemon",
     ":perfetto_src_profiling_memory_ring_buffer",
@@ -303,6 +304,7 @@ cc_library_shared {
     ":perfetto_src_profiling_common_interner",
     ":perfetto_src_profiling_common_interning_output",
     ":perfetto_src_profiling_common_proc_utils",
+    ":perfetto_src_profiling_common_profiler_guardrails",
     ":perfetto_src_profiling_common_unwind_support",
     ":perfetto_src_profiling_memory_client",
     ":perfetto_src_profiling_memory_client_api",
@@ -1003,6 +1005,7 @@ cc_library_static {
     ":perfetto_src_ipc_client",
     ":perfetto_src_ipc_common",
     ":perfetto_src_ipc_host",
+    ":perfetto_src_ipc_perfetto_ipc",
     ":perfetto_src_kallsyms_kallsyms",
     ":perfetto_src_perfetto_cmd_perfetto_atoms",
     ":perfetto_src_protozero_protozero",
@@ -1251,6 +1254,7 @@ cc_library_static {
     ":perfetto_src_ipc_client",
     ":perfetto_src_ipc_common",
     ":perfetto_src_ipc_host",
+    ":perfetto_src_ipc_perfetto_ipc",
     ":perfetto_src_kallsyms_kallsyms",
     ":perfetto_src_perfetto_cmd_perfetto_atoms",
     ":perfetto_src_protozero_protozero",
@@ -1634,12 +1638,14 @@ cc_test {
     ":perfetto_src_ipc_client",
     ":perfetto_src_ipc_common",
     ":perfetto_src_ipc_host",
+    ":perfetto_src_ipc_perfetto_ipc",
     ":perfetto_src_kallsyms_kallsyms",
     ":perfetto_src_perfetto_cmd_perfetto_atoms",
     ":perfetto_src_profiling_common_callstack_trie",
     ":perfetto_src_profiling_common_interner",
     ":perfetto_src_profiling_common_interning_output",
     ":perfetto_src_profiling_common_proc_utils",
+    ":perfetto_src_profiling_common_profiler_guardrails",
     ":perfetto_src_profiling_common_unwind_support",
     ":perfetto_src_profiling_memory_client",
     ":perfetto_src_profiling_memory_daemon",
@@ -6274,7 +6280,7 @@ genrule {
   srcs: [
     "CHANGELOG",
   ],
-  cmd: "python3 $(location tools/write_version_header.py) --no_git --cpp_out=$(out)",
+  cmd: "python3 $(location tools/write_version_header.py) --no_git --changelog=$(location CHANGELOG) --cpp_out=$(out)",
   out: [
     "perfetto_version.gen.h",
   ],
@@ -6308,6 +6314,11 @@ filegroup {
   srcs: [
     "src/ipc/host_impl.cc",
   ],
+}
+
+// GN: //src/ipc:perfetto_ipc
+filegroup {
+  name: "perfetto_src_ipc_perfetto_ipc",
 }
 
 // GN: //src/ipc:test_messages_cpp
@@ -6535,6 +6546,14 @@ filegroup {
   name: "perfetto_src_profiling_common_proc_utils",
   srcs: [
     "src/profiling/common/proc_utils.cc",
+  ],
+}
+
+// GN: //src/profiling/common:profiler_guardrails
+filegroup {
+  name: "perfetto_src_profiling_common_profiler_guardrails",
+  srcs: [
+    "src/profiling/common/profiler_guardrails.cc",
   ],
 }
 
@@ -8309,6 +8328,7 @@ cc_test {
     ":perfetto_src_profiling_common_interner",
     ":perfetto_src_profiling_common_interning_output",
     ":perfetto_src_profiling_common_proc_utils",
+    ":perfetto_src_profiling_common_profiler_guardrails",
     ":perfetto_src_profiling_common_unittests",
     ":perfetto_src_profiling_common_unwind_support",
     ":perfetto_src_profiling_deobfuscator",
