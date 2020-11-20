@@ -6261,6 +6261,7 @@ filegroup {
     "src/base/unix_socket_unittest.cc",
     "src/base/utils_unittest.cc",
     "src/base/uuid_unittest.cc",
+    "src/base/watchdog_posix_unittest.cc",
     "src/base/watchdog_unittest.cc",
     "src/base/weak_ptr_unittest.cc",
   ],
@@ -6563,6 +6564,7 @@ filegroup {
   srcs: [
     "src/profiling/common/interner_unittest.cc",
     "src/profiling/common/proc_utils_unittest.cc",
+    "src/profiling/common/profiler_guardrails_unittest.cc",
   ],
 }
 
@@ -6765,9 +6767,12 @@ filegroup {
   name: "perfetto_src_profiling_symbolizer_symbolizer",
   srcs: [
     "src/profiling/symbolizer/filesystem_posix.cc",
+    "src/profiling/symbolizer/filesystem_windows.cc",
     "src/profiling/symbolizer/local_symbolizer.cc",
     "src/profiling/symbolizer/scoped_read_mmap_posix.cc",
+    "src/profiling/symbolizer/scoped_read_mmap_windows.cc",
     "src/profiling/symbolizer/subprocess_posix.cc",
+    "src/profiling/symbolizer/subprocess_windows.cc",
     "src/profiling/symbolizer/symbolizer.cc",
   ],
 }
@@ -7586,6 +7591,7 @@ filegroup {
     "src/traced/probes/ftrace/ftrace_data_source.cc",
     "src/traced/probes/ftrace/ftrace_procfs.cc",
     "src/traced/probes/ftrace/ftrace_stats.cc",
+    "src/traced/probes/ftrace/printk_formats_parser.cc",
     "src/traced/probes/ftrace/proto_translation_table.cc",
   ],
 }
@@ -7725,6 +7731,7 @@ filegroup {
     "src/traced/probes/ftrace/ftrace_config_unittest.cc",
     "src/traced/probes/ftrace/ftrace_controller_unittest.cc",
     "src/traced/probes/ftrace/ftrace_procfs_unittest.cc",
+    "src/traced/probes/ftrace/printk_formats_parser_unittest.cc",
     "src/traced/probes/ftrace/proto_translation_table_unittest.cc",
   ],
 }
