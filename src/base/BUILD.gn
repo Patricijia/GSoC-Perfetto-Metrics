@@ -13,11 +13,13 @@
 # limitations under the License.
 
 import("//build_overrides/build.gni")
+import("../../gn/gen_perfetto_version_header.gni")
 import("../../gn/perfetto.gni")
+import("../../gn/perfetto_component.gni")
 import("../../gn/test.gni")
 import("../../gn/wasm.gni")
 
-source_set("base") {
+perfetto_component("base") {
   deps = [ "../../gn:default_deps" ]
   public_deps = [
     "../../include/perfetto/base",
@@ -28,13 +30,16 @@ source_set("base") {
     "logging.cc",
     "metatrace.cc",
     "paged_memory.cc",
+    "status.cc",
     "string_splitter.cc",
     "string_utils.cc",
     "string_view.cc",
     "subprocess.cc",
     "thread_checker.cc",
     "time.cc",
+    "utils.cc",
     "uuid.cc",
+    "version.cc",
     "virtual_destructors.cc",
     "waitable_event.cc",
     "watchdog_posix.cc",
@@ -53,6 +58,23 @@ source_set("base") {
 
   if (enable_perfetto_stderr_crash_dump) {
     deps += [ ":debug_crash_stack_trace" ]
+  }
+
+  if (enable_perfetto_version_gen) {
+    deps += [ ":version_gen_h" ]
+  }
+}
+
+if (enable_perfetto_version_gen) {
+  config("version_gen_config") {
+    include_dirs = [ root_gen_dir ]
+  }
+
+  # Note: the build file translators (tools/gn_utils.py) depend on the hardcoded
+  # "//src/base:version_gen_h". If you rename this target, update build file
+  # translators accordingly.
+  gen_perfetto_version_header("version_gen_h") {
+    cpp_out = "${root_gen_dir}/perfetto_version.gen.h"
   }
 }
 
@@ -73,7 +95,7 @@ if (enable_perfetto_stderr_crash_dump) {
 
 if (enable_perfetto_ipc) {
   # This cannot be in :base as it does not build on WASM.
-  source_set("unix_socket") {
+  perfetto_component("unix_socket") {
     deps = [
       "../../gn:default_deps",
       "../../include/perfetto/ext/base",
@@ -140,6 +162,7 @@ perfetto_unittest_source_set("unittests") {
       "thread_checker_unittest.cc",
       "thread_task_runner_unittest.cc",
       "utils_unittest.cc",
+      "watchdog_posix_unittest.cc",
     ]
   }
   if (perfetto_build_standalone || perfetto_build_with_android) {

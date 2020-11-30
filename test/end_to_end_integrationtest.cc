@@ -50,6 +50,7 @@
 #include "protos/perfetto/trace/ftrace/ftrace.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event_bundle.gen.h"
+#include "protos/perfetto/trace/ftrace/ftrace_stats.gen.h"
 #include "protos/perfetto/trace/power/battery_counters.gen.h"
 #include "protos/perfetto/trace/test_event.gen.h"
 #include "protos/perfetto/trace/trace.gen.h"
@@ -292,7 +293,7 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceProducer)) {
   ds_config->set_ftrace_config_raw(ftrace_config.SerializeAsString());
 
   helper.StartTracing(trace_config);
-  helper.WaitForTracingDisabled(10000);
+  helper.WaitForTracingDisabled();
 
   helper.ReadData();
   helper.WaitForReadData();
@@ -366,6 +367,78 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
     }
   }
   ASSERT_EQ(marker_found, 1);
+}
+
+// Disable this test:
+// 1. On cuttlefish (x86-kvm). It's too slow when running on GCE (b/171771440).
+//    We cannot change the length of the production code in
+//    CanReadKernelSymbolAddresses() to deal with it.
+// 2. On user (i.e. non-userdebug) builds. As that doesn't work there by design.
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && \
+    (defined(__i386__) ||                         \
+     !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_USERDEBUG_BUILD))
+#define MAYBE_KernelAddressSymbolization DISABLED_KernelAddressSymbolization
+#else
+#define MAYBE_KernelAddressSymbolization KernelAddressSymbolization
+#endif
+TEST_F(PerfettoTest, MAYBE_KernelAddressSymbolization) {
+  // On Android in-tree builds (TreeHugger): this test must always run to
+  // prevent selinux / property-related regressions.
+  // On standalone builds and Linux, this can be optionally skipped because
+  // there it requires root to lower kptr_restrict.
+#if !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+  if (geteuid() != 0)
+    GTEST_SKIP();
+#endif
+
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+
+#if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
+  ProbesProducerThread probes(TEST_PRODUCER_SOCK_NAME);
+  probes.Connect();
+#endif
+
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(1024);
+
+  // The symbolizer is initialized asynchronously in a dedicated PostTask in
+  // FtraceController::StartDataSource. There is no easy way to linearize with
+  // that. Here the duration needs to be long enough so that the PostTask() for
+  // the deferred parse is enqueued before the stop. The kallsyms parsing can
+  // take longer.
+  trace_config.set_duration_ms(5000);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("linux.ftrace");
+  protos::gen::FtraceConfig ftrace_cfg;
+  ftrace_cfg.set_symbolize_ksyms(true);
+  ds_config->set_ftrace_config_raw(ftrace_cfg.SerializeAsString());
+
+  helper.StartTracing(trace_config);
+  helper.WaitForTracingDisabled();
+
+  helper.ReadData();
+  helper.WaitForReadData();
+
+  const auto& packets = helper.trace();
+  ASSERT_GT(packets.size(), 0u);
+
+  int symbols_parsed = -1;
+  for (const auto& packet : packets) {
+    if (!packet.has_ftrace_stats())
+      continue;
+    if (packet.ftrace_stats().phase() != protos::gen::FtraceStats::END_OF_TRACE)
+      continue;
+    symbols_parsed =
+        static_cast<int>(packet.ftrace_stats().kernel_symbols_parsed());
+  }
+  ASSERT_GT(symbols_parsed, 100);
 }
 
 // TODO(b/73453011): reenable on more platforms (including standalone Android).
@@ -509,6 +582,75 @@ TEST_F(PerfettoTest, VeryLargePackets) {
     for (size_t i = 0; i < msg_size; i++)
       ASSERT_EQ(i < msg_size - 1 ? '.' : 0, packet.for_testing().str()[i]);
   }
+}
+
+// This is a regression test see b/169051440 for context.
+//
+// In this test we ensure that traced will not crash if a Producer stops
+// responding or draining the socket (i.e. after we fill up the IPC buffer
+// traced doesn't block on trying to write to the IPC buffer and watchdog
+// doesn't kill it).
+TEST_F(PerfettoTest, UnresponsiveProducer) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+  auto* producer = helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(4096 * 10);
+  trace_config.set_duration_ms(100);
+  trace_config.set_flush_timeout_ms(1);
+  trace_config.set_data_source_stop_timeout_ms(1);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+
+  static constexpr size_t kNumPackets = 1;
+  static constexpr uint32_t kRandomSeed = 42;
+  static constexpr uint32_t kMsgSize = 1024 * 1024 - 42;
+  ds_config->mutable_for_testing()->set_seed(kRandomSeed);
+  ds_config->mutable_for_testing()->set_message_count(kNumPackets);
+  ds_config->mutable_for_testing()->set_message_size(kMsgSize);
+  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+
+  // This string is just used to make the StartDataSource IPC larger.
+  ds_config->set_legacy_config(std::string(8192, '.'));
+  ds_config->set_target_buffer(0);
+
+  // Run one legit trace, this ensures that the producer above is
+  // valid and correct and mirrors real life producers.
+  helper.StartTracing(trace_config);
+  helper.WaitForProducerEnabled();
+  helper.WaitForTracingDisabled();
+
+  helper.ReadData();
+  helper.WaitForReadData(/* read_count */ 0, /* timeout_ms */ 10000);
+
+  const auto& packets = helper.trace();
+  ASSERT_EQ(packets.size(), 1u);
+  ASSERT_TRUE(packets[0].has_for_testing());
+  ASSERT_FALSE(packets[0].for_testing().str().empty());
+  helper.FreeBuffers();
+
+  // Switch the producer to ignoring the IPC socket. On a pixel 4 it took 13
+  // traces to fill up the IPC buffer and cause traced to block (and eventually
+  // watchdog to kill it).
+  helper.producer_thread()->get()->RemoveFileDescriptorWatch(
+      producer->unix_socket_fd());
+
+  trace_config.set_duration_ms(1);
+  for (uint32_t i = 0u; i < 15u; i++) {
+    helper.StartTracing(trace_config, base::ScopedFile());
+    helper.WaitForTracingDisabled(/* timeout_ms = */ 20000);
+    helper.FreeBuffers();
+  }
+  // We need to readd the FileDescriptor (otherwise when the UnixSocket attempts
+  // to remove it a the FakeProducer is destroyed will hit a CHECK failure.
+  helper.producer_thread()->get()->AddFileDescriptorWatch(
+      producer->unix_socket_fd(), []() {});
 }
 
 TEST_F(PerfettoTest, DetachAndReattach) {

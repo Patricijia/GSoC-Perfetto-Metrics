@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -236,6 +237,10 @@ UnixSocketRaw::UnixSocketRaw(ScopedFile fd, SockFamily family, SockType type)
     int flag = 1;
     PERFETTO_CHECK(
         !setsockopt(*fd_, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)));
+    flag = 1;
+    // Disable Nagle's algorithm, optimize for low-latency.
+    // See https://github.com/google/perfetto/issues/70.
+    setsockopt(*fd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
   }
 
   // There is no reason why a socket should outlive the process in case of
@@ -478,19 +483,21 @@ std::unique_ptr<UnixSocket> UnixSocket::Listen(ScopedFile fd,
                                                TaskRunner* task_runner,
                                                SockFamily sock_family,
                                                SockType sock_type) {
-  return std::unique_ptr<UnixSocket>(
-      new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kListening, sock_family, sock_type));
+  return std::unique_ptr<UnixSocket>(new UnixSocket(
+      event_listener, task_runner, std::move(fd), State::kListening,
+      sock_family, sock_type, SockPeerCredMode::kReadOnConnect));
 }
 
 // static
-std::unique_ptr<UnixSocket> UnixSocket::Connect(const std::string& socket_name,
-                                                EventListener* event_listener,
-                                                TaskRunner* task_runner,
-                                                SockFamily sock_family,
-                                                SockType sock_type) {
-  std::unique_ptr<UnixSocket> sock(
-      new UnixSocket(event_listener, task_runner, sock_family, sock_type));
+std::unique_ptr<UnixSocket> UnixSocket::Connect(
+    const std::string& socket_name,
+    EventListener* event_listener,
+    TaskRunner* task_runner,
+    SockFamily sock_family,
+    SockType sock_type,
+    SockPeerCredMode peer_cred_mode) {
+  std::unique_ptr<UnixSocket> sock(new UnixSocket(
+      event_listener, task_runner, sock_family, sock_type, peer_cred_mode));
   sock->DoConnect(socket_name);
   return sock;
 }
@@ -501,30 +508,35 @@ std::unique_ptr<UnixSocket> UnixSocket::AdoptConnected(
     EventListener* event_listener,
     TaskRunner* task_runner,
     SockFamily sock_family,
-    SockType sock_type) {
-  return std::unique_ptr<UnixSocket>(
-      new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kConnected, sock_family, sock_type));
+    SockType sock_type,
+    SockPeerCredMode peer_cred_mode) {
+  return std::unique_ptr<UnixSocket>(new UnixSocket(
+      event_listener, task_runner, std::move(fd), State::kConnected,
+      sock_family, sock_type, peer_cred_mode));
 }
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
                        SockFamily sock_family,
-                       SockType sock_type)
+                       SockType sock_type,
+                       SockPeerCredMode peer_cred_mode)
     : UnixSocket(event_listener,
                  task_runner,
                  ScopedFile(),
                  State::kDisconnected,
                  sock_family,
-                 sock_type) {}
+                 sock_type,
+                 peer_cred_mode) {}
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
                        ScopedFile adopt_fd,
                        State adopt_state,
                        SockFamily sock_family,
-                       SockType sock_type)
-    : event_listener_(event_listener),
+                       SockType sock_type,
+                       SockPeerCredMode peer_cred_mode)
+    : peer_cred_mode_(peer_cred_mode),
+      event_listener_(event_listener),
       task_runner_(task_runner),
       weak_ptr_factory_(this) {
   state_ = State::kDisconnected;
@@ -539,7 +551,8 @@ UnixSocket::UnixSocket(EventListener* event_listener,
     PERFETTO_DCHECK(adopt_fd);
     sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_family, sock_type);
     state_ = State::kConnected;
-    ReadPeerCredentials();
+    if (peer_cred_mode_ == SockPeerCredMode::kReadOnConnect)
+      ReadPeerCredentials();
   } else if (adopt_state == State::kListening) {
     // We get here from Listen().
 
@@ -624,6 +637,7 @@ void UnixSocket::ReadPeerCredentials() {
   // Peer credentials are supported only on AF_UNIX sockets.
   if (sock_raw_.family() != SockFamily::kUnix)
     return;
+  PERFETTO_CHECK(peer_cred_mode_ != SockPeerCredMode::kIgnore);
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
@@ -661,7 +675,8 @@ void UnixSocket::OnEvent() {
     if (res == 0 && sock_err == EINPROGRESS)
       return;  // Not connected yet, just a spurious FD watch wakeup.
     if (res == 0 && sock_err == 0) {
-      ReadPeerCredentials();
+      if (peer_cred_mode_ == SockPeerCredMode::kReadOnConnect)
+        ReadPeerCredentials();
       state_ = State::kConnected;
       return event_listener_->OnConnect(this, true /* connected */);
     }
@@ -684,7 +699,7 @@ void UnixSocket::OnEvent() {
         return;
       std::unique_ptr<UnixSocket> new_sock(new UnixSocket(
           event_listener_, task_runner_, std::move(new_fd), State::kConnected,
-          sock_raw_.family(), sock_raw_.type()));
+          sock_raw_.family(), sock_raw_.type(), peer_cred_mode_));
       event_listener_->OnNewIncomingConnection(this, std::move(new_sock));
     }
   }

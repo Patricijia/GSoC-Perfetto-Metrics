@@ -23,6 +23,7 @@
 #include <memory>
 #include <string>
 
+#include "perfetto/base/export.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/utils.h"
@@ -40,6 +41,17 @@ class TaskRunner;
 // than using GetSockType() / GetSockFamily().
 enum class SockType { kStream = 100, kDgram, kSeqPacket };
 enum class SockFamily { kUnix = 200, kInet, kInet6 };
+
+// Controls the getsockopt(SO_PEERCRED) behavior, which allows to obtain the
+// peer credentials.
+enum class SockPeerCredMode {
+  // Obtain the peer credentials immediatley after connection and cache them.
+  kReadOnConnect = 0,
+
+  // Don't read peer credentials at all. Calls to peer_uid()/peer_pid() will
+  // hit a DCHECK and return kInvalidUid/Pid in release builds.
+  kIgnore
+};
 
 // UnixSocketRaw is a basic wrapper around UNIX sockets. It exposes wrapper
 // methods that take care of most common pitfalls (e.g., marking fd as
@@ -150,7 +162,7 @@ class UnixSocketRaw {
 //                             | (failure or Shutdown())
 //                             V
 //                       OnDisconnect()
-class UnixSocket {
+class PERFETTO_EXPORT UnixSocket {
  public:
   class EventListener {
    public:
@@ -207,18 +219,22 @@ class UnixSocket {
   // Creates a Unix domain socket and connects to the listening endpoint.
   // Returns always an instance. EventListener::OnConnect(bool success) will
   // be called always, whether the connection succeeded or not.
-  static std::unique_ptr<UnixSocket> Connect(const std::string& socket_name,
-                                             EventListener*,
-                                             TaskRunner*,
-                                             SockFamily,
-                                             SockType);
+  static std::unique_ptr<UnixSocket> Connect(
+      const std::string& socket_name,
+      EventListener*,
+      TaskRunner*,
+      SockFamily,
+      SockType,
+      SockPeerCredMode = SockPeerCredMode::kReadOnConnect);
 
   // Constructs a UnixSocket using the given connected socket.
-  static std::unique_ptr<UnixSocket> AdoptConnected(ScopedFile,
-                                                    EventListener*,
-                                                    TaskRunner*,
-                                                    SockFamily,
-                                                    SockType);
+  static std::unique_ptr<UnixSocket> AdoptConnected(
+      ScopedFile,
+      EventListener*,
+      TaskRunner*,
+      SockFamily,
+      SockType,
+      SockPeerCredMode = SockPeerCredMode::kReadOnConnect);
 
   UnixSocket(const UnixSocket&) = delete;
   UnixSocket& operator=(const UnixSocket&) = delete;
@@ -236,6 +252,12 @@ class UnixSocket {
   // be reused with Listen() or Connect().
   void Shutdown(bool notify);
 
+  void SetTxTimeout(uint32_t timeout_ms) {
+    PERFETTO_CHECK(sock_raw_.SetTxTimeout(timeout_ms));
+  }
+  void SetRxTimeout(uint32_t timeout_ms) {
+    PERFETTO_CHECK(sock_raw_.SetRxTimeout(timeout_ms));
+  }
   // Returns true is the message was queued, false if there was no space in the
   // output buffer, in which case the client should retry or give up.
   // If any other error happens the socket will be shutdown and
@@ -280,8 +302,9 @@ class UnixSocket {
   // User ID of the peer, as returned by the kernel. If the client disconnects
   // and the socket goes into the kDisconnected state, it retains the uid of
   // the last peer.
-  uid_t peer_uid() const {
-    PERFETTO_DCHECK(!is_listening() && peer_uid_ != kInvalidUid);
+  uid_t peer_uid(bool skip_check_for_testing = false) const {
+    PERFETTO_DCHECK((!is_listening() && peer_uid_ != kInvalidUid) ||
+                    skip_check_for_testing);
     ignore_result(kInvalidPid);  // Silence warnings in amalgamated builds.
     return peer_uid_;
   }
@@ -293,8 +316,9 @@ class UnixSocket {
   // retains the pid of the last peer.
   //
   // This is only available on Linux / Android.
-  pid_t peer_pid() const {
-    PERFETTO_DCHECK(!is_listening() && peer_pid_ != kInvalidPid);
+  pid_t peer_pid(bool skip_check_for_testing = false) const {
+    PERFETTO_DCHECK((!is_listening() && peer_pid_ != kInvalidPid) ||
+                    skip_check_for_testing);
     return peer_pid_;
   }
 #endif
@@ -303,13 +327,18 @@ class UnixSocket {
   UnixSocketRaw ReleaseSocket();
 
  private:
-  UnixSocket(EventListener*, TaskRunner*, SockFamily, SockType);
+  UnixSocket(EventListener*,
+             TaskRunner*,
+             SockFamily,
+             SockType,
+             SockPeerCredMode);
   UnixSocket(EventListener*,
              TaskRunner*,
              ScopedFile,
              State,
              SockFamily,
-             SockType);
+             SockType,
+             SockPeerCredMode);
 
   // Called once by the corresponding public static factory methods.
   void DoConnect(const std::string& socket_name);
@@ -321,6 +350,7 @@ class UnixSocket {
   UnixSocketRaw sock_raw_;
   State state_ = State::kDisconnected;
   int last_error_ = 0;
+  SockPeerCredMode peer_cred_mode_ = SockPeerCredMode::kReadOnConnect;
   uid_t peer_uid_ = kInvalidUid;
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)

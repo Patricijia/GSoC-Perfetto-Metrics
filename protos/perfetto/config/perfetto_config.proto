@@ -362,6 +362,12 @@ message FtraceConfig {
     optional bool enabled = 1;
   }
   optional CompactSchedConfig compact_sched = 12;
+
+  // Enables symbol name resolution against /proc/kallsyms.
+  // It requires that either traced_probes is running as root or that
+  // kptr_restrict has been manually lowered.
+  // It does not disclose KASLR, symbol addresses are mangled.
+  optional bool symbolize_ksyms = 13;
 }
 
 // End of protos/perfetto/config/ftrace/ftrace_config.proto
@@ -509,7 +515,7 @@ message ProcessStatsConfig {
 // Begin of protos/perfetto/config/profiling/heapprofd_config.proto
 
 // Configuration for go/heapprofd.
-// Next id: 23
+// Next id: 24
 message HeapprofdConfig {
   message ContinuousDumpConfig {
     // ms to wait before first dump.
@@ -554,6 +560,8 @@ message HeapprofdConfig {
   //
   // Introduced in Android 12.
   repeated string heaps = 20;
+
+  optional bool stream_allocations = 23;
 
   // If given, needs to be the same length as heaps and gives the sampling
   // interval for the respective entry in heaps.
@@ -636,17 +644,8 @@ message HeapprofdConfig {
   // Introduced in Android 11.
   optional bool no_running = 11;
 
-  // Gather information on how many bytes of allocations are on non-referenced
-  // pages. The way to use this generally is:
-  // 1. Start profile of app.
-  // 2. Start app.
-  // 3. Trigger a dump by sending SIGUSR1 to heapprofd.
-  // 4. Do operations.
-  // 5. End profile.
-  //
-  // You can then find the allocations that were not used for the operations you
-  // did in step 4.
-  optional bool idle_allocations = 12;
+  // deprecated idle_allocations.
+  reserved 12;
 
   // Cause heapprofd to emit a single dump at the end, showing the memory usage
   // at the point in time when the sampled heap usage of the process was at its
@@ -709,6 +708,10 @@ message JavaHprofConfig {
   // * start with /data/app
   // * contain "extracted in memory from Y", where Y matches any of the above
   optional bool dump_smaps = 5;
+
+  // Exclude objects of the following types from the profile. This can be
+  // useful if lots of uninteresting objects, e.g. "sun.misc.Cleaner".
+  repeated string ignored_types = 6;
 }
 
 // End of protos/perfetto/config/profiling/java_hprof_config.proto
@@ -719,6 +722,8 @@ message JavaHprofConfig {
 //
 // At the time of writing, the config options are restricted to the periodic
 // system-wide stack sampling use-case (|all_cpus| must be true).
+//
+// Next id: 13
 message PerfEventConfig {
   // If true, sample events on all CPUs.
   optional bool all_cpus = 1;
@@ -736,6 +741,17 @@ message PerfEventConfig {
   // kernel. If set, must be a power of two.
   // If unset, an implementation-defined default is used.
   optional uint32 ring_buffer_pages = 3;
+
+  // If true, callstacks will include the kernel-space frames. Such frames can
+  // be identified by a magical "kernel" string as their mapping name.
+  // Requires traced_perf to be running as root, or kptr_restrict to have been
+  // manually unrestricted.
+  // This does *not* disclose KASLR, as only the function names are emitted.
+  optional bool kernel_frames = 12;
+
+  //
+  // Target process selection:
+  //
 
   // Process ID (TGID) allowlist. If this list is not empty, only matching
   // samples will be retained. If multiple allow/deny-lists are
@@ -761,8 +777,9 @@ message PerfEventConfig {
   // on a first come, first served basis.
   optional uint32 additional_cmdline_count = 11;
 
-  ////////////////////
+  //
   // Uncommon options:
+  //
 
   // Timeout for the remote /proc/<pid>/{maps,mem} file descriptors for a
   // sampled process. This is primarily for Android, where this lookup is
@@ -1138,6 +1155,7 @@ message DataSourceConfig {
   // one of which produces metadata for the other one, belong to the same trace
   // session and hence should be linked together.
   // This field was introduced in Aug 2018 after Android P.
+  // DO NOT SET in consumer as this will be overridden by the service.
   optional uint64 tracing_session_id = 4;
 
   // Keeep the lower IDs (up to 99) for fields that are *not* specific to

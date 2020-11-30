@@ -48,8 +48,8 @@ struct PathFromRoot {
     size_t parent_id = 0;
     int64_t size = 0;
     int64_t count = 0;
-    tables::HeapGraphClassTable::Id type_id = {};
-    std::map<tables::HeapGraphClassTable::Id, size_t> children;
+    StringId class_name_id = {};
+    std::map<StringId, size_t> children;
   };
   std::vector<Node> nodes{Node{}};
   std::set<tables::HeapGraphObjectTable::Id> visited;
@@ -105,6 +105,7 @@ class HeapGraphTracker : public Destructible {
                        uint64_t object_size,
                        std::vector<uint64_t> field_name_ids,
                        uint64_t superclass_id,
+                       uint64_t classloader_id,
                        bool no_fields);
   void AddInternedFieldName(uint32_t seq_id,
                             uint64_t intern_id,
@@ -150,6 +151,7 @@ class HeapGraphTracker : public Destructible {
     std::vector<uint64_t> field_name_ids;
     uint64_t superclass_id;
     bool no_fields;
+    uint64_t classloader_id;
   };
   struct SequenceState {
     UniquePid current_upid = 0;

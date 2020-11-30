@@ -142,9 +142,13 @@ message. This is not surfaced in the converted pprof compatible proto.
 ## Runtime profiling
 
 When a profiling session is started, all matching processes (by name or PID)
-are enumerated and profiling is enabled. The resulting profile will contain
-all allocations done between the beginning and the end of the profiling
-session.
+are enumerated and are signalled to request profiling. Profiling isn't actually
+enabled until a few hundred milliseconds after the next allocation that is
+done by the application. If the application is idle when profiling is
+requested, and then does a burst of allocations, these may be missed.
+
+The resulting profile will contain all allocations done between when profiling
+is enabled, and the end of the profiling session.
 
 The resulting [ProfilePacket] will have `from_startup` set to false in the
 corresponding `ProcessHeapSamples` message. This does not get surfaced in the
@@ -309,7 +313,7 @@ accuracy in the resulting profile) by passing `--interval=16000` or higher.
 ### Profile is empty
 
 Check whether your target process is eligible to be profiled by consulting
-[Target processes](#target-processes) above.
+[Target processes](#heapprofd-targets) above.
 
 Also check the [Known Issues](#known-issues).
 
@@ -363,20 +367,86 @@ $ readelf -S file.so | grep "gnu_debugdata\|eh_frame\|debug_frame"
 If this does not show one or more of the sections, change your build system
 to not strip them.
 
+## (non-Android) Linux support
+
+NOTE: This is experimental and only for ad-hoc investigations.
+
+You can use a standalone library to profile memory allocations on Linux.
+First [build Perfetto](/docs/contributing/build-instructions.md)
+
+```
+tools/build_all_configs.py
+ninja -C out/linux_clang_release
+```
+
+Then, run traced
+
+```
+out/linux_clang_release/traced
+```
+
+Start the profile (e.g. targeting trace_processor_shell)
+
+```
+out/linux_clang_release/perfetto \
+  -c - --txt \
+  -o ~/heapprofd-trace \
+<<EOF
+
+buffers {
+  size_kb: 32768
+}
+
+data_sources {
+  config {
+    name: "android.heapprofd"
+    heapprofd_config {
+      shmem_size_bytes: 8388608
+      sampling_interval_bytes: 4096
+      block_client: true
+      process_cmdline: "trace_processor_shell"
+      dump_at_max: true
+    }
+  }
+}
+
+duration_ms: 604800000
+write_into_file: true
+flush_timeout_ms: 30000
+flush_period_ms: 604800000
+
+EOF
+```
+
+Finally, run your target (e.g. trace_processor_shell) with LD_PRELOAD
+
+```
+LD_PRELOAD=out/linux_clang_release/libheapprofd_preload.so out/linux_clang_release/trace_processor_shell <trace>
+```
+
+Then, Ctrl-C the Perfetto invocation and upload ~/heapprofd-trace to the
+[Perfetto UI](https://ui.perfetto.dev).
+
 ## Known Issues
 
-### Android 11
+### {#known-issues-android11} Android 11
 
 * 32-bit programs cannot be targeted on 64-bit devices.
 * Setting `sampling_interval_bytes` to 0 crashes the target process.
   This is an invalid config that should be rejected instead.
+* For startup profiles, some frame names might be missing. This will be
+  resolved in Android 12.
 
-### Android 10
-
-* On ARM32, the bottom-most frame is always `ERROR 2`. This is harmless and
-  the callstacks are still complete.
+### {#known-issues-android10} Android 10
+* Function names in libraries with load bias might be incorrect. Use
+  [offline symbolization](#symbolization) to resolve this issue.
+* For startup profiles, some frame names might be missing. This will be
+  resolved in Android 12.
+* 32-bit programs cannot be targeted on 64-bit devices.
 * x86 platforms are not supported. This includes the Android _Cuttlefish_
   emulator.
+* On ARM32, the bottom-most frame is always `ERROR 2`. This is harmless and
+  the callstacks are still complete.
 * If heapprofd is run standalone (by running `heapprofd` in a root shell, rather
   than through init), `/dev/socket/heapprofd` get assigned an incorrect SELinux
   domain. You will not be able to profile any processes unless you disable
@@ -386,7 +456,6 @@ to not strip them.
   memory in the child process will prematurely end the profile.
   `java.lang.Runtime.exec` does this, calling it will prematurely end
   the profile. Note that this is in violation of the POSIX standard.
-* 32-bit programs cannot be targeted on 64-bit devices.
 * Setting `sampling_interval_bytes` to 0 crashes the target process.
   This is an invalid config that should be rejected instead.
 

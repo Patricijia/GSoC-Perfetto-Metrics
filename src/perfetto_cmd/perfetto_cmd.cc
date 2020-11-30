@@ -41,6 +41,7 @@
 #include "perfetto/ext/base/thread_utils.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/uuid.h"
+#include "perfetto/ext/base/version.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
@@ -167,8 +168,6 @@ light configuration flags: (only when NOT using -c/--config)
   --size           -s      : Max file size N[mb,gb] (default: in-memory ring-buffer only)
   ATRACE_CAT               : Record ATRACE_CAT (e.g. wm)
   FTRACE_GROUP/FTRACE_NAME : Record ftrace event (e.g. sched/sched_switch)
-  FTRACE_GROUP/*           : Record all events in group (e.g. sched/*)
-
 
 statsd-specific flags:
   --alert-id           : ID of the alert that triggered this trace.
@@ -205,6 +204,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
     OPT_STOP,
     OPT_QUERY,
     OPT_QUERY_RAW,
+    OPT_VERSION,
   };
   static const struct option long_options[] = {
       {"help", no_argument, nullptr, 'h'},
@@ -230,6 +230,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
       {"app", required_argument, nullptr, OPT_ATRACE_APP},
       {"query", no_argument, nullptr, OPT_QUERY},
       {"query-raw", no_argument, nullptr, OPT_QUERY_RAW},
+      {"version", no_argument, nullptr, OPT_VERSION},
       {nullptr, 0, nullptr, 0}};
 
   int option_index = 0;
@@ -400,6 +401,11 @@ int PerfettoCmd::Main(int argc, char** argv) {
       continue;
     }
 
+    if (option == OPT_VERSION) {
+      printf("%s\n", base::GetVersionString());
+      return 0;
+    }
+
     return PrintUsage(argv[0]);
   }
 
@@ -497,7 +503,8 @@ int PerfettoCmd::Main(int argc, char** argv) {
     return 1;
   }
 
-  if (trace_config_->incident_report_config().destination_package().empty() &&
+  if (trace_config_->activate_triggers().empty() &&
+      trace_config_->incident_report_config().destination_package().empty() &&
       is_uploading_) {
     PERFETTO_ELOG("Missing IncidentReportConfig with --dropbox / --upload.");
     return 1;
@@ -730,7 +737,8 @@ void PerfettoCmd::OnConnect() {
   // Failsafe mechanism to avoid waiting indefinitely if the service hangs.
   if (expected_duration_ms_) {
     uint32_t trace_timeout =
-        expected_duration_ms_ + 60000 + trace_config_->flush_timeout_ms();
+        expected_duration_ms_ + 60000 + trace_config_->flush_timeout_ms() +
+        trace_config_->data_source_stop_timeout_ms();
     task_runner_.PostDelayedTask(std::bind(&PerfettoCmd::OnTimeout, this),
                                  trace_timeout);
   }
@@ -770,8 +778,11 @@ void PerfettoCmd::OnTraceData(std::vector<TracePacket> packets, bool has_more) {
     FinalizeTraceAndExit();  // Reached end of trace.
 }
 
-void PerfettoCmd::OnTracingDisabled() {
+void PerfettoCmd::OnTracingDisabled(const std::string& error) {
   LogUploadEvent(PerfettoStatsdAtom::kOnTracingDisabled);
+
+  if (!error.empty())
+    PERFETTO_ELOG("Service error: %s", error.c_str());
 
   if (trace_config_->write_into_file()) {
     // If write_into_file == true, at this point the passed file contains

@@ -51,6 +51,8 @@ export interface Area {
 
 export const MAX_TIME = 180;
 
+export const STATE_VERSION = 2;
+
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
 export type EngineMode = 'WASM'|'HTTP_RPC';
@@ -69,6 +71,7 @@ export interface CallsiteInfo {
   selfSize: number;
   mapping: string;
   merged: boolean;
+  highlighted: boolean;
 }
 
 export interface TraceFileSource {
@@ -100,6 +103,7 @@ export interface TrackState {
   engineId: string;
   kind: string;
   name: string;
+  isMainThread: boolean;
   trackGroup?: string;
   config: {};
 }
@@ -247,9 +251,16 @@ export interface AggregationState {
   sorting?: Sorting;
 }
 
+export interface MetricsState {
+  availableMetrics?: string[];  // Undefined until list is loaded.
+  selectedIndex?: number;
+  requestedMetric?: string;  // Unset after metric request is handled.
+}
+
 export interface State {
   // tslint:disable-next-line:no-any
   [key: string]: any;
+  version: number;
   route: string|null;
   nextId: number;
   nextNoteId: number;
@@ -277,6 +288,7 @@ export interface State {
   debugTrackId?: string;
   lastTrackReloadRequest?: number;
   queries: ObjectById<QueryConfig>;
+  metrics: MetricsState;
   permalink: PermalinkConfig;
   notes: ObjectById<Note|AreaNote>;
   status: Status;
@@ -324,7 +336,7 @@ export declare type RecordMode =
     'STOP_WHEN_FULL' | 'RING_BUFFER' | 'LONG_TRACE';
 
 // 'Q','P','O' for Android, 'L' for Linux, 'C' for Chrome.
-export declare type TargetOs = 'Q' | 'P' | 'O' | 'C' | 'L';
+export declare type TargetOs = 'Q' | 'P' | 'O' | 'C' | 'L' | 'CrOS';
 
 export function isAndroidP(target: RecordingTarget) {
   return target.os === 'P';
@@ -335,7 +347,11 @@ export function isAndroidTarget(target: RecordingTarget) {
 }
 
 export function isChromeTarget(target: RecordingTarget) {
-  return target.os === 'C';
+  return ['C', 'CrOS'].includes(target.os);
+}
+
+export function isCrOSTarget(target: RecordingTarget) {
+  return target.os === 'CrOS';
 }
 
 export function isLinuxTarget(target: RecordingTarget) {
@@ -483,6 +499,7 @@ export function getDefaultRecordingTargets(): RecordingTarget[] {
     {os: 'P', name: 'Android P'},
     {os: 'O', name: 'Android O-'},
     {os: 'C', name: 'Chrome'},
+    {os: 'CrOS', name: 'Chrome OS (system trace)'},
     {os: 'L', name: 'Linux desktop'}
   ];
 }
@@ -697,6 +714,7 @@ export function getBuiltinChromeCategoryList(): string[] {
 
 export function createEmptyState(): State {
   return {
+    version: STATE_VERSION,
     route: null,
     nextId: 0,
     nextNoteId: 1,  // 0 is reserved for ephemeral area marking.
@@ -712,6 +730,7 @@ export function createEmptyState(): State {
     scrollingTracks: [],
     areas: {},
     queries: {},
+    metrics: {},
     permalink: {},
     notes: {},
 

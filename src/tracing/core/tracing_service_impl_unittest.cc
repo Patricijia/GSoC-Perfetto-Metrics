@@ -62,6 +62,7 @@ using ::testing::Not;
 using ::testing::Property;
 using ::testing::StrictMock;
 using ::testing::StringMatchResultListener;
+using ::testing::StrNe;
 
 namespace perfetto {
 
@@ -706,16 +707,18 @@ TEST_F(TracingServiceImplTest, StartTracingTriggerMultipleTraces) {
   auto checkpoint_name = "on_tracing_disabled_consumer_1_and_2";
   auto on_tracing_disabled = task_runner.CreateCheckpoint(checkpoint_name);
   std::atomic<size_t> counter(0);
-  EXPECT_CALL(*consumer_1, OnTracingDisabled()).WillOnce(Invoke([&]() {
-    if (++counter == 2u) {
-      on_tracing_disabled();
-    }
-  }));
-  EXPECT_CALL(*consumer_2, OnTracingDisabled()).WillOnce(Invoke([&]() {
-    if (++counter == 2u) {
-      on_tracing_disabled();
-    }
-  }));
+  EXPECT_CALL(*consumer_1, OnTracingDisabled(_))
+      .WillOnce(InvokeWithoutArgs([&]() {
+        if (++counter == 2u) {
+          on_tracing_disabled();
+        }
+      }));
+  EXPECT_CALL(*consumer_2, OnTracingDisabled(_))
+      .WillOnce(InvokeWithoutArgs([&]() {
+        if (++counter == 2u) {
+          on_tracing_disabled();
+        }
+      }));
 
   EXPECT_CALL(*producer, StopDataSource(id1));
   EXPECT_CALL(*producer, StopDataSource(id2));
@@ -2775,9 +2778,9 @@ TEST_F(TracingServiceImplTest, AbortIfTraceDurationIsTooLong) {
   EXPECT_CALL(*producer, SetupDataSource(_, _)).Times(0);
   consumer->EnableTracing(trace_config);
 
-  // The trace is aborted immediately, 5s here is just some slack for the thread
-  // ping-pongs for slow devices.
-  consumer->WaitForTracingDisabled(5000);
+  // The trace is aborted immediately, the default timeout here is just some
+  // slack for the thread ping-pongs for slow devices.
+  consumer->WaitForTracingDisabled();
 }
 
 TEST_F(TracingServiceImplTest, GetTraceStats) {
@@ -3033,6 +3036,40 @@ TEST_F(TracingServiceImplTest, ObserveAllDataSourceStarted) {
     Mock::VerifyAndClearExpectations(consumer.get());
     Mock::VerifyAndClearExpectations(producer.get());
   }
+}
+
+TEST_F(TracingServiceImplTest,
+       ObserveAllDataSourceStartedWithoutMatchingInstances) {
+  std::unique_ptr<MockConsumer> consumer = CreateMockConsumer();
+  consumer->Connect(svc.get());
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(128);
+
+  consumer->ObserveEvents(ObservableEvents::TYPE_ALL_DATA_SOURCES_STARTED);
+
+  // EnableTracing() should immediately cause ALL_DATA_SOURCES_STARTED, because
+  // there aren't any matching data sources registered.
+  consumer->EnableTracing(trace_config);
+
+  auto events = consumer->WaitForObservableEvents();
+  ObservableEvents::DataSourceInstanceStateChange change;
+  EXPECT_TRUE(events.all_data_sources_started());
+
+  consumer->DisableTracing();
+  consumer->WaitForTracingDisabled();
+
+  EXPECT_THAT(
+      consumer->ReadBuffers(),
+      Contains(Property(
+          &protos::gen::TracePacket::service_event,
+          Property(&protos::gen::TracingServiceEvent::all_data_sources_started,
+                   Eq(true)))));
+  consumer->FreeBuffers();
+
+  task_runner.RunUntilIdle();
+
+  Mock::VerifyAndClearExpectations(consumer.get());
 }
 
 // Similar to ObserveAllDataSourceStarted, but covers the case of some data
@@ -3333,7 +3370,8 @@ TEST_F(TracingServiceImplTest, LimitSessionsPerUid) {
   for (int i = 0; i <= kUids; i++) {
     auto* consumer = start_new_session(/*uid=*/static_cast<uid_t>(i) % kUids);
     auto on_fail = task_runner.CreateCheckpoint("uid_" + std::to_string(i));
-    EXPECT_CALL(*consumer, OnTracingDisabled()).WillOnce(Invoke(on_fail));
+    EXPECT_CALL(*consumer, OnTracingDisabled(StrNe("")))
+        .WillOnce(InvokeWithoutArgs(on_fail));
   }
 
   // Wait for failure (only after both attempts).

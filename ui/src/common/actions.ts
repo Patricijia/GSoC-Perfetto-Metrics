@@ -17,7 +17,14 @@ import {Draft} from 'immer';
 import {assertExists} from '../base/logging';
 import {randomColor} from '../common/colorizer';
 import {ConvertTrace, ConvertTraceToPprof} from '../controller/trace_converter';
+import {ASYNC_SLICE_TRACK_KIND} from '../tracks/async_slices/common';
+import {COUNTER_TRACK_KIND} from '../tracks/counter/common';
 import {DEBUG_SLICE_TRACK_KIND} from '../tracks/debug_slices/common';
+import {HEAP_PROFILE_TRACK_KIND} from '../tracks/heap_profile/common';
+import {
+  PROCESS_SCHEDULING_TRACK_KIND
+} from '../tracks/process_scheduling/common';
+import {PROCESS_SUMMARY_TRACK} from '../tracks/process_summary/common';
 
 import {DEFAULT_VIEWING_OPTION} from './flamegraph_util';
 import {
@@ -48,6 +55,7 @@ export interface AddTrackArgs {
   engineId: string;
   kind: string;
   name: string;
+  isMainThread?: boolean;
   trackGroup?: string;
   config: {};
 }
@@ -163,7 +171,7 @@ export const StateActions = {
 
   addTrack(state: StateDraft, args: {
     id?: string; engineId: string; kind: string; name: string;
-    trackGroup?: string; config: {};
+    trackGroup?: string; config: {}; isMainThread: boolean;
   }): void {
     const id = args.id !== undefined ? args.id : `${state.nextId++}`;
     state.tracks[id] = {
@@ -171,6 +179,7 @@ export const StateActions = {
       engineId: args.engineId,
       kind: args.kind,
       name: args.name,
+      isMainThread: args.isMainThread,
       trackGroup: args.trackGroup,
       config: args.config,
     };
@@ -208,6 +217,7 @@ export const StateActions = {
           engineId: args.engineId,
           kind: DEBUG_SLICE_TRACK_KIND,
           name: args.name,
+          isMainThread: false,
           trackGroup: SCROLLING_TRACK_GROUP,
           config: {
             maxDepth: 1,
@@ -224,6 +234,44 @@ export const StateActions = {
         state.scrollingTracks.filter(id => id !== debugTrackId);
     state.pinnedTracks = state.pinnedTracks.filter(id => id !== debugTrackId);
     state.debugTrackId = undefined;
+  },
+
+  sortThreadTracks(state: StateDraft, _: {}): void {
+    const threadTrackOrder = [
+      PROCESS_SCHEDULING_TRACK_KIND,
+      PROCESS_SUMMARY_TRACK,
+      HEAP_PROFILE_TRACK_KIND,
+      COUNTER_TRACK_KIND,
+      ASYNC_SLICE_TRACK_KIND
+    ];
+    for (const group of Object.values(state.trackGroups)) {
+      group.tracks.sort((a: string, b: string) => {
+        const aKind = threadTrackOrder.indexOf(state.tracks[a].kind);
+        const bKind = threadTrackOrder.indexOf(state.tracks[b].kind);
+        const aName = state.tracks[a].name.toLocaleLowerCase();
+        const bName = state.tracks[b].name.toLocaleLowerCase();
+        if (aKind === bKind) {
+          if (state.tracks[a].isMainThread && state.tracks[b].isMainThread) {
+            return 0;
+          } else if (state.tracks[a].isMainThread) {
+            return -1;
+          } else if (state.tracks[b].isMainThread) {
+            return 1;
+          }
+          if (aName > bName) {
+            return 1;
+          } else if (aName === bName) {
+            return 0;
+          } else {
+            return -1;
+          }
+        } else {
+          if (aKind === -1) return 1;
+          if (bKind === -1) return -1;
+          return aKind - bKind;
+        }
+      });
+    }
   },
 
   updateAggregateSorting(
@@ -338,8 +386,12 @@ export const StateActions = {
   setEngineReady(
       state: StateDraft,
       args: {engineId: string; ready: boolean, mode: EngineMode}): void {
-    state.engines[args.engineId].ready = args.ready;
-    state.engines[args.engineId].mode = args.mode;
+    const engine = state.engines[args.engineId];
+    if (engine === undefined) {
+      return;
+    }
+    engine.ready = args.ready;
+    engine.mode = args.mode;
   },
 
   setNewEngineMode(state: StateDraft, args: {mode: NewEngineMode}): void {
@@ -427,7 +479,8 @@ export const StateActions = {
     this.selectNote(state, {id});
   },
 
-  markArea(state: StateDraft, args: {color: string, persistent: boolean}):
+  markCurrentArea(
+      state: StateDraft, args: {color: string, persistent: boolean}):
       void {
         if (state.currentSelection === null ||
             state.currentSelection.kind !== 'AREA') {
@@ -445,15 +498,34 @@ export const StateActions = {
         state.currentSelection.noteId = id;
       },
 
-  toggleMarkArea(state: StateDraft, args: {persistent: boolean}) {
+  toggleMarkCurrentArea(state: StateDraft, args: {persistent: boolean}) {
     const selection = state.currentSelection;
     if (selection != null && selection.kind === 'AREA' &&
         selection.noteId !== undefined) {
       this.removeNote(state, {id: selection.noteId});
     } else {
       const color = randomColor();
-      this.markArea(state, {color, persistent: args.persistent});
+      this.markCurrentArea(state, {color, persistent: args.persistent});
     }
+  },
+
+  markArea(state: StateDraft, args: {area: Area, persistent: boolean}): void {
+    const areaId = `${state.nextAreaId++}`;
+    state.areas[areaId] = {
+      id: areaId,
+      startSec: args.area.startSec,
+      endSec: args.area.endSec,
+      tracks: args.area.tracks
+    };
+    const id = args.persistent ? `${state.nextNoteId++}` : '0';
+    const color = args.persistent ? randomColor() : '#344596';
+    state.notes[id] = {
+      noteType: 'AREA',
+      id,
+      areaId,
+      color,
+      text: '',
+    };
   },
 
   toggleVideo(state: StateDraft, _: {}): void {
@@ -549,11 +621,6 @@ export const StateActions = {
       ts: args.ts,
       type: args.type,
     };
-  },
-
-  showHeapProfileFlamegraph(
-      state: StateDraft,
-      args: {id: number, upid: number, ts: number, type: string}): void {
     state.currentHeapProfileFlamegraph = {
       kind: 'HEAP_PROFILE_FLAMEGRAPH',
       id: args.id,
@@ -739,7 +806,34 @@ export const StateActions = {
 
   setAnalyzePageQuery(state: StateDraft, args: {query: string}): void {
     state.analyzePageQuery = args.query;
-  }
+  },
+
+  requestSelectedMetric(state: StateDraft, _: {}): void {
+    if (!state.metrics.availableMetrics) throw Error('No metrics available');
+    if (state.metrics.selectedIndex === undefined) {
+      throw Error('No metric selected');
+    }
+    state.metrics.requestedMetric =
+        state.metrics.availableMetrics[state.metrics.selectedIndex];
+  },
+
+  resetMetricRequest(state: StateDraft, args: {name: string}): void {
+    if (state.metrics.requestedMetric !== args.name) return;
+    state.metrics.requestedMetric = undefined;
+  },
+
+  setAvailableMetrics(state: StateDraft, args: {metrics: string[]}): void {
+    state.metrics.availableMetrics = args.metrics;
+    if (args.metrics.length > 0) state.metrics.selectedIndex = 0;
+  },
+
+  setMetricSelectedIndex(state: StateDraft, args: {index: number}): void {
+    if (!state.metrics.availableMetrics ||
+        args.index >= state.metrics.availableMetrics.length) {
+      throw Error('metric selection out of bounds');
+    }
+    state.metrics.selectedIndex = args.index;
+  },
 };
 
 // When we are on the frontend side, we don't really want to execute the

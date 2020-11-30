@@ -27,6 +27,7 @@
 #include <vector>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/base/status.h"
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/circular_queue.h"
 #include "perfetto/ext/base/optional.h"
@@ -180,8 +181,7 @@ class TracingServiceImpl : public TracingService {
                          uid_t uid);
     ~ConsumerEndpointImpl() override;
 
-    void NotifyOnTracingDisabled();
-    base::WeakPtr<ConsumerEndpointImpl> GetWeakPtr();
+    void NotifyOnTracingDisabled(const std::string& error);
 
     // TracingService::ConsumerEndpoint implementation.
     void EnableTracing(const TraceConfig&, base::ScopedFile) override;
@@ -259,12 +259,12 @@ class TracingServiceImpl : public TracingService {
   bool DetachConsumer(ConsumerEndpointImpl*, const std::string& key);
   bool AttachConsumer(ConsumerEndpointImpl*, const std::string& key);
   void DisconnectConsumer(ConsumerEndpointImpl*);
-  bool EnableTracing(ConsumerEndpointImpl*,
-                     const TraceConfig&,
-                     base::ScopedFile);
+  base::Status EnableTracing(ConsumerEndpointImpl*,
+                             const TraceConfig&,
+                             base::ScopedFile);
   void ChangeTraceConfig(ConsumerEndpointImpl*, const TraceConfig&);
 
-  bool StartTracing(TracingSessionID);
+  base::Status StartTracing(TracingSessionID);
   void DisableTracing(TracingSessionID, bool disable_immediately = false);
   void Flush(TracingSessionID tsid,
              uint32_t timeout_ms,

@@ -28,6 +28,7 @@ import {
   LogExists,
   LogExistsKey
 } from '../common/logs';
+import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 
 import {AnalyzePage} from './analyze_page';
@@ -46,6 +47,7 @@ import {
 } from './globals';
 import {HomePage} from './home_page';
 import {openBufferWithLegacyTraceViewer} from './legacy_trace_viewer';
+import {MetricsPage} from './metrics_page';
 import {postMessageHandler} from './post_message_handler';
 import {RecordPage, updateAvailableAdbDevices} from './record_page';
 import {Router} from './router';
@@ -132,8 +134,35 @@ class FrontendApi {
     this.redraw();
   }
 
-  publishBoundFlows(boundFlows: Flow[]) {
-    globals.boundFlows = boundFlows;
+  publishConnectedFlows(connectedFlows: Flow[]) {
+    globals.connectedFlows = connectedFlows;
+    // Call resetFlowFocus() each time connectedFlows is updated to correctly
+    // navigate using hotkeys.
+    this.resetFlowFocus();
+    this.redraw();
+  }
+
+  // If a chrome slice is selected and we have any flows in connectedFlows
+  // we will find the flows on the right and left of that slice to set a default
+  // focus. In all other cases the focusedFlowId(Left|Right) will be set to -1.
+  resetFlowFocus() {
+    globals.frontendLocalState.focusedFlowIdLeft = -1;
+    globals.frontendLocalState.focusedFlowIdRight = -1;
+    if (globals.state.currentSelection?.kind === 'CHROME_SLICE') {
+      const sliceId = globals.state.currentSelection.id;
+      for (const flow of globals.connectedFlows) {
+        if (flow.begin.sliceId === sliceId) {
+          globals.frontendLocalState.focusedFlowIdRight = flow.id;
+        }
+        if (flow.end.sliceId === sliceId) {
+          globals.frontendLocalState.focusedFlowIdLeft = flow.id;
+        }
+      }
+    }
+  }
+
+  publishSelectedFlows(selectedFlows: Flow[]) {
+    globals.selectedFlows = selectedFlows;
     this.redraw();
   }
 
@@ -202,6 +231,17 @@ class FrontendApi {
     this.redraw();
   }
 
+  publishMetricError(error: string) {
+    globals.setMetricError(error);
+    globals.logging.logError(error, false);
+    this.redraw();
+  }
+
+  publishMetricResult(metricResult: MetricResult) {
+    globals.setMetricResult(metricResult);
+    this.redraw();
+  }
+
   publishAggregateData(args: {data: AggregateData, kind: string}) {
     globals.setAggregateData(args.kind, args.data);
     this.redraw();
@@ -264,6 +304,7 @@ function main() {
         '/viewer': ViewerPage,
         '/record': RecordPage,
         '/query': AnalyzePage,
+        '/metrics': MetricsPage,
         '/info': TraceInfoPage,
       },
       dispatch,

@@ -16,7 +16,6 @@
 
 #include "test/test_helper.h"
 
-#include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/tracing/core/tracing_service_state.h"
@@ -55,8 +54,9 @@ void TestHelper::OnDisconnect() {
   PERFETTO_FATAL("Consumer unexpectedly disconnected from the service");
 }
 
-void TestHelper::OnTracingDisabled() {
+void TestHelper::OnTracingDisabled(const std::string& /*error*/) {
   std::move(on_stop_tracing_callback_)();
+  on_stop_tracing_callback_ = nullptr;
 }
 
 void TestHelper::OnTraceData(std::vector<TracePacket> packets, bool has_more) {
@@ -79,9 +79,13 @@ void TestHelper::OnTraceData(std::vector<TracePacket> packets, bool has_more) {
   }
 }
 
+void TestHelper::StartService() {
+  service_thread_.Start();
+}
+
 void TestHelper::StartServiceIfRequired() {
 #if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
-  service_thread_.Start();
+  StartService();
 #endif
 }
 
@@ -138,8 +142,10 @@ void TestHelper::ProduceStartupEventBatch(
 
 void TestHelper::StartTracing(const TraceConfig& config,
                               base::ScopedFile file) {
+  PERFETTO_CHECK(!on_stop_tracing_callback_);
   trace_.clear();
-  on_stop_tracing_callback_ = CreateCheckpoint("stop.tracing");
+  on_stop_tracing_callback_ =
+      CreateCheckpoint("stop.tracing" + std::to_string(++trace_count_));
   endpoint_->EnableTracing(config, std::move(file));
 }
 
@@ -161,6 +167,10 @@ void TestHelper::ReadData(uint32_t read_count) {
   endpoint_->ReadBuffers();
 }
 
+void TestHelper::FreeBuffers() {
+  endpoint_->FreeBuffers();
+}
+
 void TestHelper::WaitForConsumerConnect() {
   RunUntilCheckpoint("consumer.connected." + std::to_string(cur_consumer_num_));
 }
@@ -174,7 +184,8 @@ void TestHelper::WaitForProducerEnabled() {
 }
 
 void TestHelper::WaitForTracingDisabled(uint32_t timeout_ms) {
-  RunUntilCheckpoint("stop.tracing", timeout_ms);
+  RunUntilCheckpoint(std::string("stop.tracing") + std::to_string(trace_count_),
+                     timeout_ms);
 }
 
 void TestHelper::WaitForReadData(uint32_t read_count, uint32_t timeout_ms) {

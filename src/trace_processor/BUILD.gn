@@ -88,8 +88,14 @@ source_set("storage_minimal") {
     "importers/ninja/ninja_log_parser.h",
     "importers/proto/args_table_utils.cc",
     "importers/proto/args_table_utils.h",
+    "importers/proto/async_track_set_tracker.cc",
+    "importers/proto/async_track_set_tracker.h",
     "importers/proto/heap_profile_tracker.cc",
     "importers/proto/heap_profile_tracker.h",
+    "importers/proto/memory_tracker_snapshot_module.cc",
+    "importers/proto/memory_tracker_snapshot_module.h",
+    "importers/proto/memory_tracker_snapshot_parser.cc",
+    "importers/proto/memory_tracker_snapshot_parser.h",
     "importers/proto/metadata_tracker.cc",
     "importers/proto/metadata_tracker.h",
     "importers/proto/packet_sequence_state.cc",
@@ -137,6 +143,7 @@ source_set("storage_minimal") {
     "../protozero",
     "containers",
     "importers:common",
+    "importers/memory_tracker:graph_processor",
     "storage",
     "tables",
     "types",
@@ -284,6 +291,8 @@ if (enable_perfetto_trace_processor_sqlite) {
     sources = [
       "dynamic/ancestor_slice_generator.cc",
       "dynamic/ancestor_slice_generator.h",
+      "dynamic/connected_flow_generator.cc",
+      "dynamic/connected_flow_generator.h",
       "dynamic/descendant_slice_generator.cc",
       "dynamic/descendant_slice_generator.h",
       "dynamic/describe_slice_generator.cc",
@@ -345,9 +354,6 @@ if (enable_perfetto_trace_processor_sqlite) {
       "metrics:lib",
       "util",
     ]
-    if (enable_perfetto_version_gen) {
-      deps += [ "../../gn/standalone:gen_git_revision" ]
-    }
     if (enable_perfetto_trace_processor_linenoise) {
       deps += [ "../../gn:linenoise" ]
     }

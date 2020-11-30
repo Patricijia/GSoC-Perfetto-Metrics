@@ -122,7 +122,7 @@ void UnwindingMetadata::ReparseMaps() {
 #endif
 }
 
-FrameData UnwindingMetadata::AnnotateFrame(unwindstack::FrameData frame) {
+std::string UnwindingMetadata::GetBuildId(const unwindstack::FrameData& frame) {
   std::string build_id;
   if (!frame.map_name.empty()) {
     unwindstack::MapInfo* map_info = fd_maps.Find(frame.pc);
@@ -130,7 +130,7 @@ FrameData UnwindingMetadata::AnnotateFrame(unwindstack::FrameData frame) {
       build_id = map_info->GetBuildID();
   }
 
-  return FrameData{std::move(frame), std::move(build_id)};
+  return build_id;
 }
 
 std::string StringifyLibUnwindstackError(unwindstack::ErrorCode e) {
@@ -151,6 +151,12 @@ std::string StringifyLibUnwindstackError(unwindstack::ErrorCode e) {
       return "REPEATED_FRAME";
     case unwindstack::ERROR_INVALID_ELF:
       return "INVALID_ELF";
+    case unwindstack::ERROR_SYSTEM_CALL:
+      return "SYSTEM_CALL";
+    case unwindstack::ERROR_THREAD_DOES_NOT_EXIST:
+      return "THREAD_DOES_NOT_EXIST";
+    case unwindstack::ERROR_THREAD_TIMEOUT:
+      return "THREAD_TIMEOUT";
   }
 }
 

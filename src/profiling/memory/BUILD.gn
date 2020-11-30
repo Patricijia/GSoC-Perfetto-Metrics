@@ -241,6 +241,7 @@ source_set("daemon") {
     "../common:interner",
     "../common:interning_output",
     "../common:proc_utils",
+    "../common:profiler_guardrails",
     "../common:unwind_support",
   ]
   public_deps = [
@@ -259,8 +260,6 @@ source_set("daemon") {
     "heapprofd_producer.h",
     "java_hprof_producer.cc",
     "java_hprof_producer.h",
-    "page_idle_checker.cc",
-    "page_idle_checker.h",
     "system_property.cc",
     "system_property.h",
     "unwinding.cc",
@@ -307,7 +306,6 @@ perfetto_unittest_source_set("unittests") {
     "bookkeeping_unittest.cc",
     "client_unittest.cc",
     "heapprofd_producer_unittest.cc",
-    "page_idle_checker_unittest.cc",
     "parse_smaps_unittest.cc",
     "sampler_unittest.cc",
     "system_property_unittest.cc",
