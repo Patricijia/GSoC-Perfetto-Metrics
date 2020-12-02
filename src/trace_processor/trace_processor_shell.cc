@@ -85,7 +85,7 @@ TraceProcessor* g_tp;
 #if PERFETTO_BUILDFLAG(PERFETTO_TP_LINENOISE)
 
 bool EnsureDir(const std::string& path) {
-  return mkdir(path.c_str(), 0755) != -1 || errno == EEXIST;
+  return base::Mkdir(path) || errno == EEXIST;
 }
 
 bool EnsureFile(const std::string& path) {
@@ -769,7 +769,7 @@ CommandLineOptions ParseCommandLineOptions(int argc, char** argv) {
     OPT_HTTP_PORT,
   };
 
-  static const struct option long_options[] = {
+  static const option long_options[] = {
       {"help", no_argument, nullptr, 'h'},
       {"version", no_argument, nullptr, 'v'},
       {"wide", no_argument, nullptr, 'W'},
