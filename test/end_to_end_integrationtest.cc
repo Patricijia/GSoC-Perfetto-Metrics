@@ -34,6 +34,7 @@
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/commit_data_request.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "perfetto/tracing/core/tracing_service_state.h"
@@ -51,12 +52,17 @@
 #include "protos/perfetto/trace/ftrace/ftrace_event.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event_bundle.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_stats.gen.h"
+#include "protos/perfetto/trace/perfetto/tracing_service_event.gen.h"
 #include "protos/perfetto/trace/power/battery_counters.gen.h"
 #include "protos/perfetto/trace/test_event.gen.h"
 #include "protos/perfetto/trace/trace.gen.h"
 #include "protos/perfetto/trace/trace_packet.gen.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 #include "protos/perfetto/trace/trigger.gen.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#include "test/android_test_utils.h"
+#endif
 
 namespace perfetto {
 
@@ -374,19 +380,21 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
 //    We cannot change the length of the production code in
 //    CanReadKernelSymbolAddresses() to deal with it.
 // 2. On user (i.e. non-userdebug) builds. As that doesn't work there by design.
-#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && \
-    (defined(__i386__) ||                         \
-     !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_USERDEBUG_BUILD))
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && defined(__i386__)
 #define MAYBE_KernelAddressSymbolization DISABLED_KernelAddressSymbolization
 #else
 #define MAYBE_KernelAddressSymbolization KernelAddressSymbolization
 #endif
 TEST_F(PerfettoTest, MAYBE_KernelAddressSymbolization) {
   // On Android in-tree builds (TreeHugger): this test must always run to
-  // prevent selinux / property-related regressions.
+  // prevent selinux / property-related regressions. However it can run only on
+  // userdebug.
   // On standalone builds and Linux, this can be optionally skipped because
   // there it requires root to lower kptr_restrict.
-#if !PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+  if (!IsDebuggableBuild())
+    GTEST_SKIP();
+#else
   if (geteuid() != 0)
     GTEST_SKIP();
 #endif
@@ -832,6 +840,58 @@ TEST_F(PerfettoTest, QueryServiceStateLargeResponse) {
         ds.ds_descriptor().track_event_descriptor_raw();
   }
   EXPECT_THAT(ds_found, ElementsAreArray(ds_expected));
+}
+
+TEST_F(PerfettoTest, SaveForBugreport) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+  helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(4096);
+  trace_config.set_duration_ms(10000);
+  trace_config.set_bugreport_score(10);
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+  ds_config->mutable_for_testing()->set_message_count(3);
+  ds_config->mutable_for_testing()->set_message_size(10);
+  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+
+  helper.StartTracing(trace_config);
+  helper.WaitForProducerEnabled();
+
+  EXPECT_TRUE(helper.SaveTraceForBugreportAndWait());
+  helper.WaitForTracingDisabled();
+
+  // Read the trace written in the fixed location (/data/misc/perfetto-traces/
+  // on Android, /tmp/ on Linux/Mac) and make sure it has the right contents.
+  std::string trace_str;
+  base::ReadFile(kBugreportTracePath, &trace_str);
+  ASSERT_FALSE(trace_str.empty());
+  protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromString(trace_str));
+  int test_packets = 0;
+  for (const auto& p : trace.packet())
+    test_packets += p.has_for_testing() ? 1 : 0;
+  ASSERT_EQ(test_packets, 3);
+
+  // Now read the trace returned to the consumer via ReadBuffers. This should
+  // be always empty because --save-for-bugreport takes it over and makes the
+  // buffers unreadable by the consumer (by virtue of force-setting
+  // write_into_file, which is incompatible with ReadBuffers()). The only
+  // content should be the |seized_for_bugreport| flag.
+  helper.ReadData();
+  helper.WaitForReadData();
+  const auto& packets = helper.full_trace();
+  ASSERT_EQ(packets.size(), 1u);
+  for (const auto& p : packets) {
+    ASSERT_TRUE(p.has_service_event());
+    ASSERT_TRUE(p.service_event().seized_for_bugreport());
+  }
 }
 
 // Disable cmdline tests on sanitizets because they use fork() and that messes

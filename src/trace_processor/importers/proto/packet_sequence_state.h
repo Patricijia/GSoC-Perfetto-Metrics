@@ -86,7 +86,7 @@ class InternedMessageView {
       PERFETTO_FATAL(
           "Interning entry accessed under different types! previous type: "
           "%s. new type: %s.",
-          decoder_type_, __PRETTY_FUNCTION__);
+          decoder_type_, PERFETTO_DEBUG_FUNCTION_IDENTIFIER());
     }
     return reinterpret_cast<typename MessageType::Decoder*>(decoder_.get());
   }
@@ -190,6 +190,7 @@ class PacketSequenceStateGeneration {
   }
 
   PacketSequenceState* state() const { return state_; }
+  size_t generation_index() const { return generation_index_; }
 
  private:
   friend class PacketSequenceState;
@@ -364,9 +365,7 @@ PacketSequenceStateGeneration::LookupInternedMessage(uint64_t iid) {
   }
   state_->context()->storage->IncrementStats(
       stats::interned_data_tokenizer_errors);
-  PERFETTO_DLOG("Could not find interning entry for field ID %" PRIu32
-                ", generation %zu, and IID %" PRIu64,
-                FieldId, generation_index_, iid);
+  base::ignore_result(generation_index_);
   return nullptr;
 }
 

@@ -1037,7 +1037,6 @@ cc_library_static {
     "test/cts/heapprofd_java_test_cts.cc",
     "test/cts/heapprofd_test_cts.cc",
     "test/cts/traced_perf_test_cts.cc",
-    "test/cts/utils.cc",
   ],
   static_libs: [
     "libgmock",
@@ -1785,6 +1784,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -1804,6 +1804,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.gen.cc",
     "external/perfetto/protos/perfetto/common/descriptor.gen.cc",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.gen.cc",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.gen.cc",
     "external/perfetto/protos/perfetto/common/observable_events.gen.cc",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.gen.cc",
     "external/perfetto/protos/perfetto/common/trace_stats.gen.cc",
@@ -1823,6 +1824,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -1842,6 +1844,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.gen.h",
     "external/perfetto/protos/perfetto/common/descriptor.gen.h",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.gen.h",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.gen.h",
     "external/perfetto/protos/perfetto/common/observable_events.gen.h",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.gen.h",
     "external/perfetto/protos/perfetto/common/trace_stats.gen.h",
@@ -1865,6 +1868,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -1883,6 +1887,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.pb.cc",
     "external/perfetto/protos/perfetto/common/descriptor.pb.cc",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pb.cc",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.pb.cc",
     "external/perfetto/protos/perfetto/common/observable_events.pb.cc",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.pb.cc",
     "external/perfetto/protos/perfetto/common/trace_stats.pb.cc",
@@ -1902,6 +1907,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -1920,6 +1926,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.pb.h",
     "external/perfetto/protos/perfetto/common/descriptor.pb.h",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pb.h",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.pb.h",
     "external/perfetto/protos/perfetto/common/observable_events.pb.h",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.pb.h",
     "external/perfetto/protos/perfetto/common/trace_stats.pb.h",
@@ -1943,6 +1950,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -1962,6 +1970,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/common/descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pbzero.cc",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/common/observable_events.pbzero.cc",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.pbzero.cc",
     "external/perfetto/protos/perfetto/common/trace_stats.pbzero.cc",
@@ -1981,6 +1990,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -2000,6 +2010,7 @@ genrule {
     "external/perfetto/protos/perfetto/common/data_source_descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/common/descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pbzero.h",
+    "external/perfetto/protos/perfetto/common/interceptor_descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/common/observable_events.pbzero.h",
     "external/perfetto/protos/perfetto/common/sys_stats_counters.pbzero.h",
     "external/perfetto/protos/perfetto/common/trace_stats.pbzero.h",
@@ -2149,6 +2160,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -2161,6 +2173,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.gen.cc",
     "external/perfetto/protos/perfetto/config/data_source_config.gen.cc",
+    "external/perfetto/protos/perfetto/config/interceptor_config.gen.cc",
     "external/perfetto/protos/perfetto/config/stress_test_config.gen.cc",
     "external/perfetto/protos/perfetto/config/test_config.gen.cc",
     "external/perfetto/protos/perfetto/config/trace_config.gen.cc",
@@ -2173,6 +2186,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -2185,6 +2199,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.gen.h",
     "external/perfetto/protos/perfetto/config/data_source_config.gen.h",
+    "external/perfetto/protos/perfetto/config/interceptor_config.gen.h",
     "external/perfetto/protos/perfetto/config/stress_test_config.gen.h",
     "external/perfetto/protos/perfetto/config/test_config.gen.h",
     "external/perfetto/protos/perfetto/config/trace_config.gen.h",
@@ -2205,6 +2220,7 @@ genrule {
     "protos/perfetto/common/data_source_descriptor.proto",
     "protos/perfetto/common/descriptor.proto",
     "protos/perfetto/common/gpu_counter_descriptor.proto",
+    "protos/perfetto/common/interceptor_descriptor.proto",
     "protos/perfetto/common/observable_events.proto",
     "protos/perfetto/common/sys_stats_counters.proto",
     "protos/perfetto/common/trace_stats.proto",
@@ -2220,6 +2236,7 @@ genrule {
     "protos/perfetto/config/gpu/gpu_counter_config.proto",
     "protos/perfetto/config/gpu/vulkan_memory_config.proto",
     "protos/perfetto/config/inode_file/inode_file_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/power/android_power_config.proto",
     "protos/perfetto/config/process_stats/process_stats_config.proto",
     "protos/perfetto/config/profiling/heapprofd_config.proto",
@@ -2576,6 +2593,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -2587,6 +2605,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.pb.cc",
     "external/perfetto/protos/perfetto/config/data_source_config.pb.cc",
+    "external/perfetto/protos/perfetto/config/interceptor_config.pb.cc",
     "external/perfetto/protos/perfetto/config/stress_test_config.pb.cc",
     "external/perfetto/protos/perfetto/config/test_config.pb.cc",
     "external/perfetto/protos/perfetto/config/trace_config.pb.cc",
@@ -2599,6 +2618,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -2610,6 +2630,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.pb.h",
     "external/perfetto/protos/perfetto/config/data_source_config.pb.h",
+    "external/perfetto/protos/perfetto/config/interceptor_config.pb.h",
     "external/perfetto/protos/perfetto/config/stress_test_config.pb.h",
     "external/perfetto/protos/perfetto/config/test_config.pb.h",
     "external/perfetto/protos/perfetto/config/trace_config.pb.h",
@@ -3180,6 +3201,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -3192,6 +3214,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/data_source_config.pbzero.cc",
+    "external/perfetto/protos/perfetto/config/interceptor_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/stress_test_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/test_config.pbzero.cc",
     "external/perfetto/protos/perfetto/config/trace_config.pbzero.cc",
@@ -3204,6 +3227,7 @@ genrule {
   srcs: [
     "protos/perfetto/config/chrome/chrome_config.proto",
     "protos/perfetto/config/data_source_config.proto",
+    "protos/perfetto/config/interceptor_config.proto",
     "protos/perfetto/config/stress_test_config.proto",
     "protos/perfetto/config/test_config.proto",
     "protos/perfetto/config/trace_config.proto",
@@ -3216,6 +3240,7 @@ genrule {
   out: [
     "external/perfetto/protos/perfetto/config/chrome/chrome_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/data_source_config.pbzero.h",
+    "external/perfetto/protos/perfetto/config/interceptor_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/stress_test_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/test_config.pbzero.h",
     "external/perfetto/protos/perfetto/config/trace_config.pbzero.h",
@@ -7879,6 +7904,8 @@ filegroup {
     "src/tracing/data_source.cc",
     "src/tracing/debug_annotation.cc",
     "src/tracing/event_context.cc",
+    "src/tracing/interceptor.cc",
+    "src/tracing/internal/interceptor_trace_writer.cc",
     "src/tracing/internal/tracing_muxer_impl.cc",
     "src/tracing/internal/track_event_internal.cc",
     "src/tracing/platform.cc",
@@ -8074,6 +8101,7 @@ filegroup {
 filegroup {
   name: "perfetto_test_test_helper",
   srcs: [
+    "test/android_test_utils.cc",
     "test/fake_producer.cc",
     "test/test_helper.cc",
   ],
@@ -8703,6 +8731,14 @@ cc_binary {
         "libz",
       ],
       stl: "libc++_static",
+      dist: {
+        targets: [
+          "sdk_repo",
+        ],
+      },
+      strip: {
+        all: true,
+      },
     },
   },
 }
@@ -9221,30 +9257,4 @@ genrule {
     out: [
         "statslog_perfetto.cpp",
     ],
-}
-
-cc_genrule {
-  name: "trace_processor_shell.stripped",
-  device_supported: false,
-  host_supported: true,
-  cmd: "$(location tools/strip_android_host_binary.py) $(in) -o $(out)",
-  enabled: false,
-  compile_multilib: "64",
-  tool_files: [
-    "tools/strip_android_host_binary.py",
-  ],
-  dist: {
-    targets: [
-      "sdk_repo",
-    ],
-  },
-  target: {
-    linux: {
-      out: [
-        "trace_processor_shell.stripped",
-      ],
-      srcs: [":trace_processor_shell"],
-      enabled: true,
-    },
-  },
 }
