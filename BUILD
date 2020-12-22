@@ -181,7 +181,7 @@ perfetto_cc_library(
         ":src_traced_probes_common_common",
         ":src_traced_probes_data_source",
         ":src_traced_probes_filesystem_filesystem",
-        ":src_traced_probes_ftrace_format_parser",
+        ":src_traced_probes_ftrace_format_parser_format_parser",
         ":src_traced_probes_ftrace_ftrace",
         ":src_traced_probes_initial_display_state_initial_display_state",
         ":src_traced_probes_metatrace_metatrace",
@@ -591,7 +591,7 @@ perfetto_cc_library(
         "src/base/string_splitter.cc",
         "src/base/string_utils.cc",
         "src/base/string_view.cc",
-        "src/base/subprocess.cc",
+        "src/base/subprocess_posix.cc",
         "src/base/temp_file.cc",
         "src/base/thread_checker.cc",
         "src/base/thread_task_runner.cc",
@@ -1303,12 +1303,12 @@ filegroup(
     ],
 )
 
-# GN target: //src/traced/probes/ftrace:format_parser
+# GN target: //src/traced/probes/ftrace/format_parser:format_parser
 filegroup(
-    name = "src_traced_probes_ftrace_format_parser",
+    name = "src_traced_probes_ftrace_format_parser_format_parser",
     srcs = [
-        "src/traced/probes/ftrace/format_parser.cc",
-        "src/traced/probes/ftrace/format_parser.h",
+        "src/traced/probes/ftrace/format_parser/format_parser.cc",
+        "src/traced/probes/ftrace/format_parser/format_parser.h",
     ],
 )
 
