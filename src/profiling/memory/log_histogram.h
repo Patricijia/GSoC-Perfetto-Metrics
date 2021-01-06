@@ -14,24 +14,34 @@
  * limitations under the License.
  */
 
-#ifndef SRC_PROFILING_MEMORY_CLIENT_API_FACTORY_H_
-#define SRC_PROFILING_MEMORY_CLIENT_API_FACTORY_H_
+#ifndef SRC_PROFILING_MEMORY_LOG_HISTOGRAM_H_
+#define SRC_PROFILING_MEMORY_LOG_HISTOGRAM_H_
 
-#include <memory>
+#include <inttypes.h>
+#include <stddef.h>
 
-#include "src/profiling/memory/unhooked_allocator.h"
+#include <array>
+#include <utility>
+#include <vector>
 
 namespace perfetto {
 namespace profiling {
 
-class Client;
+class LogHistogram {
+ public:
+  static const uint64_t kMaxBucket;
+  static constexpr size_t kBuckets = 20;
 
-void StartHeapprofdIfStatic();
+  void Add(uint64_t value) { values_[GetBucket(value)]++; }
+  std::vector<std::pair<uint64_t, uint64_t>> GetData() const;
 
-std::shared_ptr<Client> ConstructClient(
-    UnhookedAllocator<perfetto::profiling::Client> unhooked_allocator);
+ private:
+  size_t GetBucket(uint64_t value);
+
+  std::array<uint64_t, kBuckets> values_ = {};
+};
 
 }  // namespace profiling
 }  // namespace perfetto
 
-#endif  // SRC_PROFILING_MEMORY_CLIENT_API_FACTORY_H_
+#endif  // SRC_PROFILING_MEMORY_LOG_HISTOGRAM_H_
