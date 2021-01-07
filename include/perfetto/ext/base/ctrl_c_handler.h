@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2020 The Android Open Source Project
+ * Copyright (C) 2021 The Android Open Source Project
  *
  * Licensed under the Apache License, Version 2.0 (the "License");
  * you may not use this file except in compliance with the License.
@@ -14,22 +14,19 @@
  * limitations under the License.
  */
 
-#include "perfetto/profiling/memory/heap_profile.h"
+#ifndef INCLUDE_PERFETTO_EXT_BASE_CTRL_C_HANDLER_H_
+#define INCLUDE_PERFETTO_EXT_BASE_CTRL_C_HANDLER_H_
 
-#include <unistd.h>
+namespace perfetto {
+namespace base {
 
-namespace {
+// On Linux/Android/Mac: installs SIGINT + SIGTERM signal handlers.
+// On Windows: installs a SetConsoleCtrlHandler() handler.
+// The passed handler must be async safe.
+using CtrlCHandlerFunction = void (*)();
+void InstallCtrCHandler(CtrlCHandlerFunction);
 
-void OtherFn(uint32_t heap_id, uint64_t i) {
-  AHeapProfile_reportAllocation(heap_id, i, i);
-}
+}  // namespace base
+}  // namespace perfetto
 
-}  // namespace
-
-int main(int, char**) {
-  uint32_t heap_id = AHeapProfile_registerHeap(AHeapInfo_create("test"));
-  for (uint64_t i = 0; i < 100000; ++i) {
-    OtherFn(heap_id, i);
-    sleep(1);
-  }
-}
+#endif  // INCLUDE_PERFETTO_EXT_BASE_CTRL_C_HANDLER_H_
