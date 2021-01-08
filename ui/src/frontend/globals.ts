@@ -15,9 +15,11 @@
 import {assertExists} from '../base/logging';
 import {DeferredAction} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
+import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 import {CallsiteInfo, createEmptyState, State} from '../common/state';
 import {fromNs, toNs} from '../common/time';
+import {Analytics, initAnalytics} from '../frontend/analytics';
 
 import {FrontendLocalState} from './frontend_local_state';
 import {RafScheduler} from './raf_scheduler';
@@ -37,6 +39,7 @@ export interface SliceDetails {
   endState?: string;
   cpu?: number;
   id?: number;
+  threadStateId?: number;
   utid?: number;
   wakeupTs?: number;
   wakerUtid?: number;
@@ -47,11 +50,42 @@ export interface SliceDetails {
   description?: Description;
 }
 
+export interface FlowPoint {
+  trackId: number;
+
+  sliceName: string;
+  sliceCategory: string;
+  sliceId: number;
+  sliceStartTs: number;
+  sliceEndTs: number;
+
+  depth: number;
+}
+
+export interface Flow {
+  id: number;
+
+  begin: FlowPoint;
+  end: FlowPoint;
+
+  category?: string;
+  name?: string;
+}
+
 export interface CounterDetails {
   startTime?: number;
   value?: number;
   delta?: number;
   duration?: number;
+}
+
+export interface ThreadStateDetails {
+  ts?: number;
+  dur?: number;
+  state?: string;
+  utid?: number;
+  cpu?: number;
+  sliceId?: number;
 }
 
 export interface HeapProfileDetails {
@@ -101,6 +135,7 @@ class Globals {
   private _frontendLocalState?: FrontendLocalState = undefined;
   private _rafScheduler?: RafScheduler = undefined;
   private _serviceWorkerController?: ServiceWorkerController = undefined;
+  private _logging?: Analytics = undefined;
 
   // TODO(hjd): Unify trackDataStore, queryResults, overviewStore, threads.
   private _trackDataStore?: TrackDataStore = undefined;
@@ -109,6 +144,10 @@ class Globals {
   private _aggregateDataStore?: AggregateDataStore = undefined;
   private _threadMap?: ThreadMap = undefined;
   private _sliceDetails?: SliceDetails = undefined;
+  private _threadStateDetails?: ThreadStateDetails = undefined;
+  private _connectedFlows?: Flow[] = undefined;
+  private _selectedFlows?: Flow[] = undefined;
+  private _visibleFlowCategories?: Map<string, boolean> = undefined;
   private _counterDetails?: CounterDetails = undefined;
   private _heapProfileDetails?: HeapProfileDetails = undefined;
   private _cpuProfileDetails?: CpuProfileDetails = undefined;
@@ -116,6 +155,8 @@ class Globals {
   private _bufferUsage?: number = undefined;
   private _recordingLog?: string = undefined;
   private _traceErrors?: number = undefined;
+  private _metricError?: string = undefined;
+  private _metricResult?: MetricResult = undefined;
 
   private _currentSearchResults: CurrentSearchResults = {
     sliceIds: [],
@@ -143,6 +184,7 @@ class Globals {
     this._frontendLocalState = new FrontendLocalState();
     this._rafScheduler = new RafScheduler();
     this._serviceWorkerController = new ServiceWorkerController();
+    this._logging = initAnalytics();
 
     // TODO(hjd): Unify trackDataStore, queryResults, overviewStore, threads.
     this._trackDataStore = new Map<string, {}>();
@@ -151,7 +193,11 @@ class Globals {
     this._aggregateDataStore = new Map<string, AggregateData>();
     this._threadMap = new Map<number, ThreadDesc>();
     this._sliceDetails = {};
+    this._connectedFlows = [];
+    this._selectedFlows = [];
+    this._visibleFlowCategories = new Map<string, boolean>();
     this._counterDetails = {};
+    this._threadStateDetails = {};
     this._heapProfileDetails = {};
     this._cpuProfileDetails = {};
   }
@@ -174,6 +220,10 @@ class Globals {
 
   get rafScheduler() {
     return assertExists(this._rafScheduler);
+  }
+
+  get logging() {
+    return assertExists(this._logging);
   }
 
   get serviceWorkerController() {
@@ -205,6 +255,38 @@ class Globals {
     this._sliceDetails = assertExists(click);
   }
 
+  get threadStateDetails() {
+    return assertExists(this._threadStateDetails);
+  }
+
+  set threadStateDetails(click: ThreadStateDetails) {
+    this._threadStateDetails = assertExists(click);
+  }
+
+  get connectedFlows() {
+    return assertExists(this._connectedFlows);
+  }
+
+  set connectedFlows(connectedFlows: Flow[]) {
+    this._connectedFlows = assertExists(connectedFlows);
+  }
+
+  get selectedFlows() {
+    return assertExists(this._selectedFlows);
+  }
+
+  set selectedFlows(selectedFlows: Flow[]) {
+    this._selectedFlows = assertExists(selectedFlows);
+  }
+
+  get visibleFlowCategories() {
+    return assertExists(this._visibleFlowCategories);
+  }
+
+  set visibleFlowCategories(visibleFlowCategories: Map<string, boolean>) {
+    this._visibleFlowCategories = assertExists(visibleFlowCategories);
+  }
+
   get counterDetails() {
     return assertExists(this._counterDetails);
   }
@@ -231,6 +313,22 @@ class Globals {
 
   setTraceErrors(arg: number) {
     this._traceErrors = arg;
+  }
+
+  get metricError() {
+    return this._metricError;
+  }
+
+  setMetricError(arg: string) {
+    this._metricError = arg;
+  }
+
+  get metricResult() {
+    return this._metricResult;
+  }
+
+  setMetricResult(result: MetricResult) {
+    this._metricResult = result;
   }
 
   get cpuProfileDetails() {
@@ -293,14 +391,15 @@ class Globals {
     // window span). Therefore, zooming out by six levels is 1.1^6 ~= 2.
     // Similarily, zooming in six levels is 0.9^6 ~= 0.5.
     const pxToSec = this.frontendLocalState.timeScale.deltaPxToDuration(1);
-    return fromNs(Math.pow(2, Math.floor(Math.log2(toNs(pxToSec)))));
+    const pxToNs = Math.max(toNs(pxToSec), 1);
+    return fromNs(Math.pow(2, Math.floor(Math.log2(pxToNs))));
   }
 
-  makeSelection(action: DeferredAction<{}>) {
+  makeSelection(action: DeferredAction<{}>, tabToOpen = 'current_selection') {
     // A new selection should cancel the current search selection.
     globals.frontendLocalState.searchIndex = -1;
     globals.frontendLocalState.currentTab =
-        action.type === 'deselect' ? undefined : 'current_selection';
+        action.type === 'deselect' ? undefined : tabToOpen;
     globals.dispatch(action);
   }
 
@@ -317,8 +416,10 @@ class Globals {
     this._overviewStore = undefined;
     this._threadMap = undefined;
     this._sliceDetails = undefined;
+    this._threadStateDetails = undefined;
     this._aggregateDataStore = undefined;
     this._numQueriesQueued = 0;
+    this._metricResult = undefined;
     this._currentSearchResults = {
       sliceIds: [],
       tsStarts: [],

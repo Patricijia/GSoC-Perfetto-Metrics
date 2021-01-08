@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import("../gn/gen_perfetto_version_header.gni")
 import("../gn/perfetto.gni")
 import("../gn/perfetto_check_build_deps.gni")
 import("../gn/wasm.gni")
@@ -99,7 +100,16 @@ template("node_bin") {
     if (defined(invoker.suppress_stderr) && invoker.suppress_stderr) {
       args += [ "--suppress_stderr" ]
     }
+
+    # Some of the node_bin rules *cough*transpile_all_ts*cough* don't
+    # accuratly report the output files. This means if they can run,
+    # change something, and not cause their dependees to rerun causing
+    # bugs. Adding a stamp file which is always rewritten avoids this.
+    # See also b/120010518
+    stamp_path = "$ui_dir/$target_name.node_bin.stamp"
+    outputs += [ stamp_path ]
     args += [
+              "--stamp=" + rebase_path(stamp_path, root_build_dir),
               "--path=$nodejs_bin",
               "node",
               rebase_path("node_modules/.bin/$_node_cmd", root_build_dir),
@@ -260,6 +270,7 @@ node_bin("transpile_all_ts") {
   deps = [
     ":dist_symlink",
     ":protos_to_ts",
+    ":version_ts_gen",
     ":wasm_gen",
   ]
   inputs = [ "tsconfig.json" ]
@@ -286,6 +297,7 @@ node_bin("transpile_all_ts") {
 
   node_cmd = "tsc"
   args = [
+    "--incremental",
     "--project",
     rebase_path(".", root_build_dir),
     "--outDir",
@@ -322,6 +334,7 @@ scss_srcs = [
   "src/assets/analyze_page.scss",
   "src/assets/common.scss",
   "src/assets/details.scss",
+  "src/assets/metrics_page.scss",
   "src/assets/modal.scss",
   "src/assets/record.scss",
   "src/assets/sidebar.scss",
@@ -382,8 +395,8 @@ copy("assets_dist") {
               "src/assets/rec_cpu_fine.png",
               "src/assets/rec_cpu_freq.png",
               "src/assets/rec_cpu_voltage.png",
-              "src/assets/rec_cpu_wakeup.png",
               "src/assets/rec_ftrace.png",
+              "src/assets/rec_gpu_mem_total.png",
               "src/assets/rec_java_heap_dump.png",
               "src/assets/rec_lmk.png",
               "src/assets/rec_logcat.png",
@@ -565,7 +578,7 @@ copy("copy_tests_script") {
 
 # This target generates an map containing all the UI subresources and their
 # hashes. This is used by the service worker code for offline caching.
-# This taarget needs to be kept at the end of the BUILD.gn file, because of the
+# This target needs to be kept at the end of the BUILD.gn file, because of the
 # get_target_outputs() call (fails otherwise due to GN's evaluation order).
 action("gen_dist_file_map") {
   out_file_path = "$ui_gen_dir/dist_file_map.ts"
@@ -586,4 +599,8 @@ action("gen_dist_file_map") {
            "--strip",
            rebase_path(ui_dir, root_build_dir),
          ] + dist_files
+}
+
+gen_perfetto_version_header("version_ts_gen") {
+  ts_out = "$ui_gen_dir/perfetto_version.ts"
 }

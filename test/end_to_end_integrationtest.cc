@@ -34,6 +34,7 @@
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/commit_data_request.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
+#include "perfetto/ext/tracing/core/tracing_service.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "perfetto/tracing/core/tracing_service_state.h"
@@ -50,12 +51,18 @@
 #include "protos/perfetto/trace/ftrace/ftrace.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event.gen.h"
 #include "protos/perfetto/trace/ftrace/ftrace_event_bundle.gen.h"
+#include "protos/perfetto/trace/ftrace/ftrace_stats.gen.h"
+#include "protos/perfetto/trace/perfetto/tracing_service_event.gen.h"
 #include "protos/perfetto/trace/power/battery_counters.gen.h"
 #include "protos/perfetto/trace/test_event.gen.h"
 #include "protos/perfetto/trace/trace.gen.h"
 #include "protos/perfetto/trace/trace_packet.gen.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 #include "protos/perfetto/trace/trigger.gen.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#include "test/android_test_utils.h"
+#endif
 
 namespace perfetto {
 
@@ -368,6 +375,78 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
   ASSERT_EQ(marker_found, 1);
 }
 
+// Disable this test:
+// 1. On cuttlefish (x86-kvm). It's too slow when running on GCE (b/171771440).
+//    We cannot change the length of the production code in
+//    CanReadKernelSymbolAddresses() to deal with it.
+// 2. On user (i.e. non-userdebug) builds. As that doesn't work there by design.
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && defined(__i386__)
+#define MAYBE_KernelAddressSymbolization DISABLED_KernelAddressSymbolization
+#else
+#define MAYBE_KernelAddressSymbolization KernelAddressSymbolization
+#endif
+TEST_F(PerfettoTest, MAYBE_KernelAddressSymbolization) {
+  // On Android in-tree builds (TreeHugger): this test must always run to
+  // prevent selinux / property-related regressions. However it can run only on
+  // userdebug.
+  // On standalone builds and Linux, this can be optionally skipped because
+  // there it requires root to lower kptr_restrict.
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+  if (!IsDebuggableBuild())
+    GTEST_SKIP();
+#else
+  if (geteuid() != 0)
+    GTEST_SKIP();
+#endif
+
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+
+#if PERFETTO_BUILDFLAG(PERFETTO_START_DAEMONS)
+  ProbesProducerThread probes(TEST_PRODUCER_SOCK_NAME);
+  probes.Connect();
+#endif
+
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(1024);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("linux.ftrace");
+  protos::gen::FtraceConfig ftrace_cfg;
+  ftrace_cfg.set_symbolize_ksyms(true);
+  ftrace_cfg.set_initialize_ksyms_synchronously_for_testing(true);
+  ds_config->set_ftrace_config_raw(ftrace_cfg.SerializeAsString());
+
+  helper.StartTracing(trace_config);
+
+  // Synchronize with the ftrace data source. The kernel symbol map is loaded
+  // at this point.
+  helper.FlushAndWait(kDefaultTestTimeoutMs);
+  helper.DisableTracing();
+  helper.WaitForTracingDisabled();
+  helper.ReadData();
+  helper.WaitForReadData();
+
+  const auto& packets = helper.trace();
+  ASSERT_GT(packets.size(), 0u);
+
+  int symbols_parsed = -1;
+  for (const auto& packet : packets) {
+    if (!packet.has_ftrace_stats())
+      continue;
+    if (packet.ftrace_stats().phase() != protos::gen::FtraceStats::END_OF_TRACE)
+      continue;
+    symbols_parsed =
+        static_cast<int>(packet.ftrace_stats().kernel_symbols_parsed());
+  }
+  ASSERT_GT(symbols_parsed, 100);
+}
+
 // TODO(b/73453011): reenable on more platforms (including standalone Android).
 TEST_F(PerfettoTest, TreeHuggerOnly(TestBatteryTracing)) {
   base::TestTaskRunner task_runner;
@@ -509,6 +588,75 @@ TEST_F(PerfettoTest, VeryLargePackets) {
     for (size_t i = 0; i < msg_size; i++)
       ASSERT_EQ(i < msg_size - 1 ? '.' : 0, packet.for_testing().str()[i]);
   }
+}
+
+// This is a regression test see b/169051440 for context.
+//
+// In this test we ensure that traced will not crash if a Producer stops
+// responding or draining the socket (i.e. after we fill up the IPC buffer
+// traced doesn't block on trying to write to the IPC buffer and watchdog
+// doesn't kill it).
+TEST_F(PerfettoTest, UnresponsiveProducer) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+  auto* producer = helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(4096 * 10);
+  trace_config.set_duration_ms(100);
+  trace_config.set_flush_timeout_ms(1);
+  trace_config.set_data_source_stop_timeout_ms(1);
+
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+
+  static constexpr size_t kNumPackets = 1;
+  static constexpr uint32_t kRandomSeed = 42;
+  static constexpr uint32_t kMsgSize = 1024 * 1024 - 42;
+  ds_config->mutable_for_testing()->set_seed(kRandomSeed);
+  ds_config->mutable_for_testing()->set_message_count(kNumPackets);
+  ds_config->mutable_for_testing()->set_message_size(kMsgSize);
+  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+
+  // This string is just used to make the StartDataSource IPC larger.
+  ds_config->set_legacy_config(std::string(8192, '.'));
+  ds_config->set_target_buffer(0);
+
+  // Run one legit trace, this ensures that the producer above is
+  // valid and correct and mirrors real life producers.
+  helper.StartTracing(trace_config);
+  helper.WaitForProducerEnabled();
+  helper.WaitForTracingDisabled();
+
+  helper.ReadData();
+  helper.WaitForReadData(/* read_count */ 0, /* timeout_ms */ 10000);
+
+  const auto& packets = helper.trace();
+  ASSERT_EQ(packets.size(), 1u);
+  ASSERT_TRUE(packets[0].has_for_testing());
+  ASSERT_FALSE(packets[0].for_testing().str().empty());
+  helper.FreeBuffers();
+
+  // Switch the producer to ignoring the IPC socket. On a pixel 4 it took 13
+  // traces to fill up the IPC buffer and cause traced to block (and eventually
+  // watchdog to kill it).
+  helper.producer_thread()->get()->RemoveFileDescriptorWatch(
+      producer->unix_socket_fd());
+
+  trace_config.set_duration_ms(1);
+  for (uint32_t i = 0u; i < 15u; i++) {
+    helper.StartTracing(trace_config, base::ScopedFile());
+    helper.WaitForTracingDisabled(/* timeout_ms = */ 20000);
+    helper.FreeBuffers();
+  }
+  // We need to readd the FileDescriptor (otherwise when the UnixSocket attempts
+  // to remove it a the FakeProducer is destroyed will hit a CHECK failure.
+  helper.producer_thread()->get()->AddFileDescriptorWatch(
+      producer->unix_socket_fd(), []() {});
 }
 
 TEST_F(PerfettoTest, DetachAndReattach) {
@@ -690,6 +838,58 @@ TEST_F(PerfettoTest, QueryServiceStateLargeResponse) {
         ds.ds_descriptor().track_event_descriptor_raw();
   }
   EXPECT_THAT(ds_found, ElementsAreArray(ds_expected));
+}
+
+TEST_F(PerfettoTest, SaveForBugreport) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+  helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(4096);
+  trace_config.set_duration_ms(10000);
+  trace_config.set_bugreport_score(10);
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+  ds_config->mutable_for_testing()->set_message_count(3);
+  ds_config->mutable_for_testing()->set_message_size(10);
+  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+
+  helper.StartTracing(trace_config);
+  helper.WaitForProducerEnabled();
+
+  EXPECT_TRUE(helper.SaveTraceForBugreportAndWait());
+  helper.WaitForTracingDisabled();
+
+  // Read the trace written in the fixed location (/data/misc/perfetto-traces/
+  // on Android, /tmp/ on Linux/Mac) and make sure it has the right contents.
+  std::string trace_str;
+  base::ReadFile(kBugreportTracePath, &trace_str);
+  ASSERT_FALSE(trace_str.empty());
+  protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromString(trace_str));
+  int test_packets = 0;
+  for (const auto& p : trace.packet())
+    test_packets += p.has_for_testing() ? 1 : 0;
+  ASSERT_EQ(test_packets, 3);
+
+  // Now read the trace returned to the consumer via ReadBuffers. This should
+  // be always empty because --save-for-bugreport takes it over and makes the
+  // buffers unreadable by the consumer (by virtue of force-setting
+  // write_into_file, which is incompatible with ReadBuffers()). The only
+  // content should be the |seized_for_bugreport| flag.
+  helper.ReadData();
+  helper.WaitForReadData();
+  const auto& packets = helper.full_trace();
+  ASSERT_EQ(packets.size(), 1u);
+  for (const auto& p : packets) {
+    ASSERT_TRUE(p.has_service_event());
+    ASSERT_TRUE(p.service_event().seized_for_bugreport());
+  }
 }
 
 // Disable cmdline tests on sanitizets because they use fork() and that messes
@@ -1012,6 +1212,8 @@ TEST_F(PerfettoCmdlineTest, DISABLED_NoDataNoFileWithoutTrigger) {
   protos::gen::TraceConfig trace_config;
   trace_config.add_buffers()->set_size_kb(1024);
   trace_config.set_allow_user_build_tracing(true);
+  auto* incident_config = trace_config.mutable_incident_report_config();
+  incident_config->set_destination_package("foo.bar.baz");
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
   ds_config->set_name("android.perfetto.FakeProducer");
   ds_config->mutable_for_testing()->set_message_count(kMessageCount);
@@ -1055,7 +1257,7 @@ TEST_F(PerfettoCmdlineTest, DISABLED_NoDataNoFileWithoutTrigger) {
   background_trace.join();
 
   EXPECT_THAT(stderr_str,
-              ::testing::HasSubstr("Skipping write to dropbox. Empty trace."));
+              ::testing::HasSubstr("Skipping write to incident. Empty trace."));
 }
 
 TEST_F(PerfettoCmdlineTest, NoSanitizers(StopTracingTriggerFromConfig)) {

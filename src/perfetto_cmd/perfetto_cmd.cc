@@ -41,6 +41,7 @@
 #include "perfetto/ext/base/thread_utils.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/uuid.h"
+#include "perfetto/ext/base/version.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
@@ -138,9 +139,6 @@ bool IsUserBuild() {
 
 const char* kStateDir = "/data/misc/perfetto-traces";
 
-using protozero::proto_utils::MakeTagLengthDelimited;
-using protozero::proto_utils::WriteVarInt;
-
 int PerfettoCmd::PrintUsage(const char* argv0) {
   PERFETTO_ELOG(R"(
 Usage: %s
@@ -161,6 +159,8 @@ Usage: %s
                              human-readable text.
   --query-raw              : Like --query, but prints raw proto-encoded bytes
                              of tracing_service_state.proto.
+  --save-for-bugreport     : If a trace with bugreport_score > 0 is running, it
+                             saves it into a file. Outputs the path when done.
   --help           -h
 
 
@@ -170,8 +170,6 @@ light configuration flags: (only when NOT using -c/--config)
   --size           -s      : Max file size N[mb,gb] (default: in-memory ring-buffer only)
   ATRACE_CAT               : Record ATRACE_CAT (e.g. wm)
   FTRACE_GROUP/FTRACE_NAME : Record ftrace event (e.g. sched/sched_switch)
-  FTRACE_GROUP/*           : Record all events in group (e.g. sched/*)
-
 
 statsd-specific flags:
   --alert-id           : ID of the alert that triggered this trace.
@@ -193,6 +191,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
 
   enum LongOption {
     OPT_ALERT_ID = 1000,
+    OPT_BUGREPORT,
     OPT_CONFIG_ID,
     OPT_CONFIG_UID,
     OPT_SUBSCRIPTION_ID,
@@ -208,8 +207,9 @@ int PerfettoCmd::Main(int argc, char** argv) {
     OPT_STOP,
     OPT_QUERY,
     OPT_QUERY_RAW,
+    OPT_VERSION,
   };
-  static const struct option long_options[] = {
+  static const option long_options[] = {
       {"help", no_argument, nullptr, 'h'},
       {"config", required_argument, nullptr, 'c'},
       {"out", required_argument, nullptr, 'o'},
@@ -233,6 +233,8 @@ int PerfettoCmd::Main(int argc, char** argv) {
       {"app", required_argument, nullptr, OPT_ATRACE_APP},
       {"query", no_argument, nullptr, OPT_QUERY},
       {"query-raw", no_argument, nullptr, OPT_QUERY_RAW},
+      {"version", no_argument, nullptr, OPT_VERSION},
+      {"save-for-bugreport", no_argument, nullptr, OPT_BUGREPORT},
       {nullptr, 0, nullptr, 0}};
 
   int option_index = 0;
@@ -307,7 +309,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
 
     if (option == OPT_UPLOAD) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-      dropbox_tag_ = "perfetto";
+      is_uploading_ = true;
       continue;
 #else
       PERFETTO_ELOG("--upload is only supported on Android");
@@ -318,7 +320,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
     if (option == OPT_DROPBOX) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
       PERFETTO_CHECK(optarg);
-      dropbox_tag_ = optarg;
+      is_uploading_ = true;
       continue;
 #else
       PERFETTO_ELOG("--dropbox is only supported on Android");
@@ -403,6 +405,16 @@ int PerfettoCmd::Main(int argc, char** argv) {
       continue;
     }
 
+    if (option == OPT_VERSION) {
+      printf("%s\n", base::GetVersionString());
+      return 0;
+    }
+
+    if (option == OPT_BUGREPORT) {
+      bugreport_ = true;
+      continue;
+    }
+
     return PrintUsage(argv[0]);
   }
 
@@ -431,6 +443,12 @@ int PerfettoCmd::Main(int argc, char** argv) {
     return 1;
   }
 
+  if (bugreport_ &&
+      (is_attach() | is_detach() || query_service_ || has_config_options)) {
+    PERFETTO_ELOG("--save-for-bugreport cannot take any other argument");
+    return 1;
+  }
+
   // Parse the trace config. It can be either:
   // 1) A proto-encoded file/stdin (-c ...).
   // 2) A proto-text file/stdin (-c ... --txt).
@@ -441,7 +459,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
 
   std::vector<std::string> triggers_to_activate;
   bool parsed = false;
-  const bool will_trace = !is_attach() && !query_service_;
+  const bool will_trace = !is_attach() && !query_service_ && !bugreport_;
   if (!will_trace) {
     if ((!trace_config_raw.empty() || has_config_options)) {
       PERFETTO_ELOG("Cannot specify a trace config with this option");
@@ -493,18 +511,24 @@ int PerfettoCmd::Main(int argc, char** argv) {
     uuid_ = uuid.ToString();
   }
 
-  if (!trace_config_->incident_report_config().destination_package().empty()) {
-    if (dropbox_tag_.empty()) {
-      PERFETTO_ELOG(
-          "Unexpected IncidentReportConfig without --dropbox / --upload.");
-      return 1;
-    }
+  if (!trace_config_->incident_report_config().destination_package().empty() &&
+      !is_uploading_) {
+    PERFETTO_ELOG(
+        "Unexpected IncidentReportConfig without --dropbox / --upload.");
+    return 1;
+  }
+
+  if (trace_config_->activate_triggers().empty() &&
+      trace_config_->incident_report_config().destination_package().empty() &&
+      is_uploading_) {
+    PERFETTO_ELOG("Missing IncidentReportConfig with --dropbox / --upload.");
+    return 1;
   }
 
   // Set up the output file. Either --out or --dropbox are expected, with the
   // only exception of --attach. In this case the output file is passed when
   // detaching.
-  if (!trace_out_path_.empty() && !dropbox_tag_.empty()) {
+  if (!trace_out_path_.empty() && is_uploading_) {
     PERFETTO_ELOG(
         "Can't log to a file (--out) and DropBox (--dropbox) at the same "
         "time");
@@ -512,7 +536,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
   }
 
   if (!trace_config_->output_path().empty()) {
-    if (!trace_out_path_.empty() || !dropbox_tag_.empty()) {
+    if (!trace_out_path_.empty() || is_uploading_) {
       PERFETTO_ELOG(
           "Can't pass --out or --dropbox if output_path is set in the "
           "trace config");
@@ -542,7 +566,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
   bool open_out_file = true;
   if (!will_trace) {
     open_out_file = false;
-    if (!trace_out_path_.empty() || !dropbox_tag_.empty()) {
+    if (!trace_out_path_.empty() || is_uploading_) {
       PERFETTO_ELOG("Can't pass an --out file (or --dropbox) with this option");
       return 1;
     }
@@ -550,7 +574,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
              (trace_config_->write_into_file() &&
               !trace_config_->output_path().empty())) {
     open_out_file = false;
-  } else if (trace_out_path_.empty() && dropbox_tag_.empty()) {
+  } else if (trace_out_path_.empty() && !is_uploading_) {
     PERFETTO_ELOG("Either --out or --dropbox is required");
     return 1;
   } else if (is_detach() && !trace_config_->write_into_file()) {
@@ -614,7 +638,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
     return finished_with_success ? 0 : 1;
   }
 
-  if (query_service_) {
+  if (query_service_ || bugreport_) {
     consumer_endpoint_ =
         ConsumerIPCClient::Connect(GetConsumerSocket(), this, &task_runner_);
     task_runner_.Run();
@@ -636,7 +660,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
 
   RateLimiter::Args args{};
   args.is_user_build = IsUserBuild();
-  args.is_dropbox = !dropbox_tag_.empty();
+  args.is_uploading = is_uploading_;
   args.current_time = base::GetWallTimeS();
   args.ignore_guardrails = ignore_guardrails;
   args.allow_user_build_tracing = trace_config_->allow_user_build_tracing();
@@ -650,7 +674,7 @@ int PerfettoCmd::Main(int argc, char** argv) {
   if (!args.unique_session_name.empty())
     base::MaybeSetThreadName("p-" + args.unique_session_name);
 
-  if (args.is_dropbox && !args.ignore_guardrails &&
+  if (args.is_uploading && !args.ignore_guardrails &&
       (trace_config_->duration_ms() == 0 &&
        trace_config_->trigger_config().trigger_timeout_ms() == 0)) {
     PERFETTO_ELOG("Can't trace indefinitely when tracing to Dropbox.");
@@ -699,6 +723,19 @@ void PerfettoCmd::OnConnect() {
     return;
   }
 
+  if (bugreport_) {
+    consumer_endpoint_->SaveTraceForBugreport(
+        [](bool success, const std::string& msg) {
+          if (success) {
+            PERFETTO_ILOG("Trace saved into %s", msg.c_str());
+            exit(0);
+          }
+          PERFETTO_ELOG("%s", msg.c_str());
+          exit(1);
+        });
+    return;
+  }
+
   if (is_attach()) {
     consumer_endpoint_->Attach(attach_key_);
     return;
@@ -712,7 +749,7 @@ void PerfettoCmd::OnConnect() {
   }
 
   PERFETTO_DCHECK(trace_config_);
-  trace_config_->set_enable_extra_guardrails(!dropbox_tag_.empty());
+  trace_config_->set_enable_extra_guardrails(is_uploading_);
 
   base::ScopedFile optional_fd;
   if (trace_config_->write_into_file() && trace_config_->output_path().empty())
@@ -728,7 +765,8 @@ void PerfettoCmd::OnConnect() {
   // Failsafe mechanism to avoid waiting indefinitely if the service hangs.
   if (expected_duration_ms_) {
     uint32_t trace_timeout =
-        expected_duration_ms_ + 60000 + trace_config_->flush_timeout_ms();
+        expected_duration_ms_ + 60000 + trace_config_->flush_timeout_ms() +
+        trace_config_->data_source_stop_timeout_ms();
     task_runner_.PostDelayedTask(std::bind(&PerfettoCmd::OnTimeout, this),
                                  trace_timeout);
   }
@@ -768,8 +806,11 @@ void PerfettoCmd::OnTraceData(std::vector<TracePacket> packets, bool has_more) {
     FinalizeTraceAndExit();  // Reached end of trace.
 }
 
-void PerfettoCmd::OnTracingDisabled() {
+void PerfettoCmd::OnTracingDisabled(const std::string& error) {
   LogUploadEvent(PerfettoStatsdAtom::kOnTracingDisabled);
+
+  if (!error.empty())
+    PERFETTO_ELOG("Service error: %s", error.c_str());
 
   if (trace_config_->write_into_file()) {
     // If write_into_file == true, at this point the passed file contains
@@ -796,7 +837,7 @@ void PerfettoCmd::FinalizeTraceAndExit() {
       bytes_written_ = static_cast<size_t>(sz);
   }
 
-  if (!dropbox_tag_.empty()) {
+  if (is_uploading_) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
     SaveTraceIntoDropboxAndIncidentOrCrash();
 #endif
@@ -817,7 +858,7 @@ void PerfettoCmd::FinalizeTraceAndExit() {
 
 bool PerfettoCmd::OpenOutputFile() {
   base::ScopedFile fd;
-  if (!dropbox_tag_.empty()) {
+  if (is_uploading_) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
     fd = OpenDropboxTmpFile();
 #endif

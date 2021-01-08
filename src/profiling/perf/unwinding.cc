@@ -20,23 +20,15 @@
 
 #include <inttypes.h>
 
+#include <unwindstack/Unwinder.h>
+
 #include "perfetto/ext/base/metatrace.h"
 #include "perfetto/ext/base/thread_utils.h"
+#include "perfetto/ext/base/utils.h"
 
 namespace {
 constexpr size_t kUnwindingMaxFrames = 1000;
 constexpr uint32_t kDataSourceShutdownRetryDelayMs = 400;
-
-void MaybeReleaseAllocatorMemToOS() {
-#if defined(__BIONIC__)
-  // TODO(b/152414415): libunwindstack's volume of small allocations is
-  // adverarial to scudo, which doesn't automatically release small
-  // allocation regions back to the OS. Forceful purge does reclaim all size
-  // classes.
-  mallopt(M_PURGE, 0);
-#endif
-}
-
 }  // namespace
 
 namespace perfetto {
@@ -50,18 +42,24 @@ Unwinder::Unwinder(Delegate* delegate, base::UnixTaskRunner* task_runner)
   base::MaybeSetThreadName("stack-unwinding");
 }
 
-void Unwinder::PostStartDataSource(DataSourceInstanceID ds_id) {
+void Unwinder::PostStartDataSource(DataSourceInstanceID ds_id,
+                                   bool kernel_frames) {
   // No need for a weak pointer as the associated task runner quits (stops
   // running tasks) strictly before the Unwinder's destruction.
-  task_runner_->PostTask([this, ds_id] { StartDataSource(ds_id); });
+  task_runner_->PostTask(
+      [this, ds_id, kernel_frames] { StartDataSource(ds_id, kernel_frames); });
 }
 
-void Unwinder::StartDataSource(DataSourceInstanceID ds_id) {
+void Unwinder::StartDataSource(DataSourceInstanceID ds_id, bool kernel_frames) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   PERFETTO_DLOG("Unwinder::StartDataSource(%zu)", static_cast<size_t>(ds_id));
 
   auto it_and_inserted = data_sources_.emplace(ds_id, DataSourceState{});
   PERFETTO_DCHECK(it_and_inserted.second);
+
+  if (kernel_frames) {
+    kernel_symbolizer_.GetOrCreateKernelSymbolMap();
+  }
 }
 
 // c++11: use shared_ptr to transfer resource handles, so that the resources get
@@ -305,11 +303,13 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
 
   struct UnwindResult {
     unwindstack::ErrorCode error_code;
+    uint64_t warnings;
     std::vector<unwindstack::FrameData> frames;
 
     UnwindResult(unwindstack::ErrorCode e,
+                 uint64_t w,
                  std::vector<unwindstack::FrameData> f)
-        : error_code(e), frames(std::move(f)) {}
+        : error_code(e), warnings(w), frames(std::move(f)) {}
     UnwindResult(const UnwindResult&) = delete;
     UnwindResult& operator=(const UnwindResult&) = delete;
     UnwindResult(UnwindResult&&) = default;
@@ -328,16 +328,20 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
     unwindstack::Unwinder unwinder(kUnwindingMaxFrames, &unwind_state->fd_maps,
                                    regs_copy.get(), overlay_memory);
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-    unwinder.SetJitDebug(unwind_state->jit_debug.get(), regs_copy->Arch());
-    unwinder.SetDexFiles(unwind_state->dex_files.get(), regs_copy->Arch());
+    unwinder.SetJitDebug(unwind_state->jit_debug.get());
+    unwinder.SetDexFiles(unwind_state->dex_files.get());
 #endif
     unwinder.Unwind(/*initial_map_names_to_skip=*/nullptr,
                     /*map_suffixes_to_ignore=*/nullptr);
-    return {unwinder.LastErrorCode(), unwinder.ConsumeFrames()};
+    return {unwinder.LastErrorCode(), unwinder.warnings(),
+            unwinder.ConsumeFrames()};
   };
 
   // first unwind attempt
   UnwindResult unwind = attempt_unwind();
+
+  bool should_retry = unwind.error_code == unwindstack::ERROR_INVALID_MAP ||
+                      unwind.warnings & unwindstack::WARNING_DEX_PC_NOT_IN_MAP;
 
   // ERROR_INVALID_MAP means that unwinding reached a point in memory without a
   // corresponding mapping. This is possible if the parsed /proc/pid/maps is
@@ -348,11 +352,10 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
   // error around the truncated part is not unexpected.
   //
   // TODO(rsavitski): consider rate-limiting unwind retries.
-  if (unwind.error_code == unwindstack::ERROR_INVALID_MAP &&
-      sample.stack_maxed) {
+  if (should_retry && sample.stack_maxed) {
     PERFETTO_DLOG("Skipping reparse/reunwind due to maxed stack for tid [%d]",
                   static_cast<int>(sample.tid));
-  } else if (unwind.error_code == unwindstack::ERROR_INVALID_MAP) {
+  } else if (should_retry) {
     {
       PERFETTO_METATRACE_SCOPED(TAG_PRODUCER, PROFILER_MAPS_REPARSE);
       PERFETTO_DLOG("Reparsing maps for pid [%d]",
@@ -363,10 +366,26 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
     unwind = attempt_unwind();
   }
 
-  ret.frames.reserve(unwind.frames.size());
+  // Symbolize kernel-unwound kernel frames (if any).
+  std::vector<unwindstack::FrameData> kernel_frames =
+      SymbolizeKernelCallchain(sample);
+
+  // Concatenate the kernel and userspace frames.
+  auto kernel_frames_size = kernel_frames.size();
+
+  ret.frames = std::move(kernel_frames);
+
+  ret.build_ids.reserve(kernel_frames_size + unwind.frames.size());
+  ret.frames.reserve(kernel_frames_size + unwind.frames.size());
+
+  ret.build_ids.resize(kernel_frames_size, "");
+
   for (unwindstack::FrameData& frame : unwind.frames) {
-    ret.frames.emplace_back(unwind_state->AnnotateFrame(std::move(frame)));
+    ret.build_ids.emplace_back(unwind_state->GetBuildId(frame));
+    ret.frames.emplace_back(std::move(frame));
   }
+
+  PERFETTO_CHECK(ret.build_ids.size() == ret.frames.size());
 
   // In case of an unwinding error, add a synthetic error frame (which will
   // appear as a caller of the partially-unwound fragment), for easier
@@ -377,10 +396,44 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
     frame_data.function_name =
         "ERROR " + StringifyLibUnwindstackError(unwind.error_code);
     frame_data.map_name = "ERROR";
-    ret.frames.emplace_back(std::move(frame_data), /*build_id=*/"");
+    ret.frames.emplace_back(std::move(frame_data));
+    ret.build_ids.emplace_back("");
     ret.unwind_error = unwind.error_code;
   }
 
+  return ret;
+}
+
+std::vector<unwindstack::FrameData> Unwinder::SymbolizeKernelCallchain(
+    const ParsedSample& sample) {
+  std::vector<unwindstack::FrameData> ret;
+  if (sample.kernel_ips.empty())
+    return ret;
+
+  // The list of addresses contains special context marker values (inserted by
+  // the kernel's unwinding) to indicate which section of the callchain belongs
+  // to the kernel/user mode (if the kernel can successfully unwind user
+  // stacks). In our case, we request only the kernel frames.
+  if (sample.kernel_ips[0] != PERF_CONTEXT_KERNEL) {
+    PERFETTO_DFATAL_OR_ELOG(
+        "Unexpected: 0th frame of callchain is not PERF_CONTEXT_KERNEL.");
+    return ret;
+  }
+
+  auto* kernel_map = kernel_symbolizer_.GetOrCreateKernelSymbolMap();
+  PERFETTO_DCHECK(kernel_map);
+  ret.reserve(sample.kernel_ips.size());
+  for (size_t i = 1; i < sample.kernel_ips.size(); i++) {
+    std::string function_name = kernel_map->Lookup(sample.kernel_ips[i]);
+
+    // Synthesise a partially-valid libunwindstack frame struct for the kernel
+    // frame. We reuse the type for convenience. The kernel frames are marked by
+    // a magical "kernel" string as their containing mapping.
+    unwindstack::FrameData frame{};
+    frame.function_name = std::move(function_name);
+    frame.map_name = "kernel";
+    ret.emplace_back(std::move(frame));
+  }
   return ret;
 }
 
@@ -419,8 +472,10 @@ void Unwinder::FinishDataSourceStop(DataSourceInstanceID ds_id) {
   data_sources_.erase(it);
 
   // Clean up state if there are no more active sources.
-  if (data_sources_.empty())
+  if (data_sources_.empty()) {
+    kernel_symbolizer_.Destroy();
     ResetAndEnableUnwindstackCache();
+  }
 
   // Inform service thread that the unwinder is done with the source.
   delegate_->PostFinishDataSourceStop(ds_id);
@@ -451,7 +506,7 @@ void Unwinder::ClearCachedStatePeriodic(DataSourceInstanceID ds_id,
     pid_and_process.second.unwind_state->fd_maps.Reset();
   }
   ResetAndEnableUnwindstackCache();
-  MaybeReleaseAllocatorMemToOS();
+  base::MaybeReleaseAllocatorMemToOS();
 
   PostClearCachedStatePeriodic(ds_id, period_ms);  // repost
 }

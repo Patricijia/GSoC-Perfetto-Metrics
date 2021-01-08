@@ -85,7 +85,9 @@ void Rpc::MaybePrintProgress() {
   }
 }
 
-std::vector<uint8_t> Rpc::Query(const uint8_t* args, size_t len) {
+void Rpc::Query(const uint8_t* args,
+                size_t len,
+                QueryResultBatchCallback result_callback) {
   protos::pbzero::RawQueryArgs::Decoder query(args, len);
   std::string sql = query.sql_query().ToStdString();
   PERFETTO_DLOG("[RPC] Query < %s", sql.c_str());
@@ -97,18 +99,20 @@ std::vector<uint8_t> Rpc::Query(const uint8_t* args, size_t len) {
     PERFETTO_ELOG("[RPC] %s", kErr);
     protozero::HeapBuffered<protos::pbzero::QueryResult> result;
     result->set_error(kErr);
-    return result.SerializeAsArray();
+    auto vec = result.SerializeAsArray();
+    result_callback(vec.data(), vec.size(), /*has_more=*/false);
+    return;
   }
 
   auto it = trace_processor_->ExecuteQuery(sql.c_str());
   QueryResultSerializer serializer(std::move(it));
 
-  // TODO(primiano): propagate chunks instead of piling up batches in the same
-  // result.
   std::vector<uint8_t> res;
-  while (serializer.Serialize(&res)) {
+  for (bool has_more = true; has_more;) {
+    has_more = serializer.Serialize(&res);
+    result_callback(res.data(), res.size(), has_more);
+    res.clear();
   }
-  return res;
 }
 
 std::vector<uint8_t> Rpc::RawQuery(const uint8_t* args, size_t len) {
@@ -271,19 +275,52 @@ std::vector<uint8_t> Rpc::ComputeMetric(const uint8_t* data, size_t len) {
   PERFETTO_TP_TRACE("RPC_COMPUTE_METRIC", [&](metatrace::Record* r) {
     for (const auto& metric : metric_names) {
       r->AddArg("Metric", metric);
+      r->AddArg("Format", std::to_string(args.format()));
     }
   });
 
-  std::vector<uint8_t> metrics_proto;
-  util::Status status =
-      trace_processor_->ComputeMetric(metric_names, &metrics_proto);
-  if (status.ok()) {
-    result->AppendBytes(
-        protos::pbzero::ComputeMetricResult::kMetricsFieldNumber,
-        metrics_proto.data(), metrics_proto.size());
-  } else {
-    result->set_error(status.message());
+  switch (args.format()) {
+    case protos::pbzero::ComputeMetricArgs::BINARY_PROTOBUF: {
+      std::vector<uint8_t> metrics_proto;
+      util::Status status =
+          trace_processor_->ComputeMetric(metric_names, &metrics_proto);
+      if (status.ok()) {
+        result->AppendBytes(
+            protos::pbzero::ComputeMetricResult::kMetricsFieldNumber,
+            metrics_proto.data(), metrics_proto.size());
+      } else {
+        result->set_error(status.message());
+      }
+      break;
+    }
+    case protos::pbzero::ComputeMetricArgs::TEXTPROTO: {
+      std::string metrics_string;
+      util::Status status = trace_processor_->ComputeMetricText(
+          metric_names, TraceProcessor::MetricResultFormat::kProtoText,
+          &metrics_string);
+      if (status.ok()) {
+        result->AppendString(
+            protos::pbzero::ComputeMetricResult::kMetricsAsPrototextFieldNumber,
+            metrics_string);
+      } else {
+        result->set_error(status.message());
+      }
+      break;
+    }
   }
+  return result.SerializeAsArray();
+}
+
+std::vector<uint8_t> Rpc::GetMetricDescriptors(const uint8_t*, size_t) {
+  protozero::HeapBuffered<protos::pbzero::GetMetricDescriptorsResult> result;
+  if (!trace_processor_) {
+    return result.SerializeAsArray();
+  }
+  std::vector<uint8_t> descriptor_set =
+      trace_processor_->GetMetricDescriptors();
+  result->AppendBytes(
+      protos::pbzero::GetMetricDescriptorsResult::kDescriptorSetFieldNumber,
+      descriptor_set.data(), descriptor_set.size());
   return result.SerializeAsArray();
 }
 

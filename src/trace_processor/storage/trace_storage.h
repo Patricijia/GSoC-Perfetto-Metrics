@@ -32,11 +32,14 @@
 #include "perfetto/ext/base/string_view.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/containers/string_pool.h"
 #include "src/trace_processor/storage/metadata.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/tables/android_tables.h"
 #include "src/trace_processor/tables/counter_tables.h"
+#include "src/trace_processor/tables/flow_tables.h"
+#include "src/trace_processor/tables/memory_tables.h"
 #include "src/trace_processor/tables/metadata_tables.h"
 #include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/tables/slice_tables.h"
@@ -87,6 +90,10 @@ using RawId = tables::RawTable::Id;
 using FlamegraphId = tables::ExperimentalFlamegraphNodesTable::Id;
 
 using VulkanAllocId = tables::VulkanMemoryAllocationsTable::Id;
+
+using ProcessMemorySnapshotId = tables::ProcessMemorySnapshotTable::Id;
+
+using SnapshotNodeId = tables::MemorySnapshotNodeTable::Id;
 
 // TODO(lalitm): this is a temporary hack while migrating the counters table and
 // will be removed when the migration is complete.
@@ -447,6 +454,9 @@ class TraceStorage {
   const tables::SliceTable& slice_table() const { return slice_table_; }
   tables::SliceTable* mutable_slice_table() { return &slice_table_; }
 
+  const tables::FlowTable& flow_table() const { return flow_table_; }
+  tables::FlowTable* mutable_flow_table() { return &flow_table_; }
+
   const ThreadSlices& thread_slices() const { return thread_slices_; }
   ThreadSlices* mutable_thread_slices() { return &thread_slices_; }
 
@@ -613,6 +623,35 @@ class TraceStorage {
     return &graphics_frame_slice_table_;
   }
 
+  const tables::MemorySnapshotTable& memory_snapshot_table() const {
+    return memory_snapshot_table_;
+  }
+  tables::MemorySnapshotTable* mutable_memory_snapshot_table() {
+    return &memory_snapshot_table_;
+  }
+
+  const tables::ProcessMemorySnapshotTable& process_memory_snapshot_table()
+      const {
+    return process_memory_snapshot_table_;
+  }
+  tables::ProcessMemorySnapshotTable* mutable_process_memory_snapshot_table() {
+    return &process_memory_snapshot_table_;
+  }
+
+  const tables::MemorySnapshotNodeTable& memory_snapshot_node_table() const {
+    return memory_snapshot_node_table_;
+  }
+  tables::MemorySnapshotNodeTable* mutable_memory_snapshot_node_table() {
+    return &memory_snapshot_node_table_;
+  }
+
+  const tables::MemorySnapshotEdgeTable& memory_snapshot_edge_table() const {
+    return memory_snapshot_edge_table_;
+  }
+  tables::MemorySnapshotEdgeTable* mutable_memory_snapshot_edge_table() {
+    return &memory_snapshot_edge_table_;
+  }
+
   const StringPool& string_pool() const { return string_pool_; }
   StringPool* mutable_string_pool() { return &string_pool_; }
 
@@ -623,35 +662,23 @@ class TraceStorage {
   // Returns (0, 0) if the trace is empty.
   std::pair<int64_t, int64_t> GetTraceTimestampBoundsNs() const;
 
-  // TODO(lalitm): remove this when we have a better home.
-  std::vector<MappingId> FindMappingRow(StringId name,
-                                        StringId build_id) const {
-    auto it = stack_profile_mapping_index_.find(std::make_pair(name, build_id));
-    if (it == stack_profile_mapping_index_.end())
-      return {};
-    return it->second;
-  }
-
-  // TODO(lalitm): remove this when we have a better home.
-  void InsertMappingId(StringId name, StringId build_id, MappingId row) {
-    auto pair = std::make_pair(name, build_id);
-    stack_profile_mapping_index_[pair].emplace_back(row);
-  }
-
-  // TODO(lalitm): remove this when we have a better home.
-  std::vector<FrameId> FindFrameIds(MappingId mapping_row,
-                                    uint64_t rel_pc) const {
-    auto it =
-        stack_profile_frame_index_.find(std::make_pair(mapping_row, rel_pc));
-    if (it == stack_profile_frame_index_.end())
-      return {};
-    return it->second;
-  }
-
-  // TODO(lalitm): remove this when we have a better home.
-  void InsertFrameRow(MappingId mapping_row, uint64_t rel_pc, FrameId row) {
-    auto pair = std::make_pair(mapping_row, rel_pc);
-    stack_profile_frame_index_[pair].emplace_back(row);
+  util::Status ExtractArg(uint32_t arg_set_id,
+                          const char* key,
+                          base::Optional<Variadic>* result) {
+    const auto& args = arg_table();
+    RowMap filtered = args.FilterToRowMap(
+        {args.arg_set_id().eq(arg_set_id), args.key().eq(key)});
+    if (filtered.empty()) {
+      *result = base::nullopt;
+      return util::OkStatus();
+    }
+    if (filtered.size() > 1) {
+      return util::ErrStatus(
+          "EXTRACT_ARG: received multiple args matching arg set id and key");
+    }
+    uint32_t idx = filtered.Get(0);
+    *result = GetArgValue(idx);
+    return util::OkStatus();
   }
 
   Variadic GetArgValue(uint32_t row) const {
@@ -714,14 +741,6 @@ class TraceStorage {
   TraceStorage(TraceStorage&&) = delete;
   TraceStorage& operator=(TraceStorage&&) = delete;
 
-  // TODO(lalitm): remove this when we find a better home for this.
-  using MappingKey = std::pair<StringId /* name */, StringId /* build id */>;
-  std::map<MappingKey, std::vector<MappingId>> stack_profile_mapping_index_;
-
-  // TODO(lalitm): remove this when we find a better home for this.
-  using FrameKey = std::pair<MappingId, uint64_t /* rel_pc */>;
-  std::map<FrameKey, std::vector<FrameId>> stack_profile_frame_index_;
-
   // One entry for each unique string in the trace.
   StringPool string_pool_;
 
@@ -764,6 +783,9 @@ class TraceStorage {
 
   // Slices coming from userspace events (e.g. Chromium TRACE_EVENT macros).
   tables::SliceTable slice_table_{&string_pool_, nullptr};
+
+  // Flow events from userspace events (e.g. Chromium TRACE_EVENT macros).
+  tables::FlowTable flow_table_{&string_pool_, nullptr};
 
   // Slices from CPU scheduling data.
   tables::SchedSliceTable sched_slice_table_{&string_pool_, nullptr};
@@ -830,6 +852,15 @@ class TraceStorage {
 
   tables::GraphicsFrameSliceTable graphics_frame_slice_table_{&string_pool_,
                                                               &slice_table_};
+
+  // Metadata for memory snapshot.
+  tables::MemorySnapshotTable memory_snapshot_table_{&string_pool_, nullptr};
+  tables::ProcessMemorySnapshotTable process_memory_snapshot_table_{
+      &string_pool_, nullptr};
+  tables::MemorySnapshotNodeTable memory_snapshot_node_table_{&string_pool_,
+                                                              nullptr};
+  tables::MemorySnapshotEdgeTable memory_snapshot_edge_table_{&string_pool_,
+                                                              nullptr};
 
   // The below array allow us to map between enums and their string
   // representations.

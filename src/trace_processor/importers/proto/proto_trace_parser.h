@@ -57,8 +57,8 @@ class ProtoTraceParser : public TraceParser {
                          TimestampedTracePiece) override;
 
   void ParseTracePacketImpl(int64_t ts,
-                            TimestampedTracePiece,
-                            const TracePacketData*,
+                            const TimestampedTracePiece&,
+                            PacketSequenceStateGeneration*,
                             const protos::pbzero::TracePacket_Decoder&);
 
   void ParseTraceStats(ConstBytes);
@@ -66,6 +66,10 @@ class ProtoTraceParser : public TraceParser {
                           PacketSequenceStateGeneration*,
                           uint32_t seq_id,
                           ConstBytes);
+  void ParseDeobfuscationMapping(int64_t ts,
+                                 PacketSequenceStateGeneration*,
+                                 uint32_t seq_id,
+                                 ConstBytes);
   void ParsePerfSample(int64_t ts, PacketSequenceStateGeneration*, ConstBytes);
   void ParseChromeBenchmarkMetadata(ConstBytes);
   void ParseChromeEvents(int64_t ts, ConstBytes);

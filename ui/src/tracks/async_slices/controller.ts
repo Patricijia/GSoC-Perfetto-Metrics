@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNs} from '../../common/time';
 import {
   TrackController,
@@ -33,7 +34,7 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
 
     // ns per quantization bucket (i.e. ns per pixel). /2 * 2 is to force it to
     // be an even number, so we can snap in the middle.
-    const bucketNs = Math.round(resolution * 1e9 * pxSize / 2) * 2;
+    const bucketNs = Math.max(Math.round(resolution * 1e9 * pxSize / 2) * 2, 1);
 
     if (this.maxDurNs === 0) {
       const maxDurResult = await this.query(`
@@ -41,7 +42,7 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
         from experimental_slice_layout
         where filter_track_ids = '${this.config.trackIds.join(',')}'
       `);
-      if (maxDurResult.numRecords === 1) {
+      if (slowlyCountRows(maxDurResult) === 1) {
         this.maxDurNs = maxDurResult.columns[0].longValues![0];
       }
     }
@@ -53,16 +54,19 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
         max(dur) as dur,
         layout_depth,
         name,
-        id
+        id,
+        dur = 0 as is_instant,
+        dur = -1 as is_incomplete
       from experimental_slice_layout
       where
         filter_track_ids = '${this.config.trackIds.join(',')}' and
         ts >= ${startNs - this.maxDurNs} and
         ts <= ${endNs}
-      group by tsq
+      group by tsq, layout_depth
+      order by tsq, layout_depth
     `);
 
-    const numRows = +rawResult.numRecords;
+    const numRows = slowlyCountRows(rawResult);
     const slices: Data = {
       start,
       end,
@@ -74,6 +78,8 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
       ends: new Float64Array(numRows),
       depths: new Uint16Array(numRows),
       titles: new Uint16Array(numRows),
+      isInstant: new Uint16Array(numRows),
+      isIncomplete: new Uint16Array(numRows),
     };
 
     const stringIndexes = new Map<string, number>();
@@ -105,6 +111,8 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
       slices.depths[row] = +cols[3].longValues![row];
       slices.titles[row] = internString(cols[4].stringValues![row]);
       slices.sliceIds[row] = +cols[5].longValues![row];
+      slices.isInstant[row] = +cols[6].longValues![row];
+      slices.isIncomplete[row] = +cols[7].longValues![row];
     }
     return slices;
   }

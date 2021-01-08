@@ -22,10 +22,11 @@
 
 #include <errno.h>
 #include <stddef.h>
+#include <stdint.h>
 #include <stdlib.h>
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <sys/types.h>
-#endif
+
+#include <atomic>
 
 #define PERFETTO_EINTR(x)                                   \
   ([&] {                                                    \
@@ -39,7 +40,7 @@
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 // TODO(brucedawson) - create a ::perfetto::base::IOSize to replace this.
 #if defined(_WIN64)
-using ssize_t = __int64;
+using ssize_t = int64_t;
 #else
 using ssize_t = long;
 #endif
@@ -53,7 +54,17 @@ constexpr uid_t kInvalidUid = static_cast<uid_t>(-1);
 constexpr pid_t kInvalidPid = static_cast<pid_t>(-1);
 #endif
 
+// Do not add new usages of kPageSize, consider using GetSysPageSize() below.
+// TODO(primiano): over time the semantic of kPageSize became too ambiguous.
+// Strictly speaking, this constant is incorrect on some new devices where the
+// page size can be 16K (e.g., crbug.com/1116576). Unfortunately too much code
+// ended up depending on kPageSize for purposes that are not strictly related
+// with the kernel's mm subsystem.
 constexpr size_t kPageSize = 4096;
+
+// Returns the system's page size. Use this when dealing with mmap, madvise and
+// similar mm-related syscalls.
+uint32_t GetSysPageSize();
 
 template <typename T>
 constexpr size_t ArraySize(const T& array) {
@@ -86,6 +97,11 @@ constexpr size_t AlignUp(size_t size) {
 inline bool IsAgain(int err) {
   return err == EAGAIN || err == EWOULDBLOCK;
 }
+
+// Calls mallopt(M_PURGE, 0) on Android. Does nothing on other platforms.
+// This forces the allocator to release freed memory. This is used to work
+// around various Scudo inefficiencies. See b/170217718.
+void MaybeReleaseAllocatorMemToOS();
 
 }  // namespace base
 }  // namespace perfetto

@@ -66,20 +66,10 @@ TrackId TrackTracker::InternProcessTrack(UniquePid upid) {
 }
 
 TrackId TrackTracker::InternFuchsiaAsyncTrack(StringId name,
+                                              uint32_t upid,
                                               int64_t correlation_id) {
-  auto it = fuchsia_async_tracks_.find(correlation_id);
-  if (it != fuchsia_async_tracks_.end())
-    return it->second;
-
-  tables::TrackTable::Row row(name);
-  auto id = context_->storage->mutable_track_table()->Insert(row).id;
-  fuchsia_async_tracks_[correlation_id] = id;
-
-  context_->args_tracker->AddArgsTo(id)
-      .AddArg(source_key_, Variadic::String(fuchsia_source_))
-      .AddArg(source_id_key_, Variadic::Integer(correlation_id));
-
-  return id;
+  return InternLegacyChromeAsyncTrack(name, upid, correlation_id, false,
+                                      StringId());
 }
 
 TrackId TrackTracker::InternCpuTrack(StringId name, uint32_t cpu) {
@@ -120,8 +110,17 @@ TrackId TrackTracker::InternLegacyChromeAsyncTrack(
   tuple.source_scope = source_scope;
 
   auto it = chrome_tracks_.find(tuple);
-  if (it != chrome_tracks_.end())
+  if (it != chrome_tracks_.end()) {
+    if (name != kNullStringId) {
+      // The track may have been created for an end event without name. In that
+      // case, update it with this event's name.
+      auto* tracks = context_->storage->mutable_track_table();
+      uint32_t track_row = *tracks->id().IndexOf(it->second);
+      if (tracks->name()[track_row] == kNullStringId)
+        tracks->mutable_name()->Set(track_row, name);
+    }
     return it->second;
+  }
 
   // Legacy async tracks are always drawn in the context of a process, even if
   // the ID's scope is global.
@@ -141,24 +140,12 @@ TrackId TrackTracker::InternLegacyChromeAsyncTrack(
   return id;
 }
 
-TrackId TrackTracker::InternAndroidAsyncTrack(StringId name,
-                                              UniquePid upid,
-                                              int64_t cookie) {
-  AndroidAsyncTrackTuple tuple{upid, cookie, name};
-
-  auto it = android_async_tracks_.find(tuple);
-  if (it != android_async_tracks_.end())
-    return it->second;
-
+TrackId TrackTracker::CreateAndroidAsyncTrack(StringId name, UniquePid upid) {
   tables::ProcessTrackTable::Row row(name);
   row.upid = upid;
   auto id = context_->storage->mutable_process_track_table()->Insert(row).id;
-  android_async_tracks_[tuple] = id;
-
-  context_->args_tracker->AddArgsTo(id)
-      .AddArg(source_key_, Variadic::String(android_source_))
-      .AddArg(source_id_key_, Variadic::Integer(cookie));
-
+  context_->args_tracker->AddArgsTo(id).AddArg(
+      source_key_, Variadic::String(android_source_));
   return id;
 }
 
@@ -310,24 +297,46 @@ void TrackTracker::ReserveDescriptorChildTrack(uint64_t uuid,
   context_->storage->IncrementStats(stats::track_event_tokenizer_errors);
 }
 
-base::Optional<TrackId> TrackTracker::GetDescriptorTrack(uint64_t uuid) {
-  return GetDescriptorTrackImpl(uuid);
+base::Optional<TrackId> TrackTracker::GetDescriptorTrack(uint64_t uuid,
+                                                         StringId event_name) {
+  base::Optional<TrackId> track_id = GetDescriptorTrackImpl(uuid);
+  if (!track_id || event_name.is_null())
+    return track_id;
+
+  // Update the name of the track if unset and the track is not the primary
+  // track of a process/thread or a counter track.
+  auto* tracks = context_->storage->mutable_track_table();
+  uint32_t row = *tracks->id().IndexOf(*track_id);
+  if (!tracks->name()[row].is_null())
+    return track_id;
+
+  // Check reservation for track type.
+  auto reservation_it = reserved_descriptor_tracks_.find(uuid);
+  PERFETTO_CHECK(reservation_it != reserved_descriptor_tracks_.end());
+
+  if (reservation_it->second.pid || reservation_it->second.tid ||
+      reservation_it->second.is_counter) {
+    return track_id;
+  }
+  tracks->mutable_name()->Set(row, event_name);
+  return track_id;
 }
 
 base::Optional<TrackId> TrackTracker::GetDescriptorTrackImpl(
     uint64_t uuid,
     std::vector<uint64_t>* descendent_uuids) {
   auto it = resolved_descriptor_tracks_.find(uuid);
-  if (it == resolved_descriptor_tracks_.end()) {
-    auto reservation_it = reserved_descriptor_tracks_.find(uuid);
-    if (reservation_it == reserved_descriptor_tracks_.end())
-      return base::nullopt;
-    TrackId track_id =
-        ResolveDescriptorTrack(uuid, reservation_it->second, descendent_uuids);
-    resolved_descriptor_tracks_[uuid] = track_id;
-    return track_id;
-  }
-  return it->second;
+  if (it != resolved_descriptor_tracks_.end())
+    return it->second;
+
+  auto reservation_it = reserved_descriptor_tracks_.find(uuid);
+  if (reservation_it == reserved_descriptor_tracks_.end())
+    return base::nullopt;
+
+  TrackId track_id =
+      ResolveDescriptorTrack(uuid, reservation_it->second, descendent_uuids);
+  resolved_descriptor_tracks_[uuid] = track_id;
+  return track_id;
 }
 
 TrackId TrackTracker::ResolveDescriptorTrack(
@@ -335,13 +344,14 @@ TrackId TrackTracker::ResolveDescriptorTrack(
     const DescriptorTrackReservation& reservation,
     std::vector<uint64_t>* descendent_uuids) {
   auto set_track_name_and_return = [this, &reservation](TrackId track_id) {
+    if (reservation.name.is_null())
+      return track_id;
+
     // Initialize the track name here, so that, if a name was given in the
     // reservation, it is set immediately after resolution takes place.
-    if (reservation.name != kNullStringId) {
-      auto* tracks = context_->storage->mutable_track_table();
-      tracks->mutable_name()->Set(*tracks->id().IndexOf(track_id),
-                                  reservation.name);
-    }
+    auto* tracks = context_->storage->mutable_track_table();
+    tracks->mutable_name()->Set(*tracks->id().IndexOf(track_id),
+                                reservation.name);
     return track_id;
   };
 
@@ -469,11 +479,11 @@ TrackId TrackTracker::ResolveDescriptorTrack(
       if (process_track_index) {
         if (reservation.is_counter) {
           // Process counter track.
-          auto* thread_counter_tracks =
+          auto* process_counter_tracks =
               context_->storage->mutable_process_counter_track_table();
           tables::ProcessCounterTrackTable::Row row;
           row.upid = process_tracks->upid()[*process_track_index];
-          track_id = thread_counter_tracks->Insert(row).id;
+          track_id = process_counter_tracks->Insert(row).id;
         } else {
           // Process slice track.
           tables::ProcessTrackTable::Row row;
@@ -552,13 +562,17 @@ TrackId TrackTracker::GetOrCreateTriggerTrack() {
   return *trigger_track_id_;
 }
 
-TrackId TrackTracker::InternGlobalCounterTrack(StringId name) {
+TrackId TrackTracker::InternGlobalCounterTrack(StringId name,
+                                               StringId unit,
+                                               StringId description) {
   auto it = global_counter_tracks_by_name_.find(name);
   if (it != global_counter_tracks_by_name_.end()) {
     return it->second;
   }
 
   tables::CounterTrackTable::Row row(name);
+  row.unit = unit;
+  row.description = description;
   TrackId track =
       context_->storage->mutable_counter_track_table()->Insert(row).id;
   global_counter_tracks_by_name_[name] = track;
@@ -595,7 +609,10 @@ TrackId TrackTracker::InternThreadCounterTrack(StringId name, UniqueTid utid) {
   return track;
 }
 
-TrackId TrackTracker::InternProcessCounterTrack(StringId name, UniquePid upid) {
+TrackId TrackTracker::InternProcessCounterTrack(StringId name,
+                                                UniquePid upid,
+                                                StringId unit,
+                                                StringId description) {
   auto it = upid_counter_tracks_.find(std::make_pair(name, upid));
   if (it != upid_counter_tracks_.end()) {
     return it->second;
@@ -603,6 +620,8 @@ TrackId TrackTracker::InternProcessCounterTrack(StringId name, UniquePid upid) {
 
   tables::ProcessCounterTrackTable::Row row(name);
   row.upid = upid;
+  row.unit = unit;
+  row.description = description;
 
   TrackId track =
       context_->storage->mutable_process_counter_track_table()->Insert(row).id;

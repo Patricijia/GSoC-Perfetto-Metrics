@@ -29,7 +29,9 @@
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/base/thread_utils.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/utils.h"
 
 namespace perfetto {
 namespace base {
@@ -70,7 +72,7 @@ bool ReadProcStat(int fd, ProcStat* out) {
   c[c_pos] = '\0';
 
   if (sscanf(c,
-             "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu"
+             "%*d %*s %*c %*d %*d %*d %*d %*d %*u %*u %*u %*u %*u %lu "
              "%lu %*d %*d %*d %*d %*d %*d %*u %*u %ld",
              &out->utime, &out->stime, &out->rss_pages) != 3) {
     PERFETTO_ELOG("Invalid stat format: %s", c);
@@ -167,7 +169,7 @@ void Watchdog::ThreadMain() {
 
     uint64_t cpu_time = stat.utime + stat.stime;
     uint64_t rss_bytes =
-        static_cast<uint64_t>(stat.rss_pages) * base::kPageSize;
+        static_cast<uint64_t>(stat.rss_pages) * base::GetSysPageSize();
 
     CheckMemory(rss_bytes);
     CheckCpu(cpu_time);

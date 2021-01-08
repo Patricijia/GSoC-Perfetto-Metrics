@@ -23,6 +23,7 @@
 #include <utility>
 
 #include "perfetto/base/task_runner.h"
+#include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/ipc/service_descriptor.h"
 #include "perfetto/ext/ipc/service_proxy.h"
@@ -37,17 +38,29 @@ namespace perfetto {
 namespace ipc {
 
 // static
-std::unique_ptr<Client> Client::CreateInstance(const char* socket_name,
+std::unique_ptr<Client> Client::CreateInstance(ConnArgs conn_args,
                                                base::TaskRunner* task_runner) {
-  std::unique_ptr<Client> client(new ClientImpl(socket_name, task_runner));
+  std::unique_ptr<Client> client(
+      new ClientImpl(std::move(conn_args), task_runner));
   return client;
 }
 
-ClientImpl::ClientImpl(const char* socket_name, base::TaskRunner* task_runner)
-    : task_runner_(task_runner), weak_ptr_factory_(this) {
-  sock_ = base::UnixSocket::Connect(socket_name, this, task_runner,
-                                    base::SockFamily::kUnix,
-                                    base::SockType::kStream);
+ClientImpl::ClientImpl(ConnArgs conn_args, base::TaskRunner* task_runner)
+    : socket_name_(conn_args.socket_name),
+      socket_retry_(conn_args.retry),
+      task_runner_(task_runner),
+      weak_ptr_factory_(this) {
+  if (conn_args.socket_fd) {
+    // Create the client using a connected socket. This code path will never hit
+    // OnConnect().
+    sock_ = base::UnixSocket::AdoptConnected(
+        std::move(conn_args.socket_fd), this, task_runner_,
+        base::SockFamily::kUnix, base::SockType::kStream,
+        base::SockPeerCredMode::kIgnore);
+  } else {
+    // Connect using the socket name.
+    TryConnect();
+  }
 }
 
 ClientImpl::~ClientImpl() {
@@ -55,6 +68,13 @@ ClientImpl::~ClientImpl() {
   PERFETTO_DCHECK(!invoking_method_reply_);
   OnDisconnect(
       nullptr);  // The base::UnixSocket* ptr is not used in OnDisconnect().
+}
+
+void ClientImpl::TryConnect() {
+  PERFETTO_DCHECK(socket_name_);
+  sock_ = base::UnixSocket::Connect(
+      socket_name_, this, task_runner_, base::SockFamily::kUnix,
+      base::SockType::kStream, base::SockPeerCredMode::kIgnore);
 }
 
 void ClientImpl::BindService(base::WeakPtr<ServiceProxy> service_proxy) {
@@ -129,16 +149,35 @@ bool ClientImpl::SendFrame(const Frame& frame, int fd) {
 }
 
 void ClientImpl::OnConnect(base::UnixSocket*, bool connected) {
-  // Drain the BindService() calls that were queued before establishig the
-  // connection with the host.
-  for (base::WeakPtr<ServiceProxy>& service_proxy : queued_bindings_) {
+  if (!connected && socket_retry_) {
+    socket_backoff_ms_ =
+        (socket_backoff_ms_ < 10000) ? socket_backoff_ms_ + 1000 : 30000;
+    PERFETTO_DLOG(
+        "Connection to traced's UNIX socket failed, retrying in %u seconds",
+        socket_backoff_ms_ / 1000);
+    auto weak_this = weak_ptr_factory_.GetWeakPtr();
+    task_runner_->PostDelayedTask(
+        [weak_this] {
+          if (weak_this)
+            static_cast<ClientImpl&>(*weak_this).TryConnect();
+        },
+        socket_backoff_ms_);
+    return;
+  }
+
+  // Drain the BindService() calls that were queued before establishing the
+  // connection with the host. Note that if we got disconnected, the call to
+  // OnConnect below might delete |this|, so move everything on the stack first.
+  auto queued_bindings = std::move(queued_bindings_);
+  queued_bindings_.clear();
+  for (base::WeakPtr<ServiceProxy>& service_proxy : queued_bindings) {
     if (connected) {
       BindService(service_proxy);
     } else if (service_proxy) {
       service_proxy->OnConnect(false /* success */);
     }
   }
-  queued_bindings_.clear();
+  // Don't access |this| below here.
 }
 
 void ClientImpl::OnDisconnect(base::UnixSocket*) {

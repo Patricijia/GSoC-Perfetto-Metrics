@@ -16,7 +16,12 @@
 
 #include "perfetto/profiling/pprof_builder.h"
 
+#include "perfetto/base/build_config.h"
+
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <cxxabi.h>
+#endif
+
 #include <inttypes.h>
 
 #include <algorithm>
@@ -47,10 +52,6 @@ namespace trace_to_text {
 
 namespace {
 
-using ::protozero::proto_utils::kMessageLengthFieldSize;
-using ::protozero::proto_utils::MakeTagLengthDelimited;
-using ::protozero::proto_utils::WriteVarInt;
-
 struct View {
   const char* type;
   const char* unit;
@@ -59,8 +60,12 @@ struct View {
 };
 
 void MaybeDemangle(std::string* name) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  char* data = nullptr;
+#else
   int ignored;
   char* data = abi::__cxa_demangle(name->c_str(), nullptr, nullptr, &ignored);
+#endif
   if (data) {
     *name = data;
     free(data);
@@ -68,9 +73,9 @@ void MaybeDemangle(std::string* name) {
 }
 
 const View kSpaceView{"space", "bytes", "SUM(size)", nullptr};
-const View kAllocSpaceView{"alloc_space", "bytes", "SUM(size)", "size > 0"};
+const View kAllocSpaceView{"alloc_space", "bytes", "SUM(size)", "size >= 0"};
 const View kAllocObjectsView{"alloc_objects", "count", "sum(count)",
-                             "size > 0"};
+                             "size >= 0"};
 const View kObjectsView{"objects", "count", "SUM(count)", nullptr};
 
 const View kViews[] = {kAllocObjectsView, kObjectsView, kAllocSpaceView,
@@ -261,15 +266,16 @@ class GProfileBuilder {
       }
 
       if (!all_next) {
-        PERFETTO_DCHECK(!any_next);
+        PERFETTO_CHECK(!any_next);
         break;
       }
 
       auto* gsample = result_->add_sample();
       protozero::PackedVarInt sample_values;
+      int64_t callstack_id = -1;
       for (size_t i = 0; i < base::ArraySize(kViews); ++i) {
-        int64_t callstack_id = (*view_its)[i].Get(0).AsLong();
         if (i == 0) {
+          callstack_id = (*view_its)[i].Get(0).AsLong();
           auto frames = FramesForCallstack(callstack_id);
           if (frames.empty())
             return false;
@@ -369,7 +375,8 @@ class GProfileBuilder {
                    std::set<int64_t>* seen_mappings,
                    std::set<int64_t>* seen_symbol_ids) {
     Iterator frame_it = tp->ExecuteQuery(
-        "SELECT spf.id, spf.name, spf.mapping, spf.rel_pc, spf.symbol_set_id "
+        "SELECT spf.id, IFNULL(spf.deobfuscated_name, spf.name), spf.mapping, "
+        "spf.rel_pc, spf.symbol_set_id "
         "FROM stack_profile_frame spf;");
     size_t frames_no = 0;
     while (frame_it.Next()) {

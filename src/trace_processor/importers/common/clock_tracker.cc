@@ -19,6 +19,7 @@
 #include <inttypes.h>
 
 #include <algorithm>
+#include <atomic>
 #include <queue>
 
 #include "perfetto/base/logging.h"
@@ -209,9 +210,13 @@ base::Optional<int64_t> ClockTracker::ConvertSlowpath(ClockId src_clock_id,
 
   ClockPath path = FindPath(src_clock_id, target_clock_id);
   if (!path.valid()) {
-    PERFETTO_DLOG("No path from clock %" PRIu64 " to %" PRIu64
-                  " at timestamp %" PRId64,
-                  src_clock_id, target_clock_id, src_timestamp);
+    // Too many logs maybe emitted when path is invalid.
+    static std::atomic<uint32_t> dlog_count(0);
+    if (dlog_count++ < 10) {
+      PERFETTO_DLOG("No path from clock %" PRIu64 " to %" PRIu64
+                    " at timestamp %" PRId64,
+                    src_clock_id, target_clock_id, src_timestamp);
+    }
     context_->storage->IncrementStats(stats::clock_sync_failure);
     return base::nullopt;
   }
@@ -251,8 +256,8 @@ base::Optional<int64_t> ClockTracker::ConvertSlowpath(ClockId src_clock_id,
     // And use that to retrieve the corresponding time in the next clock domain.
     // The snapshot id must exist in the target clock domain. If it doesn't
     // either the hash logic or the pathfinding logic are bugged.
-    // This can also happen if the sanity checks in AddSnapshot fail and we
-    // skip part of the snapshot.
+    // This can also happen if the checks in AddSnapshot fail and we skip part
+    // of the snapshot.
     const ClockSnapshots& next_snap = next_clock->GetSnapshot(hash);
 
     // Using std::lower_bound because snapshot_ids is sorted, so we can do

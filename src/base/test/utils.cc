@@ -20,10 +20,11 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/file_utils.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX) ||  \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
 #include <limits.h>
 #include <unistd.h>
@@ -31,11 +32,10 @@
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
     !PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
-#include <corecrt_io.h>
 #include <io.h>
 #endif
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 #include <mach-o/dyld.h>
 #endif
 
@@ -52,7 +52,7 @@ std::string GetCurExecutableDir() {
   PERFETTO_CHECK(size != -1);
   // readlink does not null terminate.
   self_path = std::string(buf, static_cast<size_t>(size));
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#elif PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
   uint32_t size = 0;
   PERFETTO_CHECK(_NSGetExecutablePath(nullptr, &size));
   self_path.resize(size);
@@ -68,10 +68,10 @@ std::string GetCurExecutableDir() {
 std::string GetTestDataPath(const std::string& path) {
   std::string self_path = GetCurExecutableDir();
   std::string full_path = self_path + "/../../" + path;
-  if (access(full_path.c_str(), 0 /*F_OK*/) == 0)
+  if (FileExists(full_path))
     return full_path;
   full_path = self_path + "/" + path;
-  if (access(full_path.c_str(), 0 /*F_OK*/) == 0)
+  if (FileExists(full_path))
     return full_path;
   // Fall back to relative to root dir.
   return path;

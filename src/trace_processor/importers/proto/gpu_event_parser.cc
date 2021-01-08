@@ -112,7 +112,14 @@ GpuEventParser::GpuEventParser(TraceProcessorContext* context)
                              "UNKNOWN_SEVERITY") /* must be last */}},
       vk_event_track_id_(context->storage->InternString("Vulkan Events")),
       vk_event_scope_id_(context->storage->InternString("vulkan_events")),
-      vk_queue_submit_id_(context->storage->InternString("vkQueueSubmit")) {}
+      vk_queue_submit_id_(context->storage->InternString("vkQueueSubmit")),
+      gpu_mem_total_name_id_(context->storage->InternString("GPU Memory")),
+      gpu_mem_total_unit_id_(context->storage->InternString(
+          std::to_string(protos::pbzero::GpuCounterDescriptor::BYTE).c_str())),
+      gpu_mem_total_global_desc_id_(context->storage->InternString(
+          "Total GPU memory used by the entire system")),
+      gpu_mem_total_proc_desc_id_(context->storage->InternString(
+          "Total GPU memory used by this process")) {}
 
 void GpuEventParser::ParseGpuCounterEvent(int64_t ts, ConstBytes blob) {
   protos::pbzero::GpuCounterEvent::Decoder event(blob.data, blob.size);
@@ -226,13 +233,13 @@ const StringId GpuEventParser::GetFullStageName(
     }
     stage_name = context_->storage->InternString(decoder->name());
   } else {
-    size_t stage_id = static_cast<size_t>(event.stage_id());
+    uint64_t stage_id = static_cast<uint64_t>(event.stage_id());
 
     if (stage_id < gpu_render_stage_ids_.size()) {
-      stage_name = gpu_render_stage_ids_[stage_id].first;
+      stage_name = gpu_render_stage_ids_[static_cast<size_t>(stage_id)].first;
     } else {
       char buffer[64];
-      snprintf(buffer, sizeof(buffer), "render stage(%zu)", stage_id);
+      snprintf(buffer, sizeof(buffer), "render stage(%" PRIu64 ")", stage_id);
       stage_name = context_->storage->InternString(buffer);
     }
   }
@@ -726,6 +733,28 @@ void GpuEventParser::ParseVulkanApiEvent(int64_t ts, ConstBytes blob) {
     };
     context_->slice_tracker->ScopedGpu(row, args_callback);
   }
+}
+
+void GpuEventParser::ParseGpuMemTotalEvent(int64_t ts, ConstBytes blob) {
+  protos::pbzero::GpuMemTotalEvent::Decoder gpu_mem_total(blob.data, blob.size);
+
+  TrackId track = kInvalidTrackId;
+  const uint32_t pid = gpu_mem_total.pid();
+  if (pid == 0) {
+    // Pid 0 is used to indicate the global total
+    track = context_->track_tracker->InternGlobalCounterTrack(
+        gpu_mem_total_name_id_, gpu_mem_total_unit_id_,
+        gpu_mem_total_global_desc_id_);
+  } else {
+    // Process emitting the packet can be different from the pid in the event.
+    UniqueTid utid = context_->process_tracker->UpdateThread(pid, pid);
+    UniquePid upid = context_->storage->thread_table().upid()[utid].value_or(0);
+    track = context_->track_tracker->InternProcessCounterTrack(
+        gpu_mem_total_name_id_, upid, gpu_mem_total_unit_id_,
+        gpu_mem_total_proc_desc_id_);
+  }
+  context_->event_tracker->PushCounter(
+      ts, static_cast<double>(gpu_mem_total.size()), track);
 }
 
 }  // namespace trace_processor

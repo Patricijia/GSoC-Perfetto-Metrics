@@ -20,6 +20,7 @@
 #include <fcntl.h>
 #include <netdb.h>
 #include <netinet/in.h>
+#include <netinet/tcp.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
@@ -37,7 +38,7 @@
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/utils.h"
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 #include <sys/ucred.h>
 #endif
 
@@ -46,7 +47,7 @@ namespace base {
 
 // The CMSG_* macros use NULL instead of nullptr.
 #pragma GCC diagnostic push
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 #pragma GCC diagnostic ignored "-Wzero-as-null-pointer-constant"
 #endif
 
@@ -54,7 +55,7 @@ namespace {
 
 // MSG_NOSIGNAL is not supported on Mac OS X, but in that case the socket is
 // created with SO_NOSIGPIPE (See InitializeSocket()).
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
 constexpr int kNoSigPipe = 0;
 #else
 constexpr int kNoSigPipe = MSG_NOSIGNAL;
@@ -92,6 +93,8 @@ inline int GetSockFamily(SockFamily family) {
       return AF_UNIX;
     case SockFamily::kInet:
       return AF_INET;
+    case SockFamily::kInet6:
+      return AF_INET6;
   }
   PERFETTO_CHECK(false);  // For GCC.
 }
@@ -140,6 +143,23 @@ SockaddrAny MakeSockAddr(SockFamily family, const std::string& socket_name) {
       PERFETTO_CHECK(getaddrinfo(parts[0].c_str(), parts[1].c_str(), &hints,
                                  &addr_info) == 0);
       PERFETTO_CHECK(addr_info->ai_family == AF_INET);
+      SockaddrAny res(addr_info->ai_addr, addr_info->ai_addrlen);
+      freeaddrinfo(addr_info);
+      return res;
+    }
+    case SockFamily::kInet6: {
+      auto parts = SplitString(socket_name, "]");
+      PERFETTO_CHECK(parts.size() == 2);
+      auto address = SplitString(parts[0], "[");
+      PERFETTO_CHECK(address.size() == 1);
+      auto port = SplitString(parts[1], ":");
+      PERFETTO_CHECK(port.size() == 1);
+      struct addrinfo* addr_info = nullptr;
+      struct addrinfo hints {};
+      hints.ai_family = AF_INET6;
+      PERFETTO_CHECK(getaddrinfo(address[0].c_str(), port[0].c_str(), &hints,
+                                 &addr_info) == 0);
+      PERFETTO_CHECK(addr_info->ai_family == AF_INET6);
       SockaddrAny res(addr_info->ai_addr, addr_info->ai_addrlen);
       freeaddrinfo(addr_info);
       return res;
@@ -208,15 +228,19 @@ UnixSocketRaw::UnixSocketRaw(SockFamily family, SockType type)
 UnixSocketRaw::UnixSocketRaw(ScopedFile fd, SockFamily family, SockType type)
     : fd_(std::move(fd)), family_(family), type_(type) {
   PERFETTO_CHECK(fd_);
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
   const int no_sigpipe = 1;
   setsockopt(*fd_, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
 #endif
 
-  if (family == SockFamily::kInet) {
+  if (family == SockFamily::kInet || family == SockFamily::kInet6) {
     int flag = 1;
     PERFETTO_CHECK(
         !setsockopt(*fd_, SOL_SOCKET, SO_REUSEADDR, &flag, sizeof(flag)));
+    flag = 1;
+    // Disable Nagle's algorithm, optimize for low-latency.
+    // See https://github.com/google/perfetto/issues/70.
+    setsockopt(*fd_, IPPROTO_TCP, TCP_NODELAY, &flag, sizeof(flag));
   }
 
   // There is no reason why a socket should outlive the process in case of
@@ -459,19 +483,21 @@ std::unique_ptr<UnixSocket> UnixSocket::Listen(ScopedFile fd,
                                                TaskRunner* task_runner,
                                                SockFamily sock_family,
                                                SockType sock_type) {
-  return std::unique_ptr<UnixSocket>(
-      new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kListening, sock_family, sock_type));
+  return std::unique_ptr<UnixSocket>(new UnixSocket(
+      event_listener, task_runner, std::move(fd), State::kListening,
+      sock_family, sock_type, SockPeerCredMode::kReadOnConnect));
 }
 
 // static
-std::unique_ptr<UnixSocket> UnixSocket::Connect(const std::string& socket_name,
-                                                EventListener* event_listener,
-                                                TaskRunner* task_runner,
-                                                SockFamily sock_family,
-                                                SockType sock_type) {
-  std::unique_ptr<UnixSocket> sock(
-      new UnixSocket(event_listener, task_runner, sock_family, sock_type));
+std::unique_ptr<UnixSocket> UnixSocket::Connect(
+    const std::string& socket_name,
+    EventListener* event_listener,
+    TaskRunner* task_runner,
+    SockFamily sock_family,
+    SockType sock_type,
+    SockPeerCredMode peer_cred_mode) {
+  std::unique_ptr<UnixSocket> sock(new UnixSocket(
+      event_listener, task_runner, sock_family, sock_type, peer_cred_mode));
   sock->DoConnect(socket_name);
   return sock;
 }
@@ -482,30 +508,35 @@ std::unique_ptr<UnixSocket> UnixSocket::AdoptConnected(
     EventListener* event_listener,
     TaskRunner* task_runner,
     SockFamily sock_family,
-    SockType sock_type) {
-  return std::unique_ptr<UnixSocket>(
-      new UnixSocket(event_listener, task_runner, std::move(fd),
-                     State::kConnected, sock_family, sock_type));
+    SockType sock_type,
+    SockPeerCredMode peer_cred_mode) {
+  return std::unique_ptr<UnixSocket>(new UnixSocket(
+      event_listener, task_runner, std::move(fd), State::kConnected,
+      sock_family, sock_type, peer_cred_mode));
 }
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
                        SockFamily sock_family,
-                       SockType sock_type)
+                       SockType sock_type,
+                       SockPeerCredMode peer_cred_mode)
     : UnixSocket(event_listener,
                  task_runner,
                  ScopedFile(),
                  State::kDisconnected,
                  sock_family,
-                 sock_type) {}
+                 sock_type,
+                 peer_cred_mode) {}
 
 UnixSocket::UnixSocket(EventListener* event_listener,
                        TaskRunner* task_runner,
                        ScopedFile adopt_fd,
                        State adopt_state,
                        SockFamily sock_family,
-                       SockType sock_type)
-    : event_listener_(event_listener),
+                       SockType sock_type,
+                       SockPeerCredMode peer_cred_mode)
+    : peer_cred_mode_(peer_cred_mode),
+      event_listener_(event_listener),
       task_runner_(task_runner),
       weak_ptr_factory_(this) {
   state_ = State::kDisconnected;
@@ -520,7 +551,8 @@ UnixSocket::UnixSocket(EventListener* event_listener,
     PERFETTO_DCHECK(adopt_fd);
     sock_raw_ = UnixSocketRaw(std::move(adopt_fd), sock_family, sock_type);
     state_ = State::kConnected;
-    ReadPeerCredentials();
+    if (peer_cred_mode_ == SockPeerCredMode::kReadOnConnect)
+      ReadPeerCredentials();
   } else if (adopt_state == State::kListening) {
     // We get here from Listen().
 
@@ -605,6 +637,7 @@ void UnixSocket::ReadPeerCredentials() {
   // Peer credentials are supported only on AF_UNIX sockets.
   if (sock_raw_.family() != SockFamily::kUnix)
     return;
+  PERFETTO_CHECK(peer_cred_mode_ != SockPeerCredMode::kIgnore);
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
@@ -642,7 +675,8 @@ void UnixSocket::OnEvent() {
     if (res == 0 && sock_err == EINPROGRESS)
       return;  // Not connected yet, just a spurious FD watch wakeup.
     if (res == 0 && sock_err == 0) {
-      ReadPeerCredentials();
+      if (peer_cred_mode_ == SockPeerCredMode::kReadOnConnect)
+        ReadPeerCredentials();
       state_ = State::kConnected;
       return event_listener_->OnConnect(this, true /* connected */);
     }
@@ -665,7 +699,7 @@ void UnixSocket::OnEvent() {
         return;
       std::unique_ptr<UnixSocket> new_sock(new UnixSocket(
           event_listener_, task_runner_, std::move(new_fd), State::kConnected,
-          sock_raw_.family(), sock_raw_.type()));
+          sock_raw_.family(), sock_raw_.type(), peer_cred_mode_));
       event_listener_->OnNewIncomingConnection(this, std::move(new_sock));
     }
   }

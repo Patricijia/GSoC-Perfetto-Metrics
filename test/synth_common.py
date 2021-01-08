@@ -22,6 +22,30 @@ CLONE_THREAD = 0x00010000
 CLONE_VFORK = 0x00004000
 CLONE_VM = 0x00000100
 
+# TODO(b/174825244): These magic numbers should go away.
+TYPE_SLICE_BEGIN = 1
+TYPE_SLICE_END = 2
+
+RAIL_MODE_RESPONSE = 1
+RAIL_MODE_ANIMATION = 2
+RAIL_MODE_IDLE = 3
+RAIL_MODE_LOAD = 4
+
+PROCESS_BROWSER = 1
+PROCESS_RENDERER = 2
+PROCESS_GPU = 6
+
+CHROME_THREAD_UNSPECIFIED = 0
+CHROME_THREAD_MAIN = 1
+CHROME_THREAD_IO = 2
+CHROME_THREAD_COMPOSITOR = 8
+
+COUNTER_THREAD_TIME_NS = 1
+
+
+def ms_to_ns(time_in_ms):
+  return time_in_ms * 1000000
+
 
 class Trace(object):
 
@@ -187,10 +211,12 @@ class Trace(object):
       process.uid = uid
     self.proc_map[pid] = cmdline
 
-  def add_thread(self, tid, tgid, cmdline):
+  def add_thread(self, tid, tgid, cmdline, name=None):
     thread = self.packet.process_tree.threads.add()
     thread.tid = tid
     thread.tgid = tgid
+    if name is not None:
+      thread.name = name
     self.proc_map[tid] = cmdline
 
   def add_battery_counters(self, ts, charge_uah, cap_prct, curr_ua,
@@ -393,11 +419,198 @@ class Trace(object):
       thread.cpu_freq_indices.append(index)
       thread.cpu_freq_ticks.append(freqs[index])
 
-  def add_gpu_mem_total(self, pid, ts, size):
+  def add_gpu_mem_total_ftrace_event(self, pid, ts, size):
     ftrace = self.__add_ftrace_event(ts, pid)
-    gpu_mem_total_event = ftrace.gpu_mem_total
+    gpu_mem_total_ftrace_event = ftrace.gpu_mem_total
+    gpu_mem_total_ftrace_event.pid = pid
+    gpu_mem_total_ftrace_event.size = size
+
+  def add_gpu_mem_total_event(self, pid, ts, size):
+    packet = self.add_packet()
+    packet.timestamp = ts
+    gpu_mem_total_event = packet.gpu_mem_total_event
     gpu_mem_total_event.pid = pid
     gpu_mem_total_event.size = size
+
+  def add_sched_blocked_reason(self, ts, pid, io_wait, unblock_pid):
+    ftrace = self.__add_ftrace_event(ts, unblock_pid)
+    sched_blocked_reason = ftrace.sched_blocked_reason
+    sched_blocked_reason.pid = pid
+    sched_blocked_reason.io_wait = io_wait
+
+  def add_track_event(self,
+                      name=None,
+                      ts=None,
+                      track=None,
+                      trusted_sequence_id=0,
+                      cpu_time=None):
+    packet = self.add_packet(ts=ts)
+    if name is not None:
+      packet.track_event.name = name
+    if track is not None:
+      packet.track_event.track_uuid = track
+    packet.trusted_packet_sequence_id = trusted_sequence_id
+    if cpu_time is not None:
+      packet.track_event.extra_counter_values.append(cpu_time)
+    return packet
+
+  def add_track_descriptor(self, uuid, parent=None):
+    packet = self.add_packet()
+    track_descriptor = packet.track_descriptor
+    if uuid is not None:
+      track_descriptor.uuid = uuid
+    if parent is not None:
+      track_descriptor.parent_uuid = parent
+    return packet
+
+  def add_process_track_descriptor(self, process_track, pid=None):
+    packet = self.add_track_descriptor(process_track)
+    packet.track_descriptor.process.pid = pid
+    return packet
+
+  def add_chrome_process_track_descriptor(
+      self,
+      process_track,
+      pid=None,
+      process_type=PROCESS_RENDERER,
+      host_app_package_name="org.chromium.chrome"):
+    packet = self.add_process_track_descriptor(process_track, pid=pid)
+    chrome_process = packet.track_descriptor.chrome_process
+    chrome_process.process_type = process_type
+    chrome_process.host_app_package_name = host_app_package_name
+    return packet
+
+  def add_thread_track_descriptor(self,
+                                  process_track,
+                                  thread_track,
+                                  trusted_packet_sequence_id=None,
+                                  pid=None,
+                                  tid=None):
+    packet = self.add_track_descriptor(thread_track, parent=process_track)
+    packet.trusted_packet_sequence_id = trusted_packet_sequence_id
+    packet.track_descriptor.thread.pid = pid
+    packet.track_descriptor.thread.tid = tid
+    return packet
+
+  def add_chrome_thread_track_descriptor(self,
+                                         process_track,
+                                         thread_track,
+                                         trusted_packet_sequence_id=None,
+                                         pid=None,
+                                         tid=None,
+                                         thread_type=CHROME_THREAD_UNSPECIFIED):
+    packet = self.add_thread_track_descriptor(
+        process_track,
+        thread_track,
+        trusted_packet_sequence_id=trusted_packet_sequence_id,
+        pid=pid,
+        tid=tid)
+    return packet
+
+  def add_trace_packet_defaults(self,
+                                trusted_packet_sequence_id=None,
+                                thread_track=None,
+                                counter_track=None):
+    packet = self.add_track_descriptor(None)
+    packet.trusted_packet_sequence_id = trusted_packet_sequence_id
+    track_event_defaults = packet.trace_packet_defaults.track_event_defaults
+    track_event_defaults.track_uuid = thread_track
+    track_event_defaults.extra_counter_track_uuids.append(counter_track)
+    return packet
+
+  def add_counter_track_descriptor(self,
+                                   trusted_packet_sequence_id=None,
+                                   thread_track=None,
+                                   counter_track=None):
+    packet = self.add_track_descriptor(counter_track, parent=thread_track)
+    packet.trusted_packet_sequence_id = trusted_packet_sequence_id
+    packet.track_descriptor.counter.type = COUNTER_THREAD_TIME_NS
+    return packet
+
+  def add_chrome_thread_with_cpu_counter(self,
+                                         process_track,
+                                         thread_track,
+                                         trusted_packet_sequence_id=None,
+                                         counter_track=None,
+                                         pid=None,
+                                         tid=None,
+                                         thread_type=None):
+    self.add_chrome_thread_track_descriptor(
+        process_track,
+        thread_track,
+        trusted_packet_sequence_id=trusted_packet_sequence_id,
+        pid=pid,
+        tid=tid,
+        thread_type=thread_type)
+    self.add_trace_packet_defaults(
+        trusted_packet_sequence_id=trusted_packet_sequence_id,
+        counter_track=counter_track,
+        thread_track=thread_track)
+
+    self.add_counter_track_descriptor(
+        trusted_packet_sequence_id=trusted_packet_sequence_id,
+        counter_track=counter_track,
+        thread_track=thread_track)
+
+  def add_track_event_slice_begin(self,
+                                  name,
+                                  ts,
+                                  track=None,
+                                  trusted_sequence_id=0,
+                                  cpu_time=None):
+    packet = self.add_track_event(
+        name,
+        ts=ts,
+        track=track,
+        trusted_sequence_id=trusted_sequence_id,
+        cpu_time=cpu_time)
+    packet.track_event.type = TYPE_SLICE_BEGIN
+    return packet
+
+  def add_track_event_slice_end(self,
+                                ts,
+                                track=None,
+                                trusted_sequence_id=0,
+                                cpu_time=None):
+    packet = self.add_track_event(
+        ts=ts,
+        track=track,
+        trusted_sequence_id=trusted_sequence_id,
+        cpu_time=cpu_time)
+    packet.track_event.type = TYPE_SLICE_END
+    return packet
+
+  # Returns the start slice packet.
+  def add_track_event_slice(self,
+                            name,
+                            ts,
+                            dur,
+                            track=None,
+                            trusted_sequence_id=0,
+                            cpu_start=None,
+                            cpu_delta=None):
+
+    packet = self.add_track_event_slice_begin(
+        name,
+        ts,
+        track=track,
+        trusted_sequence_id=trusted_sequence_id,
+        cpu_time=cpu_start)
+
+    if dur >= 0:
+      cpu_end = cpu_start + cpu_delta if cpu_start is not None else None
+      self.add_track_event_slice_end(
+          ts + dur,
+          track=track,
+          trusted_sequence_id=trusted_sequence_id,
+          cpu_time=cpu_end)
+
+    return packet
+
+  def add_rail_mode_slice(self, ts, dur, track, mode):
+    packet = self.add_track_event_slice(
+        "Scheduler.RAILMode", ts=ts, dur=dur, track=track)
+    packet.track_event.chrome_renderer_scheduler_state.rail_mode = mode
 
 
 def create_trace():

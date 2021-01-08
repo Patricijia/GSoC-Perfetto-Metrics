@@ -60,6 +60,25 @@ enum BackendType : uint32_t {
   kCustomBackend = 1 << 2,
 };
 
+struct TracingError {
+  enum ErrorCode : uint32_t {
+    // Peer disconnection.
+    kDisconnected = 1,
+
+    // The Start() method failed. This is typically because errors in the passed
+    // TraceConfig. More details are available in |message|.
+    kTracingFailed = 2,
+  };
+
+  ErrorCode code;
+  std::string message;
+
+  TracingError(ErrorCode cd, std::string msg)
+      : code(cd), message(std::move(msg)) {
+    PERFETTO_CHECK(!message.empty());
+  }
+};
+
 struct TracingInitArgs {
   uint32_t backends = 0;                     // One or more BackendFlags.
   TracingBackend* custom_backend = nullptr;  // [Optional].
@@ -82,6 +101,21 @@ struct TracingInitArgs {
   // the shmem buffer in presence of multiple writer threads.
   // Must be one of [4, 8, 16, 32].
   uint32_t shmem_page_size_hint_kb = 0;
+
+  // [Optional] The length of the period during which shared-memory-buffer
+  // chunks that have been filled with data are accumulated (batched) on the
+  // producer side, before the service is notified of them over an out-of-band
+  // IPC call. If, while this period lasts, the shared memory buffer gets too
+  // full, the IPC call will be sent immediately. The value of this parameter is
+  // a trade-off between IPC traffic overhead and the ability to sustain bursts
+  // of trace writes. The higher the value, the more chunks will be batched and
+  // the less buffer space will be available to hide the latency of the service,
+  // and vice versa. For more details, see the SetBatchCommitsDuration method in
+  // shared_memory_arbiter.h.
+  //
+  // Note: With the default value of 0ms, batching still happens but with a zero
+  // delay, i.e. commits will be sent to the service at the next opportunity.
+  uint32_t shmem_batch_commits_duration_ms = 0;
 
  protected:
   friend class Tracing;
@@ -176,6 +210,41 @@ class PERFETTO_EXPORT TracingSession {
   // thread.
   virtual void SetOnStartCallback(std::function<void()>) = 0;
 
+  // This callback can be used to get a notification when some error occured
+  // (e.g., peer disconnection). Error type will be passed as an argument. This
+  // callback will be invoked on an internal perfetto thread.
+  virtual void SetOnErrorCallback(std::function<void(TracingError)>) = 0;
+
+  // Issues a flush request, asking all data sources to ack the request, within
+  // the specified timeout. A "flush" is a fence to ensure visibility of data in
+  // the async tracing pipeline. It guarantees that all data written before the
+  // Flush() call will be visible in the trace buffer and hence by the
+  // ReadTrace() / ReadTraceBlocking() methods.
+  // Args:
+  //  callback: will be invoked on an internal perfetto thread when all data
+  //    sources have acked, or the timeout is reached. The bool argument
+  //    will be true if all data sources acked within the timeout, false if
+  //    the timeout was hit or some other error occurred (e.g. the tracing
+  //    session wasn't started or ended).
+  //  timeout_ms: how much time the service will wait for data source acks. If
+  //    0, the global timeout specified in the TraceConfig (flush_timeout_ms)
+  //    will be used. If flush_timeout_ms is also unspecified, a default value
+  //    of 5s will be used.
+  // Known issues:
+  //    Because flushing is still based on service-side scraping, the very last
+  //    trace packet for each data source thread will not be visible. Fixing
+  //    this requires either propagating the Flush() to the data sources or
+  //    changing the order of atomic operations in the service (b/162206162).
+  //    Until then, a workaround is to make sure to call
+  //    DataSource::Trace([](TraceContext ctx) { ctx.Flush(); }) just before
+  //    stopping, on each thread where DataSource::Trace has been previously
+  //    called.
+  virtual void Flush(std::function<void(bool)>, uint32_t timeout_ms = 0) = 0;
+
+  // Blocking version of Flush(). Waits until all data sources have acked and
+  // returns the success/failure status.
+  bool FlushBlocking(uint32_t timeout_ms = 0);
+
   // Disable tracing asynchronously.
   // Use SetOnStopCallback() to get a notification when the tracing session is
   // fully stopped and all data sources have acked.
@@ -189,6 +258,12 @@ class PERFETTO_EXPORT TracingSession {
   // when the trace reaches its |duration_ms| time limit.
   // This callback will be invoked on an internal perfetto thread.
   virtual void SetOnStopCallback(std::function<void()>) = 0;
+
+  // Changes the TraceConfig for an active tracing session. The session must
+  // have been configured and started before. Note that the tracing service
+  // only supports changing a subset of TraceConfig fields,
+  // see ConsumerEndpoint::ChangeTraceConfig().
+  virtual void ChangeTraceConfig(const TraceConfig&) = 0;
 
   // Struct passed as argument to the callback passed to ReadTrace().
   // [data, size] is guaranteed to contain 1 or more full trace packets, which
@@ -207,8 +282,13 @@ class PERFETTO_EXPORT TracingSession {
 
   // Reads back the trace data (raw protobuf-encoded bytes) asynchronously.
   // Can be called at any point during the trace, typically but not necessarily,
-  // after stopping. Reading the trace data is a destructive operation w.r.t.
-  // contents of the trace buffer and is not idempotent.
+  // after stopping. If this is called before the end of the trace (i.e. before
+  // Stop() / StopBlocking()), in almost all cases you need to call
+  // Flush() / FlushBlocking() before Read(). This is to guarantee that tracing
+  // data in-flight in the data sources is committed into the tracing buffers
+  // before reading them.
+  // Reading the trace data is a destructive operation w.r.t. contents of the
+  // trace buffer and is not idempotent.
   // A single ReadTrace() call can yield >1 callback invocations, until
   // |has_more| is false.
   using ReadTraceCallback = std::function<void(ReadTraceCallbackArgs)>;
@@ -241,6 +321,30 @@ class PERFETTO_EXPORT TracingSession {
 
   // Synchronous version of GetTraceStats() for convenience.
   GetTraceStatsCallbackArgs GetTraceStatsBlocking();
+
+  // Struct passed as an argument to the callback for QueryServiceState().
+  // Contains information about registered data sources.
+  struct QueryServiceStateCallbackArgs {
+    // Whether or not getting the service state succeeded.
+    bool success = false;
+    // Serialized TracingServiceState protobuf message. To decode:
+    //
+    //   perfetto::protos::gen::TracingServiceState state;
+    //   state.ParseFromArray(args.service_state_data.data(),
+    //                        args.service_state_data.size());
+    //
+    std::vector<uint8_t> service_state_data;
+  };
+
+  // Requests a snapshot of the tracing service state for this session. Only one
+  // request per session may be active at a time. This callback will be invoked
+  // on an internal perfetto thread.
+  using QueryServiceStateCallback =
+      std::function<void(QueryServiceStateCallbackArgs)>;
+  virtual void QueryServiceState(QueryServiceStateCallback) = 0;
+
+  // Synchronous version of QueryServiceState() for convenience.
+  QueryServiceStateCallbackArgs QueryServiceStateBlocking();
 };
 
 }  // namespace perfetto

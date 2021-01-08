@@ -40,8 +40,8 @@ Usage: %s TRIGGER...
 
 int __attribute__((visibility("default")))
 TriggerPerfettoMain(int argc, char** argv) {
-  static const struct option long_options[] = {
-      {"help", no_argument, nullptr, 'h'}, {nullptr, 0, nullptr, 0}};
+  static const option long_options[] = {{"help", no_argument, nullptr, 'h'},
+                                        {nullptr, 0, nullptr, 0}};
 
   int option_index = 0;
 
@@ -60,7 +60,7 @@ TriggerPerfettoMain(int argc, char** argv) {
   for (int i = optind; i < argc; i++)
     triggers_to_activate.push_back(std::string(argv[i]));
 
-  if (triggers_to_activate.size() == 0) {
+  if (triggers_to_activate.empty()) {
     PERFETTO_ELOG("At least one trigger must the specified.");
     return PrintUsage(argv[0]);
   }

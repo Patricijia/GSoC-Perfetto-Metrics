@@ -164,6 +164,13 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("sde", "sde_evtlog"));
         events.insert(GroupAndName("sde", "sde_encoder_underrun"));
         events.insert(GroupAndName("sde", "sde_cmd_release_bw"));
+
+        AddEventGroup(table, "dpu", &events);
+        events.insert(GroupAndName("dpu", "tracing_mark_write"));
+
+        AddEventGroup(table, "g2d", &events);
+        events.insert(GroupAndName("g2d", "tracing_mark_write"));
+        events.insert(GroupAndName("g2d", "g2d_perf_update_qos"));
         continue;
       }
 
@@ -508,12 +515,11 @@ FtraceConfigId FtraceConfigMuxer::SetupConfig(const FtraceConfig& request) {
 
   std::vector<std::string> apps(request.atrace_apps());
   std::vector<std::string> categories(request.atrace_categories());
-
   FtraceConfigId id = ++last_id_;
   ds_configs_.emplace(
       std::piecewise_construct, std::forward_as_tuple(id),
       std::forward_as_tuple(std::move(filter), compact_sched, std::move(apps),
-                            std::move(categories)));
+                            std::move(categories), request.symbolize_ksyms()));
   return id;
 }
 

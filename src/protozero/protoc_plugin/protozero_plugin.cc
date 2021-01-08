@@ -14,6 +14,8 @@
  * limitations under the License.
  */
 
+#include <stdlib.h>
+
 #include <limits>
 #include <map>
 #include <memory>
@@ -54,7 +56,7 @@ constexpr int kMaxDecoderFieldId = 999;
 
 void Assert(bool condition) {
   if (!condition)
-    __builtin_trap();
+    abort();
 }
 
 struct FileDescriptorComp {
@@ -97,7 +99,7 @@ class GeneratorJob {
       GenerateEnumDescriptor(enumeration);
     for (const Descriptor* message : messages_)
       GenerateMessageDescriptor(message);
-    for (auto key_value : extensions_)
+    for (const auto& key_value : extensions_)
       GenerateExtension(key_value.first, key_value.second);
     GenerateEpilogue();
     return error_.empty();
@@ -299,7 +301,7 @@ class GeneratorJob {
     if (source_->weak_dependency_count() > 0)
       Abort("Weak imports are not supported.");
 
-    // Sanity check. Collect public imports (of collected imports) in DFS order.
+    // Validations. Collect public imports (of collected imports) in DFS order.
     // Visibilty for current proto:
     // - all imports listed in current proto,
     // - public imports of everything imported (recursive).
@@ -326,8 +328,8 @@ class GeneratorJob {
     }
 
     // Collect descriptors of messages and enums used in current proto.
-    // It will be used to generate necessary forward declarations and performed
-    // sanity check guarantees that everything lays in the same namespace.
+    // It will be used to generate necessary forward declarations and
+    // check that everything lays in the same namespace.
     for (const Descriptor* message : messages_) {
       for (int i = 0; i < message->field_count(); ++i) {
         const FieldDescriptor* field = message->field(i);
@@ -837,7 +839,8 @@ class GeneratorJob {
     // TODO(ddrone): ensure that this code works when containing_type located in
     // other file or namespace.
     stub_h_->Print("class $name$ : public $extendee$ {\n", "name",
-                   extension_name, "extendee", GetCppClassName(base_message));
+                   extension_name, "extendee",
+                   GetCppClassName(base_message, /*full=*/true));
     stub_h_->Print(" public:\n");
     stub_h_->Indent();
     for (const FieldDescriptor* field : descriptors) {

@@ -122,8 +122,36 @@ message AndroidDisplayMetrics {
 
   // Stat reports whether there is any duplicate_frames tracked
   optional uint32 duplicate_frames_logged = 2;
+
+  // Stat that reports the number of dpu underrrun occurs count.
+  optional uint32 total_dpu_underrun_count = 3;
 }
+
 // End of protos/perfetto/metrics/android/display_metrics.proto
+
+// Begin of protos/perfetto/metrics/android/gpu_metric.proto
+
+message AndroidGpuMetric {
+  message Process {
+    // Process name.
+    optional string name = 1;
+
+    // max/min/avg GPU memory used by this process.
+    optional int64 mem_max = 2;
+    optional int64 mem_min = 3;
+    optional int64 mem_avg = 4;
+  }
+
+  // GPU metric for processes using GPU.
+  repeated Process processes = 1;
+
+  // max/min/avg GPU memory used by the entire system.
+  optional int64 mem_max = 2;
+  optional int64 mem_min = 3;
+  optional int64 mem_avg = 4;
+}
+
+// End of protos/perfetto/metrics/android/gpu_metric.proto
 
 // Begin of protos/perfetto/metrics/android/process_metadata.proto
 
@@ -326,8 +354,11 @@ message AndroidIonMetric {
 // Begin of protos/perfetto/metrics/android/java_heap_histogram.proto
 
 message JavaHeapHistogram {
+  // Next id: 5
   message TypeCount {
     optional string type_name = 1;
+    optional string category = 4;
+
     optional uint32 obj_count = 2;
     optional uint32 reachable_obj_count = 3;
   }
@@ -568,7 +599,7 @@ message AndroidStartupMetric {
 
   // Timing information spanning the intent received by the
   // activity manager to the first frame drawn.
-  // Next id: 21.
+  // Next id: 22.
   message ToFirstFrame {
     optional int64 dur_ns = 1;
     optional double dur_ms = 17;
@@ -587,6 +618,7 @@ message AndroidStartupMetric {
     optional Slice time_bind_application = 6;
     optional Slice time_activity_start = 7;
     optional Slice time_activity_resume = 8;
+    optional Slice time_activity_restart = 21;
     optional Slice time_choreographer = 9;
 
     // If we are starting a new process, record the duration from the
@@ -665,6 +697,28 @@ message AndroidSurfaceflingerMetric {
 
 // End of protos/perfetto/metrics/android/surfaceflinger.proto
 
+// Begin of protos/perfetto/metrics/android/sysui_cuj_metrics.proto
+
+// Metric that stores frame information and potential jank root causes
+// for a single Android system UI interaction/user journey.
+message AndroidSysUiCujMetrics {
+  // A list of all frames within the SysUi user journey.
+  repeated Frame frames = 1;
+
+  message Frame {
+    // Index of the frame within the single user journey.
+    optional int64 number = 1;
+    optional int64 ts = 2;
+    optional int64 dur = 3;
+
+    // A list of identified potential causes for jank.
+    // Optional.
+    repeated string jank_cause = 4;
+  }
+}
+
+// End of protos/perfetto/metrics/android/sysui_cuj_metrics.proto
+
 // Begin of protos/perfetto/metrics/android/task_names.proto
 
 message AndroidTaskNames {
@@ -718,27 +772,6 @@ message AndroidThreadTimeInStateMetric {
 
 // End of protos/perfetto/metrics/android/thread_time_in_state_metric.proto
 
-// Begin of protos/perfetto/metrics/android/unmapped_java_symbols.proto
-
-message UnmappedJavaSymbols {
-  message Field {
-    optional string field_name = 1;
-    optional string field_type_name = 2;
-  }
-
-  message ProcessSymbols {
-    reserved 3;
-
-    optional AndroidProcessMetadata process_metadata = 1;
-    repeated string type_name = 2;
-    repeated Field field = 4;
-  }
-
-  repeated ProcessSymbols process_symbols = 1;
-}
-
-// End of protos/perfetto/metrics/android/unmapped_java_symbols.proto
-
 // Begin of protos/perfetto/metrics/android/unsymbolized_frames.proto
 
 message UnsymbolizedFrames {
@@ -769,9 +802,9 @@ message TraceMetadata {
 
 // Root message for all Perfetto-based metrics.
 //
-// Next id: 26
+// Next id: 28
 message TraceMetrics {
-  reserved 4, 10, 13, 14;
+  reserved 4, 10, 13, 14, 19;
 
   // Battery counters metric on Android.
   optional AndroidBatteryMetric android_batt = 5;
@@ -821,9 +854,6 @@ message TraceMetrics {
   // Metrics used to find potential culprits of low-memory kills.
   optional AndroidLmkReasonMetric android_lmk_reason = 18;
 
-  // Java type names that have no deobfuscation mappings.
-  optional UnmappedJavaSymbols unmapped_java_symbols = 19;
-
   optional AndroidHwuiMetric android_hwui_metric = 20;
 
   optional AndroidDisplayMetrics display_metrics = 22;
@@ -834,6 +864,12 @@ message TraceMetrics {
 
   // Metric associated with surfaceflinger.
   optional AndroidSurfaceflingerMetric android_surfaceflinger = 25;
+
+  // GPU metrics on Android.
+  optional AndroidGpuMetric android_gpu = 26;
+
+  // Frame timing and jank root causes for system UI interactions.
+  optional AndroidSysUiCujMetrics android_sysui_cuj = 27;
 
   // Demo extensions.
   extensions 450 to 499;

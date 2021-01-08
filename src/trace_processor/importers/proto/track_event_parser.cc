@@ -24,6 +24,7 @@
 #include "perfetto/trace_processor/status.h"
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
+#include "src/trace_processor/importers/common/flow_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/json/json_utils.h"
@@ -34,6 +35,7 @@
 
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.pbzero.h"
+#include "protos/perfetto/trace/track_event/chrome_histogram_sample.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_legacy_ipc.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_process_descriptor.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_thread_descriptor.pbzero.h"
@@ -120,11 +122,11 @@ class TrackEventParser::EventImporter {
         parser_(parser),
         ts_(ts),
         event_data_(event_data),
-        sequence_state_(event_data_->sequence_state),
+        sequence_state_(event_data->sequence_state.get()),
         blob_(std::move(blob)),
         event_(blob_),
         legacy_event_(event_.legacy_event()),
-        defaults_(sequence_state_->GetTrackEventDefaults()) {}
+        defaults_(event_data->sequence_state->GetTrackEventDefaults()) {}
 
   util::Status Import() {
     // TODO(eseckler): This legacy event field will eventually be replaced by
@@ -155,15 +157,19 @@ class TrackEventParser::EventImporter {
 
     // TODO(eseckler): Replace phase with type and remove handling of
     // legacy_event_.phase() once it is no longer used by producers.
-    int32_t phase = ParsePhaseOrType();
+    char phase = static_cast<char>(ParsePhaseOrType());
 
-    switch (static_cast<char>(phase)) {
+    switch (phase) {
       case 'B':  // TRACE_EVENT_PHASE_BEGIN.
         return ParseThreadBeginEvent();
       case 'E':  // TRACE_EVENT_PHASE_END.
         return ParseThreadEndEvent();
       case 'X':  // TRACE_EVENT_PHASE_COMPLETE.
         return ParseThreadCompleteEvent();
+      case 's':  // TRACE_EVENT_PHASE_FLOW_BEGIN.
+      case 't':  // TRACE_EVENT_PHASE_FLOW_STEP.
+      case 'f':  // TRACE_EVENT_PHASE_FLOW_END.
+        return ParseFlowEventV1(phase);
       case 'i':
       case 'I':  // TRACE_EVENT_PHASE_INSTANT.
         return ParseThreadInstantEvent();
@@ -274,18 +280,17 @@ class TrackEventParser::EventImporter {
     // Determine track from track_uuid specified in either TrackEvent or
     // TrackEventDefaults. If a non-default track is not set, we either:
     //   a) fall back to the track specified by the sequence's (or event's) pid
-    //   +
-    //      tid (only in case of legacy tracks/events, i.e. events that don't
+    //      + tid (only in case of legacy tracks/events, i.e. events that don't
     //      specify an explicit track uuid or use legacy event phases instead of
     //      TrackEvent types), or
     //   b) a default track.
     if (track_uuid_) {
       base::Optional<TrackId> opt_track_id =
-          track_tracker->GetDescriptorTrack(track_uuid_);
+          track_tracker->GetDescriptorTrack(track_uuid_, name_id_);
       if (!opt_track_id) {
         track_tracker->ReserveDescriptorChildTrack(track_uuid_,
                                                    /*parent_uuid=*/0, name_id_);
-        opt_track_id = track_tracker->GetDescriptorTrack(track_uuid_);
+        opt_track_id = track_tracker->GetDescriptorTrack(track_uuid_, name_id_);
       }
       track_id_ = *opt_track_id;
 
@@ -558,6 +563,7 @@ class TrackEventParser::EventImporter {
           opt_slice_id.value(), event_data_->thread_timestamp,
           kPendingThreadDuration, event_data_->thread_instruction_count,
           kPendingThreadInstructionDelta);
+      MaybeParseFlowEvents();
     }
 
     return util::OkStatus();
@@ -603,9 +609,105 @@ class TrackEventParser::EventImporter {
           opt_slice_id.value(), event_data_->thread_timestamp,
           thread_duration_ns, event_data_->thread_instruction_count,
           legacy_event_.thread_instruction_delta());
+      MaybeParseFlowEvents();
     }
 
     return util::OkStatus();
+  }
+
+  base::Optional<uint64_t> GetLegacyEventId() {
+    if (legacy_event_.has_unscoped_id())
+      return legacy_event_.unscoped_id();
+    // TODO(andrewbb): Catapult doesn't support global_id and local_id on flow
+    // events. We could add support in trace processor (e.g. because there seem
+    // to be some callsites supplying local_id in chromium), but we would have
+    // to consider the process ID for local IDs and use a separate ID scope for
+    // global_id and unscoped_id.
+    return base::nullopt;
+  }
+
+  util::Status ParseFlowEventV1(char phase) {
+    auto opt_source_id = GetLegacyEventId();
+    if (!opt_source_id) {
+      storage_->IncrementStats(stats::flow_invalid_id);
+      return util::ErrStatus("Invalid id for flow event v1");
+    }
+    FlowId flow_id = context_->flow_tracker->GetFlowIdForV1Event(
+        opt_source_id.value(), category_id_, name_id_);
+    switch (phase) {
+      case 's':
+        context_->flow_tracker->Begin(track_id_, flow_id);
+        break;
+      case 't':
+        context_->flow_tracker->Step(track_id_, flow_id);
+        break;
+      case 'f':
+        context_->flow_tracker->End(track_id_, flow_id,
+                                    legacy_event_.bind_to_enclosing(),
+                                    /* close_flow = */ false);
+        break;
+    }
+    return util::OkStatus();
+  }
+
+  void MaybeParseTrackEventFlows() {
+    if (event_.has_flow_ids()) {
+      auto it = event_.flow_ids();
+      for (; it; ++it) {
+        FlowId flow_id = *it;
+        if (!context_->flow_tracker->IsActive(flow_id)) {
+          context_->flow_tracker->Begin(track_id_, flow_id);
+          continue;
+        }
+        context_->flow_tracker->Step(track_id_, flow_id);
+      }
+    }
+    if (event_.has_terminating_flow_ids()) {
+      auto it = event_.terminating_flow_ids();
+      for (; it; ++it) {
+        FlowId flow_id = *it;
+        if (!context_->flow_tracker->IsActive(flow_id)) {
+          // If we should terminate a flow, do not begin a new one if it's not
+          // active already.
+          continue;
+        }
+        context_->flow_tracker->End(track_id_, flow_id,
+                                    /* bind_enclosing = */ true,
+                                    /* close_flow = */ true);
+      }
+    }
+  }
+
+  void MaybeParseFlowEventV2() {
+    if (!legacy_event_.has_bind_id()) {
+      return;
+    }
+    if (!legacy_event_.has_flow_direction()) {
+      storage_->IncrementStats(stats::flow_without_direction);
+      return;
+    }
+
+    auto bind_id = legacy_event_.bind_id();
+    switch (legacy_event_.flow_direction()) {
+      case LegacyEvent::FLOW_OUT:
+        context_->flow_tracker->Begin(track_id_, bind_id);
+        break;
+      case LegacyEvent::FLOW_INOUT:
+        context_->flow_tracker->Step(track_id_, bind_id);
+        break;
+      case LegacyEvent::FLOW_IN:
+        context_->flow_tracker->End(track_id_, bind_id,
+                                    /* bind_enclosing_slice = */ true,
+                                    /* close_flow = */ false);
+        break;
+      default:
+        storage_->IncrementStats(stats::flow_without_direction);
+    }
+  }
+
+  void MaybeParseFlowEvents() {
+    MaybeParseFlowEventV2();
+    MaybeParseTrackEventFlows();
   }
 
   util::Status ParseThreadInstantEvent() {
@@ -833,6 +935,10 @@ class TrackEventParser::EventImporter {
     if (event_.has_log_message()) {
       log_errors(ParseLogMessage(event_.log_message(), inserter));
     }
+    if (event_.has_chrome_histogram_sample()) {
+      log_errors(
+          ParseHistogramName(event_.chrome_histogram_sample(), inserter));
+    }
 
     log_errors(
         parser_->context_->proto_to_args_table_->InternProtoFieldsIntoArgsTable(
@@ -843,39 +949,6 @@ class TrackEventParser::EventImporter {
       inserter->AddArg(parser_->legacy_event_passthrough_utid_id_,
                        Variadic::UnsignedInteger(*legacy_passthrough_utid_),
                        ArgsTracker::UpdatePolicy::kSkipIfExists);
-    }
-
-    // TODO(eseckler): Parse legacy flow events into flow events table once we
-    // have a design for it.
-    if (legacy_event_.has_bind_id()) {
-      inserter->AddArg(parser_->legacy_event_bind_id_key_id_,
-                       Variadic::UnsignedInteger(legacy_event_.bind_id()));
-    }
-
-    if (legacy_event_.bind_to_enclosing()) {
-      inserter->AddArg(parser_->legacy_event_bind_to_enclosing_key_id_,
-                       Variadic::Boolean(true));
-    }
-
-    if (legacy_event_.flow_direction()) {
-      StringId value = kNullStringId;
-      switch (legacy_event_.flow_direction()) {
-        case LegacyEvent::FLOW_IN:
-          value = parser_->flow_direction_value_in_id_;
-          break;
-        case LegacyEvent::FLOW_OUT:
-          value = parser_->flow_direction_value_out_id_;
-          break;
-        case LegacyEvent::FLOW_INOUT:
-          value = parser_->flow_direction_value_inout_id_;
-          break;
-        default:
-          PERFETTO_ELOG("Unknown flow direction: %d",
-                        legacy_event_.flow_direction());
-          break;
-      }
-      inserter->AddArg(parser_->legacy_event_flow_direction_key_id_,
-                       Variadic::String(value));
     }
   }
 
@@ -1061,6 +1134,30 @@ class TrackEventParser::EventImporter {
     return util::OkStatus();
   }
 
+  util::Status ParseHistogramName(ConstBytes blob, BoundInserter* inserter) {
+    protos::pbzero::ChromeHistogramSample::Decoder sample(blob);
+    if (!sample.has_name_iid()) {
+      PERFETTO_DLOG("name_iid is not set for ChromeHistogramSample");
+      return util::OkStatus();
+    }
+
+    if (sample.has_name()) {
+      return util::ErrStatus(
+          "name is already set for ChromeHistogramSample: only one of name and "
+          "name_iid can be set.");
+    }
+
+    auto* decoder = sequence_state_->LookupInternedMessage<
+        protos::pbzero::InternedData::kHistogramNamesFieldNumber,
+        protos::pbzero::HistogramName>(sample.name_iid());
+    if (!decoder)
+      return util::ErrStatus("HistogramName with invalid name_iid");
+
+    inserter->AddArg(parser_->histogram_name_key_id_,
+                     Variadic::String(storage_->InternString(decoder->name())));
+    return util::OkStatus();
+  }
+
   TraceProcessorContext* context_;
   TraceStorage* storage_;
   TrackEventParser* parser_;
@@ -1138,6 +1235,8 @@ TrackEventParser::TrackEventParser(TraceProcessorContext* context)
           context->storage->InternString("legacy_event.bind_to_enclosing")),
       legacy_event_flow_direction_key_id_(
           context->storage->InternString("legacy_event.flow_direction")),
+      histogram_name_key_id_(
+          context->storage->InternString("chrome_histogram_sample.name")),
       flow_direction_value_in_id_(context->storage->InternString("in")),
       flow_direction_value_out_id_(context->storage->InternString("out")),
       flow_direction_value_inout_id_(context->storage->InternString("inout")),

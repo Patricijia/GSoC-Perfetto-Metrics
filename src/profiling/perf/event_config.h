@@ -32,13 +32,14 @@
 namespace perfetto {
 namespace profiling {
 
-// Parsed whitelist/blacklist for filtering samples.
-// An empty whitelist set means that all targets are allowed.
+// Parsed allow/deny-list for filtering samples.
+// An empty filter set means that all targets are allowed.
 struct TargetFilter {
   base::FlatSet<std::string> cmdlines;
   base::FlatSet<std::string> exclude_cmdlines;
   base::FlatSet<pid_t> pids;
   base::FlatSet<pid_t> exclude_pids;
+  uint32_t additional_cmdline_count;
 };
 
 // Describes a single profiling configuration. Bridges the gap between the data
@@ -58,8 +59,8 @@ class EventConfig {
   uint32_t unwind_state_clear_period_ms() const {
     return unwind_state_clear_period_ms_;
   }
-
   const TargetFilter& filter() const { return target_filter_; }
+  bool kernel_frames() const { return kernel_frames_; }
 
   perf_event_attr* perf_attr() const {
     return const_cast<perf_event_attr*>(&perf_event_attr_);
@@ -91,7 +92,7 @@ class EventConfig {
   // *each* per-cpu buffer.
   const uint32_t samples_per_tick_limit_;
 
-  // Parsed whitelist/blacklist for filtering samples.
+  // Parsed allow/deny-list for filtering samples.
   const TargetFilter target_filter_;
 
   // Timeout for proc-fd lookup.
@@ -99,6 +100,9 @@ class EventConfig {
 
   // Optional period for clearing cached unwinder state. Skipped if zero.
   const uint32_t unwind_state_clear_period_ms_;
+
+  // If true, include kernel frames in the callstacks.
+  const bool kernel_frames_;
 };
 
 }  // namespace profiling

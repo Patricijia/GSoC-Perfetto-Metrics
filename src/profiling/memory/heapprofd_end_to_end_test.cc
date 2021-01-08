@@ -14,10 +14,6 @@
  * limitations under the License.
  */
 
-// End to end tests for heapprofd.
-// None of these tests currently pass on non-Android, but we still build most
-// of it as a best-effort way to maintain the out-of-tree build.
-
 #include <atomic>
 #include <string>
 
@@ -28,11 +24,15 @@
 #include <unistd.h>
 
 #include "perfetto/base/build_config.h"
+#include "perfetto/base/logging.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/pipe.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/subprocess.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
-#include "perfetto/profiling/memory/client_ext.h"
+#include "perfetto/profiling/memory/heap_profile.h"
+#include "protos/perfetto/trace/trace.gen.h"
+#include "protos/perfetto/trace/trace.pbzero.h"
 #include "src/base/test/test_task_runner.h"
 #include "src/profiling/memory/heapprofd_producer.h"
 #include "test/gtest_and_gmock.h"
@@ -43,6 +43,7 @@
 #endif
 
 #include "protos/perfetto/config/profiling/heapprofd_config.gen.h"
+#include "protos/perfetto/trace/interned_data/interned_data.gen.h"
 #include "protos/perfetto/trace/profiling/profile_common.gen.h"
 #include "protos/perfetto/trace/profiling/profile_packet.gen.h"
 
@@ -71,14 +72,14 @@ using ::testing::Values;
 std::string AllocatorName(AllocatorMode mode) {
   switch (mode) {
     case AllocatorMode::kMalloc:
-      return "malloc";
+      return "libc.malloc";
     case AllocatorMode::kCustom:
       return "test";
   }
 }
 
 AllocatorMode AllocatorModeFromNameOrDie(std::string s) {
-  if (s == "malloc")
+  if (s == "libc.malloc")
     return AllocatorMode::kMalloc;
   if (s == "test")
     return AllocatorMode::kCustom;
@@ -165,17 +166,16 @@ base::ScopedResource<std::string*, SetModeProperty, nullptr> DisableFork() {
 #endif
 
 void CustomAllocateAndFree(size_t bytes) {
-  HeapprofdHeapInfo info{"test", nullptr};
-  static uint32_t heap_id = heapprofd_register_heap(&info, sizeof(info));
-  heapprofd_report_allocation(heap_id, 0x1234abc, bytes);
-  heapprofd_report_free(heap_id, 0x1234abc);
+  static uint32_t heap_id = AHeapProfile_registerHeap(AHeapInfo_create("test"));
+  AHeapProfile_reportAllocation(heap_id, 0x1234abc, bytes);
+  AHeapProfile_reportFree(heap_id, 0x1234abc);
 }
 
 void SecondaryAllocAndFree(size_t bytes) {
-  HeapprofdHeapInfo info{"secondary", nullptr};
-  static uint32_t heap_id = heapprofd_register_heap(&info, sizeof(info));
-  heapprofd_report_allocation(heap_id, 0x1234abc, bytes);
-  heapprofd_report_free(heap_id, 0x1234abc);
+  static uint32_t heap_id =
+      AHeapProfile_registerHeap(AHeapInfo_create("secondary"));
+  AHeapProfile_reportAllocation(heap_id, 0x1234abc, bytes);
+  AHeapProfile_reportFree(heap_id, 0x1234abc);
 }
 
 void AllocateAndFree(size_t bytes) {
@@ -288,9 +288,13 @@ void __attribute__((constructor(1024))) RunAccurateMalloc() {
     return;
 
   static std::atomic<bool> initialized{false};
-  HeapprofdHeapInfo info{"test", [](bool) { initialized = true; }};
-
-  static uint32_t heap_id = heapprofd_register_heap(&info, sizeof(info));
+  static uint32_t heap_id =
+      AHeapProfile_registerHeap(AHeapInfo_setEnabledCallback(
+          AHeapInfo_create("test"),
+          [](void*, const AHeapProfileEnableCallbackInfo*) {
+            initialized = true;
+          },
+          nullptr));
 
   ChildFinishHandshake();
 
@@ -300,11 +304,14 @@ void __attribute__((constructor(1024))) RunAccurateMalloc() {
   // We call the callback before setting enabled=true on the heap, so we
   // wait a bit for the assignment to happen.
   usleep(100000);
-  heapprofd_report_allocation(heap_id, 0x1, 10u);
-  heapprofd_report_free(heap_id, 0x1);
-  heapprofd_report_allocation(heap_id, 0x2, 15u);
-  heapprofd_report_allocation(heap_id, 0x3, 15u);
-  heapprofd_report_free(heap_id, 0x2);
+  if (!AHeapProfile_reportAllocation(heap_id, 0x1, 10u))
+    PERFETTO_FATAL("Expected allocation to be sampled.");
+  AHeapProfile_reportFree(heap_id, 0x1);
+  if (!AHeapProfile_reportAllocation(heap_id, 0x2, 15u))
+    PERFETTO_FATAL("Expected allocation to be sampled.");
+  if (!AHeapProfile_reportAllocation(heap_id, 0x3, 15u))
+    PERFETTO_FATAL("Expected allocation to be sampled.");
+  AHeapProfile_reportFree(heap_id, 0x2);
 
   // Wait around so we can verify it did't crash.
   for (;;) {
@@ -355,6 +362,20 @@ std::unique_ptr<TestHelper> GetHelper(base::TestTaskRunner* task_runner) {
   return helper;
 }
 
+std::string ToTraceString(
+    const std::vector<protos::gen::TracePacket>& packets) {
+  protos::gen::Trace trace;
+  for (const protos::gen::TracePacket& packet : packets) {
+    *trace.add_packet() = packet;
+  }
+  return trace.SerializeAsString();
+}
+
+#define WRITE_TRACE(trace)                 \
+  do {                                     \
+    WriteTrace(trace, __FILE__, __LINE__); \
+  } while (0)
+
 std::string FormatHistogram(const protos::gen::ProfilePacket_Histogram& hist) {
   std::string out;
   std::string prev_upper_limit = "-inf";
@@ -380,10 +401,9 @@ std::string FormatStats(const protos::gen::ProfilePacket_ProcessStats& stats) {
          "unwinding_time_us: " + FormatHistogram(stats.unwinding_time_us());
 }
 
-__attribute__((unused)) std::string TestSuffix(
-    const ::testing::TestParamInfo<std::tuple<TestMode, AllocatorMode>>& info) {
-  TestMode tm = std::get<0>(info.param);
-  AllocatorMode am = std::get<1>(info.param);
+std::string Suffix(const std::tuple<TestMode, AllocatorMode>& param) {
+  TestMode tm = std::get<0>(param);
+  AllocatorMode am = std::get<1>(param);
 
   std::string result;
   switch (tm) {
@@ -406,6 +426,11 @@ __attribute__((unused)) std::string TestSuffix(
       break;
   }
   return result;
+}
+
+__attribute__((unused)) std::string TestSuffix(
+    const ::testing::TestParamInfo<std::tuple<TestMode, AllocatorMode>>& info) {
+  return Suffix(info.param);
 }
 
 class HeapprofdEndToEnd
@@ -437,10 +462,24 @@ class HeapprofdEndToEnd
       nullptr};
 
   TestMode test_mode() { return std::get<0>(GetParam()); }
-
   AllocatorMode allocator_mode() { return std::get<1>(GetParam()); }
-
   std::string allocator_name() { return AllocatorName(allocator_mode()); }
+
+  void WriteTrace(const std::vector<protos::gen::TracePacket>& packets,
+                  const char* filename,
+                  uint64_t lineno) {
+    const char* outdir = getenv("HEAPPROFD_TEST_PROFILE_OUT");
+    if (!outdir)
+      return;
+    const std::string fq_filename =
+        std::string(outdir) + "/" + basename(filename) + ":" +
+        std::to_string(lineno) + "_" + Suffix(GetParam());
+    base::ScopedFile fd(base::OpenFile(fq_filename, O_WRONLY | O_CREAT, 0666));
+    PERFETTO_CHECK(*fd);
+    std::string trace_string = ToTraceString(packets);
+    PERFETTO_CHECK(
+        base::WriteAll(*fd, trace_string.data(), trace_string.size()) >= 0);
+  }
 
   std::unique_ptr<TestHelper> Trace(const TraceConfig& trace_config) {
     auto helper = GetHelper(&task_runner);
@@ -453,6 +492,20 @@ class HeapprofdEndToEnd
     return helper;
   }
 
+  std::vector<std::string> GetUnwindingErrors(TestHelper* helper) {
+    std::vector<std::string> out;
+    const auto& packets = helper->trace();
+    for (const protos::gen::TracePacket& packet : packets) {
+      for (const protos::gen::InternedString& fn :
+           packet.interned_data().function_names()) {
+        if (fn.str().find("ERROR ") == 0) {
+          out.push_back(fn.str());
+        }
+      }
+    }
+    return out;
+  }
+
   void PrintStats(TestHelper* helper) {
     const auto& packets = helper->trace();
     for (const protos::gen::TracePacket& packet : packets) {
@@ -461,6 +514,10 @@ class HeapprofdEndToEnd
         PERFETTO_LOG("Stats for %s: %s", std::to_string(dump.pid()).c_str(),
                      FormatStats(dump.stats()).c_str());
       }
+    }
+    std::vector<std::string> errors = GetUnwindingErrors(helper);
+    for (const std::string& err : errors) {
+      PERFETTO_LOG("Unwinding error: %s", err.c_str());
     }
   }
 
@@ -567,7 +624,8 @@ class HeapprofdEndToEnd
 // This checks that the child is still running (to ensure it didn't crash
 // unxpectedly) and then kills it.
 void KillAssertRunning(base::Subprocess* child) {
-  ASSERT_EQ(child->Poll(), base::Subprocess::kRunning);
+  ASSERT_EQ(child->Poll(), base::Subprocess::kRunning)
+      << "Target process not running. CHECK CRASH LOGS.";
   child->KillAndWaitForTermination();
 }
 
@@ -585,10 +643,11 @@ TEST_P(HeapprofdEndToEnd, Disabled) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
 
   ValidateNoSamples(helper.get(), pid);
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, Smoke) {
@@ -605,12 +664,13 @@ TEST_P(HeapprofdEndToEnd, Smoke) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper.get(), pid, allocator_name());
   ValidateOnlyPID(helper.get(), pid);
   ValidateSampleSizes(helper.get(), pid, kAllocSize);
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, TwoAllocators) {
@@ -630,14 +690,15 @@ TEST_P(HeapprofdEndToEnd, TwoAllocators) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper.get(), pid, "secondary");
   ValidateHasSamples(helper.get(), pid, allocator_name());
   ValidateOnlyPID(helper.get(), pid);
   ValidateSampleSizes(helper.get(), pid, kCustomAllocSize, "secondary");
   ValidateSampleSizes(helper.get(), pid, kAllocSize, allocator_name());
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, TwoAllocatorsAll) {
@@ -656,14 +717,15 @@ TEST_P(HeapprofdEndToEnd, TwoAllocatorsAll) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper.get(), pid, "secondary");
   ValidateHasSamples(helper.get(), pid, allocator_name());
   ValidateOnlyPID(helper.get(), pid);
   ValidateSampleSizes(helper.get(), pid, kCustomAllocSize, "secondary");
   ValidateSampleSizes(helper.get(), pid, kAllocSize, allocator_name());
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, AccurateCustom) {
@@ -686,7 +748,10 @@ TEST_P(HeapprofdEndToEnd, AccurateCustom) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
+
   ValidateOnlyPID(helper.get(), pid);
 
   size_t total_alloc = 0;
@@ -701,7 +766,47 @@ TEST_P(HeapprofdEndToEnd, AccurateCustom) {
   }
   EXPECT_EQ(total_alloc, 40u);
   EXPECT_EQ(total_freed, 25u);
+}
+
+TEST_P(HeapprofdEndToEnd, AccurateDumpAtMaxCustom) {
+  if (allocator_mode() != AllocatorMode::kCustom)
+    GTEST_SKIP();
+
+  base::Subprocess child({"/proc/self/exe"});
+  child.args.argv0_override = "heapprofd_continuous_malloc";
+  child.args.stdout_mode = base::Subprocess::kDevNull;
+  child.args.stderr_mode = base::Subprocess::kDevNull;
+  child.args.env.push_back("HEAPPROFD_TESTING_RUN_ACCURATE_MALLOC=1");
+  StartAndWaitForHandshake(&child);
+
+  const uint64_t pid = static_cast<uint64_t>(child.pid());
+
+  TraceConfig trace_config = MakeTraceConfig([pid](HeapprofdConfig* cfg) {
+    cfg->set_sampling_interval_bytes(1);
+    cfg->add_pid(pid);
+    cfg->add_heaps("test");
+    cfg->set_dump_at_max(true);
+  });
+
+  auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
+  PrintStats(helper.get());
   KillAssertRunning(&child);
+
+  ValidateOnlyPID(helper.get(), pid);
+
+  size_t total_alloc = 0;
+  size_t total_count = 0;
+  for (const protos::gen::TracePacket& packet : helper->trace()) {
+    for (const auto& dump : packet.profile_packet().process_dumps()) {
+      for (const auto& sample : dump.samples()) {
+        total_alloc += sample.self_max();
+        total_count += sample.self_max_count();
+      }
+    }
+  }
+  EXPECT_EQ(total_alloc, 30u);
+  EXPECT_EQ(total_count, 2u);
 }
 
 TEST_P(HeapprofdEndToEnd, TwoProcesses) {
@@ -722,15 +827,17 @@ TEST_P(HeapprofdEndToEnd, TwoProcesses) {
       });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+
+  KillAssertRunning(&child);
+  KillAssertRunning(&child2);
+
   ValidateHasSamples(helper.get(), pid, allocator_name());
   ValidateSampleSizes(helper.get(), pid, kAllocSize);
   ValidateHasSamples(helper.get(), static_cast<uint64_t>(pid2),
                      allocator_name());
   ValidateSampleSizes(helper.get(), static_cast<uint64_t>(pid2), kAllocSize2);
-
-  KillAssertRunning(&child);
-  KillAssertRunning(&child2);
 }
 
 TEST_P(HeapprofdEndToEnd, FinalFlush) {
@@ -745,12 +852,13 @@ TEST_P(HeapprofdEndToEnd, FinalFlush) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper.get(), pid, allocator_name());
   ValidateOnlyPID(helper.get(), pid);
   ValidateSampleSizes(helper.get(), pid, kAllocSize);
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, NativeStartup) {
@@ -794,6 +902,7 @@ TEST_P(HeapprofdEndToEnd, NativeStartup) {
 
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
 
   KillAssertRunning(&child);
 
@@ -866,6 +975,7 @@ TEST_P(HeapprofdEndToEnd, NativeStartupDenormalizedCmdline) {
 
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
 
   KillAssertRunning(&child);
 
@@ -928,6 +1038,7 @@ TEST_P(HeapprofdEndToEnd, DiscoverByName) {
 
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
 
   KillAssertRunning(&child);
 
@@ -991,6 +1102,7 @@ TEST_P(HeapprofdEndToEnd, DiscoverByNameDenormalizedCmdline) {
 
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
 
   KillAssertRunning(&child);
 
@@ -1066,6 +1178,7 @@ TEST_P(HeapprofdEndToEnd, ReInit) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
 
   PrintStats(helper.get());
   ValidateHasSamples(helper.get(), pid, allocator_name());
@@ -1095,13 +1208,14 @@ TEST_P(HeapprofdEndToEnd, ReInit) {
 
   helper2->ReadData();
   helper2->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper2->trace());
 
   PrintStats(helper2.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper2.get(), pid, allocator_name());
   ValidateOnlyPID(helper2.get(), pid);
   ValidateSampleSizes(helper2.get(), pid, kSecondIterationBytes);
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, ReInitAfterInvalid) {
@@ -1149,6 +1263,7 @@ TEST_P(HeapprofdEndToEnd, ReInitAfterInvalid) {
   });
 
   auto helper = Trace(trace_config);
+  WRITE_TRACE(helper->full_trace());
 
   PrintStats(helper.get());
   ValidateHasSamples(helper.get(), pid, allocator_name());
@@ -1178,13 +1293,14 @@ TEST_P(HeapprofdEndToEnd, ReInitAfterInvalid) {
 
   helper2->ReadData();
   helper2->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper2->trace());
 
   PrintStats(helper2.get());
+  KillAssertRunning(&child);
+
   ValidateHasSamples(helper2.get(), pid, allocator_name());
   ValidateOnlyPID(helper2.get(), pid);
   ValidateSampleSizes(helper2.get(), pid, kSecondIterationBytes);
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, ConcurrentSession) {
@@ -1214,20 +1330,23 @@ TEST_P(HeapprofdEndToEnd, ConcurrentSession) {
   helper->WaitForTracingDisabled(kTracingDisabledTimeoutMs);
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
   PrintStats(helper.get());
-  ValidateHasSamples(helper.get(), pid, allocator_name());
-  ValidateOnlyPID(helper.get(), pid);
-  ValidateSampleSizes(helper.get(), pid, kAllocSize);
-  ValidateRejectedConcurrent(helper_concurrent.get(), pid, false);
 
   helper_concurrent->WaitForTracingDisabled(kTracingDisabledTimeoutMs);
   helper_concurrent->ReadData();
   helper_concurrent->WaitForReadData(0, kWaitForReadDataTimeoutMs);
-  PrintStats(helper.get());
+  WRITE_TRACE(helper_concurrent->trace());
+  PrintStats(helper_concurrent.get());
+  KillAssertRunning(&child);
+
+  ValidateHasSamples(helper.get(), pid, allocator_name());
+  ValidateOnlyPID(helper.get(), pid);
+  ValidateSampleSizes(helper.get(), pid, kAllocSize);
+  ValidateRejectedConcurrent(helper.get(), pid, false);
+
   ValidateOnlyPID(helper_concurrent.get(), pid);
   ValidateRejectedConcurrent(helper_concurrent.get(), pid, true);
-
-  KillAssertRunning(&child);
 }
 
 TEST_P(HeapprofdEndToEnd, NativeProfilingActiveAtProcessExit) {
@@ -1287,6 +1406,7 @@ TEST_P(HeapprofdEndToEnd, NativeProfilingActiveAtProcessExit) {
   helper->WaitForTracingDisabled(kTracingDisabledTimeoutMs);
   helper->ReadData();
   helper->WaitForReadData(0, kWaitForReadDataTimeoutMs);
+  WRITE_TRACE(helper->full_trace());
 
   const auto& packets = helper->trace();
   ASSERT_GT(packets.size(), 0u);

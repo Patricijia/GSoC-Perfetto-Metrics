@@ -27,10 +27,11 @@ namespace stats {
 // clang-format off
 #define PERFETTO_TP_STATS(F)                                                   \
   F(android_log_num_failed,             kSingle,  kError,    kTrace,    ""),   \
-  F(android_log_num_skipped,            kSingle,  kError,    kTrace,    ""),   \
+  F(android_log_num_skipped,            kSingle,  kInfo,     kTrace,    ""),   \
   F(android_log_num_total,              kSingle,  kInfo,     kTrace,    ""),   \
   F(counter_events_out_of_order,        kSingle,  kError,    kAnalysis, ""),   \
   F(ftrace_bundle_tokenizer_errors,     kSingle,  kError,    kAnalysis, ""),   \
+  F(deobfuscate_location_parse_error,   kSingle,  kError,    kTrace,    ""),   \
   F(ftrace_cpu_bytes_read_begin,        kIndexed, kInfo,     kTrace,    ""),   \
   F(ftrace_cpu_bytes_read_end,          kIndexed, kInfo,     kTrace,    ""),   \
   F(ftrace_cpu_commit_overrun_begin,    kIndexed, kError,    kTrace,    ""),   \
@@ -71,6 +72,12 @@ namespace stats {
   F(rss_stat_unknown_thread_for_mm_id,  kSingle,  kInfo,     kAnalysis, ""),   \
   F(sched_switch_out_of_order,          kSingle,  kError,    kAnalysis, ""),   \
   F(slice_out_of_order,                 kSingle,  kError,    kAnalysis, ""),   \
+  F(flow_duplicate_id,                  kSingle,  kError,    kTrace,    ""),   \
+  F(flow_no_enclosing_slice,            kSingle,  kError,    kTrace,    ""),   \
+  F(flow_step_without_start,            kSingle,  kInfo,     kTrace,    ""),   \
+  F(flow_end_without_start,             kSingle,  kInfo,     kTrace,    ""),   \
+  F(flow_invalid_id,                    kSingle,  kError,    kTrace,    ""),   \
+  F(flow_without_direction,             kSingle,  kError,    kTrace,    ""),   \
   F(stackprofile_invalid_string_id,     kSingle,  kError,    kTrace,    ""),   \
   F(stackprofile_invalid_mapping_id,    kSingle,  kError,    kTrace,    ""),   \
   F(stackprofile_invalid_frame_id,      kSingle,  kError,    kTrace,    ""),   \
@@ -119,7 +126,6 @@ namespace stats {
   F(heap_graph_non_finalized_graph,     kSingle,  kError,    kTrace,    ""),   \
   F(heap_graph_malformed_packet,        kIndexed, kError,    kTrace,    ""),   \
   F(heap_graph_missing_packet,          kIndexed, kError,    kTrace,    ""),   \
-  F(heap_graph_location_parse_error,    kSingle,  kError,    kTrace,    ""),   \
   F(heapprofd_buffer_corrupted,         kIndexed, kError,    kTrace,           \
       "Shared memory buffer corrupted. This is a bug or memory corruption "    \
       "in the target. Indexed by target upid."),                               \
@@ -149,6 +155,7 @@ namespace stats {
   F(ninja_parse_errors,                 kSingle,  kError,    kTrace,    ""),   \
   F(perf_samples_skipped,               kSingle,  kInfo,     kTrace,    ""),   \
   F(perf_samples_skipped_dataloss,      kSingle,  kDataLoss, kTrace,    ""),   \
+  F(memory_snapshot_parser_failure,     kSingle,  kError,    kAnalysis, ""),   \
   F(thread_time_in_state_out_of_order,  kSingle,  kError,    kAnalysis, ""),   \
   F(thread_time_in_state_unknown_cpu_freq,                                     \
                                         kSingle,  kError,    kAnalysis, ""),   \
@@ -183,7 +190,9 @@ enum Source {
 };
 
 // Ignore GCC warning about a missing argument for a variadic macro parameter.
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC system_header
+#endif
 
 // Declares an enum of literals (one for each stat). The enum values of each
 // literal corresponds to the string index in the arrays below.

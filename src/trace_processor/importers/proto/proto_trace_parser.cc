@@ -29,22 +29,28 @@
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/uuid.h"
 #include "perfetto/trace_processor/status.h"
+
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/importers/common/clock_tracker.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
+#include "src/trace_processor/importers/config.descriptor.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
 #include "src/trace_processor/importers/proto/heap_profile_tracker.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
 #include "src/trace_processor/importers/proto/profile_packet_utils.h"
+#include "src/trace_processor/importers/proto/profiler_util.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/storage/metadata.h"
+#include "src/trace_processor/tables/profiler_tables.h"
 #include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 #include "src/trace_processor/types/variadic.h"
+#include "src/trace_processor/util/descriptors.h"
+#include "src/trace_processor/util/protozero_to_text.h"
 
 #include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/common/trace_stats.pbzero.h"
@@ -53,6 +59,7 @@
 #include "protos/perfetto/trace/chrome/chrome_trace_event.pbzero.h"
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
+#include "protos/perfetto/trace/profiling/deobfuscation.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "protos/perfetto/trace/profiling/smaps.pbzero.h"
@@ -93,7 +100,7 @@ void ProtoTraceParser::ParseTracePacket(int64_t ts, TimestampedTracePiece ttp) {
   const TraceBlobView& blob = data->packet;
   protos::pbzero::TracePacket::Decoder packet(blob.data(), blob.length());
 
-  ParseTracePacketImpl(ts, std::move(ttp), data, packet);
+  ParseTracePacketImpl(ts, ttp, data->sequence_state.get(), packet);
 
   // TODO(lalitm): maybe move this to the flush method in the trace processor
   // once we have it. This may reduce performance in the ArgsTracker though so
@@ -104,9 +111,17 @@ void ProtoTraceParser::ParseTracePacket(int64_t ts, TimestampedTracePiece ttp) {
 
 void ProtoTraceParser::ParseTracePacketImpl(
     int64_t ts,
-    TimestampedTracePiece ttp,
-    const TracePacketData* data,
+    const TimestampedTracePiece& ttp,
+    PacketSequenceStateGeneration* sequence_state,
     const protos::pbzero::TracePacket::Decoder& packet) {
+  // This needs to get handled both by the HeapGraphModule and
+  // ProtoTraceParser (for StackProfileTracker).
+  if (packet.has_deobfuscation_mapping()) {
+    ParseDeobfuscationMapping(ts, sequence_state,
+                              packet.trusted_packet_sequence_id(),
+                              packet.deobfuscation_mapping());
+  }
+
   // TODO(eseckler): Propagate statuses from modules.
   auto& modules = context_->modules_by_field;
   for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
@@ -120,13 +135,12 @@ void ProtoTraceParser::ParseTracePacketImpl(
     ParseTraceStats(packet.trace_stats());
 
   if (packet.has_profile_packet()) {
-    ParseProfilePacket(ts, data->sequence_state,
-                       packet.trusted_packet_sequence_id(),
+    ParseProfilePacket(ts, sequence_state, packet.trusted_packet_sequence_id(),
                        packet.profile_packet());
   }
 
   if (packet.has_perf_sample()) {
-    ParsePerfSample(ts, data->sequence_state, packet.perf_sample());
+    ParsePerfSample(ts, sequence_state, packet.perf_sample());
   }
 
   if (packet.has_chrome_benchmark_metadata()) {
@@ -248,31 +262,31 @@ void ProtoTraceParser::ParseProfilePacket(
 
     const char* str = reinterpret_cast<const char*>(entry.str().data);
     auto str_view = base::StringView(str, entry.str().size);
-    sequence_state->state()->stack_profile_tracker().AddString(entry.iid(),
-                                                               str_view);
+    sequence_state->state()->sequence_stack_profile_tracker().AddString(
+        entry.iid(), str_view);
   }
 
   for (auto it = packet.mappings(); it; ++it) {
     protos::pbzero::Mapping::Decoder entry(*it);
-    StackProfileTracker::SourceMapping src_mapping =
+    SequenceStackProfileTracker::SourceMapping src_mapping =
         ProfilePacketUtils::MakeSourceMapping(entry);
-    sequence_state->state()->stack_profile_tracker().AddMapping(entry.iid(),
-                                                                src_mapping);
+    sequence_state->state()->sequence_stack_profile_tracker().AddMapping(
+        entry.iid(), src_mapping);
   }
 
   for (auto it = packet.frames(); it; ++it) {
     protos::pbzero::Frame::Decoder entry(*it);
-    StackProfileTracker::SourceFrame src_frame =
+    SequenceStackProfileTracker::SourceFrame src_frame =
         ProfilePacketUtils::MakeSourceFrame(entry);
-    sequence_state->state()->stack_profile_tracker().AddFrame(entry.iid(),
-                                                              src_frame);
+    sequence_state->state()->sequence_stack_profile_tracker().AddFrame(
+        entry.iid(), src_frame);
   }
 
   for (auto it = packet.callstacks(); it; ++it) {
     protos::pbzero::Callstack::Decoder entry(*it);
-    StackProfileTracker::SourceCallstack src_callstack =
+    SequenceStackProfileTracker::SourceCallstack src_callstack =
         ProfilePacketUtils::MakeSourceCallstack(entry);
-    sequence_state->state()->stack_profile_tracker().AddCallstack(
+    sequence_state->state()->sequence_stack_profile_tracker().AddCallstack(
         entry.iid(), src_callstack);
   }
 
@@ -320,14 +334,15 @@ void ProtoTraceParser::ParseProfilePacket(
       }
       src_allocation.timestamp = timestamp;
       src_allocation.callstack_id = sample.callstack_id();
-      if (sample.self_max()) {
+      if (sample.has_self_max()) {
         src_allocation.self_allocated = sample.self_max();
+        src_allocation.alloc_count = sample.self_max_count();
       } else {
         src_allocation.self_allocated = sample.self_allocated();
         src_allocation.self_freed = sample.self_freed();
+        src_allocation.alloc_count = sample.alloc_count();
+        src_allocation.free_count = sample.free_count();
       }
-      src_allocation.alloc_count = sample.alloc_count();
-      src_allocation.free_count = sample.free_count();
 
       context_->heap_profile_tracker->StoreAllocation(seq_id, src_allocation);
     }
@@ -336,8 +351,69 @@ void ProtoTraceParser::ParseProfilePacket(
     PERFETTO_CHECK(sequence_state);
     ProfilePacketInternLookup intern_lookup(sequence_state);
     context_->heap_profile_tracker->FinalizeProfile(
-        seq_id, &sequence_state->state()->stack_profile_tracker(),
+        seq_id, &sequence_state->state()->sequence_stack_profile_tracker(),
         &intern_lookup);
+  }
+}
+
+void ProtoTraceParser::ParseDeobfuscationMapping(int64_t,
+                                                 PacketSequenceStateGeneration*,
+                                                 uint32_t /* seq_id */,
+                                                 ConstBytes blob) {
+  protos::pbzero::DeobfuscationMapping::Decoder deobfuscation_mapping(
+      blob.data, blob.size);
+  if (deobfuscation_mapping.package_name().size == 0)
+    return;
+
+  auto opt_package_name_id = context_->storage->string_pool().GetId(
+      deobfuscation_mapping.package_name());
+  auto opt_memfd_id = context_->storage->string_pool().GetId("memfd");
+  if (!opt_package_name_id && !opt_memfd_id)
+    return;
+
+  for (auto class_it = deobfuscation_mapping.obfuscated_classes(); class_it;
+       ++class_it) {
+    protos::pbzero::ObfuscatedClass::Decoder cls(*class_it);
+    for (auto member_it = cls.obfuscated_methods(); member_it; ++member_it) {
+      protos::pbzero::ObfuscatedMember::Decoder member(*member_it);
+      std::string merged_obfuscated = cls.obfuscated_name().ToStdString() +
+                                      "." +
+                                      member.obfuscated_name().ToStdString();
+      auto merged_obfuscated_id = context_->storage->string_pool().GetId(
+          base::StringView(merged_obfuscated));
+      if (!merged_obfuscated_id)
+        continue;
+      std::string merged_deobfuscated =
+          FullyQualifiedDeobfuscatedName(cls, member);
+
+      std::vector<tables::StackProfileFrameTable::Id> frames;
+      if (opt_package_name_id) {
+        const std::vector<tables::StackProfileFrameTable::Id>* pkg_frames =
+            context_->global_stack_profile_tracker->JavaFramesForName(
+                {*merged_obfuscated_id, *opt_package_name_id});
+        if (pkg_frames) {
+          frames.insert(frames.end(), pkg_frames->begin(), pkg_frames->end());
+        }
+      }
+      if (opt_memfd_id) {
+        const std::vector<tables::StackProfileFrameTable::Id>* memfd_frames =
+            context_->global_stack_profile_tracker->JavaFramesForName(
+                {*merged_obfuscated_id, *opt_memfd_id});
+        if (memfd_frames) {
+          frames.insert(frames.end(), memfd_frames->begin(),
+                        memfd_frames->end());
+        }
+      }
+
+      for (tables::StackProfileFrameTable::Id frame_id : frames) {
+        auto* frames_tbl =
+            context_->storage->mutable_stack_profile_frame_table();
+        frames_tbl->mutable_deobfuscated_name()->Set(
+            *frames_tbl->id().IndexOf(frame_id),
+            context_->storage->InternString(
+                base::StringView(merged_deobfuscated)));
+      }
+    }
   }
 }
 
@@ -374,8 +450,8 @@ void ProtoTraceParser::ParsePerfSample(
   }
 
   // Proper sample, though possibly with an incomplete stack unwind.
-  StackProfileTracker& stack_tracker =
-      sequence_state->state()->stack_profile_tracker();
+  SequenceStackProfileTracker& stack_tracker =
+      sequence_state->state()->sequence_stack_profile_tracker();
   ProfilePacketInternLookup intern_lookup(sequence_state);
 
   uint64_t callstack_iid = sample.callstack_iid();
@@ -656,6 +732,17 @@ void ProtoTraceParser::ParseTraceConfig(ConstBytes blob) {
     context_->metadata_tracker->SetMetadata(metadata::unique_session_name,
                                             Variadic::String(id));
   }
+
+  DescriptorPool pool;
+  pool.AddFromFileDescriptorSet(kConfigDescriptor.data(),
+                                kConfigDescriptor.size());
+
+  std::string text = protozero_to_text::ProtozeroToText(
+      pool, ".perfetto.protos.TraceConfig", blob,
+      protozero_to_text::kIncludeNewLines);
+  StringId id = context_->storage->InternString(base::StringView(text));
+  context_->metadata_tracker->SetMetadata(metadata::trace_config_pbtxt,
+                                          Variadic::String(id));
 }
 
 void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
@@ -670,7 +757,7 @@ void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
         module_symbols.build_id().data, module_symbols.build_id().size)));
   }
 
-  auto mapping_ids = context_->storage->FindMappingRow(
+  auto mapping_ids = context_->global_stack_profile_tracker->FindMappingRow(
       context_->storage->InternString(module_symbols.path()), build_id);
   if (mapping_ids.empty()) {
     context_->storage->IncrementStats(stats::stackprofile_invalid_mapping_id);
@@ -695,8 +782,9 @@ void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
     }
     bool frame_found = false;
     for (MappingId mapping_id : mapping_ids) {
-      std::vector<FrameId> frame_ids = context_->storage->FindFrameIds(
-          mapping_id, address_symbols.address());
+      std::vector<FrameId> frame_ids =
+          context_->global_stack_profile_tracker->FindFrameIds(
+              mapping_id, address_symbols.address());
 
       for (const FrameId frame_id : frame_ids) {
         auto* frames = context_->storage->mutable_stack_profile_frame_table();
@@ -710,7 +798,6 @@ void ProtoTraceParser::ParseModuleSymbols(ConstBytes blob) {
       context_->storage->IncrementStats(stats::stackprofile_invalid_frame_id);
       continue;
     }
-
   }
 }
 
@@ -745,7 +832,18 @@ void ProtoTraceParser::ParseSmapsPacket(int64_t ts, ConstBytes blob) {
         {upid, ts, context_->storage->InternString(e.path()),
          static_cast<int64_t>(e.size_kb()),
          static_cast<int64_t>(e.private_dirty_kb()),
-         static_cast<int64_t>(e.swap_kb())});
+         static_cast<int64_t>(e.swap_kb()),
+         context_->storage->InternString(e.file_name()),
+         static_cast<int64_t>(e.start_address()),
+         static_cast<int64_t>(e.module_timestamp()),
+         context_->storage->InternString(e.module_debugid()),
+         context_->storage->InternString(e.module_debug_path()),
+         static_cast<int32_t>(e.protection_flags()),
+         static_cast<int64_t>(e.private_clean_resident_kb()),
+         static_cast<int64_t>(e.shared_dirty_resident_kb()),
+         static_cast<int64_t>(e.shared_clean_resident_kb()),
+         static_cast<int64_t>(e.locked_kb()),
+         static_cast<int64_t>(e.proportional_resident_kb())});
   }
 }
 

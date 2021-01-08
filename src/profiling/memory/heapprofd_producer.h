@@ -22,6 +22,8 @@
 #include <map>
 #include <vector>
 
+#include <inttypes.h>
+
 #include "perfetto/base/task_runner.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/unix_socket.h"
@@ -35,9 +37,9 @@
 
 #include "src/profiling/common/interning_output.h"
 #include "src/profiling/common/proc_utils.h"
+#include "src/profiling/common/profiler_guardrails.h"
 #include "src/profiling/memory/bookkeeping.h"
 #include "src/profiling/memory/bookkeeping_dump.h"
-#include "src/profiling/memory/page_idle_checker.h"
 #include "src/profiling/memory/system_property.h"
 #include "src/profiling/memory/unwinding.h"
 #include "src/profiling/memory/unwound_messages.h"
@@ -73,7 +75,7 @@ class LogHistogram {
 // clients. This can be implemented as an additional mode here.
 enum class HeapprofdMode { kCentral, kChild };
 
-void HeapprofdConfigToClientConfiguration(
+bool HeapprofdConfigToClientConfiguration(
     const HeapprofdConfig& heapprofd_config,
     ClientConfiguration* cli_config);
 
@@ -104,7 +106,8 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   // Alternatively, find a better name for this.
   class SocketDelegate : public base::UnixSocket::EventListener {
    public:
-    SocketDelegate(HeapprofdProducer* producer) : producer_(producer) {}
+    explicit SocketDelegate(HeapprofdProducer* producer)
+        : producer_(producer) {}
 
     void OnDisconnect(base::UnixSocket* self) override;
     void OnNewIncomingConnection(
@@ -139,14 +142,15 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   void DumpAll();
 
   // UnwindingWorker::Delegate impl:
-  void PostAllocRecord(std::vector<AllocRecord>) override;
-  void PostFreeRecord(std::vector<FreeRecord>) override;
-  void PostHeapNameRecord(HeapNameRecord) override;
-  void PostSocketDisconnected(DataSourceInstanceID,
+  void PostAllocRecord(UnwindingWorker*, std::unique_ptr<AllocRecord>) override;
+  void PostFreeRecord(UnwindingWorker*, std::vector<FreeRecord>) override;
+  void PostHeapNameRecord(UnwindingWorker*, HeapNameRecord) override;
+  void PostSocketDisconnected(UnwindingWorker*,
+                              DataSourceInstanceID,
                               pid_t,
                               SharedRingBuffer::Stats) override;
 
-  void HandleAllocRecord(AllocRecord);
+  void HandleAllocRecord(AllocRecord*);
   void HandleFreeRecord(FreeRecord);
   void HandleHeapNameRecord(HeapNameRecord);
   void HandleSocketDisconnected(DataSourceInstanceID,
@@ -199,13 +203,13 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
     uint64_t unwinding_errors = 0;
 
     uint64_t total_unwinding_time_us = 0;
+    uint64_t client_spinlock_blocked_us = 0;
     GlobalCallstackTrie* callsites;
     bool dump_at_max_mode;
     LogHistogram unwinding_time_us;
     std::map<uint32_t, HeapTracker> heap_trackers;
     std::map<uint32_t, std::string> heap_names;
 
-    base::Optional<PageIdleChecker> page_idle_checker;
     HeapTracker& GetHeapTracker(uint32_t heap_id) {
       auto it = heap_trackers.find(heap_id);
       if (it == heap_trackers.end()) {
@@ -218,7 +222,8 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   };
 
   struct DataSource {
-    DataSource(std::unique_ptr<TraceWriter> tw) : trace_writer(std::move(tw)) {
+    explicit DataSource(std::unique_ptr<TraceWriter> tw)
+        : trace_writer(std::move(tw)) {
       // Make MSAN happy.
       memset(&client_configuration, 0, sizeof(client_configuration));
     }
@@ -238,7 +243,7 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
     bool hit_guardrail = false;
     bool was_stopped = false;
     uint32_t stop_timeout_ms;
-    base::Optional<uint64_t> start_cputime_sec;
+    GuardrailConfig guardrail_config;
   };
 
   struct PendingProcess {
@@ -255,13 +260,11 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   void ResetConnectionBackoff();
   void IncreaseConnectionBackoff();
 
-  base::Optional<uint64_t> GetCputimeSec();
-
-  void CheckDataSourceMemory();
-  void CheckDataSourceCpu();
+  void CheckDataSourceMemoryTask();
+  void CheckDataSourceCpuTask();
 
   void FinishDataSourceFlush(FlushRequestID flush_id);
-  bool DumpProcessesInDataSource(DataSourceInstanceID id);
+  void DumpProcessesInDataSource(DataSource* ds);
   void DumpProcessState(DataSource* ds, pid_t pid, ProcessState* process);
 
   void DoContinuousDump(DataSourceInstanceID id, uint32_t dump_interval);
@@ -281,6 +284,8 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
   void ShutdownDataSource(DataSource* ds);
   bool MaybeFinishDataSource(DataSource* ds);
+
+  void WriteRejectedConcurrentSession(BufferID buffer_id, pid_t pid);
 
   // Class state:
 
@@ -326,7 +331,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   base::Optional<std::function<void()>> data_source_callback_;
 
   SocketDelegate socket_delegate_;
-  base::ScopedFile stat_fd_;
 
   base::WeakPtrFactory<HeapprofdProducer> weak_factory_;  // Keep last.
 };

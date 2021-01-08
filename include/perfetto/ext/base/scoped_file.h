@@ -19,33 +19,27 @@
 
 #include "perfetto/base/build_config.h"
 
-#include <fcntl.h>
 #include <stdio.h>
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
-#include <corecrt_io.h>
-typedef int mode_t;
-#else
-#include <dirent.h>
-#include <unistd.h>
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include <dirent.h>  // For DIR* / opendir().
 #endif
 
 #include <string>
 
+#include "perfetto/base/export.h"
 #include "perfetto/base/logging.h"
+#include "perfetto/base/platform_handle.h"
 
 namespace perfetto {
 namespace base {
-
-constexpr mode_t kInvalidMode = static_cast<mode_t>(-1);
 
 // RAII classes for auto-releasing fds and dirs.
 template <typename T,
           int (*CloseFunction)(T),
           T InvalidValue,
           bool CheckClose = true>
-class ScopedResource {
+class PERFETTO_EXPORT ScopedResource {
  public:
   explicit ScopedResource(T t = InvalidValue) : t_(t) {}
   ScopedResource(ScopedResource&& other) noexcept {
@@ -82,20 +76,17 @@ class ScopedResource {
   T t_;
 };
 
-using ScopedFile = ScopedResource<int, close, -1>;
-inline static ScopedFile OpenFile(const std::string& path,
-                                  int flags,
-                                  mode_t mode = kInvalidMode) {
-  PERFETTO_DCHECK((flags & O_CREAT) == 0 || mode != kInvalidMode);
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  // Always use O_BINARY on Windows, to avoid silly EOL translations.
-  ScopedFile fd(open(path.c_str(), flags | O_BINARY, mode));
-#else
-  // Always open a ScopedFile with O_CLOEXEC so we can safely fork and exec.
-  ScopedFile fd(open(path.c_str(), flags | O_CLOEXEC, mode));
-#endif
-  return fd;
-}
+// Declared in file_utils.h. Forward declared to avoid #include cycles.
+int PERFETTO_EXPORT CloseFile(int fd);
+
+// Use this for file resources obtained via open() and similar APIs.
+using ScopedFile = ScopedResource<int, CloseFile, -1>;
+
+// Use this for resources that are HANDLE on Windows. See comments in
+// platform_handle.h
+using ScopedPlatformHandle =
+    ScopedResource<PlatformHandle, ClosePlatformHandle, InvalidPlatformHandle>;
+
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 using ScopedDir = ScopedResource<DIR*, closedir, nullptr>;
 #endif

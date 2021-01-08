@@ -31,6 +31,7 @@ class TraceProcessorContext;
 class SliceTracker {
  public:
   using SetArgsCallback = std::function<void(ArgsTracker::BoundInserter*)>;
+  using OnSliceBeginCallback = std::function<void(TrackId, SliceId)>;
 
   explicit SliceTracker(TraceProcessorContext*);
   virtual ~SliceTracker();
@@ -49,7 +50,8 @@ class SliceTracker {
   // as the latest time we saw a begin event. For legacy Android use only. See
   // the comment in SystraceParser::ParseSystracePoint for information on why
   // this method exists.
-  void BeginLegacyUnnestable(tables::SliceTable::Row row);
+  void BeginLegacyUnnestable(tables::SliceTable::Row row,
+                             SetArgsCallback args_callback);
 
   void BeginGpu(tables::GpuSliceTable::Row row,
                 SetArgsCallback args_callback = SetArgsCallback());
@@ -102,6 +104,10 @@ class SliceTracker {
 
   void FlushPendingSlices();
 
+  void SetOnSliceBeginCallback(OnSliceBeginCallback callback);
+
+  base::Optional<SliceId> GetTopmostSliceOnTrack(TrackId track_id) const;
+
  private:
   struct SliceInfo {
     uint32_t row;
@@ -130,13 +136,20 @@ class SliceTracker {
       SetArgsCallback args_callback,
       std::function<base::Optional<uint32_t>(const SlicesStack&)> finder);
 
-  void MaybeCloseStack(int64_t end_ts, SlicesStack*);
+  void MaybeCloseStack(int64_t end_ts, SlicesStack*, TrackId track_id);
 
   base::Optional<uint32_t> MatchingIncompleteSliceIndex(
       const SlicesStack& stack,
       StringId name,
       StringId category);
+
   int64_t GetStackHash(const SlicesStack&);
+
+  void StackPop(TrackId track_id);
+  void StackPush(TrackId track_id, uint32_t slice_idx);
+  void FlowTrackerUpdate(TrackId track_id);
+
+  OnSliceBeginCallback on_slice_begin_callback_;
 
   // Timestamp of the previous event. Used to discard events arriving out
   // of order.

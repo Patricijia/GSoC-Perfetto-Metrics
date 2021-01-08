@@ -109,6 +109,11 @@ std::string FtraceProcfs::ReadEventFormat(const std::string& group,
   return ReadFileIntoString(path);
 }
 
+std::string FtraceProcfs::ReadPrintkFormats() const {
+  std::string path = root_ + "printk_formats";
+  return ReadFileIntoString(path);
+}
+
 std::vector<std::string> FtraceProcfs::ReadEnabledEvents() {
   std::string path = root_ + "set_event";
   std::string s = ReadFileIntoString(path);
@@ -116,7 +121,7 @@ std::vector<std::string> FtraceProcfs::ReadEnabledEvents() {
   std::vector<std::string> events;
   while (ss.Next()) {
     std::string event = ss.cur_token();
-    if (event.size() == 0)
+    if (event.empty())
       continue;
     events.push_back(base::StripChars(event, ":", '/'));
   }

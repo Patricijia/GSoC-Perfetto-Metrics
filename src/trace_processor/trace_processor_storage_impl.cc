@@ -21,15 +21,17 @@
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/importers/common/clock_tracker.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
+#include "src/trace_processor/importers/common/flow_tracker.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/slice_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/default_modules.h"
 #include "src/trace_processor/importers/proto/args_table_utils.h"
+#include "src/trace_processor/importers/proto/async_track_set_tracker.h"
 #include "src/trace_processor/importers/proto/heap_profile_tracker.h"
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
-#include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
+#include "src/trace_processor/importers/proto/proto_trace_reader.h"
 #include "src/trace_processor/importers/proto/stack_profile_tracker.h"
 #include "src/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_sorter.h"
@@ -41,15 +43,23 @@ TraceProcessorStorageImpl::TraceProcessorStorageImpl(const Config& cfg) {
   context_.config = cfg;
   context_.storage.reset(new TraceStorage(context_.config));
   context_.track_tracker.reset(new TrackTracker(&context_));
+  context_.async_track_set_tracker.reset(new AsyncTrackSetTracker(&context_));
   context_.args_tracker.reset(new ArgsTracker(&context_));
   context_.slice_tracker.reset(new SliceTracker(&context_));
+  context_.flow_tracker.reset(new FlowTracker(&context_));
   context_.event_tracker.reset(new EventTracker(&context_));
   context_.process_tracker.reset(new ProcessTracker(&context_));
   context_.clock_tracker.reset(new ClockTracker(&context_));
   context_.heap_profile_tracker.reset(new HeapProfileTracker(&context_));
+  context_.global_stack_profile_tracker.reset(new GlobalStackProfileTracker());
   context_.metadata_tracker.reset(new MetadataTracker(&context_));
   context_.global_args_tracker.reset(new GlobalArgsTracker(&context_));
   context_.proto_to_args_table_.reset(new ProtoToArgsTable(&context_));
+
+  context_.slice_tracker->SetOnSliceBeginCallback(
+      [this](TrackId track_id, SliceId slice_id) {
+        context_.flow_tracker->ClosePendingEventsOnTrack(track_id, slice_id);
+      });
 
   RegisterDefaultModules(&context_);
 }
@@ -87,6 +97,7 @@ void TraceProcessorStorageImpl::NotifyEndOfFile() {
   for (std::unique_ptr<ProtoImporterModule>& module : context_.modules) {
     module->NotifyEndOfFile();
   }
+  context_.args_tracker->Flush();
 }
 
 }  // namespace trace_processor

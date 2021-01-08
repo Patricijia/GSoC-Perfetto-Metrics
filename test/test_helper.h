@@ -34,6 +34,11 @@
 
 namespace perfetto {
 
+// This value has been bumped to 10s in Oct 2020 because the x86 cuttlefish
+// emulator is sensibly slower (up to 10x) than real hw and caused flakes.
+// See bugs duped against b/171771440.
+constexpr uint32_t kDefaultTestTimeoutMs = 10000;
+
 // This is used only in daemon starting integrations tests.
 class ServiceThread {
  public:
@@ -53,7 +58,10 @@ class ServiceThread {
       svc_ = ServiceIPCHost::CreateInstance(runner_->get());
       unlink(producer_socket_.c_str());
       unlink(consumer_socket_.c_str());
-
+      setenv("PERFETTO_PRODUCER_SOCK_NAME", producer_socket_.c_str(),
+             /*overwrite=*/true);
+      setenv("PERFETTO_CONSUMER_SOCK_NAME", consumer_socket_.c_str(),
+             /*overwrite=*/true);
       bool res =
           svc_->Start(producer_socket_.c_str(), consumer_socket_.c_str());
       PERFETTO_CHECK(res);
@@ -133,8 +141,7 @@ class FakeProducerThread {
   void CreateProducerProvidedSmb() {
     PosixSharedMemory::Factory factory;
     shm_ = factory.CreateSharedMemory(1024 * 1024);
-    shm_arbiter_ =
-        SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), base::kPageSize);
+    shm_arbiter_ = SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), 4096);
   }
 
   void ProduceStartupEventBatch(const protos::gen::TestConfig& config,
@@ -165,13 +172,18 @@ class TestHelper : public Consumer {
   // Consumer implementation.
   void OnConnect() override;
   void OnDisconnect() override;
-  void OnTracingDisabled() override;
+  void OnTracingDisabled(const std::string& error) override;
   void OnTraceData(std::vector<TracePacket> packets, bool has_more) override;
   void OnDetach(bool) override;
   void OnAttach(bool, const TraceConfig&) override;
   void OnTraceStats(bool, const TraceStats&) override;
   void OnObservableEvents(const ObservableEvents&) override;
 
+  // Starts the tracing service unconditionally.
+  void StartService();
+
+  // Starts the tracing service unless the build was configured to use an
+  // existing one running on the system.
   void StartServiceIfRequired();
 
   // Connects the producer and waits that the service has seen the
@@ -184,8 +196,10 @@ class TestHelper : public Consumer {
   void DisableTracing();
   void FlushAndWait(uint32_t timeout_ms);
   void ReadData(uint32_t read_count = 0);
+  void FreeBuffers();
   void DetachConsumer(const std::string& key);
   bool AttachConsumer(const std::string& key);
+  bool SaveTraceForBugreportAndWait();
   void CreateProducerProvidedSmb();
   bool IsShmemProvidedByProducer();
   void ProduceStartupEventBatch(const protos::gen::TestConfig& config);
@@ -193,8 +207,9 @@ class TestHelper : public Consumer {
   void WaitForConsumerConnect();
   void WaitForProducerSetup();
   void WaitForProducerEnabled();
-  void WaitForTracingDisabled(uint32_t timeout_ms = 5000);
-  void WaitForReadData(uint32_t read_count = 0, uint32_t timeout_ms = 5000);
+  void WaitForTracingDisabled(uint32_t timeout_ms = kDefaultTestTimeoutMs);
+  void WaitForReadData(uint32_t read_count = 0,
+                       uint32_t timeout_ms = kDefaultTestTimeoutMs);
   void SyncAndWaitProducer();
   TracingServiceState QueryServiceStateAndWait();
 
@@ -207,7 +222,7 @@ class TestHelper : public Consumer {
   }
 
   void RunUntilCheckpoint(const std::string& checkpoint,
-                          uint32_t timeout_ms = 5000) {
+                          uint32_t timeout_ms = kDefaultTestTimeoutMs) {
     return task_runner_->RunUntilCheckpoint(AddID(checkpoint), timeout_ms);
   }
 
@@ -217,6 +232,9 @@ class TestHelper : public Consumer {
   base::ThreadTaskRunner* producer_thread() {
     return fake_producer_thread_.runner();
   }
+  const std::vector<protos::gen::TracePacket>& full_trace() {
+    return full_trace_;
+  }
   const std::vector<protos::gen::TracePacket>& trace() { return trace_; }
 
  private:
@@ -224,6 +242,7 @@ class TestHelper : public Consumer {
   uint64_t instance_num_;
   base::TestTaskRunner* task_runner_ = nullptr;
   int cur_consumer_num_ = 0;
+  uint64_t trace_count_ = 0;
 
   std::function<void()> on_connect_callback_;
   std::function<void()> on_packets_finished_callback_;
@@ -231,6 +250,7 @@ class TestHelper : public Consumer {
   std::function<void()> on_detach_callback_;
   std::function<void(bool)> on_attach_callback_;
 
+  std::vector<protos::gen::TracePacket> full_trace_;
   std::vector<protos::gen::TracePacket> trace_;
 
   ServiceThread service_thread_;

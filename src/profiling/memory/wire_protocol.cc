@@ -24,10 +24,20 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#include <bionic/mte.h>
+#else
+struct ScopedDisableMTE {
+  // Silence unused variable warnings in non-Android builds.
+  ScopedDisableMTE() {}
+};
+#endif
+
 namespace perfetto {
 namespace profiling {
 
 namespace {
+
 template <typename T>
 bool ViewAndAdvance(char** ptr, T** out, const char* end) {
   if (end - sizeof(T) < *ptr)
@@ -40,6 +50,7 @@ bool ViewAndAdvance(char** ptr, T** out, const char* end) {
 // We need this to prevent crashes due to FORTIFY_SOURCE.
 void UnsafeMemcpy(char* dest, const char* src, size_t n)
     __attribute__((no_sanitize("address", "hwaddress"))) {
+  ScopedDisableMTE m;
   for (size_t i = 0; i < n; ++i) {
     dest[i] = src[i];
   }
@@ -150,6 +161,22 @@ bool ReceiveWireMessage(char* buf, size_t size, WireMessage* out) {
     return false;
   }
   return true;
+}
+
+uint64_t GetHeapSamplingInterval(const ClientConfiguration& cli_config,
+                                 const char* heap_name) {
+  for (uint32_t i = 0; i < cli_config.num_heaps; ++i) {
+    const ClientConfigurationHeap& heap = cli_config.heaps[i];
+    static_assert(sizeof(heap.name) == HEAPPROFD_HEAP_NAME_SZ,
+                  "correct heap name size");
+    if (strncmp(&heap.name[0], heap_name, HEAPPROFD_HEAP_NAME_SZ) == 0) {
+      return heap.interval;
+    }
+  }
+  if (cli_config.all_heaps) {
+    return cli_config.default_interval;
+  }
+  return 0;
 }
 
 }  // namespace profiling

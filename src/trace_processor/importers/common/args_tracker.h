@@ -108,6 +108,15 @@ class ArgsTracker {
     return AddArgsTo(context_->storage->mutable_slice_table(), id);
   }
 
+  BoundInserter AddArgsTo(tables::FlowTable::Id id) {
+    return AddArgsTo(context_->storage->mutable_flow_table(), id);
+  }
+
+  BoundInserter AddArgsTo(tables::MemorySnapshotNodeTable::Id id) {
+    return AddArgsTo(context_->storage->mutable_memory_snapshot_node_table(),
+                     id);
+  }
+
   BoundInserter AddArgsTo(MetadataId id) {
     auto* table = context_->storage->mutable_metadata_table();
     uint32_t row = *table->id().IndexOf(id);

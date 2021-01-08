@@ -171,3 +171,65 @@ test('Columnar iteration over two rows', () => {
 
   expect(it.valid()).toBe(false);
 });
+
+test('Columnar iteration over empty query set', () => {
+  const r = new RawQueryResult({
+    columnDescriptors: [{
+      name: 'emptyColumn',
+      type: COLUMN_TYPE_STR,
+    }],
+    numRecords: 0,
+    columns: [{
+      stringValues: [],
+      isNulls: [],
+    }],
+  });
+
+  {
+    const it = iter({'emptyColumn': STR}, r);
+    expect(it.valid()).toBe(false);
+  }
+
+  {
+    const it = iter({'emptyColumn': NUM}, r);
+    expect(it.valid()).toBe(false);
+  }
+
+  {
+    const it = iter({'emptyColumn': NUM_NULL}, r);
+    expect(it.valid()).toBe(false);
+  }
+
+  {
+    const it = iter({'emptyColumn': STR_NULL}, r);
+    expect(it.valid()).toBe(false);
+  }
+});
+
+test('Columnar iteration first row is null', () => {
+  const r = new RawQueryResult({
+    columnDescriptors: [{
+      name: 'numbers',
+      type: COLUMN_TYPE_STR,
+    }],
+    numRecords: 2,
+    columns: [{
+      stringValues: ['[NULL]'],
+      doubleValues: [0],
+      longValues: [0, 1],
+      isNulls: [true, false],
+    }],
+  });
+
+  const it = iter({'numbers': NUM_NULL}, r);
+
+  expect(it.valid()).toBe(true);
+  expect(it.row.numbers).toBe(null);
+  it.next();
+
+  expect(it.valid()).toBe(true);
+  expect(it.row.numbers).toBe(1);
+  it.next();
+
+  expect(it.valid()).toBe(false);
+});

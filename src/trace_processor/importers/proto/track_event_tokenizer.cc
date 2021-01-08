@@ -21,7 +21,7 @@
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
-#include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
+#include "src/trace_processor/importers/proto/proto_trace_reader.h"
 #include "src/trace_processor/storage/stats.h"
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/trace_blob_view.h"
@@ -125,7 +125,7 @@ ModuleResult TrackEventTokenizer::TokenizeTrackDescriptorPacket(
     // threads, in which case it has to use absolute values on a different
     // track_uuid. Right now these absolute values are imported onto a separate
     // counter track than the other thread's regular thread time values.)
-    if (name_id == kNullStringId) {
+    if (name_id.is_null()) {
       switch (counter.type()) {
         case CounterDescriptor::COUNTER_UNSPECIFIED:
           break;
@@ -147,7 +147,7 @@ ModuleResult TrackEventTokenizer::TokenizeTrackDescriptorPacket(
         track.uuid(), track.parent_uuid(), name_id);
   }
 
-  // Let ProtoTraceTokenizer forward the packet to the parser.
+  // Let ProtoTraceReader forward the packet to the parser.
   return ModuleResult::Ignored();
 }
 
@@ -173,7 +173,7 @@ ModuleResult TrackEventTokenizer::TokenizeThreadDescriptorPacket(
   protos::pbzero::ThreadDescriptor::Decoder thread(packet.thread_descriptor());
   TokenizeThreadDescriptor(state, thread);
 
-  // Let ProtoTraceTokenizer forward the packet to the parser.
+  // Let ProtoTraceReader forward the packet to the parser.
   return ModuleResult::Ignored();
 }
 

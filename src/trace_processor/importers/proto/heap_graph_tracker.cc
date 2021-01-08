@@ -18,42 +18,27 @@
 
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "src/trace_processor/importers/proto/profiler_util.h"
+#include "src/trace_processor/tables/profiler_tables.h"
 
 #include <set>
+#include <utility>
 
 namespace perfetto {
 namespace trace_processor {
 
 namespace {
-base::Optional<base::StringView> PackageFromApp(base::StringView location) {
-  location = location.substr(base::StringView("/data/app/").size());
-  size_t slash = location.find('/');
-  if (slash == std::string::npos) {
-    return base::nullopt;
-  }
-  size_t second_slash = location.find('/', slash + 1);
-  if (second_slash == std::string::npos) {
-    location = location.substr(0, slash);
-  } else {
-    location = location.substr(slash + 1, second_slash - slash);
-  }
-  size_t minus = location.find('-');
-  if (minus == std::string::npos) {
-    return base::nullopt;
-  }
-  return location.substr(0, minus);
-}
 
-std::set<tables::HeapGraphObjectTable::Id> GetChildren(
-    const TraceStorage& storage,
-    tables::HeapGraphObjectTable::Id id) {
+template <typename F>
+void ForReferenceSet(const TraceStorage& storage,
+                     tables::HeapGraphObjectTable::Id id,
+                     F fn) {
   uint32_t row = *storage.heap_graph_object_table().id().IndexOf(id);
   base::Optional<uint32_t> reference_set_id =
       storage.heap_graph_object_table().reference_set_id()[row];
   if (!reference_set_id)
-    return {};
+    return;
   uint32_t cur_reference_set_id;
-  std::set<tables::HeapGraphObjectTable::Id> children;
   for (uint32_t reference_row = *reference_set_id;
        reference_row < storage.heap_graph_reference_table().row_count();
        ++reference_row) {
@@ -61,12 +46,24 @@ std::set<tables::HeapGraphObjectTable::Id> GetChildren(
         storage.heap_graph_reference_table().reference_set_id()[reference_row];
     if (cur_reference_set_id != *reference_set_id)
       break;
-
-    PERFETTO_CHECK(
-        storage.heap_graph_reference_table().owner_id()[reference_row] == id);
-    children.emplace(
-        storage.heap_graph_reference_table().owned_id()[reference_row]);
+    if (!fn(reference_row))
+      break;
   }
+}
+
+std::set<tables::HeapGraphObjectTable::Id> GetChildren(
+    const TraceStorage& storage,
+    tables::HeapGraphObjectTable::Id id) {
+  std::set<tables::HeapGraphObjectTable::Id> children;
+  ForReferenceSet(
+      storage, id, [&storage, &children, id](uint32_t reference_row) {
+        PERFETTO_CHECK(
+            storage.heap_graph_reference_table().owner_id()[reference_row] ==
+            id);
+        children.emplace(
+            storage.heap_graph_reference_table().owned_id()[reference_row]);
+        return true;
+      });
   return children;
 }
 
@@ -156,6 +153,7 @@ BuildSuperclassMap(UniquePid upid, int64_t ts, TraceStorage* storage) {
   }
   return superclass_map;
 }
+
 }  // namespace
 
 void MarkRoot(TraceStorage* storage,
@@ -250,94 +248,6 @@ std::string DenormalizeTypeName(NormalizedType normalized,
 HeapGraphTracker::HeapGraphTracker(TraceProcessorContext* context)
     : context_(context) {}
 
-base::Optional<std::string> HeapGraphTracker::PackageFromLocation(
-    base::StringView location) {
-  // List of some hardcoded apps that do not follow the scheme used in
-  // PackageFromApp. Ask for yours to be added.
-  //
-  // TODO(b/153632336): Get rid of the hardcoded list of system apps.
-  base::StringView sysui(
-      "/system_ext/priv-app/SystemUIGoogle/SystemUIGoogle.apk");
-  if (location.size() >= sysui.size() &&
-      location.substr(0, sysui.size()) == sysui) {
-    return "com.android.systemui";
-  }
-
-  base::StringView phonesky("/product/priv-app/Phonesky/Phonesky.apk");
-  if (location.size() >= phonesky.size() &&
-      location.substr(0, phonesky.size()) == phonesky) {
-    return "com.android.vending";
-  }
-
-  base::StringView maps("/product/app/Maps/Maps.apk");
-  if (location.size() >= maps.size() &&
-      location.substr(0, maps.size()) == maps) {
-    return "com.google.android.apps.maps";
-  }
-
-  base::StringView launcher(
-      "/system_ext/priv-app/NexusLauncherRelease/NexusLauncherRelease.apk");
-  if (location.size() >= launcher.size() &&
-      location.substr(0, launcher.size()) == launcher) {
-    return "com.google.android.apps.nexuslauncher";
-  }
-
-  base::StringView photos("/product/app/Photos/Photos.apk");
-  if (location.size() >= photos.size() &&
-      location.substr(0, photos.size()) == photos) {
-    return "com.google.android.apps.photos";
-  }
-
-  base::StringView wellbeing(
-      "/product/priv-app/WellbeingPrebuilt/WellbeingPrebuilt.apk");
-  if (location.size() >= wellbeing.size() &&
-      location.substr(0, wellbeing.size()) == wellbeing) {
-    return "com.google.android.apps.wellbeing";
-  }
-
-  base::StringView matchmaker("MatchMaker");
-  if (location.size() >= matchmaker.size() &&
-      location.find(matchmaker) != base::StringView::npos) {
-    return "com.google.android.as";
-  }
-
-  base::StringView gm("/product/app/PrebuiltGmail/PrebuiltGmail.apk");
-  if (location.size() >= gm.size() && location.substr(0, gm.size()) == gm) {
-    return "com.google.android.gm";
-  }
-
-  base::StringView gmscore("/product/priv-app/PrebuiltGmsCore/PrebuiltGmsCore");
-  if (location.size() >= gmscore.size() &&
-      location.substr(0, gmscore.size()) == gmscore) {
-    return "com.google.android.gms";
-  }
-
-  base::StringView velvet("/product/priv-app/Velvet/Velvet.apk");
-  if (location.size() >= velvet.size() &&
-      location.substr(0, velvet.size()) == velvet) {
-    return "com.google.android.googlequicksearchbox";
-  }
-
-  base::StringView inputmethod(
-      "/product/app/LatinIMEGooglePrebuilt/LatinIMEGooglePrebuilt.apk");
-  if (location.size() >= inputmethod.size() &&
-      location.substr(0, inputmethod.size()) == inputmethod) {
-    return "com.google.android.inputmethod.latin";
-  }
-
-  base::StringView data_app("/data/app/");
-  if (location.substr(0, data_app.size()) == data_app) {
-    auto package = PackageFromApp(location);
-    if (!package) {
-      PERFETTO_DLOG("Failed to parse %s", location.ToStdString().c_str());
-      context_->storage->IncrementStats(stats::heap_graph_location_parse_error);
-      return base::nullopt;
-    }
-    return package->ToStdString();
-  }
-  return base::nullopt;
-}
-
 HeapGraphTracker::SequenceState& HeapGraphTracker::GetOrCreateSequence(
     uint32_t seq_id) {
   return sequence_state_[seq_id];
@@ -417,15 +327,20 @@ void HeapGraphTracker::AddObject(uint32_t seq_id,
   hgo->mutable_self_size()->Set(row, static_cast<int64_t>(obj.self_size));
   hgo->mutable_type_id()->Set(row, type_id);
 
+  if (obj.self_size == 0)
+    sequence_state.deferred_size_objects_for_type_[type_id].push_back(owner_id);
+
   uint32_t reference_set_id =
       context_->storage->heap_graph_reference_table().row_count();
   bool any_references = false;
-  for (const SourceObject::Reference& ref : obj.references) {
+
+  for (size_t i = 0; i < obj.referred_objects.size(); ++i) {
+    uint64_t owned_object_id = obj.referred_objects[i];
     // This is true for unset reference fields.
-    if (ref.owned_object_id == 0)
+    if (owned_object_id == 0)
       continue;
     tables::HeapGraphObjectTable::Id owned_id =
-        GetOrInsertObject(&sequence_state, ref.owned_object_id);
+        GetOrInsertObject(&sequence_state, owned_object_id);
 
     auto ref_id_and_row =
         context_->storage->mutable_heap_graph_reference_table()->Insert(
@@ -435,8 +350,10 @@ void HeapGraphTracker::AddObject(uint32_t seq_id,
              {},
              {},
              /*deobfuscated_field_name=*/base::nullopt});
-    sequence_state.references_for_field_name_id[ref.field_name_id].push_back(
-        ref_id_and_row.id);
+    if (!obj.field_name_ids.empty()) {
+      sequence_state.references_for_field_name_id[obj.field_name_ids[i]]
+          .push_back(ref_id_and_row.id);
+    }
     any_references = true;
   }
   if (any_references) {
@@ -445,6 +362,10 @@ void HeapGraphTracker::AddObject(uint32_t seq_id,
     context_->storage->mutable_heap_graph_object_table()
         ->mutable_reference_set_id()
         ->Set(owner_row, reference_set_id);
+    if (obj.field_name_ids.empty()) {
+      sequence_state.deferred_reference_objects_for_type_[type_id].push_back(
+          owner_id);
+    }
   }
 }
 
@@ -469,10 +390,21 @@ void HeapGraphTracker::AddInternedLocationName(uint32_t seq_id,
 void HeapGraphTracker::AddInternedType(uint32_t seq_id,
                                        uint64_t intern_id,
                                        StringPool::Id strid,
-                                       base::Optional<uint64_t> location_id) {
+                                       uint64_t location_id,
+                                       uint64_t object_size,
+                                       std::vector<uint64_t> field_name_ids,
+                                       uint64_t superclass_id,
+                                       uint64_t classloader_id,
+                                       bool no_fields) {
   SequenceState& sequence_state = GetOrCreateSequence(seq_id);
   sequence_state.interned_types[intern_id].name = strid;
   sequence_state.interned_types[intern_id].location_id = location_id;
+  sequence_state.interned_types[intern_id].object_size = object_size;
+  sequence_state.interned_types[intern_id].field_name_ids =
+      std::move(field_name_ids);
+  sequence_state.interned_types[intern_id].superclass_id = superclass_id;
+  sequence_state.interned_types[intern_id].classloader_id = classloader_id;
+  sequence_state.interned_types[intern_id].no_fields = no_fields;
 }
 
 void HeapGraphTracker::AddInternedFieldName(uint32_t seq_id,
@@ -487,6 +419,10 @@ void HeapGraphTracker::AddInternedFieldName(uint32_t seq_id,
   }
   StringPool::Id field_name = context_->storage->InternString(str);
   StringPool::Id type_name = context_->storage->InternString(type);
+
+  sequence_state.interned_fields.emplace(intern_id,
+                                         InternedField{field_name, type_name});
+
   auto it = sequence_state.references_for_field_name_id.find(intern_id);
   if (it != sequence_state.references_for_field_name_id.end()) {
     auto hgr = context_->storage->mutable_heap_graph_reference_table();
@@ -513,6 +449,7 @@ void HeapGraphTracker::SetPacketIndex(uint32_t seq_id, uint64_t index) {
   }
 
   if (dropped_packet) {
+    sequence_state.truncated = true;
     if (sequence_state.prev_index) {
       PERFETTO_ELOG("Missing packets between %" PRIu64 " and %" PRIu64,
                     *sequence_state.prev_index, index);
@@ -527,8 +464,28 @@ void HeapGraphTracker::SetPacketIndex(uint32_t seq_id, uint64_t index) {
   sequence_state.prev_index = index;
 }
 
+// This only works on Android S+ traces. We need to have ingested the whole
+// profile before calling this function (e.g. in FinalizeProfile).
+HeapGraphTracker::InternedType* HeapGraphTracker::GetSuperClass(
+    SequenceState* sequence_state,
+    const InternedType* current_type) {
+  if (current_type->superclass_id) {
+    auto it = sequence_state->interned_types.find(current_type->superclass_id);
+    if (it != sequence_state->interned_types.end())
+      return &it->second;
+  }
+  context_->storage->IncrementIndexedStats(
+      stats::heap_graph_malformed_packet,
+      static_cast<int>(sequence_state->current_upid));
+  return nullptr;
+}
+
 void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
   SequenceState& sequence_state = GetOrCreateSequence(seq_id);
+  if (sequence_state.truncated) {
+    truncated_graphs_.emplace(
+        std::make_pair(sequence_state.current_upid, sequence_state.current_ts));
+  }
 
   // We do this in FinalizeProfile because the interned_location_names get
   // written at the end of the dump.
@@ -550,9 +507,74 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
     tables::HeapGraphClassTable::Id type_id =
         GetOrInsertType(&sequence_state, id);
 
+    auto sz_obj_it =
+        sequence_state.deferred_size_objects_for_type_.find(type_id);
+    if (sz_obj_it != sequence_state.deferred_size_objects_for_type_.end()) {
+      for (tables::HeapGraphObjectTable::Id obj_id : sz_obj_it->second) {
+        auto* hgo = context_->storage->mutable_heap_graph_object_table();
+        uint32_t row = *hgo->id().IndexOf(obj_id);
+        hgo->mutable_self_size()->Set(
+            row, static_cast<int64_t>(interned_type.object_size));
+      }
+      sequence_state.deferred_size_objects_for_type_.erase(sz_obj_it);
+    }
+
+    auto ref_obj_it =
+        sequence_state.deferred_reference_objects_for_type_.find(type_id);
+    if (ref_obj_it !=
+        sequence_state.deferred_reference_objects_for_type_.end()) {
+      for (tables::HeapGraphObjectTable::Id obj_id : ref_obj_it->second) {
+        const InternedType* current_type = &interned_type;
+        if (interned_type.no_fields) {
+          continue;
+        }
+        size_t field_offset_in_cls = 0;
+        ForReferenceSet(
+            *context_->storage, obj_id,
+            [this, &current_type, &sequence_state,
+             &field_offset_in_cls](uint32_t reference_row) {
+              while (current_type && field_offset_in_cls >=
+                                         current_type->field_name_ids.size()) {
+                size_t prev_type_size = current_type->field_name_ids.size();
+                current_type = GetSuperClass(&sequence_state, current_type);
+                field_offset_in_cls -= prev_type_size;
+              }
+
+              if (!current_type) {
+                return false;
+              }
+
+              uint64_t field_id =
+                  current_type->field_name_ids[field_offset_in_cls++];
+              auto it = sequence_state.interned_fields.find(field_id);
+              if (it == sequence_state.interned_fields.end()) {
+                PERFETTO_ELOG("Invalid field id.");
+                context_->storage->IncrementIndexedStats(
+                    stats::heap_graph_malformed_packet,
+                    static_cast<int>(sequence_state.current_upid));
+                return true;
+              }
+              const InternedField& field = it->second;
+              auto hgr =
+                  context_->storage->mutable_heap_graph_reference_table();
+              hgr->mutable_field_name()->Set(reference_row, field.name);
+              hgr->mutable_field_type_name()->Set(reference_row,
+                                                  field.type_name);
+              field_to_rows_[field.name].emplace_back(reference_row);
+              return true;
+            });
+      }
+      sequence_state.deferred_reference_objects_for_type_.erase(ref_obj_it);
+    }
+
     auto* hgc = context_->storage->mutable_heap_graph_class_table();
     uint32_t row = *hgc->id().IndexOf(type_id);
     hgc->mutable_name()->Set(row, interned_type.name);
+    if (interned_type.classloader_id) {
+      auto classloader_object_id =
+          GetOrInsertObject(&sequence_state, interned_type.classloader_id);
+      hgc->mutable_classloader_id()->Set(row, classloader_object_id.value);
+    }
     if (location_name)
       hgc->mutable_location()->Set(row, *location_name);
 
@@ -570,7 +592,8 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
 
     if (location_name && !is_base_apk) {
       base::Optional<std::string> package_name =
-          PackageFromLocation(context_->storage->GetString(*location_name));
+          PackageFromLocation(context_->storage.get(),
+                              context_->storage->GetString(*location_name));
       if (package_name) {
         class_to_rows_[std::make_pair(
                            context_->storage->InternString(
@@ -591,6 +614,18 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
                          context_->storage->InternString(normalized_type))]
           .emplace_back(type_id);
     }
+  }
+
+  if (!sequence_state.deferred_size_objects_for_type_.empty()) {
+    context_->storage->IncrementIndexedStats(
+        stats::heap_graph_malformed_packet,
+        static_cast<int>(sequence_state.current_upid));
+  }
+
+  if (!sequence_state.deferred_reference_objects_for_type_.empty()) {
+    context_->storage->IncrementIndexedStats(
+        stats::heap_graph_malformed_packet,
+        static_cast<int>(sequence_state.current_upid));
   }
 
   for (const SourceRoot& root : sequence_state.current_roots) {
@@ -614,6 +649,7 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
   sequence_state_.erase(seq_id);
 }
 
+// TODO(fmayer): For Android S+ traces, use the superclass_id from the trace.
 void HeapGraphTracker::PopulateSuperClasses(const SequenceState& seq) {
   // Maps from normalized class name and location, to superclass.
   std::map<ClassDescriptor, ClassDescriptor> superclass_map =
@@ -686,13 +722,22 @@ void FindPathFromRoot(const TraceStorage& storage,
 
     tables::HeapGraphClassTable::Id type_id =
         storage.heap_graph_object_table().type_id()[row];
-    auto it = path->nodes[parent_id].children.find(type_id);
+
+    uint32_t type_row = *storage.heap_graph_class_table().id().IndexOf(type_id);
+    base::Optional<StringPool::Id> opt_class_name_id =
+        storage.heap_graph_class_table().deobfuscated_name()[type_row];
+    if (!opt_class_name_id) {
+      opt_class_name_id = storage.heap_graph_class_table().name()[type_row];
+    }
+    PERFETTO_CHECK(opt_class_name_id);
+    StringPool::Id class_name_id = *opt_class_name_id;
+    auto it = path->nodes[parent_id].children.find(class_name_id);
     if (it == path->nodes[parent_id].children.end()) {
       size_t path_id = path->nodes.size();
       path->nodes.emplace_back(PathFromRoot::Node{});
       std::tie(it, std::ignore) =
-          path->nodes[parent_id].children.emplace(type_id, path_id);
-      path->nodes.back().type_id = type_id;
+          path->nodes[parent_id].children.emplace(class_name_id, path_id);
+      path->nodes.back().class_name_id = class_name_id;
       path->nodes.back().depth = depth;
       path->nodes.back().parent_id = parent_id;
     }
@@ -742,22 +787,44 @@ void FindPathFromRoot(const TraceStorage& storage,
 std::unique_ptr<tables::ExperimentalFlamegraphNodesTable>
 HeapGraphTracker::BuildFlamegraph(const int64_t current_ts,
                                   const UniquePid current_upid) {
-  auto it = roots_.find(std::make_pair(current_upid, current_ts));
-  if (it == roots_.end())
-    return nullptr;
-
-  const std::set<tables::HeapGraphObjectTable::Id>& roots = it->second;
+  auto profile_type = context_->storage->InternString("graph");
+  auto java_mapping = context_->storage->InternString("JAVA");
 
   std::unique_ptr<tables::ExperimentalFlamegraphNodesTable> tbl(
       new tables::ExperimentalFlamegraphNodesTable(
           context_->storage->mutable_string_pool(), nullptr));
 
+  auto it = roots_.find(std::make_pair(current_upid, current_ts));
+  if (it == roots_.end()) {
+    // TODO(fmayer): This should not be within the flame graph but some marker
+    // in the UI.
+    if (IsTruncated(current_upid, current_ts)) {
+      tables::ExperimentalFlamegraphNodesTable::Row alloc_row{};
+      alloc_row.ts = current_ts;
+      alloc_row.upid = current_upid;
+      alloc_row.profile_type = profile_type;
+      alloc_row.depth = 0;
+      alloc_row.name =
+          context_->storage->InternString("ERROR: INCOMPLETE GRAPH");
+      alloc_row.map_name = java_mapping;
+      alloc_row.count = 1;
+      alloc_row.cumulative_count = 1;
+      alloc_row.size = 1;
+      alloc_row.cumulative_size = 1;
+      alloc_row.parent_id = base::nullopt;
+      tbl->Insert(alloc_row);
+      return tbl;
+    }
+    // We haven't seen this graph, so we should raise an error.
+    return nullptr;
+  }
+
+  const std::set<tables::HeapGraphObjectTable::Id>& roots = it->second;
+
   PathFromRoot init_path;
   for (tables::HeapGraphObjectTable::Id root : roots) {
     FindPathFromRoot(*context_->storage, root, &init_path);
   }
-  auto profile_type = context_->storage->InternString("graph");
-  auto java_mapping = context_->storage->InternString("JAVA");
 
   std::vector<int32_t> node_to_cumulative_size(init_path.nodes.size());
   std::vector<int32_t> node_to_cumulative_count(init_path.nodes.size());
@@ -781,22 +848,12 @@ HeapGraphTracker::BuildFlamegraph(const int64_t current_ts,
       parent_id = node_to_id[node.parent_id];
     const uint32_t depth = node.depth;
 
-    uint32_t type_row =
-        *context_->storage->heap_graph_class_table().id().IndexOf(node.type_id);
-    base::Optional<StringPool::Id> name =
-        context_->storage->heap_graph_class_table()
-            .deobfuscated_name()[type_row];
-    if (!name) {
-      name = context_->storage->heap_graph_class_table().name()[type_row];
-    }
-    PERFETTO_CHECK(name);
-
     tables::ExperimentalFlamegraphNodesTable::Row alloc_row{};
     alloc_row.ts = current_ts;
     alloc_row.upid = current_upid;
     alloc_row.profile_type = profile_type;
     alloc_row.depth = depth;
-    alloc_row.name = *name;
+    alloc_row.name = node.class_name_id;
     alloc_row.map_name = java_mapping;
     alloc_row.count = static_cast<int64_t>(node.count);
     alloc_row.cumulative_count =
@@ -820,29 +877,22 @@ void HeapGraphTracker::NotifyEndOfFile() {
   }
 }
 
-StringPool::Id HeapGraphTracker::MaybeDeobfuscate(
-    base::Optional<StringPool::Id> package_name,
-    StringPool::Id id) {
-  base::StringView type_name = context_->storage->GetString(id);
-  auto normalized_type = GetNormalizedType(type_name);
-  auto it = deobfuscation_mapping_.find(std::make_pair(
-      package_name, context_->storage->InternString(normalized_type.name)));
-  if (it == deobfuscation_mapping_.end())
-    return id;
+bool HeapGraphTracker::IsTruncated(UniquePid upid, int64_t ts) {
+  // The graph was finalized but was missing packets.
+  if (truncated_graphs_.find(std::make_pair(upid, ts)) !=
+      truncated_graphs_.end()) {
+    return true;
+  }
 
-  base::StringView normalized_deobfuscated_name =
-      context_->storage->GetString(it->second);
-  std::string result =
-      DenormalizeTypeName(normalized_type, normalized_deobfuscated_name);
-  return context_->storage->InternString(base::StringView(result));
-}
-
-void HeapGraphTracker::AddDeobfuscationMapping(
-    base::Optional<StringPool::Id> package_name,
-    StringPool::Id obfuscated_name,
-    StringPool::Id deobfuscated_name) {
-  deobfuscation_mapping_.emplace(std::make_pair(package_name, obfuscated_name),
-                                 deobfuscated_name);
+  // Or the graph was never finalized, so is missing packets at the end.
+  for (const auto& p : sequence_state_) {
+    const SequenceState& sequence_state = p.second;
+    if (sequence_state.current_upid == upid &&
+        sequence_state.current_ts == ts) {
+      return true;
+    }
+  }
+  return false;
 }
 
 HeapGraphTracker::~HeapGraphTracker() = default;

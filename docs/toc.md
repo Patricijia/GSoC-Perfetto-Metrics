@@ -28,12 +28,16 @@
 * [App Instrumentation](#)
   * [Tracing SDK](instrumentation/tracing-sdk.md)
   * [Track events](instrumentation/track-events.md)
+  * [Interceptors](instrumentation/interceptors.md)
 
 * [Trace analysis](#)
   * [Trace Processor (SQL)](analysis/trace-processor.md)
   * [Trace-based metrics](analysis/metrics.md)
   * [SQL tables](analysis/sql-tables.autogen)
   * [Stats table](analysis/sql-stats.autogen)
+
+* [Trace visualization](#)
+  * [Perfetto UI](visualization/perfetto-ui.md)
 
 * [Core concepts](#)
   * [Trace configuration](concepts/config.md)
@@ -55,6 +59,7 @@
     * [Common tasks](contributing/common-tasks.md)
     * [Embedding Perfetto](contributing/embedding.md)
     * [Releasing the SDK](contributing/sdk-releasing.md)
+    * [Chrome branches](contributing/chrome-branches.md)
 
 * [Design documents](#)
     * [API and ABI surface](design-docs/api-and-abi.md)

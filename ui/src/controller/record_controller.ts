@@ -41,6 +41,7 @@ import {
   isAdbTarget,
   isAndroidP,
   isChromeTarget,
+  isCrOSTarget,
   MAX_TIME,
   RecordConfig,
   RecordingTarget
@@ -53,7 +54,9 @@ import {ChromeExtensionConsumerPort} from './chrome_proxy_record_controller';
 import {
   ConsumerPortResponse,
   GetTraceStatsResponse,
+  isDisableTracingResponse,
   isEnableTracingResponse,
+  isFreeBuffersResponse,
   isGetTraceStatsResponse,
   isReadBuffersResponse,
 } from './consumer_port_types';
@@ -117,17 +120,15 @@ export function genConfig(
   let procThreadAssociationFtrace = false;
   let trackInitialOomScore = false;
 
-  if (uiCfg.cpuSched || uiCfg.cpuLatency) {
+  if (uiCfg.cpuSched) {
     procThreadAssociationPolling = true;
     procThreadAssociationFtrace = true;
     ftraceEvents.add('sched/sched_switch');
     ftraceEvents.add('power/suspend_resume');
-    if (uiCfg.cpuLatency) {
-      ftraceEvents.add('sched/sched_wakeup');
-      ftraceEvents.add('sched/sched_wakeup_new');
-      ftraceEvents.add('sched/sched_waking');
-      ftraceEvents.add('power/suspend_resume');
-    }
+    ftraceEvents.add('sched/sched_wakeup');
+    ftraceEvents.add('sched/sched_wakeup_new');
+    ftraceEvents.add('sched/sched_waking');
+    ftraceEvents.add('power/suspend_resume');
   }
 
   if (uiCfg.cpuFreq) {
@@ -138,6 +139,17 @@ export function genConfig(
 
   if (uiCfg.gpuFreq) {
     ftraceEvents.add('power/gpu_frequency');
+  }
+
+  if (uiCfg.gpuMemTotal) {
+    ftraceEvents.add('gpu_mem/gpu_mem_total');
+
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      const ds = new TraceConfig.DataSource();
+      ds.config = new DataSourceConfig();
+      ds.config.name = 'android.gpu.memory';
+      protoCfg.dataSources.push(ds);
+    }
   }
 
   if (uiCfg.cpuSyscall) {
@@ -164,7 +176,9 @@ export function genConfig(
       AndroidPowerConfig.BatteryCounters.BATTERY_COUNTER_CURRENT,
     ];
     ds.config.androidPowerConfig.collectPowerRails = true;
-    protoCfg.dataSources.push(ds);
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      protoCfg.dataSources.push(ds);
+    }
   }
 
   if (uiCfg.boardSensors) {
@@ -255,6 +269,8 @@ export function genConfig(
         cdc.dumpPhaseMs = uiCfg.hpContinuousDumpsPhase;
       }
     }
+    // TODO(fmayer): Add a toggle for this to the UI?
+    cfg.blockClient = true;
     heapprofd = cfg;
   }
 
@@ -292,7 +308,9 @@ export function genConfig(
     if (procThreadAssociationPolling || trackInitialOomScore) {
       ds.config.processStatsConfig.scanAllProcessesOnStart = true;
     }
-    protoCfg.dataSources.push(ds);
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      protoCfg.dataSources.push(ds);
+    }
   }
 
   if (uiCfg.androidLogs) {
@@ -305,7 +323,9 @@ export function genConfig(
       return AndroidLogId[name as any as number] as any as number;
     });
 
-    protoCfg.dataSources.push(ds);
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      protoCfg.dataSources.push(ds);
+    }
   }
 
   if (uiCfg.chromeLogs) {
@@ -368,10 +388,17 @@ export function genConfig(
     } else {
       chromeRecordMode = 'record-continuously';
     }
-    const traceConfigJson = JSON.stringify({
+    const configStruct = {
       record_mode: chromeRecordMode,
       included_categories: [...chromeCategories.values()],
-    });
+      memory_dump_config: {},
+    };
+    if (chromeCategories.has('disabled-by-default-memory-infra')) {
+      configStruct.memory_dump_config = {
+        triggers: [{mode: 'detailed', periodic_interval_ms: 10000}]
+      };
+    }
+    const traceConfigJson = JSON.stringify(configStruct);
 
     const traceDs = new TraceConfig.DataSource();
     traceDs.config = new DataSourceConfig();
@@ -395,7 +422,8 @@ export function genConfig(
 
   // Keep these last. The stages above can enrich them.
 
-  if (sysStatsCfg !== undefined) {
+  if (sysStatsCfg !== undefined &&
+      (!isChromeTarget(target) || isCrOSTarget(target))) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.name = 'linux.sys_stats';
@@ -403,7 +431,8 @@ export function genConfig(
     protoCfg.dataSources.push(ds);
   }
 
-  if (heapprofd !== undefined) {
+  if (heapprofd !== undefined &&
+      (!isChromeTarget(target) || isCrOSTarget(target))) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.targetBuffer = 0;
@@ -412,7 +441,8 @@ export function genConfig(
     protoCfg.dataSources.push(ds);
   }
 
-  if (javaHprof !== undefined) {
+  if (javaHprof !== undefined &&
+      (!isChromeTarget(target) || isCrOSTarget(target))) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.targetBuffer = 0;
@@ -468,7 +498,9 @@ export function genConfig(
     ds.config.ftraceConfig.ftraceEvents = ftraceEventsArray;
     ds.config.ftraceConfig.atraceCategories = Array.from(atraceCats);
     ds.config.ftraceConfig.atraceApps = Array.from(atraceApps);
-    protoCfg.dataSources.push(ds);
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      protoCfg.dataSources.push(ds);
+    }
   }
 
   return protoCfg;
@@ -557,6 +589,14 @@ export class RecordController extends Controller<'main'> implements Consumer {
   }
 
   run() {
+    // TODO(eseckler): Use ConsumerPort's QueryServiceState instead
+    // of posting a custom extension message to retrieve the category list.
+    if (this.app.state.updateChromeCategories === true) {
+      if (this.app.state.extensionInstalled) {
+        this.extensionPort.postMessage({method: 'GetCategories'});
+      }
+      globals.dispatch(Actions.setUpdateChromeCategories({update: false}));
+    }
     if (this.app.state.recordConfig === this.config &&
         this.app.state.recordingInProgress === this.recordingInProgress) {
       return;
@@ -634,8 +674,12 @@ export class RecordController extends Controller<'main'> implements Consumer {
       if (percentage) {
         globals.publish('BufferUsage', {percentage});
       }
+    } else if (isFreeBuffersResponse(data)) {
+      // No action required.
+    } else if (isDisableTracingResponse(data)) {
+      // No action required.
     } else {
-      console.warn('Unrecognized consumer port response:', data);
+      console.error('Unrecognized consumer port response:', data);
     }
   }
 
