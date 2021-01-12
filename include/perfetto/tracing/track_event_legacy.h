@@ -479,29 +479,29 @@ class PERFETTO_EXPORT TrackEventLegacy {
 
 // Implementations for the INTERNAL_* adapter macros used by the trace points
 // below.
-#define INTERNAL_TRACE_EVENT_ADD(phase, category, name, flags, ...)      \
-  PERFETTO_INTERNAL_TRACK_EVENT(                                         \
-      category, ::perfetto::StaticString{name},                          \
-      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),        \
-      [&](perfetto::EventContext ctx) {                                  \
-        using ::perfetto::internal::TrackEventLegacy;                    \
-        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags, \
-                                           ##__VA_ARGS__);               \
+#define INTERNAL_TRACE_EVENT_ADD(phase, category, name, flags, ...)        \
+  PERFETTO_INTERNAL_TRACK_EVENT(                                           \
+      category, ::perfetto::StaticString{name},                            \
+      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),          \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS { \
+        using ::perfetto::internal::TrackEventLegacy;                      \
+        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags,   \
+                                           ##__VA_ARGS__);                 \
       })
 
-#define INTERNAL_TRACE_EVENT_ADD_SCOPED(category, name, ...)        \
-  PERFETTO_INTERNAL_SCOPED_TRACK_EVENT(                             \
-      category, ::perfetto::StaticString{name},                     \
-      [&](perfetto::EventContext ctx) {                             \
-        using ::perfetto::internal::TrackEventLegacy;               \
-        TrackEventLegacy::AddDebugAnnotations(&ctx, ##__VA_ARGS__); \
+#define INTERNAL_TRACE_EVENT_ADD_SCOPED(category, name, ...)               \
+  PERFETTO_INTERNAL_SCOPED_TRACK_EVENT(                                    \
+      category, ::perfetto::StaticString{name},                            \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS { \
+        using ::perfetto::internal::TrackEventLegacy;                      \
+        TrackEventLegacy::AddDebugAnnotations(&ctx, ##__VA_ARGS__);        \
       })
 
 #define INTERNAL_TRACE_EVENT_ADD_SCOPED_WITH_FLOW(category, name, bind_id,   \
                                                   flags, ...)                \
   PERFETTO_INTERNAL_SCOPED_TRACK_EVENT(                                      \
       category, ::perfetto::StaticString{name},                              \
-      [&](perfetto::EventContext ctx) {                                      \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS {   \
         using ::perfetto::internal::TrackEventLegacy;                        \
         ::perfetto::internal::LegacyTraceId PERFETTO_UID(trace_id){bind_id}; \
         TrackEventLegacy::WriteLegacyEventWithIdAndTid(                      \
@@ -510,16 +510,16 @@ class PERFETTO_EXPORT TrackEventLegacy {
             ##__VA_ARGS__);                                                  \
       })
 
-#define INTERNAL_TRACE_EVENT_ADD_WITH_TIMESTAMP(phase, category, name,   \
-                                                timestamp, flags, ...)   \
-  PERFETTO_INTERNAL_TRACK_EVENT(                                         \
-      category, ::perfetto::StaticString{name},                          \
-      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),        \
-      ::perfetto::legacy::ConvertTimestampToTraceTimeNs(timestamp),      \
-      [&](perfetto::EventContext ctx) {                                  \
-        using ::perfetto::internal::TrackEventLegacy;                    \
-        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags, \
-                                           ##__VA_ARGS__);               \
+#define INTERNAL_TRACE_EVENT_ADD_WITH_TIMESTAMP(phase, category, name,     \
+                                                timestamp, flags, ...)     \
+  PERFETTO_INTERNAL_TRACK_EVENT(                                           \
+      category, ::perfetto::StaticString{name},                            \
+      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),          \
+      ::perfetto::legacy::ConvertTimestampToTraceTimeNs(timestamp),        \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS { \
+        using ::perfetto::internal::TrackEventLegacy;                      \
+        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags,   \
+                                           ##__VA_ARGS__);                 \
       })
 
 #define INTERNAL_TRACE_EVENT_ADD_WITH_ID_TID_AND_TIMESTAMP(                  \
@@ -528,7 +528,7 @@ class PERFETTO_EXPORT TrackEventLegacy {
       category, ::perfetto::StaticString{name},                              \
       ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),            \
       ::perfetto::legacy::ConvertTimestampToTraceTimeNs(timestamp),          \
-      [&](perfetto::EventContext ctx) {                                      \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS {   \
         using ::perfetto::internal::TrackEventLegacy;                        \
         ::perfetto::internal::LegacyTraceId PERFETTO_UID(trace_id){id};      \
         TrackEventLegacy::WriteLegacyEventWithIdAndTid(                      \
@@ -541,7 +541,7 @@ class PERFETTO_EXPORT TrackEventLegacy {
   PERFETTO_INTERNAL_TRACK_EVENT(                                           \
       category, ::perfetto::StaticString{name},                            \
       ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),          \
-      [&](perfetto::EventContext ctx) {                                    \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS { \
         using ::perfetto::internal::TrackEventLegacy;                      \
         ::perfetto::internal::LegacyTraceId PERFETTO_UID(trace_id){id};    \
         TrackEventLegacy::WriteLegacyEventWithIdAndTid(                    \
@@ -991,6 +991,12 @@ class PERFETTO_EXPORT TrackEventLegacy {
   INTERNAL_TRACE_EVENT_ADD_WITH_ID(                                            \
       TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN, category_group, name, id,        \
       TRACE_EVENT_FLAG_NONE, arg1_name, arg1_val, arg2_name, arg2_val)
+#define TRACE_EVENT_NESTABLE_ASYNC_BEGIN_WITH_TIMESTAMP1(                  \
+    category_group, name, id, timestamp, arg1_name, arg1_val)              \
+  INTERNAL_TRACE_EVENT_ADD_WITH_ID_TID_AND_TIMESTAMP(                      \
+      TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN, category_group, name, id,    \
+      TRACE_EVENT_API_CURRENT_THREAD_ID, timestamp, TRACE_EVENT_FLAG_NONE, \
+      arg1_name, arg1_val)
 
 // Async end events.
 #define TRACE_EVENT_NESTABLE_ASYNC_END0(category_group, name, id)        \
@@ -1076,6 +1082,13 @@ class PERFETTO_EXPORT TrackEventLegacy {
   INTERNAL_TRACE_EVENT_ADD_WITH_ID_TID_AND_TIMESTAMP(                 \
       TRACE_EVENT_PHASE_NESTABLE_ASYNC_END, category_group, name, id, \
       TRACE_EVENT_API_CURRENT_THREAD_ID, timestamp, TRACE_EVENT_FLAG_COPY)
+#define TRACE_EVENT_NESTABLE_ASYNC_END_WITH_TIMESTAMP2(                    \
+    category_group, name, id, timestamp, arg1_name, arg1_val, arg2_name,   \
+    arg2_val)                                                              \
+  INTERNAL_TRACE_EVENT_ADD_WITH_ID_TID_AND_TIMESTAMP(                      \
+      TRACE_EVENT_PHASE_NESTABLE_ASYNC_END, category_group, name, id,      \
+      TRACE_EVENT_API_CURRENT_THREAD_ID, timestamp, TRACE_EVENT_FLAG_NONE, \
+      arg1_name, arg1_val, arg2_name, arg2_val)
 
 // Legacy flow events.
 #define TRACE_EVENT_FLOW_BEGIN0(category_group, name, id)        \
@@ -1157,21 +1170,6 @@ class PERFETTO_EXPORT TrackEventLegacy {
                                    name, id, TRACE_EVENT_FLAG_COPY, arg1_name, \
                                    arg1_val, arg2_name, arg2_val)
 
-// Special strongly typed trace events.
-// TODO(skyostil): Migrate these to regular track event trace points.
-#define TRACE_TASK_EXECUTION(run_function, task) \
-  if (false) {                                   \
-    base::ignore_result(run_function);           \
-    base::ignore_result(task);                   \
-  }
-
-#define TRACE_LOG_MESSAGE(file, message, line) \
-  if (false) {                                 \
-    base::ignore_result(file);                 \
-    base::ignore_result(message);              \
-    base::ignore_result(line);                 \
-  }
-
 // Metadata events.
 #define TRACE_EVENT_METADATA1(category_group, name, arg1_name, arg1_val) \
   INTERNAL_TRACE_EVENT_METADATA_ADD(category_group, name, arg1_name, arg1_val)
@@ -1219,6 +1217,11 @@ class PERFETTO_EXPORT TrackEventLegacy {
   INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_LEAVE_CONTEXT, \
                                    category_group, name, context,   \
                                    TRACE_EVENT_FLAG_NONE)
+
+// TODO(skyostil): Implement binary-efficient trace events.
+#define TRACE_EVENT_BINARY_EFFICIENT0 TRACE_EVENT0
+#define TRACE_EVENT_BINARY_EFFICIENT1 TRACE_EVENT1
+#define TRACE_EVENT_BINARY_EFFICIENT2 TRACE_EVENT2
 
 // Macro to efficiently determine if a given category group is enabled.
 #define TRACE_EVENT_CATEGORY_GROUP_ENABLED(category, ret) \
