@@ -184,11 +184,6 @@ bool ConvertThreadId(const T&,
                      int32_t* pid_override_out,
                      int32_t* tid_override_out);
 
-// User-provided function to convert an abstract timestamp into the trace clock
-// timebase in nanoseconds.
-template <typename T>
-uint64_t ConvertTimestampToTraceTimeNs(const T&);
-
 // Built-in implementation for events referring to the current thread.
 template <>
 bool PERFETTO_EXPORT ConvertThreadId(const PerfettoLegacyCurrentThreadId&,
@@ -510,24 +505,22 @@ class PERFETTO_EXPORT TrackEventLegacy {
             ##__VA_ARGS__);                                                  \
       })
 
-#define INTERNAL_TRACE_EVENT_ADD_WITH_TIMESTAMP(phase, category, name,     \
-                                                timestamp, flags, ...)     \
-  PERFETTO_INTERNAL_TRACK_EVENT(                                           \
-      category, ::perfetto::StaticString{name},                            \
-      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),          \
-      ::perfetto::legacy::ConvertTimestampToTraceTimeNs(timestamp),        \
-      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS { \
-        using ::perfetto::internal::TrackEventLegacy;                      \
-        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags,   \
-                                           ##__VA_ARGS__);                 \
+#define INTERNAL_TRACE_EVENT_ADD_WITH_TIMESTAMP(phase, category, name,       \
+                                                timestamp, flags, ...)       \
+  PERFETTO_INTERNAL_TRACK_EVENT(                                             \
+      category, ::perfetto::StaticString{name},                              \
+      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase), timestamp, \
+      [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS {   \
+        using ::perfetto::internal::TrackEventLegacy;                        \
+        TrackEventLegacy::WriteLegacyEvent(std::move(ctx), phase, flags,     \
+                                           ##__VA_ARGS__);                   \
       })
 
 #define INTERNAL_TRACE_EVENT_ADD_WITH_ID_TID_AND_TIMESTAMP(                  \
     phase, category, name, id, thread_id, timestamp, flags, ...)             \
   PERFETTO_INTERNAL_TRACK_EVENT(                                             \
       category, ::perfetto::StaticString{name},                              \
-      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase),            \
-      ::perfetto::legacy::ConvertTimestampToTraceTimeNs(timestamp),          \
+      ::perfetto::internal::TrackEventLegacy::PhaseToType(phase), timestamp, \
       [&](perfetto::EventContext ctx) PERFETTO_NO_THREAD_SAFETY_ANALYSIS {   \
         using ::perfetto::internal::TrackEventLegacy;                        \
         ::perfetto::internal::LegacyTraceId PERFETTO_UID(trace_id){id};      \
@@ -1089,86 +1082,6 @@ class PERFETTO_EXPORT TrackEventLegacy {
       TRACE_EVENT_PHASE_NESTABLE_ASYNC_END, category_group, name, id,      \
       TRACE_EVENT_API_CURRENT_THREAD_ID, timestamp, TRACE_EVENT_FLAG_NONE, \
       arg1_name, arg1_val, arg2_name, arg2_val)
-
-// Legacy flow events.
-#define TRACE_EVENT_FLOW_BEGIN0(category_group, name, id)        \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_BEGIN, \
-                                   category_group, name, id,     \
-                                   TRACE_EVENT_FLAG_NONE)
-#define TRACE_EVENT_FLOW_BEGIN1(category_group, name, id, arg1_name, arg1_val) \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_BEGIN,               \
-                                   category_group, name, id,                   \
-                                   TRACE_EVENT_FLAG_NONE, arg1_name, arg1_val)
-#define TRACE_EVENT_FLOW_BEGIN2(category_group, name, id, arg1_name, arg1_val, \
-                                arg2_name, arg2_val)                           \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(                                            \
-      TRACE_EVENT_PHASE_FLOW_BEGIN, category_group, name, id,                  \
-      TRACE_EVENT_FLAG_NONE, arg1_name, arg1_val, arg2_name, arg2_val)
-#define TRACE_EVENT_COPY_FLOW_BEGIN0(category_group, name, id)   \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_BEGIN, \
-                                   category_group, name, id,     \
-                                   TRACE_EVENT_FLAG_COPY)
-#define TRACE_EVENT_COPY_FLOW_BEGIN1(category_group, name, id, arg1_name, \
-                                     arg1_val)                            \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_BEGIN,          \
-                                   category_group, name, id,              \
-                                   TRACE_EVENT_FLAG_COPY, arg1_name, arg1_val)
-#define TRACE_EVENT_COPY_FLOW_BEGIN2(category_group, name, id, arg1_name, \
-                                     arg1_val, arg2_name, arg2_val)       \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(                                       \
-      TRACE_EVENT_PHASE_FLOW_BEGIN, category_group, name, id,             \
-      TRACE_EVENT_FLAG_COPY, arg1_name, arg1_val, arg2_name, arg2_val)
-
-// Legacy flow step events.
-#define TRACE_EVENT_FLOW_STEP0(category_group, name, id, step)  \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_STEP, \
-                                   category_group, name, id,    \
-                                   TRACE_EVENT_FLAG_NONE, "step", step)
-#define TRACE_EVENT_FLOW_STEP1(category_group, name, id, step, arg1_name, \
-                               arg1_val)                                  \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(                                       \
-      TRACE_EVENT_PHASE_FLOW_STEP, category_group, name, id,              \
-      TRACE_EVENT_FLAG_NONE, "step", step, arg1_name, arg1_val)
-#define TRACE_EVENT_COPY_FLOW_STEP0(category_group, name, id, step) \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_STEP,     \
-                                   category_group, name, id,        \
-                                   TRACE_EVENT_FLAG_COPY, "step", step)
-#define TRACE_EVENT_COPY_FLOW_STEP1(category_group, name, id, step, arg1_name, \
-                                    arg1_val)                                  \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(                                            \
-      TRACE_EVENT_PHASE_FLOW_STEP, category_group, name, id,                   \
-      TRACE_EVENT_FLAG_COPY, "step", step, arg1_name, arg1_val)
-
-// Legacy flow end events.
-#define TRACE_EVENT_FLOW_END0(category_group, name, id)                        \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_NONE)
-#define TRACE_EVENT_FLOW_END_BIND_TO_ENCLOSING0(category_group, name, id)      \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id,                                   \
-                                   TRACE_EVENT_FLAG_BIND_TO_ENCLOSING)
-#define TRACE_EVENT_FLOW_END1(category_group, name, id, arg1_name, arg1_val)   \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_NONE, arg1_name, \
-                                   arg1_val)
-#define TRACE_EVENT_FLOW_END2(category_group, name, id, arg1_name, arg1_val,   \
-                              arg2_name, arg2_val)                             \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_NONE, arg1_name, \
-                                   arg1_val, arg2_name, arg2_val)
-#define TRACE_EVENT_COPY_FLOW_END0(category_group, name, id)                   \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_COPY)
-#define TRACE_EVENT_COPY_FLOW_END1(category_group, name, id, arg1_name,        \
-                                   arg1_val)                                   \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_COPY, arg1_name, \
-                                   arg1_val)
-#define TRACE_EVENT_COPY_FLOW_END2(category_group, name, id, arg1_name,        \
-                                   arg1_val, arg2_name, arg2_val)              \
-  INTERNAL_TRACE_EVENT_ADD_WITH_ID(TRACE_EVENT_PHASE_FLOW_END, category_group, \
-                                   name, id, TRACE_EVENT_FLAG_COPY, arg1_name, \
-                                   arg1_val, arg2_name, arg2_val)
 
 // Metadata events.
 #define TRACE_EVENT_METADATA1(category_group, name, arg1_name, arg1_val) \
