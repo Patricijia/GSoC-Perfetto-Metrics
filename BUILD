@@ -513,6 +513,7 @@ filegroup(
         "include/perfetto/tracing/event_context.h",
         "include/perfetto/tracing/interceptor.h",
         "include/perfetto/tracing/internal/basic_types.h",
+        "include/perfetto/tracing/internal/checked_scope.h",
         "include/perfetto/tracing/internal/data_source_internal.h",
         "include/perfetto/tracing/internal/in_process_tracing_backend.h",
         "include/perfetto/tracing/internal/interceptor_trace_writer.h",
@@ -1573,6 +1574,7 @@ filegroup(
         "src/tracing/debug_annotation.cc",
         "src/tracing/event_context.cc",
         "src/tracing/interceptor.cc",
+        "src/tracing/internal/checked_scope.cc",
         "src/tracing/internal/interceptor_trace_writer.cc",
         "src/tracing/internal/tracing_muxer_fake.cc",
         "src/tracing/internal/tracing_muxer_fake.h",
@@ -2954,6 +2956,7 @@ perfetto_proto_library(
     srcs = [
         "protos/perfetto/trace/track_event/chrome_application_state_info.proto",
         "protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto",
+        "protos/perfetto/trace/track_event/chrome_content_settings_event_info.proto",
         "protos/perfetto/trace/track_event/chrome_frame_reporter.proto",
         "protos/perfetto/trace/track_event/chrome_histogram_sample.proto",
         "protos/perfetto/trace/track_event/chrome_keyed_service.proto",
