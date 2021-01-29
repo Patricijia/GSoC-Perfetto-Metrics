@@ -53,7 +53,8 @@ base::Optional<uint32_t> SliceTracker::Begin(int64_t timestamp,
   });
 }
 
-void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row) {
+void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row,
+                                         SetArgsCallback args_callback) {
   // Ensure that the duration is pending for this row.
   // TODO(lalitm): change this to eventually use null instead of -1.
   row.dur = kPendingDuration;
@@ -68,7 +69,7 @@ void SliceTracker::BeginLegacyUnnestable(tables::SliceTable::Row row) {
   // Ensure that StartSlice knows that this track is unnestable.
   stacks_[row.track_id].is_legacy_unnestable = true;
 
-  StartSlice(row.ts, row.track_id, SetArgsCallback{}, [this, &row]() {
+  StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
     return context_->storage->mutable_slice_table()->Insert(row).id;
   });
 }
@@ -92,6 +93,34 @@ void SliceTracker::BeginFrameEvent(tables::GraphicsFrameSliceTable::Row row,
 
   StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
     return context_->storage->mutable_graphics_frame_slice_table()
+        ->Insert(row)
+        .id;
+  });
+}
+
+void SliceTracker::BeginFrameTimeline(
+    tables::ExpectedFrameTimelineSliceTable::Row row,
+    SetArgsCallback args_callback) {
+  // Ensure that the duration is pending for this row.
+  // TODO(lalitm): change this to eventually use null instead of -1.
+  row.dur = kPendingDuration;
+
+  StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
+    return context_->storage->mutable_expected_frame_timeline_slice_table()
+        ->Insert(row)
+        .id;
+  });
+}
+
+void SliceTracker::BeginFrameTimeline(
+    tables::ActualFrameTimelineSliceTable::Row row,
+    SetArgsCallback args_callback) {
+  // Ensure that the duration is pending for this row.
+  // TODO(lalitm): change this to eventually use null instead of -1.
+  row.dur = kPendingDuration;
+
+  StartSlice(row.ts, row.track_id, args_callback, [this, &row]() {
+    return context_->storage->mutable_actual_frame_timeline_slice_table()
         ->Insert(row)
         .id;
   });
@@ -183,6 +212,15 @@ base::Optional<SliceId> SliceTracker::EndGpu(int64_t ts,
 }
 
 base::Optional<SliceId> SliceTracker::EndFrameEvent(
+    int64_t ts,
+    TrackId t_id,
+    SetArgsCallback args_callback) {
+  return CompleteSlice(ts, t_id, args_callback, [](const SlicesStack& stack) {
+    return static_cast<uint32_t>(stack.size() - 1);
+  });
+}
+
+base::Optional<SliceId> SliceTracker::EndFrameTimeline(
     int64_t ts,
     TrackId t_id,
     SetArgsCallback args_callback) {
@@ -428,8 +466,8 @@ int64_t SliceTracker::GetStackHash(const SlicesStack& stack) {
   base::Hash hash;
   for (size_t i = 0; i < stack.size(); i++) {
     uint32_t slice_idx = stack[i].row;
-    hash.Update(slices.category()[slice_idx]);
-    hash.Update(slices.name()[slice_idx]);
+    hash.Update(slices.category()[slice_idx].raw_id());
+    hash.Update(slices.name()[slice_idx].raw_id());
   }
 
   // For clients which don't have an integer type (i.e. Javascript), returning

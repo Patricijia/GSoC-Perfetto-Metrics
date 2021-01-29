@@ -109,6 +109,11 @@ std::string FtraceProcfs::ReadEventFormat(const std::string& group,
   return ReadFileIntoString(path);
 }
 
+std::string FtraceProcfs::ReadPrintkFormats() const {
+  std::string path = root_ + "printk_formats";
+  return ReadFileIntoString(path);
+}
+
 std::vector<std::string> FtraceProcfs::ReadEnabledEvents() {
   std::string path = root_ + "set_event";
   std::string s = ReadFileIntoString(path);
@@ -152,9 +157,13 @@ void FtraceProcfs::ClearTrace() {
   // on Android. The permissions to these files are configured in
   // platform/framework/native/cmds/atrace/atrace.rc.
   for (size_t cpu = 0; cpu < NumberOfCpus(); cpu++) {
-    if (!ClearFile(root_ + "per_cpu/cpu" + std::to_string(cpu) + "/trace"))
-      PERFETTO_ELOG("Failed to clear buffer for CPU %zd", cpu);
+    ClearPerCpuTrace(cpu);
   }
+}
+
+void FtraceProcfs::ClearPerCpuTrace(size_t cpu) {
+  if (!ClearFile(root_ + "per_cpu/cpu" + std::to_string(cpu) + "/trace"))
+    PERFETTO_ELOG("Failed to clear buffer for CPU %zd", cpu);
 }
 
 bool FtraceProcfs::WriteTraceMarker(const std::string& str) {

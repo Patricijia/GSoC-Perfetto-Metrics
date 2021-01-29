@@ -50,13 +50,18 @@ class SliceTracker {
   // as the latest time we saw a begin event. For legacy Android use only. See
   // the comment in SystraceParser::ParseSystracePoint for information on why
   // this method exists.
-  void BeginLegacyUnnestable(tables::SliceTable::Row row);
+  void BeginLegacyUnnestable(tables::SliceTable::Row row,
+                             SetArgsCallback args_callback);
 
   void BeginGpu(tables::GpuSliceTable::Row row,
                 SetArgsCallback args_callback = SetArgsCallback());
 
   void BeginFrameEvent(tables::GraphicsFrameSliceTable::Row row,
                        SetArgsCallback args_callback = SetArgsCallback());
+  void BeginFrameTimeline(tables::ExpectedFrameTimelineSliceTable::Row row,
+                          SetArgsCallback args_callback = SetArgsCallback());
+  void BeginFrameTimeline(tables::ActualFrameTimelineSliceTable::Row row,
+                          SetArgsCallback args_callback = SetArgsCallback());
 
   // virtual for testing
   virtual base::Optional<uint32_t> Scoped(
@@ -97,6 +102,11 @@ class SliceTracker {
       SetArgsCallback args_callback = SetArgsCallback());
 
   base::Optional<SliceId> EndFrameEvent(
+      int64_t ts,
+      TrackId track_id,
+      SetArgsCallback args_callback = SetArgsCallback());
+
+  base::Optional<SliceId> EndFrameTimeline(
       int64_t ts,
       TrackId track_id,
       SetArgsCallback args_callback = SetArgsCallback());

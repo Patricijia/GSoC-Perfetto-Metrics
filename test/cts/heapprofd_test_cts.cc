@@ -24,7 +24,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "src/base/test/test_task_runner.h"
-#include "test/cts/utils.h"
+#include "test/android_test_utils.h"
 #include "test/gtest_and_gmock.h"
 #include "test/test_helper.h"
 
@@ -95,7 +95,7 @@ std::vector<protos::gen::TracePacket> ProfileRuntime(
 
   // start tracing
   helper.StartTracing(trace_config);
-  helper.WaitForTracingDisabled(10000 /*ms*/);
+  helper.WaitForTracingDisabled();
   helper.ReadData();
   helper.WaitForReadData();
 
@@ -142,7 +142,7 @@ std::vector<protos::gen::TracePacket> ProfileStartup(
                    /*delay_ms=*/100);
   task_runner.RunUntilCheckpoint("target.app.running", 2000 /*ms*/);
 
-  helper.WaitForTracingDisabled(8000 /*ms*/);
+  helper.WaitForTracingDisabled();
   helper.ReadData();
   helper.WaitForReadData();
 

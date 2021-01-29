@@ -67,8 +67,9 @@ util::Status ProtoTraceReader::ParseExtensionDescriptor(ConstBytes descriptor) {
                                                        descriptor.size);
 
   auto extension = decoder.extension_set();
-  return context_->proto_to_args_table_->AddProtoFileDescriptor(extension.data,
-                                                                extension.size);
+  return context_->proto_to_args_table_->AddProtoFileDescriptor(
+      extension.data, extension.size,
+      /*merge_existing_messages=*/true);
 }
 
 util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
@@ -258,8 +259,10 @@ void ProtoTraceReader::HandleIncrementalStateCleared(
   GetIncrementalStateForPacketSequence(
       packet_decoder.trusted_packet_sequence_id())
       ->OnIncrementalStateCleared();
-  context_->track_tracker->OnIncrementalStateCleared(
-      packet_decoder.trusted_packet_sequence_id());
+  for (auto& module : context_->modules) {
+    module->OnIncrementalStateCleared(
+        packet_decoder.trusted_packet_sequence_id());
+  }
 }
 
 void ProtoTraceReader::HandlePreviousPacketDropped(

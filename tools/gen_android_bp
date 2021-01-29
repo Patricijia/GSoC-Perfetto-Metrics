@@ -26,6 +26,7 @@
 # libraries are also mapped to their Android equivalents -- see |builtin_deps|.
 
 import argparse
+import collections
 import json
 import os
 import re
@@ -58,6 +59,7 @@ default_targets = [
     '//src/perfetto_cmd:trigger_perfetto',
     '//src/profiling/memory:heapprofd_client',
     '//src/profiling/memory:heapprofd_client_api',
+    '//src/profiling/memory:heapprofd_api_noop',
     '//src/profiling/memory:heapprofd',
     '//src/profiling/memory:heapprofd_standalone_client',
     '//src/profiling/perf:traced_perf',
@@ -177,6 +179,10 @@ additional_args = {
         # guarantee that the global constructors get run before it is used.
         ('cflags', {'-Wglobal-constructors', '-Werror=global-constructors'}),
         ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
+        ('stubs', {
+          'versions': ['S'],
+          'symbol_file': 'src/profiling/memory/heapprofd_client_api.map.txt',
+        })
     ],
     'heapprofd_client': [
         ('include_dirs', {'bionic/libc'}),
@@ -203,21 +209,24 @@ additional_args = {
     ],
     'libperfetto_android_internal': [('static_libs', {'libhealthhalutils'}),],
     'trace_processor_shell': [
+      ('strip', {'all': True}),
       ('host', {
-        'stl': 'libc++_static'
+        'stl': 'libc++_static',
+        'dist': {'targets': ['sdk_repo']},
       }),
     ],
     'libperfetto_client_experimental': [
       ('apex_available', {
         '//apex_available:platform',
-        'com.android.art.debug',
-        'com.android.art.release'}),
+        'com.android.art',
+        'com.android.art.debug'}),
+      ('shared_libs', {'liblog'}),
     ],
     'perfetto_trace_protos': [
       ('apex_available', {
         '//apex_available:platform',
-        'com.android.art.debug',
-        'com.android.art.release'}),
+        'com.android.art',
+        'com.android.art.debug'}),
     ],
 }
 
@@ -381,6 +390,8 @@ class Target(object):
     self.static_libs = set()
     self.whole_static_libs = set()
     self.cflags = set()
+    self.dist = dict()
+    self.strip = dict()
     self.stl = None
 
   def to_string(self, output):
@@ -390,6 +401,8 @@ class Target(object):
     self._output_field(nested_out, 'whole_static_libs')
     self._output_field(nested_out, 'cflags')
     self._output_field(nested_out, 'stl')
+    self._output_field(nested_out, 'dist')
+    self._output_field(nested_out, 'strip')
 
     if nested_out:
       output.append('  %s: {' % self.name)
@@ -445,6 +458,7 @@ class Module(object):
     self.version_script = None
     self.require_root = None
     self.test_suites = set()
+    self.stubs = {}
 
   def to_string(self, output):
     if self.comment:
@@ -477,6 +491,7 @@ class Module(object):
     self._output_field(output, 'version_script')
     self._output_field(output, 'require_root')
     self._output_field(output, 'test_suites')
+    self._output_field(output, 'stubs')
 
     target_out = []
     self._output_field(target_out, 'android')
@@ -614,7 +629,7 @@ def create_proto_modules(blueprint, gn, target):
   if target.proto_plugin == 'descriptor':
     out = '{}.bin'.format(target_module_name)
 
-    cmd += ['--descriptor_set_out=$(out)', '--include_imports']
+    cmd += ['--descriptor_set_out=$(out)']
     cmd += ['$(in)']
 
     descriptor_module = Module('genrule', target_module_name, target.name)
@@ -622,6 +637,21 @@ def create_proto_modules(blueprint, gn, target):
     descriptor_module.out = [out]
     descriptor_module.tools = tools
     blueprint.add_module(descriptor_module)
+
+    # Recursively extract the .proto files of all the dependencies and
+    # add them to srcs.
+    target_queue = collections.deque([target.name])
+    seen_targets = set()
+    while target_queue:
+      dep = target_queue.popleft()
+      if dep in seen_targets:
+        continue
+      seen_targets.add(dep)
+
+      current_target = gn.get_target(dep)
+      descriptor_module.srcs.update(
+          gn_utils.label_to_path(src) for src in current_target.sources)
+      target_queue.extend(current_target.proto_deps)
 
     return descriptor_module
 
@@ -730,6 +760,23 @@ def create_cc_proto_descriptor_module(blueprint, target):
   return module
 
 
+def create_gen_version_module(blueprint, target, bp_module_name):
+  module = Module('genrule', bp_module_name, gn_utils.GEN_VERSION_TARGET)
+  script_path = gn_utils.label_to_path(target.script)
+  module.genrule_headers.add(bp_module_name)
+  module.tool_files = [ script_path ]
+  module.out.update(target.outputs)
+  module.srcs.update(gn_utils.label_to_path(src) for src in target.inputs)
+  module.cmd = ' '.join([
+        'python3 $(location %s)' % script_path,
+        '--no_git',
+        '--changelog=$(location CHANGELOG)',
+        '--cpp_out=$(out)'
+  ])
+  blueprint.add_module(module)
+  return module
+
+
 def _get_cflags(target):
   cflags = {flag for flag in target.cflags if re.match(cflag_allowlist, flag)}
   cflags |= set("-D%s" % define
@@ -782,14 +829,19 @@ def create_modules_from_target(blueprint, gn, gn_target_name):
   elif target.type == 'action':
     if 'gen_merged_sql_metrics' in target.name:
       module = create_merged_sql_metrics_module(blueprint, target)
-    elif 'gen_cc_metrics_descriptor' in target.name or \
-         'gen_cc_all_chrome_metrics_descriptor' in target.name:
+    elif re.match('.*gen_cc_.*_descriptor$', target.name):
       module = create_cc_proto_descriptor_module(blueprint, target)
+    elif target.type == 'action' and gn_utils.label_without_toolchain(
+        target.name) == gn_utils.GEN_VERSION_TARGET:
+      module = create_gen_version_module(blueprint, target, bp_module_name)
+    else:
+      raise Error('Unhandled action: {}'.format(target.name))
   else:
     raise Error('Unknown target %s (%s)' % (target.name, target.type))
 
   blueprint.add_module(module)
-  module.host_supported = target.name in target_host_supported
+  module.host_supported = (gn_utils.label_without_toolchain(target.name) in
+                           target_host_supported)
   module.init_rc = target_initrc.get(target.name, [])
   module.srcs.update(
       gn_utils.label_to_path(src)
@@ -954,6 +1006,13 @@ def main():
   gn = gn_utils.GnParser(desc)
   blueprint = create_blueprint_for_targets(gn, desc, args.targets or
                                            default_targets)
+
+  # TODO(primiano): enable this on Android after the TODO in
+  # perfetto_component.gni is fixed.
+  # Check for ODR violations
+  # for target_name in default_targets:
+    # checker = gn_utils.ODRChecker(gn, target_name)
+
   output = [
       """// Copyright (C) 2017 The Android Open Source Project
 //
@@ -983,6 +1042,8 @@ def main():
   out_files.append(args.output + '.swp')
   with open(out_files[-1], 'w') as f:
     f.write('\n'.join(output))
+    # Text files should have a trailing EOL.
+    f.write('\n')
 
   # Generate the perfetto_build_flags.h file.
   out_files.append(os.path.join(buildflags_dir, 'perfetto_build_flags.h.swp'))

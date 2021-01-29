@@ -50,6 +50,9 @@ class FtraceProcfs {
 
   virtual std::string ReadPageHeaderFormat() const;
 
+  // Read the printk formats file.
+  std::string ReadPrintkFormats() const;
+
   // Read the "/per_cpu/cpuXX/stats" file for the given |cpu|.
   std::string ReadCpuStats(size_t cpu) const;
 
@@ -64,6 +67,9 @@ class FtraceProcfs {
 
   // Clears the trace buffers for all CPUs. Blocks until this is done.
   void ClearTrace();
+
+  // Clears the trace buffer for cpu. Blocks until this is done.
+  void ClearPerCpuTrace(size_t cpu);
 
   // Writes the string |str| as an event into the trace buffer.
   bool WriteTraceMarker(const std::string& str);

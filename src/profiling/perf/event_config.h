@@ -48,6 +48,9 @@ struct TargetFilter {
 class EventConfig {
  public:
   static base::Optional<EventConfig> Create(const DataSourceConfig& ds_config);
+  static base::Optional<EventConfig> Create(
+      const protos::pbzero::PerfEventConfig::Decoder& pb_config,
+      const DataSourceConfig& raw_ds_config);
 
   uint32_t target_all_cpus() const { return target_all_cpus_; }
   uint32_t ring_buffer_pages() const { return ring_buffer_pages_; }
@@ -59,15 +62,18 @@ class EventConfig {
   uint32_t unwind_state_clear_period_ms() const {
     return unwind_state_clear_period_ms_;
   }
-
   const TargetFilter& filter() const { return target_filter_; }
+  bool kernel_frames() const { return kernel_frames_; }
 
   perf_event_attr* perf_attr() const {
     return const_cast<perf_event_attr*>(&perf_event_attr_);
   }
 
+  const DataSourceConfig& raw_ds_config() const { return raw_ds_config_; }
+
  private:
   EventConfig(const protos::pbzero::PerfEventConfig::Decoder& cfg,
+              const DataSourceConfig& raw_ds_config,
               uint32_t sampling_frequency,
               uint32_t ring_buffer_pages,
               uint32_t read_tick_period_ms,
@@ -100,6 +106,12 @@ class EventConfig {
 
   // Optional period for clearing cached unwinder state. Skipped if zero.
   const uint32_t unwind_state_clear_period_ms_;
+
+  // If true, include kernel frames in the callstacks.
+  const bool kernel_frames_;
+
+  // The raw data source config, as a pbzero-generated C++ class.
+  const DataSourceConfig raw_ds_config_;
 };
 
 }  // namespace profiling

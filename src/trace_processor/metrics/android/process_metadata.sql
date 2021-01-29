@@ -26,7 +26,16 @@ DROP TABLE IF EXISTS process_metadata_table;
 CREATE TABLE process_metadata_table AS
 SELECT
   process.upid,
-  process.name AS process_name,
+  -- TODO(b/169226092) remove this workaround
+  CASE
+      -- cmdline gets rewritten after fork, if these are still there we must
+      -- have seen a racy capture.
+    WHEN length(process.name) = 15 AND (
+      process.cmdline in ('zygote', 'zygote64', '<pre-initialized>')
+      OR process.cmdline like '%' || process.name)
+    THEN process.cmdline
+    ELSE process.name
+  END AS process_name,
   process.android_appid AS uid,
   CASE WHEN uid_package_count.cnt > 1 THEN TRUE ELSE NULL END AS shared_uid,
   plist.package_name,
@@ -45,7 +54,9 @@ ON (
     OR process.name LIKE plist.package_name || '%')
   );
 
-CREATE VIEW IF NOT EXISTS process_metadata AS
+DROP VIEW IF EXISTS process_metadata;
+
+CREATE VIEW process_metadata AS
 WITH upid_packages AS (
   SELECT
   upid,

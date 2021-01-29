@@ -19,7 +19,7 @@ syntax = "proto2";
 package perfetto.protos;
 
 // Configuration for go/heapprofd.
-// Next id: 23
+// Next id: 26
 message HeapprofdConfig {
   message ContinuousDumpConfig {
     // ms to wait before first dump.
@@ -47,6 +47,14 @@ message HeapprofdConfig {
   // Before Android 12, setting this to 0 would crash the target process.
   optional uint64 sampling_interval_bytes = 1;
 
+  // If less than the given numbers of bytes are left free in the shared
+  // memory buffer, increase sampling interval by a factor of two.
+  // Adaptive sampling is disabled when set to 0.
+  optional uint64 adaptive_sampling_shmem_threshold = 24;
+  // Stop doubling the sampling_interval once the sampling interval has reached
+  // this value.
+  optional uint64 adaptive_sampling_max_sampling_interval_bytes = 25;
+
   // E.g. surfaceflinger, com.android.phone
   // This input is normalized in the following way: if it contains slashes,
   // everything up to the last slash is discarded. If it contains "@",
@@ -64,6 +72,8 @@ message HeapprofdConfig {
   //
   // Introduced in Android 12.
   repeated string heaps = 20;
+
+  optional bool stream_allocations = 23;
 
   // If given, needs to be the same length as heaps and gives the sampling
   // interval for the respective entry in heaps.
@@ -146,17 +156,8 @@ message HeapprofdConfig {
   // Introduced in Android 11.
   optional bool no_running = 11;
 
-  // Gather information on how many bytes of allocations are on non-referenced
-  // pages. The way to use this generally is:
-  // 1. Start profile of app.
-  // 2. Start app.
-  // 3. Trigger a dump by sending SIGUSR1 to heapprofd.
-  // 4. Do operations.
-  // 5. End profile.
-  //
-  // You can then find the allocations that were not used for the operations you
-  // did in step 4.
-  optional bool idle_allocations = 12;
+  // deprecated idle_allocations.
+  reserved 12;
 
   // Cause heapprofd to emit a single dump at the end, showing the memory usage
   // at the point in time when the sampled heap usage of the process was at its

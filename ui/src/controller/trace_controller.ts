@@ -21,6 +21,7 @@ import {
 } from '../common/actions';
 import {Engine, QueryError} from '../common/engine';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
+import {slowlyCountRows} from '../common/query_iterator';
 import {EngineMode} from '../common/state';
 import {toNs, toNsCeil, toNsFloor} from '../common/time';
 import {TimeSpan} from '../common/time';
@@ -30,12 +31,16 @@ import {
   WasmEngineProxy
 } from '../common/wasm_engine_proxy';
 import {QuantizedLoad, ThreadDesc} from '../frontend/globals';
+
 import {
   CounterAggregationController
 } from './aggregation/counter_aggregation_controller';
 import {
   CpuAggregationController
 } from './aggregation/cpu_aggregation_controller';
+import {
+  CpuByProcessAggregationController
+} from './aggregation/cpu_by_process_aggregation_controller';
 import {
   SliceAggregationController
 } from './aggregation/slice_aggregation_controller';
@@ -78,6 +83,8 @@ import {TrackControllerArgs, trackControllerRegistry} from './track_controller';
 import {decideTracks} from './track_decider';
 
 type States = 'init'|'loading_trace'|'ready';
+
+const TRACE_MARGIN_TIME_S = 1 / 1e7;
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -170,6 +177,10 @@ export class TraceController extends Controller<States> {
             'thread_aggregation',
             ThreadAggregationController,
             {engine, kind: 'thread_state_aggregation'}));
+        childControllers.push(Child(
+            'cpu_process_aggregation',
+            CpuByProcessAggregationController,
+            {engine, kind: 'cpu_by_process_aggregation'}));
         childControllers.push(Child(
             'slice_aggregation',
             SliceAggregationController,
@@ -275,9 +286,13 @@ export class TraceController extends Controller<States> {
     }
 
     const traceTime = await this.engine.getTraceTimeBounds();
+    let startSec = traceTime.start;
+    let endSec = traceTime.end;
+    startSec -= TRACE_MARGIN_TIME_S;
+    endSec += TRACE_MARGIN_TIME_S;
     const traceTimeState = {
-      startSec: traceTime.start,
-      endSec: traceTime.end,
+      startSec,
+      endSec,
     };
     const actions: DeferredAction[] = [
       Actions.setTraceTime(traceTimeState),
@@ -306,7 +321,24 @@ export class TraceController extends Controller<States> {
     await this.listThreads();
     await this.loadTimelineOverview(traceTime);
     globals.dispatch(Actions.sortThreadTracks({}));
+    await this.selectFirstHeapProfile();
+
     return engineMode;
+  }
+
+  private async selectFirstHeapProfile() {
+    const query = `select * from
+    (select distinct(ts) as ts, 'native' as type,
+        upid from heap_profile_allocation
+        union
+        select distinct(graph_sample_ts) as ts, 'graph' as type, upid from
+        heap_graph_object) order by ts limit 1`;
+    const profile = await assertExists(this.engine).query(query);
+    if (profile.numRecords !== 1) return;
+    const ts = profile.columns[0].longValues![0];
+    const type = profile.columns[1].stringValues![0];
+    const upid = profile.columns[2].longValues![0];
+    globals.dispatch(Actions.selectHeapProfile({id: 0, upid, ts, type}));
   }
 
   private async listTracks() {
@@ -328,7 +360,7 @@ export class TraceController extends Controller<States> {
         using(upid)`;
     const threadRows = await assertExists(this.engine).query(sqlQuery);
     const threads: ThreadDesc[] = [];
-    for (let i = 0; i < threadRows.numRecords; i++) {
+    for (let i = 0; i < slowlyCountRows(threadRows); i++) {
       const utid = threadRows.columns[0].longValues![i];
       const tid = threadRows.columns[1].longValues![i];
       const pid = threadRows.columns[2].longValues![i];
@@ -360,7 +392,7 @@ export class TraceController extends Controller<States> {
           `where ts >= ${startNs} and ts < ${endNs} and utid != 0 ` +
           'group by cpu order by cpu');
       const schedData: {[key: string]: QuantizedLoad} = {};
-      for (let i = 0; i < schedRows.numRecords; i++) {
+      for (let i = 0; i < slowlyCountRows(schedRows); i++) {
         const load = schedRows.columns[0].doubleValues![i];
         const cpu = schedRows.columns[1].longValues![i];
         schedData[cpu] = {startSec, endSec, load};
@@ -393,7 +425,7 @@ export class TraceController extends Controller<States> {
          group by bucket, upid`);
 
     const slicesData: {[key: string]: QuantizedLoad[]} = {};
-    for (let i = 0; i < sliceSummaryQuery.numRecords; i++) {
+    for (let i = 0; i < slowlyCountRows(sliceSummaryQuery); i++) {
       const bucket = sliceSummaryQuery.columns[0].longValues![i];
       const upid = sliceSummaryQuery.columns[1].longValues![i];
       const load = sliceSummaryQuery.columns[2].doubleValues![i];
@@ -466,7 +498,9 @@ export class TraceController extends Controller<States> {
                  'android_ion',
                  'android_thread_time_in_state',
                  'android_surfaceflinger',
-                 'android_batt']) {
+                 'android_batt',
+                 'android_sysui_cuj',
+                 'android_jank']) {
       this.updateStatus(`Computing ${metric} metric`);
       try {
         // We don't care about the actual result of metric here as we are just

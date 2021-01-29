@@ -17,6 +17,7 @@
 #include "perfetto/trace_processor/read_trace.h"
 
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/proto_utils.h"
@@ -60,7 +61,7 @@ util::Status ReadTraceUsingRead(
       progress_callback(*file_size);
 
     std::unique_ptr<uint8_t[]> buf(new uint8_t[kChunkSize]);
-    auto rsize = read(fd, buf.get(), kChunkSize);
+    auto rsize = base::Read(fd, buf.get(), kChunkSize);
     if (rsize == 0)
       break;
 
@@ -194,16 +195,15 @@ util::Status DecompressTrace(const uint8_t* data,
   }
 
   if (type == TraceType::kGzipTraceType) {
-    GzipDecompressor decompressor;
-    SerializingProtoTraceReader reader(output);
+    std::unique_ptr<ChunkedTraceReader> reader(
+        new SerializingProtoTraceReader(output));
+    GzipTraceParser parser(std::move(reader));
 
-    bool needs_more_input = false;
-    RETURN_IF_ERROR(GzipTraceParser::Parse(data, size, &decompressor, &reader,
-                                           &needs_more_input));
-
-    if (needs_more_input)
+    RETURN_IF_ERROR(parser.ParseUnowned(data, size));
+    if (parser.needs_more_input())
       return util::ErrStatus("Cannot decompress partial trace file");
 
+    parser.NotifyEndOfFile();
     return util::OkStatus();
   }
 

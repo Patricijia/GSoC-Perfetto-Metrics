@@ -69,15 +69,16 @@ bool FDMaps::Parse() {
   unwindstack::MapInfo* prev_map = nullptr;
   unwindstack::MapInfo* prev_real_map = nullptr;
   return android::procinfo::ReadMapFileContent(
-      &content[0], [&](uint64_t start, uint64_t end, uint16_t flags,
-                       uint64_t pgoff, ino_t, const char* name) {
+      &content[0], [&](const android::procinfo::MapInfo& mapinfo) {
         // Mark a device map in /dev/ and not in /dev/ashmem/ specially.
-        if (strncmp(name, "/dev/", 5) == 0 &&
-            strncmp(name + 5, "ashmem/", 7) != 0) {
+        auto flags = mapinfo.flags;
+        if (strncmp(mapinfo.name.c_str(), "/dev/", 5) == 0 &&
+            strncmp(mapinfo.name.c_str() + 5, "ashmem/", 7) != 0) {
           flags |= unwindstack::MAPS_FLAGS_DEVICE_MAP;
         }
         maps_.emplace_back(new unwindstack::MapInfo(
-            prev_map, prev_real_map, start, end, pgoff, flags, name));
+            prev_map, prev_real_map, mapinfo.start, mapinfo.end, mapinfo.pgoff,
+            flags, mapinfo.name));
         prev_map = maps_.back().get();
         if (!prev_map->IsBlank()) {
           prev_real_map = prev_map;
@@ -122,15 +123,15 @@ void UnwindingMetadata::ReparseMaps() {
 #endif
 }
 
-FrameData UnwindingMetadata::AnnotateFrame(unwindstack::FrameData frame) {
-  std::string build_id;
+const std::string& UnwindingMetadata::GetBuildId(
+    const unwindstack::FrameData& frame) {
   if (!frame.map_name.empty()) {
     unwindstack::MapInfo* map_info = fd_maps.Find(frame.pc);
     if (map_info)
-      build_id = map_info->GetBuildID();
+      return map_info->GetBuildID();
   }
 
-  return FrameData{std::move(frame), std::move(build_id)};
+  return empty_string_;
 }
 
 std::string StringifyLibUnwindstackError(unwindstack::ErrorCode e) {
@@ -151,6 +152,12 @@ std::string StringifyLibUnwindstackError(unwindstack::ErrorCode e) {
       return "REPEATED_FRAME";
     case unwindstack::ERROR_INVALID_ELF:
       return "INVALID_ELF";
+    case unwindstack::ERROR_SYSTEM_CALL:
+      return "SYSTEM_CALL";
+    case unwindstack::ERROR_THREAD_DOES_NOT_EXIST:
+      return "THREAD_DOES_NOT_EXIST";
+    case unwindstack::ERROR_THREAD_TIMEOUT:
+      return "THREAD_TIMEOUT";
   }
 }
 

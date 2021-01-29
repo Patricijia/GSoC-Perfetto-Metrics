@@ -86,7 +86,7 @@ class InternedMessageView {
       PERFETTO_FATAL(
           "Interning entry accessed under different types! previous type: "
           "%s. new type: %s.",
-          decoder_type_, __PRETTY_FUNCTION__);
+          decoder_type_, PERFETTO_DEBUG_FUNCTION_IDENTIFIER());
     }
     return reinterpret_cast<typename MessageType::Decoder*>(decoder_.get());
   }
@@ -157,6 +157,8 @@ class PacketSequenceStateGeneration {
   template <uint32_t FieldId, typename MessageType>
   typename MessageType::Decoder* LookupInternedMessage(uint64_t iid);
 
+  template <uint32_t FieldId>
+  InternedMessageView* GetInternedMessageView(uint64_t iid);
   // Returns |nullptr| if no defaults were set.
   InternedMessageView* GetTracePacketDefaultsView() {
     if (!trace_packet_defaults_)
@@ -190,6 +192,7 @@ class PacketSequenceStateGeneration {
   }
 
   PacketSequenceState* state() const { return state_; }
+  size_t generation_index() const { return generation_index_; }
 
  private:
   friend class PacketSequenceState;
@@ -225,8 +228,8 @@ class PacketSequenceState {
  public:
   PacketSequenceState(TraceProcessorContext* context)
       : context_(context), sequence_stack_profile_tracker_(context) {
-    generations_.emplace_back(
-        new PacketSequenceStateGeneration(this, generations_.size()));
+    current_generation_.reset(
+        new PacketSequenceStateGeneration(this, generation_index_++));
   }
 
   int64_t IncrementAndGetTrackEventTimeNs(int64_t delta_ns) {
@@ -249,23 +252,23 @@ class PacketSequenceState {
 
   // Intern a message into the current generation.
   void InternMessage(uint32_t field_id, TraceBlobView message) {
-    generations_.back()->InternMessage(field_id, std::move(message));
+    current_generation_->InternMessage(field_id, std::move(message));
   }
 
   // Set the trace packet defaults for the current generation. If the current
   // generation already has defaults set, starts a new generation without
   // invalidating other incremental state (such as interned data).
   void UpdateTracePacketDefaults(TraceBlobView defaults) {
-    if (!generations_.back()->GetTracePacketDefaultsView()) {
-      generations_.back()->SetTracePacketDefaults(std::move(defaults));
+    if (!current_generation_->GetTracePacketDefaultsView()) {
+      current_generation_->SetTracePacketDefaults(std::move(defaults));
       return;
     }
 
     // The new defaults should only apply to subsequent messages on the
     // sequence. Add a new generation with the updated defaults but the
     // current generation's interned data state.
-    generations_.emplace_back(new PacketSequenceStateGeneration(
-        this, generations_.size(), generations_.back()->interned_data_,
+    current_generation_.reset(new PacketSequenceStateGeneration(
+        this, generation_index_++, current_generation_->interned_data_,
         std::move(defaults)));
   }
 
@@ -291,8 +294,8 @@ class PacketSequenceState {
   // Starts a new generation with clean-slate incremental state and defaults.
   void OnIncrementalStateCleared() {
     packet_loss_ = false;
-    generations_.emplace_back(
-        new PacketSequenceStateGeneration(this, generations_.size()));
+    current_generation_.reset(
+        new PacketSequenceStateGeneration(this, generation_index_++));
   }
 
   bool IsIncrementalStateValid() const { return !packet_loss_; }
@@ -301,9 +304,9 @@ class PacketSequenceState {
     return sequence_stack_profile_tracker_;
   }
 
-  // Returns a pointer to the current generation.
-  PacketSequenceStateGeneration* current_generation() const {
-    return generations_.back().get();
+  // Returns a ref-counted ptr to the current generation.
+  std::shared_ptr<PacketSequenceStateGeneration> current_generation() const {
+    return current_generation_;
   }
 
   bool track_event_timestamps_valid() const {
@@ -318,12 +321,9 @@ class PacketSequenceState {
   TraceProcessorContext* context() const { return context_; }
 
  private:
-  // TODO(eseckler): Reference count the generations so that we can get rid of
-  // past generations once all packets referring to them have been parsed.
-  using GenerationList =
-      std::vector<std::unique_ptr<PacketSequenceStateGeneration>>;
-
   TraceProcessorContext* context_;
+
+  size_t generation_index_ = 0;
 
   // If true, incremental state on the sequence is considered invalid until we
   // see the next packet with incremental_state_cleared. We assume that we
@@ -350,27 +350,34 @@ class PacketSequenceState {
   int64_t track_event_thread_timestamp_ns_ = 0;
   int64_t track_event_thread_instruction_count_ = 0;
 
-  GenerationList generations_;
+  std::shared_ptr<PacketSequenceStateGeneration> current_generation_;
   SequenceStackProfileTracker sequence_stack_profile_tracker_;
 };
 
-template <uint32_t FieldId, typename MessageType>
-typename MessageType::Decoder*
-PacketSequenceStateGeneration::LookupInternedMessage(uint64_t iid) {
+template <uint32_t FieldId>
+InternedMessageView* PacketSequenceStateGeneration::GetInternedMessageView(
+    uint64_t iid) {
   auto field_it = interned_data_.find(FieldId);
   if (field_it != interned_data_.end()) {
     auto* message_map = &field_it->second;
     auto it = message_map->find(iid);
     if (it != message_map->end()) {
-      return it->second.GetOrCreateDecoder<MessageType>();
+      return &it->second;
     }
   }
   state_->context()->storage->IncrementStats(
       stats::interned_data_tokenizer_errors);
-  PERFETTO_DLOG("Could not find interning entry for field ID %" PRIu32
-                ", generation %zu, and IID %" PRIu64,
-                FieldId, generation_index_, iid);
   return nullptr;
+}
+
+template <uint32_t FieldId, typename MessageType>
+typename MessageType::Decoder*
+PacketSequenceStateGeneration::LookupInternedMessage(uint64_t iid) {
+  auto* interned_message_view = GetInternedMessageView<FieldId>(iid);
+  if (!interned_message_view)
+    return nullptr;
+
+  return interned_message_view->template GetOrCreateDecoder<MessageType>();
 }
 
 }  // namespace trace_processor

@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import("../gn/gen_perfetto_version_header.gni")
 import("../gn/perfetto.gni")
 import("../gn/perfetto_check_build_deps.gni")
 import("../gn/wasm.gni")
@@ -23,8 +24,7 @@ assert(enable_perfetto_ui)
 ui_dir = "$root_build_dir/ui"
 chrome_extension_dir = "$root_build_dir/chrome_extension"
 ui_gen_dir = "$target_out_dir/gen"
-nodejs_root = "../buildtools/nodejs"
-nodejs_bin = rebase_path("$nodejs_root/bin", root_build_dir)
+nodejs_bin = rebase_path("//tools/node", root_build_dir)
 
 # +----------------------------------------------------------------------------+
 # | The outer "ui" target to just ninja -C out/xxx ui                          |
@@ -109,8 +109,7 @@ template("node_bin") {
     outputs += [ stamp_path ]
     args += [
               "--stamp=" + rebase_path(stamp_path, root_build_dir),
-              "--path=$nodejs_bin",
-              "node",
+              nodejs_bin,
               rebase_path("node_modules/.bin/$_node_cmd", root_build_dir),
             ] + invoker.args
   }
@@ -269,6 +268,7 @@ node_bin("transpile_all_ts") {
   deps = [
     ":dist_symlink",
     ":protos_to_ts",
+    ":version_ts_gen",
     ":wasm_gen",
   ]
   inputs = [ "tsconfig.json" ]
@@ -597,4 +597,8 @@ action("gen_dist_file_map") {
            "--strip",
            rebase_path(ui_dir, root_build_dir),
          ] + dist_files
+}
+
+gen_perfetto_version_header("version_ts_gen") {
+  ts_out = "$ui_gen_dir/perfetto_version.ts"
 }

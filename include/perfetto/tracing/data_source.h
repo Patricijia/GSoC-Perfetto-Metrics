@@ -173,7 +173,12 @@ class DataSource : public DataSourceBase {
         ::protozero::MessageHandle<::perfetto::protos::pbzero::TracePacket>;
 
     TraceContext(TraceContext&&) noexcept = default;
-    ~TraceContext() = default;
+    ~TraceContext() {
+      // If the data source is being intercepted, flush the trace writer after
+      // each trace point to make sure the interceptor sees the data right away.
+      if (PERFETTO_UNLIKELY(tls_inst_->is_intercepted))
+        Flush();
+    }
 
     TracePacketHandle NewTracePacket() {
       return tls_inst_->trace_writer->NewTracePacket();
@@ -359,11 +364,16 @@ class DataSource : public DataSourceBase {
             Traits::GetActiveInstances()->load(std::memory_order_acquire);
         instance_state = static_state_.TryGetCached(instances, i);
         if (!instance_state || !instance_state->trace_lambda_enabled)
-          return;
+          continue;
         tls_inst.backend_id = instance_state->backend_id;
+        tls_inst.backend_connection_id = instance_state->backend_connection_id;
         tls_inst.buffer_id = instance_state->buffer_id;
+        tls_inst.data_source_instance_id =
+            instance_state->data_source_instance_id;
+        tls_inst.is_intercepted = instance_state->interceptor_id != 0;
         tls_inst.trace_writer = tracing_impl->CreateTraceWriter(
-            instance_state, DataSourceType::kBufferExhaustedPolicy);
+            &static_state_, i, instance_state,
+            DataSourceType::kBufferExhaustedPolicy);
         CreateIncrementalState(
             &tls_inst,
             static_cast<typename DataSourceTraits::IncrementalStateType*>(
@@ -386,18 +396,21 @@ class DataSource : public DataSourceBase {
   // Can return false to signal failure if attemping to register more than
   // kMaxDataSources (32) data sources types or if tracing hasn't been
   // initialized.
-  static bool Register(const DataSourceDescriptor& descriptor) {
+  // The optional |constructor_args| will be passed to the data source when it
+  // is constructed.
+  template <class... Args>
+  static bool Register(const DataSourceDescriptor& descriptor,
+                       const Args&... constructor_args) {
     // Silences -Wunused-variable warning in case the trace method is not used
     // by the translation unit that declares the data source.
     (void)static_state_;
     (void)tls_state_;
 
-    auto factory = [] {
-      return std::unique_ptr<DataSourceBase>(new DataSourceType());
+    auto factory = [constructor_args...]() {
+      return std::unique_ptr<DataSourceBase>(
+          new DataSourceType(constructor_args...));
     };
     auto* tracing_impl = internal::TracingMuxer::Get();
-    if (!tracing_impl)
-      return false;
     return tracing_impl->RegisterDataSource(descriptor, factory,
                                             &static_state_);
   }
@@ -489,19 +502,35 @@ PERFETTO_THREAD_LOCAL internal::DataSourceThreadLocalState*
   PERFETTO_COMPONENT_EXPORT perfetto::internal::DataSourceStaticState \
       perfetto::DataSource<__VA_ARGS__>::static_state_;               \
   template <>                                                         \
-  PERFETTO_COMPONENT_EXPORT thread_local perfetto::internal::         \
-      DataSourceThreadLocalState*                                     \
+  PERFETTO_COMPONENT_EXPORT PERFETTO_THREAD_LOCAL                     \
+      perfetto::internal::DataSourceThreadLocalState*                 \
           perfetto::DataSource<__VA_ARGS__>::tls_state_
+
+// MSVC has a bug where explicit template member specialization declarations
+// can't have thread_local as the storage class specifier. The generated code
+// seems correct without the specifier, so drop it until the bug gets fixed.
+// See https://developercommunity2.visualstudio.com/t/Unable-to-specialize-
+// static-thread_local/1302689.
+#if PERFETTO_BUILDFLAG(PERFETTO_COMPILER_MSVC)
+#define PERFETTO_TEMPLATE_THREAD_LOCAL
+#else
+#define PERFETTO_TEMPLATE_THREAD_LOCAL PERFETTO_THREAD_LOCAL
+#endif
 
 // This macro must be used once for each data source in one source file to
 // allocate static storage for the data source's static state.
+//
+// Note: if MSVC fails with a C2086 (redefinition) error here, use the
+// permissive- flag to enable standards-compliant mode. See
+// https://developercommunity.visualstudio.com/content/problem/319447/
+// explicit-specialization-of-static-data-member-inco.html.
 #define PERFETTO_DEFINE_DATA_SOURCE_STATIC_MEMBERS(...)               \
   template <>                                                         \
   PERFETTO_COMPONENT_EXPORT perfetto::internal::DataSourceStaticState \
       perfetto::DataSource<__VA_ARGS__>::static_state_{};             \
   template <>                                                         \
-  PERFETTO_COMPONENT_EXPORT thread_local perfetto::internal::         \
-      DataSourceThreadLocalState*                                     \
+  PERFETTO_COMPONENT_EXPORT PERFETTO_TEMPLATE_THREAD_LOCAL            \
+      perfetto::internal::DataSourceThreadLocalState*                 \
           perfetto::DataSource<__VA_ARGS__>::tls_state_ = nullptr
 
 #endif  // INCLUDE_PERFETTO_TRACING_DATA_SOURCE_H_

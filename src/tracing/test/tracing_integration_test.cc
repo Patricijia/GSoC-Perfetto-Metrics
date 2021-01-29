@@ -15,7 +15,6 @@
  */
 
 #include <inttypes.h>
-#include <unistd.h>
 
 #include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/tracing/core/consumer.h"
@@ -45,9 +44,9 @@
 namespace perfetto {
 namespace {
 
+using testing::_;
 using testing::Invoke;
 using testing::InvokeWithoutArgs;
-using testing::_;
 
 constexpr char kProducerSockName[] = TEST_SOCK_NAME("tracing_test-producer");
 constexpr char kConsumerSockName[] = TEST_SOCK_NAME("tracing_test-consumer");
@@ -80,7 +79,7 @@ class MockConsumer : public Consumer {
   // Producer implementation.
   MOCK_METHOD0(OnConnect, void());
   MOCK_METHOD0(OnDisconnect, void());
-  MOCK_METHOD0(OnTracingDisabled, void());
+  MOCK_METHOD1(OnTracingDisabled, void(const std::string& /*error*/));
   MOCK_METHOD2(OnTracePackets, void(std::vector<TracePacket>*, bool));
   MOCK_METHOD1(OnDetach, void(bool));
   MOCK_METHOD2(OnAttach, void(bool, const TraceConfig&));
@@ -299,6 +298,8 @@ TEST_F(TracingIntegrationTest, WithIPCTransport) {
                      std::vector<TracePacket>* packets, bool has_more) {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
             const int kExpectedMinNumberOfClocks = 1;
+#elif PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+            const int kExpectedMinNumberOfClocks = 2;
 #else
             const int kExpectedMinNumberOfClocks = 6;
 #endif
@@ -338,11 +339,42 @@ TEST_F(TracingIntegrationTest, WithIPCTransport) {
   auto on_tracing_disabled =
       task_runner_->CreateCheckpoint("on_tracing_disabled");
   EXPECT_CALL(producer_, StopDataSource(_));
-  EXPECT_CALL(consumer_, OnTracingDisabled())
-      .WillOnce(Invoke(on_tracing_disabled));
+  EXPECT_CALL(consumer_, OnTracingDisabled(_))
+      .WillOnce(InvokeWithoutArgs(on_tracing_disabled));
   task_runner_->RunUntilCheckpoint("on_tracing_disabled");
 }
 
+// Regression test for b/172950370.
+TEST_F(TracingIntegrationTest, ValidErrorOnDisconnection) {
+  // Start tracing.
+  TraceConfig trace_config;
+  trace_config.add_buffers()->set_size_kb(4096 * 10);
+  auto* ds_config = trace_config.add_data_sources()->mutable_config();
+  ds_config->set_name("perfetto.test");
+  consumer_endpoint_->EnableTracing(trace_config);
+
+  auto on_create_ds_instance =
+      task_runner_->CreateCheckpoint("on_create_ds_instance");
+  EXPECT_CALL(producer_, OnTracingSetup());
+
+  // Store the arguments passed to SetupDataSource() and later check that they
+  // match the ones passed to StartDataSource().
+  EXPECT_CALL(producer_, SetupDataSource(_, _));
+  EXPECT_CALL(producer_, StartDataSource(_, _))
+      .WillOnce(InvokeWithoutArgs(on_create_ds_instance));
+  task_runner_->RunUntilCheckpoint("on_create_ds_instance");
+
+  EXPECT_CALL(consumer_, OnTracingDisabled(_))
+      .WillOnce(Invoke([](const std::string& err) {
+        EXPECT_THAT(err,
+                    testing::HasSubstr("EnableTracing IPC request rejected"));
+      }));
+
+  // TearDown() will destroy the service via svc_.reset(). That will drop the
+  // connection and trigger the EXPECT_CALL(OnTracingDisabled) above.
+}
+
+#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 TEST_F(TracingIntegrationTest, WriteIntoFile) {
   // Start tracing.
   TraceConfig trace_config;
@@ -390,8 +422,8 @@ TEST_F(TracingIntegrationTest, WriteIntoFile) {
   auto on_tracing_disabled =
       task_runner_->CreateCheckpoint("on_tracing_disabled");
   EXPECT_CALL(producer_, StopDataSource(_));
-  EXPECT_CALL(consumer_, OnTracingDisabled())
-      .WillOnce(Invoke(on_tracing_disabled));
+  EXPECT_CALL(consumer_, OnTracingDisabled(_))
+      .WillOnce(InvokeWithoutArgs(on_tracing_disabled));
   task_runner_->RunUntilCheckpoint("on_tracing_disabled");
 
   // Check that |tmp_file| contains a valid trace.proto message.
@@ -423,6 +455,7 @@ TEST_F(TracingIntegrationTest, WriteIntoFile) {
   ASSERT_GT(num_clock_snapshot_packet, 0u);
   ASSERT_GT(num_system_info_packet, 0u);
 }
+#endif
 
 class TracingIntegrationTestWithSMBScrapingProducer
     : public TracingIntegrationTest {
@@ -516,9 +549,12 @@ TEST_F(TracingIntegrationTestWithSMBScrapingProducer, ScrapeOnFlush) {
 
   auto on_tracing_disabled =
       task_runner_->CreateCheckpoint("on_tracing_disabled");
-  EXPECT_CALL(producer_, StopDataSource(_));
-  EXPECT_CALL(consumer_, OnTracingDisabled())
-      .WillOnce(Invoke(on_tracing_disabled));
+  auto on_stop_ds = task_runner_->CreateCheckpoint("on_stop_ds");
+  EXPECT_CALL(producer_, StopDataSource(_))
+      .WillOnce(InvokeWithoutArgs(on_stop_ds));
+  EXPECT_CALL(consumer_, OnTracingDisabled(_))
+      .WillOnce(InvokeWithoutArgs(on_tracing_disabled));
+  task_runner_->RunUntilCheckpoint("on_stop_ds");
   task_runner_->RunUntilCheckpoint("on_tracing_disabled");
 }
 

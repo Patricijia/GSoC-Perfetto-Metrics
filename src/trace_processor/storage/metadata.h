@@ -49,7 +49,8 @@ namespace metadata {
   F(trace_size_bytes,                  KeyType::kSingle,  Variadic::kInt),    \
   F(all_data_source_started_ns,        KeyType::kSingle,  Variadic::kInt),    \
   F(tracing_started_ns,                KeyType::kSingle,  Variadic::kInt),    \
-  F(tracing_disabled_ns,               KeyType::kSingle,  Variadic::kInt)
+  F(tracing_disabled_ns,               KeyType::kSingle,  Variadic::kInt),    \
+  F(trace_config_pbtxt,                KeyType::kSingle, Variadic::kString)
 // clang-format on
 
 // Compile time list of metadata items.
@@ -60,7 +61,9 @@ namespace metadata {
 // clang-format
 
 // Ignore GCC warning about a missing argument for a variadic macro parameter.
+#if defined(__GNUC__) || defined(__clang__)
 #pragma GCC system_header
+#endif
 
 #define PERFETTO_TP_META_TYPE_ENUM(varname, ...) varname
 enum class KeyType : size_t {
