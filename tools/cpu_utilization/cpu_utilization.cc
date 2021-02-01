@@ -15,7 +15,6 @@
  */
 
 #include <fcntl.h>
-#include <getopt.h>
 #include <inttypes.h>
 #include <stdint.h>
 #include <sys/stat.h>
@@ -27,6 +26,8 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/base/time.h"
+#include "perfetto/ext/base/file_utils.h"
+#include "perfetto/ext/base/getopt.h"
 #include "perfetto/ext/base/scoped_file.h"
 
 // Periodically prints an un-normalized cpu usage ratio (full use of a single
@@ -71,9 +72,8 @@ int CpuUtilizationMain(int argc, char** argv) {
       {"sleep-duration-us", required_argument, nullptr, 't'},
       {"sleep-intervals", required_argument, nullptr, 'n'},
       {nullptr, 0, nullptr, 0}};
-  int option_index;
   int c;
-  while ((c = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {
+  while ((c = getopt_long(argc, argv, "", long_options, nullptr)) != -1) {
     switch (c) {
       case 'p':
         target_pid = atoi(optarg);

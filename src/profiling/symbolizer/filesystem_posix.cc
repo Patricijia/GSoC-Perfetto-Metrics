@@ -16,16 +16,24 @@
 
 #include "src/profiling/symbolizer/filesystem.h"
 
+#include "perfetto/base/build_config.h"
+
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
 #include <fts.h>
 #include <sys/stat.h>
 #endif
+
+#include <string>
+
+#include "perfetto/ext/base/file_utils.h"
+
 namespace perfetto {
 namespace profiling {
 #if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
 bool WalkDirectories(std::vector<std::string> dirs, FileCallback fn) {
   std::vector<char*> dir_cstrs;
+  dir_cstrs.reserve(dirs.size());
   for (std::string& dir : dirs)
     dir_cstrs.emplace_back(&dir[0]);
   dir_cstrs.push_back(nullptr);

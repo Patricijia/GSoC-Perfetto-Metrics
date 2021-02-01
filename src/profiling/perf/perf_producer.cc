@@ -37,10 +37,13 @@
 #include "perfetto/tracing/core/data_source_descriptor.h"
 #include "src/profiling/common/callstack_trie.h"
 #include "src/profiling/common/proc_utils.h"
+#include "src/profiling/common/producer_support.h"
+#include "src/profiling/common/profiler_guardrails.h"
 #include "src/profiling/common/unwind_support.h"
 #include "src/profiling/perf/common_types.h"
 #include "src/profiling/perf/event_reader.h"
 
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
 #include "protos/perfetto/config/profiling/perf_event_config.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
@@ -61,6 +64,8 @@ namespace {
 // (since this is a naive walltime wait).
 // The proper fix is in the platform, see bug for progress.
 constexpr uint32_t kProcDescriptorsAndroidDelayMs = 50;
+
+constexpr uint32_t kMemoryLimitCheckPeriodMs = 5 * 1000;
 
 constexpr uint32_t kInitialConnectionBackoffMs = 100;
 constexpr uint32_t kMaxConnectionBackoffMs = 30 * 1000;
@@ -113,7 +118,7 @@ bool ShouldRejectDueToFilter(pid_t pid,
   if (filter.pids.count(pid)) {
     return false;
   }
-  if (!filter.cmdlines.size() && !filter.pids.size() &&
+  if (filter.cmdlines.empty() && filter.pids.empty() &&
       !filter.additional_cmdline_count) {
     // If no filters are set allow everything.
     return false;
@@ -198,14 +203,13 @@ PerfProducer::PerfProducer(ProcDescriptorGetter* proc_fd_getter,
 void PerfProducer::SetupDataSource(DataSourceInstanceID,
                                    const DataSourceConfig&) {}
 
-void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
+void PerfProducer::StartDataSource(DataSourceInstanceID ds_id,
                                    const DataSourceConfig& config) {
-  PERFETTO_LOG("StartDataSource(%zu, %s)", static_cast<size_t>(instance_id),
+  PERFETTO_LOG("StartDataSource(%zu, %s)", static_cast<size_t>(ds_id),
                config.name().c_str());
 
   if (config.name() == MetatraceWriter::kDataSourceName) {
-    StartMetatraceSource(instance_id,
-                         static_cast<BufferID>(config.target_buffer()));
+    StartMetatraceSource(ds_id, static_cast<BufferID>(config.target_buffer()));
     return;
   }
 
@@ -213,7 +217,20 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
   if (config.name() != kDataSourceName)
     return;
 
-  base::Optional<EventConfig> event_config = EventConfig::Create(config);
+  // Tracepoint name -> id lookup in case the config asks for tracepoints:
+  auto tracepoint_id_lookup = [this](const std::string& group,
+                                     const std::string& name) {
+    if (!tracefs_)  // lazy init or retry
+      tracefs_ = FtraceProcfs::CreateGuessingMountPoint();
+    if (!tracefs_)  // still didn't find an accessible tracefs
+      return 0u;
+    return tracefs_->ReadEventId(group, name);
+  };
+
+  protos::pbzero::PerfEventConfig::Decoder event_config_pb(
+      config.perf_event_config_raw());
+  base::Optional<EventConfig> event_config =
+      EventConfig::Create(event_config_pb, config, tracepoint_id_lookup);
   if (!event_config.has_value()) {
     PERFETTO_ELOG("PerfEventConfig rejected.");
     return;
@@ -245,7 +262,7 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
   std::map<DataSourceInstanceID, DataSourceState>::iterator ds_it;
   bool inserted;
   std::tie(ds_it, inserted) = data_sources_.emplace(
-      std::piecewise_construct, std::forward_as_tuple(instance_id),
+      std::piecewise_construct, std::forward_as_tuple(ds_id),
       std::forward_as_tuple(event_config.value(), std::move(writer),
                             std::move(per_cpu_readers)));
   PERFETTO_CHECK(inserted);
@@ -257,39 +274,81 @@ void PerfProducer::StartDataSource(DataSourceInstanceID instance_id,
 
   // Inform unwinder of the new data source instance, and optionally start a
   // periodic task to clear its cached state.
-  unwinding_worker_->PostStartDataSource(instance_id,
+  unwinding_worker_->PostStartDataSource(ds_id,
                                          ds.event_config.kernel_frames());
   if (ds.event_config.unwind_state_clear_period_ms()) {
     unwinding_worker_->PostClearCachedStatePeriodic(
-        instance_id, ds.event_config.unwind_state_clear_period_ms());
+        ds_id, ds.event_config.unwind_state_clear_period_ms());
   }
 
   // Kick off periodic read task.
   auto tick_period_ms = ds.event_config.read_tick_period_ms();
   auto weak_this = weak_factory_.GetWeakPtr();
   task_runner_->PostDelayedTask(
-      [weak_this, instance_id] {
+      [weak_this, ds_id] {
         if (weak_this)
-          weak_this->TickDataSourceRead(instance_id);
+          weak_this->TickDataSourceRead(ds_id);
       },
-      TimeToNextReadTickMs(instance_id, tick_period_ms));
+      TimeToNextReadTickMs(ds_id, tick_period_ms));
+
+  // Optionally kick off periodic memory footprint limit check.
+  uint32_t max_daemon_memory_kb = event_config_pb.max_daemon_memory_kb();
+  if (max_daemon_memory_kb > 0) {
+    task_runner_->PostDelayedTask(
+        [weak_this, ds_id, max_daemon_memory_kb] {
+          if (weak_this)
+            weak_this->CheckMemoryFootprintPeriodic(ds_id,
+                                                    max_daemon_memory_kb);
+        },
+        kMemoryLimitCheckPeriodMs);
+  }
 }
 
-void PerfProducer::StopDataSource(DataSourceInstanceID instance_id) {
-  PERFETTO_LOG("StopDataSource(%zu)", static_cast<size_t>(instance_id));
+void PerfProducer::CheckMemoryFootprintPeriodic(DataSourceInstanceID ds_id,
+                                                uint32_t max_daemon_memory_kb) {
+  auto ds_it = data_sources_.find(ds_id);
+  if (ds_it == data_sources_.end())
+    return;  // stop recurring
+
+  GuardrailConfig gconfig = {};
+  gconfig.memory_guardrail_kb = max_daemon_memory_kb;
+
+  ProfilerMemoryGuardrails footprint_snapshot;
+  if (footprint_snapshot.IsOverMemoryThreshold(gconfig)) {
+    PurgeDataSource(ds_id);
+    return;  // stop recurring
+  }
+
+  // repost
+  auto weak_this = weak_factory_.GetWeakPtr();
+  task_runner_->PostDelayedTask(
+      [weak_this, ds_id, max_daemon_memory_kb] {
+        if (weak_this)
+          weak_this->CheckMemoryFootprintPeriodic(ds_id, max_daemon_memory_kb);
+      },
+      kMemoryLimitCheckPeriodMs);
+}
+
+void PerfProducer::StopDataSource(DataSourceInstanceID ds_id) {
+  PERFETTO_LOG("StopDataSource(%zu)", static_cast<size_t>(ds_id));
 
   // Metatrace: stop immediately (will miss the events from the
   // asynchronous shutdown of the primary data source).
-  auto meta_it = metatrace_writers_.find(instance_id);
+  auto meta_it = metatrace_writers_.find(ds_id);
   if (meta_it != metatrace_writers_.end()) {
     meta_it->second.WriteAllAndFlushTraceWriter([] {});
     metatrace_writers_.erase(meta_it);
     return;
   }
 
-  auto ds_it = data_sources_.find(instance_id);
-  if (ds_it == data_sources_.end())
+  auto ds_it = data_sources_.find(ds_id);
+  if (ds_it == data_sources_.end()) {
+    // Most likely, the source is missing due to an abrupt stop (via
+    // |PurgeDataSource|). Tell the service that we've stopped the source now,
+    // so that it doesn't wait for the ack until the timeout.
+    endpoint_->NotifyDataSourceStopped(ds_id);
     return;
+  }
 
   // Start shutting down the reading frontend, which will propagate the stop
   // further as the intermediate buffers are cleared.
@@ -305,7 +364,7 @@ void PerfProducer::StopDataSource(DataSourceInstanceID instance_id) {
 void PerfProducer::Flush(FlushRequestID flush_id,
                          const DataSourceInstanceID* data_source_ids,
                          size_t num_data_sources) {
-  bool should_ack_flush = false;
+  // Flush metatracing if requested.
   for (size_t i = 0; i < num_data_sources; i++) {
     auto ds_id = data_source_ids[i];
     PERFETTO_DLOG("Flush(%zu)", static_cast<size_t>(ds_id));
@@ -313,14 +372,10 @@ void PerfProducer::Flush(FlushRequestID flush_id,
     auto meta_it = metatrace_writers_.find(ds_id);
     if (meta_it != metatrace_writers_.end()) {
       meta_it->second.WriteAllAndFlushTraceWriter([] {});
-      should_ack_flush = true;
-    }
-    if (data_sources_.find(ds_id) != data_sources_.end()) {
-      should_ack_flush = true;
     }
   }
-  if (should_ack_flush)
-    endpoint_->NotifyFlushComplete(flush_id);
+
+  endpoint_->NotifyFlushComplete(flush_id);
 }
 
 void PerfProducer::ClearIncrementalState(
@@ -486,6 +541,7 @@ bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
 // Note: first-fit makes descriptor request fulfillment not true FIFO. But the
 // edge-cases where it matters are very unlikely.
 void PerfProducer::OnProcDescriptors(pid_t pid,
+                                     uid_t uid,
                                      base::ScopedFile maps_fd,
                                      base::ScopedFile mem_fd) {
   // Find first-fit data source that requested descriptors for the process.
@@ -494,6 +550,13 @@ void PerfProducer::OnProcDescriptors(pid_t pid,
     auto proc_status_it = ds.process_states.find(pid);
     if (proc_status_it == ds.process_states.end())
       continue;
+
+    if (!CanProfile(ds.event_config.raw_ds_config(), uid)) {
+      PERFETTO_DLOG("Not profileable: pid [%d], uid [%d] for DS [%zu]",
+                    static_cast<int>(pid), static_cast<int>(uid),
+                    static_cast<size_t>(it.first));
+      continue;
+    }
 
     // Match against either resolving, or expired state. In the latter
     // case, it means that the async response was slow enough that we've marked
@@ -587,7 +650,11 @@ void PerfProducer::PostEmitSample(DataSourceInstanceID ds_id,
 void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
                               CompletedSample sample) {
   auto ds_it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(ds_it != data_sources_.end());
+  if (ds_it == data_sources_.end()) {
+    PERFETTO_DLOG("EmitSample(ds: %zu): source gone",
+                  static_cast<size_t>(ds_id));
+    return;
+  }
   DataSourceState& ds = ds_it->second;
 
   // intern callsite
@@ -598,6 +665,7 @@ void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
   // start packet
   auto packet = ds.trace_writer->NewTracePacket();
   packet->set_timestamp(sample.timestamp);
+  packet->set_timestamp_clock_id(protos::pbzero::BUILTIN_CLOCK_MONOTONIC_RAW);
 
   // write new interning data (if any)
   protos::pbzero::InternedData* interned_out = packet->set_interned_data();
@@ -620,7 +688,8 @@ void PerfProducer::EmitRingBufferLoss(DataSourceInstanceID ds_id,
                                       size_t cpu,
                                       uint64_t records_lost) {
   auto ds_it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(ds_it != data_sources_.end());
+  if (ds_it == data_sources_.end())
+    return;
   DataSourceState& ds = ds_it->second;
   PERFETTO_DLOG("DataSource(%zu): cpu%zu lost [%" PRIu64 "] records",
                 static_cast<size_t>(ds_id), cpu, records_lost);
@@ -662,7 +731,8 @@ void PerfProducer::EmitSkippedSample(DataSourceInstanceID ds_id,
                                      ParsedSample sample,
                                      SampleSkipReason reason) {
   auto ds_it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(ds_it != data_sources_.end());
+  if (ds_it == data_sources_.end())
+    return;
   DataSourceState& ds = ds_it->second;
 
   auto packet = ds.trace_writer->NewTracePacket();
@@ -711,7 +781,11 @@ void PerfProducer::PostFinishDataSourceStop(DataSourceInstanceID ds_id) {
 void PerfProducer::FinishDataSourceStop(DataSourceInstanceID ds_id) {
   PERFETTO_LOG("FinishDataSourceStop(%zu)", static_cast<size_t>(ds_id));
   auto ds_it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(ds_it != data_sources_.end());
+  if (ds_it == data_sources_.end()) {
+    PERFETTO_DLOG("FinishDataSourceStop(%zu): source gone",
+                  static_cast<size_t>(ds_id));
+    return;
+  }
   DataSourceState& ds = ds_it->second;
   PERFETTO_CHECK(ds.status == DataSourceState::Status::kShuttingDown);
 
@@ -719,6 +793,46 @@ void PerfProducer::FinishDataSourceStop(DataSourceInstanceID ds_id) {
   data_sources_.erase(ds_it);
 
   endpoint_->NotifyDataSourceStopped(ds_id);
+
+  // Clean up resources if there are no more active sources.
+  if (data_sources_.empty()) {
+    callstack_trie_.ClearTrie();  // purge internings
+    base::MaybeReleaseAllocatorMemToOS();
+  }
+}
+
+// TODO(rsavitski): maybe make the tracing service respect premature
+// producer-driven stops, and then issue a NotifyDataSourceStopped here.
+// Alternatively (and at the expense of higher complexity) introduce a new data
+// source status of "tombstoned", and propagate it until the source is stopped
+// by the service (this would technically allow for stricter lifetime checking
+// of data sources, and help with discarding periodic flushes).
+// TODO(rsavitski): Purging while stopping will currently leave the stop
+// unacknowledged. Consider checking whether the DS is stopping here, and if so,
+// notifying immediately after erasing.
+void PerfProducer::PurgeDataSource(DataSourceInstanceID ds_id) {
+  auto ds_it = data_sources_.find(ds_id);
+  if (ds_it == data_sources_.end())
+    return;
+  DataSourceState& ds = ds_it->second;
+
+  PERFETTO_LOG("Stopping DataSource(%zu) prematurely",
+               static_cast<size_t>(ds_id));
+
+  unwinding_worker_->PostPurgeDataSource(ds_id);
+
+  // Write a packet indicating the abrupt stop.
+  {
+    auto packet = ds.trace_writer->NewTracePacket();
+    packet->set_timestamp(static_cast<uint64_t>(base::GetBootTimeNs().count()));
+    auto* perf_sample = packet->set_perf_sample();
+    auto* producer_event = perf_sample->set_producer_event();
+    producer_event->set_source_stop_reason(
+        protos::pbzero::PerfSample::ProducerEvent::PROFILER_STOP_GUARDRAIL);
+  }
+
+  ds.trace_writer->Flush();
+  data_sources_.erase(ds_it);
 
   // Clean up resources if there are no more active sources.
   if (data_sources_.empty()) {

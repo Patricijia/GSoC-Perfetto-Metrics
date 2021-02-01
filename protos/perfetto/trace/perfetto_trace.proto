@@ -339,6 +339,11 @@ message ChromeConfig {
     USER_INITIATED = 2;
   }
   optional ClientPriority client_priority = 4;
+
+  // Applicable only when using legacy JSON format.
+  // If |json_agent_label_filter| is not empty, only data pertaining to
+  // the specified tracing agent label (e.g. "traceEvents") will be returned.
+  optional string json_agent_label_filter = 5;
 }
 
 // End of protos/perfetto/config/chrome/chrome_config.proto
@@ -368,6 +373,13 @@ message FtraceConfig {
   // kptr_restrict has been manually lowered.
   // It does not disclose KASLR, symbol addresses are mangled.
   optional bool symbolize_ksyms = 13;
+
+  // By default the kernel symbolizer is lazily initialized on a deferred task
+  // to reduce ftrace's time-to-start-recording. Unfortunately that makes
+  // ksyms integration tests hard. This flag forces the kernel symbolizer to be
+  // initialized synchronously on the data source start and hence avoiding
+  // timing races in tests.
+  optional bool initialize_ksyms_synchronously_for_testing = 14;
 }
 
 // End of protos/perfetto/config/ftrace/ftrace_config.proto
@@ -434,6 +446,20 @@ message InodeFileConfig {
 
 // End of protos/perfetto/config/inode_file/inode_file_config.proto
 
+// Begin of protos/perfetto/config/interceptors/console_config.proto
+
+message ConsoleConfig {
+  enum Output {
+    OUTPUT_UNSPECIFIED = 0;
+    OUTPUT_STDOUT = 1;
+    OUTPUT_STDERR = 2;
+  }
+  optional Output output = 1;
+  optional bool enable_colors = 2;
+}
+
+// End of protos/perfetto/config/interceptors/console_config.proto
+
 // Begin of protos/perfetto/config/interceptor_config.proto
 
 // Configuration for trace packet interception. Used for diverting trace data to
@@ -442,6 +468,8 @@ message InodeFileConfig {
 message InterceptorConfig {
   // Matches the name given to RegisterInterceptor().
   optional string name = 1;
+
+  optional ConsoleConfig console_config = 100 [lazy = true];
 }
 
 // End of protos/perfetto/config/interceptor_config.proto
@@ -527,7 +555,7 @@ message ProcessStatsConfig {
 // Begin of protos/perfetto/config/profiling/heapprofd_config.proto
 
 // Configuration for go/heapprofd.
-// Next id: 24
+// Next id: 26
 message HeapprofdConfig {
   message ContinuousDumpConfig {
     // ms to wait before first dump.
@@ -554,6 +582,14 @@ message HeapprofdConfig {
   // BUGS
   // Before Android 12, setting this to 0 would crash the target process.
   optional uint64 sampling_interval_bytes = 1;
+
+  // If less than the given numbers of bytes are left free in the shared
+  // memory buffer, increase sampling interval by a factor of two.
+  // Adaptive sampling is disabled when set to 0.
+  optional uint64 adaptive_sampling_shmem_threshold = 24;
+  // Stop doubling the sampling_interval once the sampling interval has reached
+  // this value.
+  optional uint64 adaptive_sampling_max_sampling_interval_bytes = 25;
 
   // E.g. surfaceflinger, com.android.phone
   // This input is normalized in the following way: if it contains slashes,
@@ -735,8 +771,12 @@ message JavaHprofConfig {
 // At the time of writing, the config options are restricted to the periodic
 // system-wide stack sampling use-case (|all_cpus| must be true).
 //
-// Next id: 13
+// Next id: 15
 message PerfEventConfig {
+  // Event (counter) to use as a time base for the sampling.
+  // If unset, implies the CPU timer (PERF_COUNT_SW_CPU_CLOCK) as the event.
+  optional TracepointEventConfig tracepoint = 14;
+
   // If true, sample events on all CPUs.
   optional bool all_cpus = 1;
 
@@ -790,6 +830,14 @@ message PerfEventConfig {
   optional uint32 additional_cmdline_count = 11;
 
   //
+  // Daemon's resource usage limits:
+  //
+
+  // Stop the data source if traced_perf's combined {RssAnon + Swap} memory
+  // footprint exceeds this value.
+  optional uint32 max_daemon_memory_kb = 13;
+
+  //
   // Uncommon options:
   //
 
@@ -810,6 +858,14 @@ message PerfEventConfig {
   optional uint32 unwind_state_clear_period_ms = 10;
 }
 
+// TODO(rsavitski): figure out the state of function tracepoints in
+// perf_event_open (they're implemented, but have constraints).
+message TracepointEventConfig {
+  // Group and name for the tracepoint, acceptable forms:
+  // * "sched/sched_switch"
+  // * "sched:sched_switch"
+  optional string name = 1;
+}
 // End of protos/perfetto/config/profiling/perf_event_config.proto
 
 // Begin of protos/perfetto/common/sys_stats_counters.proto
@@ -1494,7 +1550,7 @@ message TraceConfig {
       // The producer must specify this name to activate the trigger.
       optional string name = 1;
 
-      // The a std::regex that will match the producer that can activate this
+      // An std::regex that will match the producer that can activate this
       // trigger. This is optional. If unset any producers can activate this
       // trigger.
       optional string producer_name_regex = 2;
@@ -1502,6 +1558,11 @@ message TraceConfig {
       // After a trigger is received either in START_TRACING or STOP_TRACING
       // mode then the trace will end |stop_delay_ms| after triggering.
       optional uint32 stop_delay_ms = 3;
+
+      // Limits the number of traces this trigger can start/stop in a rolling
+      // 24 hour window. If this field is unset or zero, no limit is applied and
+      // activiation of this trigger *always* starts/stops the trace.
+      optional uint32 max_per_24_h = 4;
     }
     // A list of triggers which are related to this configuration. If ANY
     // trigger is seen then an action will be performed based on |trigger_mode|.
@@ -1560,9 +1621,9 @@ message TraceConfig {
   }
   optional CompressionType compression_type = 24;
 
-  // Android-only. Debug builds only. Not for general use. If set, saves a
-  // Dropbox trace into an incident. This field is read by perfetto_cmd, rather
-  // than the tracing service. All fields are mandatory.
+  // Android-only. Not for general use. If set, saves a Dropbox trace into an
+  // incident. This field is read by perfetto_cmd, rather than the tracing
+  // service. All fields are mandatory.
   message IncidentReportConfig {
     optional string destination_package = 1;
     optional string destination_class = 2;
@@ -1805,17 +1866,19 @@ message AndroidLogPacket {
 // This relationship can be reconstructed by using
 //    DisplayFrame.token = SurfaceFrame.display_frame_token
 message FrameTimelineEvent {
-  // Specifies which component was the main source for the jank.
+  // Specifies the reason(s) most likely to have caused the jank.
+  // Used as a bitmask.
   enum JankType {
     JANK_UNSPECIFIED = 0;
     JANK_NONE = 1;
     JANK_SF_SCHEDULING = 2;
-    JANK_PREDICTION_ERROR = 3;
-    JANK_DISPLAY_HAL = 4;
-    JANK_SF_DEADLINE_MISSED = 5;
-    JANK_APP_DEADLINE_MISSED = 6;
-    JANK_BUFFER_STUFFING = 7;
-    JANK_UNKNOWN = 8;
+    JANK_PREDICTION_ERROR = 4;
+    JANK_DISPLAY_HAL = 8;
+    JANK_SF_CPU_DEADLINE_MISSED = 16;
+    JANK_SF_GPU_DEADLINE_MISSED = 32;
+    JANK_APP_DEADLINE_MISSED = 64;
+    JANK_BUFFER_STUFFING = 128;
+    JANK_UNKNOWN = 256;
   };
 
   // Specifies how a frame was presented on screen w.r.t. timing.
@@ -1828,70 +1891,118 @@ message FrameTimelineEvent {
     PRESENT_DROPPED = 4;
   };
 
-  // Represents the app's work on a frame.
-  // Next id: 13
-  message SurfaceFrame {
+  // Indicates the start of expected timeline slice for SurfaceFrames.
+  message ExpectedSurfaceFrameStart {
+    // Cookie used to correlate between the start and end messages of the same
+    // frame. Since all values except the ts are same for start and end, cookie
+    // helps in preventing redundant data transmission.
+    // The same cookie is used only by start and end messages of a single frame
+    // and is otherwise unique.
+    optional int64 cookie = 1;
+
     // Token received by the app for its work. Can be shared between multiple
     // layers of the same app (example: pip mode).
-    optional int64 token = 1;
-
+    optional int64 token = 2;
     // The corresponding DisplayFrame token is required to link the App's work
     // with SurfaceFlinger's work. Many SurfaceFrames can be mapped to a single
     // DisplayFrame.
     // this.display_frame_token = DisplayFrame.token
-    optional int64 display_frame_token = 12;
-
-    optional PresentType present_type = 2;
-    optional bool on_time_finish = 3;
-    optional bool gpu_composition = 4;
-    optional JankType jank_type = 5;
-
-    // Timestamps in nanoseconds using CLOCK_MONOTONIC.
-    // Expected timeline = expected_start to expected_end.
-    optional int64 expected_start_ns = 6;
-    optional int64 expected_end_ns = 7;
-
-    // (b/172587309) Apps currently do not provide actual start time.
-    // Actual timeline = expected_start to actual_end.
-    optional int64 actual_start_ns = 8;
-    // If two SufaceFrames have the same token and same pid, then
-    //  actual timeline =
-    //    expected_start to max(frame1.actual_end, frame2.actual_end)
-    optional int64 actual_end_ns = 9;
+    optional int64 display_frame_token = 3;
 
     // Pid of the app. Used in creating the timeline tracks (and slices) inside
     // the respective process track group.
-    optional int32 pid = 10;
-    optional string layer_name = 11;
+    optional int32 pid = 4;
+    optional string layer_name = 5;
   };
 
-  // Represents the SurfaceFlinger's work on a frame.
-  message DisplayFrame {
+  // Indicates the start of actual timeline slice for SurfaceFrames. Also
+  // includes the jank information.
+  message ActualSurfaceFrameStart {
+    // Cookie used to correlate between the start and end messages of the same
+    // frame. Since all values except the ts are same for start and end, cookie
+    // helps in preventing redundant data transmission.
+    // The same cookie is used only by start and end messages of a single frame
+    // and is otherwise unique.
+    optional int64 cookie = 1;
+
+    // Token received by the app for its work. Can be shared between multiple
+    // layers of the same app (example: pip mode).
+    optional int64 token = 2;
+    // The corresponding DisplayFrame token is required to link the App's work
+    // with SurfaceFlinger's work. Many SurfaceFrames can be mapped to a single
+    // DisplayFrame.
+    // this.display_frame_token = DisplayFrame.token
+    optional int64 display_frame_token = 3;
+
+    // Pid of the app. Used in creating the timeline tracks (and slices) inside
+    // the respective process track group.
+    optional int32 pid = 4;
+    optional string layer_name = 5;
+
+    optional PresentType present_type = 6;
+    optional bool on_time_finish = 7;
+    optional bool gpu_composition = 8;
+    // A bitmask of JankType. More than one reason can be attributed to a janky
+    // frame.
+    optional int32 jank_type = 9;
+  };
+
+  // Indicates the start of expected timeline slice for DisplayFrames.
+  message ExpectedDisplayFrameStart {
+    // Cookie used to correlate between the start and end messages of the same
+    // frame. Since all values except the ts are same for start and end, cookie
+    // helps in preventing redundant data transmission.
+    // The same cookie is used only by start and end messages of a single frame
+    // and is otherwise unique.
+    optional int64 cookie = 1;
+
     // Token received by SurfaceFlinger for its work
     // this.token = SurfaceFrame.display_frame_token
-    optional int64 token = 1;
-    optional PresentType present_type = 2;
-    optional bool on_time_finish = 3;
-    optional bool gpu_composition = 4;
-    optional JankType jank_type = 5;
-
-    // Timestamps in nanoseconds using CLOCK_MONOTONIC.
-    // Expected timeline = expected_start to expected_end.
-    optional int64 expected_start_ns = 6;
-    optional int64 expected_end_ns = 7;
-
-    // Actual timeline = actual_start to actual_end.
-    optional int64 actual_start_ns = 8;
-    optional int64 actual_end_ns = 9;
+    optional int64 token = 2;
 
     // Pid of SurfaceFlinger. Used in creating the timeline tracks (and slices)
     // inside the SurfaceFlinger process group.
-    optional int32 pid = 10;
+    optional int32 pid = 3;
   };
 
+  // Indicates the start of actual timeline slice for DisplayFrames. Also
+  // includes the jank information.
+  message ActualDisplayFrameStart {
+    // Cookie used to correlate between the start and end messages of the same
+    // frame. Since all values except the ts are same for start and end, cookie
+    // helps in preventing redundant data transmission.
+    // The same cookie is used only by start and end messages of a single frame
+    // and is otherwise unique.
+    optional int64 cookie = 1;
+
+    // Token received by SurfaceFlinger for its work
+    // this.token = SurfaceFrame.display_frame_token
+    optional int64 token = 2;
+
+    // Pid of SurfaceFlinger. Used in creating the timeline tracks (and slices)
+    // inside the SurfaceFlinger process group.
+    optional int32 pid = 3;
+
+    optional PresentType present_type = 4;
+    optional bool on_time_finish = 5;
+    optional bool gpu_composition = 6;
+    // A bitmask of JankType. More than one reason can be attributed to a janky
+    // frame.
+    optional int32 jank_type = 7;
+  };
+
+  // FrameEnd just sends the cookie to indicate that the corresponding
+  // <display/surface>frame slice's end.
+  message FrameEnd { optional int64 cookie = 1; };
+
   oneof event {
-    DisplayFrame display_frame = 1;
-    SurfaceFrame surface_frame = 2;
+    ExpectedDisplayFrameStart expected_display_frame_start = 1;
+    ActualDisplayFrameStart actual_display_frame_start = 2;
+
+    ExpectedSurfaceFrameStart expected_surface_frame_start = 3;
+    ActualSurfaceFrameStart actual_surface_frame_start = 4;
+
+    FrameEnd frame_end = 5;
   }
 }
 
@@ -6026,6 +6137,17 @@ message CompositorTimingHistory {
 
 // End of protos/perfetto/trace/track_event/chrome_compositor_scheduler_state.proto
 
+// Begin of protos/perfetto/trace/track_event/chrome_content_settings_event_info.proto
+
+// Details about ContentSettings trace events.
+message ChromeContentSettingsEventInfo {
+  // The number of user defined hostname patterns for content settings at
+  // browser start. Similar to UMA histogram
+  // 'ContentSettings.NumberOfExceptions'.
+  optional uint32 number_of_exceptions = 1;
+}
+// End of protos/perfetto/trace/track_event/chrome_content_settings_event_info.proto
+
 // Begin of protos/perfetto/trace/track_event/chrome_frame_reporter.proto
 
 message ChromeFrameReporter {
@@ -6225,6 +6347,9 @@ message ChromeLegacyIpc {
 message ChromeMessagePump {
   // True if there are sent messages in the queue.
   optional bool sent_messages_in_queue = 1;
+  // Interned SourceLocation of IO handler that MessagePumpForIO is about to
+  // invoke.
+  optional uint64 io_handler_location_iid = 2;
 }
 
 // End of protos/perfetto/trace/track_event/chrome_message_pump.proto
@@ -6368,7 +6493,7 @@ message TaskExecution {
 // their default track association) can be emitted as part of a
 // TrackEventDefaults message.
 //
-// Next reserved id: 13 (up to 15). Next id: 43.
+// Next reserved id: 13 (up to 15). Next id: 44.
 message TrackEvent {
   // Names of categories of the event. In the client library, categories are a
   // way to turn groups of individual events on or off.
@@ -6502,6 +6627,8 @@ message TrackEvent {
   optional ChromeApplicationStateInfo chrome_application_state_info = 39;
   optional ChromeRendererSchedulerState chrome_renderer_scheduler_state = 40;
   optional ChromeWindowHandleEventInfo chrome_window_handle_event_info = 41;
+  optional ChromeContentSettingsEventInfo chrome_content_settings_event_info =
+      43;
 
   // This field is used only if the source location represents the function that
   // executes during this event.
@@ -7257,6 +7384,8 @@ message ProfilePacket {
     optional bool hit_guardrail = 10;
 
     optional string heap_name = 11;
+    optional uint64 sampling_interval_bytes = 12;
+    optional uint64 orig_sampling_interval_bytes = 13;
 
     // Timestamp of the state of the target process that this dump represents.
     // This can be different to the timestamp of the TracePackets for various
@@ -7348,11 +7477,16 @@ message Profiling {
 
 // Individual performance sampling packet payload. Typically corresponds to a
 // stack sample on a configration-dependent counter overflow.
-// Timestamps are within the root packet (in the CLOCK_BOOTTIME domain).
-// There are three distinct views of this message:
+//
+// Timestamps are within the root packet. This used to use the CLOCK_BOOTTIME
+// domain, but now the default is CLOCK_MONOTONIC_RAW which is compatible with
+// more event types.
+//
+// There are several distinct views of this message:
 // * completely processed sample (callstack_iid set)
 // * indication of kernel buffer data loss (kernel_records_lost set)
 // * indication of skipped samples (sample_skipped_reason set)
+// * notable event in the sampling implementation (producer_event set)
 message PerfSample {
   optional uint32 cpu = 1;
   optional uint32 pid = 2;
@@ -7394,6 +7528,18 @@ message PerfSample {
   oneof optional_sample_skipped_reason {
     SampleSkipReason sample_skipped_reason = 18;
   };
+
+  // A notable event within the sampling implementation.
+  message ProducerEvent {
+    enum DataSourceStopReason {
+      PROFILER_STOP_UNKNOWN = 0;
+      PROFILER_STOP_GUARDRAIL = 1;
+    }
+    oneof optional_source_stop_reason {
+      DataSourceStopReason source_stop_reason = 1;
+    }
+  }
+  optional ProducerEvent producer_event = 19;
 }
 
 // End of protos/perfetto/trace/profiling/profile_packet.proto
@@ -7871,6 +8017,9 @@ message ChromeThreadDescriptor {
     THREAD_MAIN = 1;
     THREAD_IO = 2;
 
+    // Browser:
+    THREAD_NETWORK_SERVICE = 12;
+
     // Scheduler:
     THREAD_POOL_BG_WORKER = 3;
     THREAD_POOL_FG_WORKER = 4;
@@ -8078,7 +8227,7 @@ message Trigger {
 //
 // See the [Buffers and Dataflow](/docs/concepts/buffers.md) doc for details.
 //
-// Next reserved id: 13 (up to 15).
+// Next reserved id: 14 (up to 15).
 // Next id: 77.
 message TracePacket {
   // The timestamp of the TracePacket.
@@ -8276,24 +8425,3 @@ message Trace {
 }
 
 // End of protos/perfetto/trace/trace.proto
-
-// Begin of protos/perfetto/trace/test_extensions.proto
-
-// Extensions for TrackEvent used for integration testing. This proto file is
-// compiled to descriptor and is used in tools/diff_test_trace_processor.py.
-//
-// See docs/design-docs/extensions.md for more details.
-message TestExtension {
-  extend TrackEvent {
-    optional string string_extension_for_testing = 9900;
-    repeated int32 int_extension_for_testing = 9901;
-    optional string omitted_extension_for_testing = 9902;
-    optional TestExtensionChild nested_message_extension_for_testing = 9903;
-  }
-}
-
-message TestExtensionChild {
-  optional string child_field_for_testing = 1;
-}
-
-// End of protos/perfetto/trace/test_extensions.proto

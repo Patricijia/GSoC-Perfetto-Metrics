@@ -40,6 +40,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/utils.h"
@@ -165,7 +166,7 @@ std::shared_ptr<Client> Client::CreateAndHandshake(
     return nullptr;
   }
 
-  PERFETTO_DCHECK(sock.IsBlocking());
+  sock.DcheckIsBlocking(true);
 
   // We might be running in a process that is not dumpable (such as app
   // processes on user builds), in which case the /proc/self/mem will be chown'd
@@ -451,7 +452,9 @@ bool Client::RecordFree(uint32_t heap_id, const uint64_t alloc_address) {
   return true;
 }
 
-bool Client::RecordHeapName(uint32_t heap_id, const char* heap_name) {
+bool Client::RecordHeapInfo(uint32_t heap_id,
+                            const char* heap_name,
+                            uint64_t interval) {
   if (PERFETTO_UNLIKELY(IsPostFork())) {
     return postfork_return_value_;
   }
@@ -460,6 +463,7 @@ bool Client::RecordHeapName(uint32_t heap_id, const char* heap_name) {
   hnr.heap_id = heap_id;
   strncpy(&hnr.heap_name[0], heap_name, sizeof(hnr.heap_name));
   hnr.heap_name[sizeof(hnr.heap_name) - 1] = '\0';
+  hnr.sample_interval = interval;
 
   WireMessage msg = {};
   msg.record_type = RecordType::HeapName;
@@ -468,7 +472,7 @@ bool Client::RecordHeapName(uint32_t heap_id, const char* heap_name) {
 }
 
 bool Client::IsConnected() {
-  PERFETTO_DCHECK(!sock_.IsBlocking());
+  sock_.DcheckIsBlocking(false);
   char buf[1];
   ssize_t recv_bytes = sock_.Receive(buf, sizeof(buf), nullptr, 0);
   if (recv_bytes == 0)

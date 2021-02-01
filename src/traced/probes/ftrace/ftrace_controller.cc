@@ -97,12 +97,6 @@ void ClearFile(const char* path) {
 
 }  // namespace
 
-const char* const FtraceController::kTracingPaths[] = {
-    "/sys/kernel/tracing/",
-    "/sys/kernel/debug/tracing/",
-    nullptr,
-};
-
 // Method of last resort to reset ftrace state.
 // We don't know what state the rest of the system and process is so as far
 // as possible avoid allocations.
@@ -121,15 +115,11 @@ void HardResetFtraceState() {
 }
 
 // static
-// TODO(taylori): Add a test for tracing paths in integration tests.
 std::unique_ptr<FtraceController> FtraceController::Create(
     base::TaskRunner* runner,
     Observer* observer) {
-  size_t index = 0;
-  std::unique_ptr<FtraceProcfs> ftrace_procfs = nullptr;
-  while (!ftrace_procfs && kTracingPaths[index]) {
-    ftrace_procfs = FtraceProcfs::Create(kTracingPaths[index++]);
-  }
+  std::unique_ptr<FtraceProcfs> ftrace_procfs =
+      FtraceProcfs::CreateGuessingMountPoint();
 
   if (!ftrace_procfs)
     return nullptr;
@@ -395,11 +385,15 @@ bool FtraceController::StartDataSource(FtraceDataSource* data_source) {
   // strictly required here but is to avoid hitting the parsing cost while
   // processing the first ftrace event batch in CpuReader.
   if (data_source->config().symbolize_ksyms()) {
-    auto weak_this = weak_factory_.GetWeakPtr();
-    task_runner_->PostTask([weak_this] {
-      if (weak_this)
-        weak_this->symbolizer_->GetOrCreateKernelSymbolMap();
-    });
+    if (data_source->config().initialize_ksyms_synchronously_for_testing()) {
+      symbolizer_->GetOrCreateKernelSymbolMap();
+    } else {
+      auto weak_this = weak_factory_.GetWeakPtr();
+      task_runner_->PostTask([weak_this] {
+        if (weak_this)
+          weak_this->symbolizer_->GetOrCreateKernelSymbolMap();
+      });
+    }
   }
 
   return true;

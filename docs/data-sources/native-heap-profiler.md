@@ -299,6 +299,26 @@ to `index`, and the symbolizer will recursively search the given directory for
 an ELF file with the given build id. This way, you will not have to worry
 about correct filenames.
 
+## Deobfuscation
+
+If your profile contains obfuscated Java methods (like `fsd.a`), you can
+provide a deobfuscation map to turn them back into human readable.
+To do so, use the `PERFETTO_PROGUARD_MAP` environment variable, using the
+format `packagename=filename[:packagename=filename...]`, e.g.
+`PERFETTO_PROGUARD_MAP=com.example.pkg1=foo.txt:com.example.pkg2=bar.txt`.
+All tools
+(traceconv, trace_processor_shell, the heap_profile script) support specifying
+the `PERFETTO_PROGUARD_MAP` as an environment variable.
+
+You can get a deobfuscation map for your trace using
+`tools/traceconv deobfuscate`. Then concatenate the resulting file to your
+trace to get a deobfuscated version of it.
+
+```
+PERFETTO_PROGUARD_MAP=com.example.pkg tools/traceconv deobfuscate ${TRACE} > deobfuscation_map
+cat ${TRACE} deobfuscation_map > deobfuscated_trace
+```
+
 ## Troubleshooting
 
 ### Buffer overrun
@@ -421,7 +441,7 @@ EOF
 Finally, run your target (e.g. trace_processor_shell) with LD_PRELOAD
 
 ```
-LD_PRELOAD=out/linux_clang_release/libheapprofd_preload.so out/linux_clang_release/trace_processor_shell <trace>
+LD_PRELOAD=out/linux_clang_release/libheapprofd_glibc_preload.so out/linux_clang_release/trace_processor_shell <trace>
 ```
 
 Then, Ctrl-C the Perfetto invocation and upload ~/heapprofd-trace to the
@@ -436,6 +456,8 @@ Then, Ctrl-C the Perfetto invocation and upload ~/heapprofd-trace to the
   This is an invalid config that should be rejected instead.
 * For startup profiles, some frame names might be missing. This will be
   resolved in Android 12.
+* `Failed to send control socket byte.` is displayed in logcat at the end of
+  every profile. This is benign.
 
 ### {#known-issues-android10} Android 10
 * Function names in libraries with load bias might be incorrect. Use
@@ -458,6 +480,8 @@ Then, Ctrl-C the Perfetto invocation and upload ~/heapprofd-trace to the
   the profile. Note that this is in violation of the POSIX standard.
 * Setting `sampling_interval_bytes` to 0 crashes the target process.
   This is an invalid config that should be rejected instead.
+* `Failed to send control socket byte.` is displayed in logcat at the end of
+  every profile. This is benign.
 
 ## Heapprofd vs malloc_info() vs RSS
 

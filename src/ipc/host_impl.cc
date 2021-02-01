@@ -33,6 +33,18 @@
 namespace perfetto {
 namespace ipc {
 
+namespace {
+uid_t GetPosixPeerUid(base::UnixSocket* sock) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+  base::ignore_result(sock);
+  // Unsupported. Must be != kInvalidUid or the PacketValidator will fail.
+  return 0;
+#else
+  return sock->peer_uid_posix();
+#endif
+}
+}  // namespace
+
 // static
 std::unique_ptr<Host> Host::CreateInstance(const char* socket_name,
                                            base::TaskRunner* task_runner) {
@@ -43,7 +55,7 @@ std::unique_ptr<Host> Host::CreateInstance(const char* socket_name,
 }
 
 // static
-std::unique_ptr<Host> Host::CreateInstance(base::ScopedFile socket_fd,
+std::unique_ptr<Host> Host::CreateInstance(base::ScopedSocketHandle socket_fd,
                                            base::TaskRunner* task_runner) {
   std::unique_ptr<HostImpl> host(
       new HostImpl(std::move(socket_fd), task_runner));
@@ -52,7 +64,8 @@ std::unique_ptr<Host> Host::CreateInstance(base::ScopedFile socket_fd,
   return std::unique_ptr<Host>(std::move(host));
 }
 
-HostImpl::HostImpl(base::ScopedFile socket_fd, base::TaskRunner* task_runner)
+HostImpl::HostImpl(base::ScopedSocketHandle socket_fd,
+                   base::TaskRunner* task_runner)
     : task_runner_(task_runner), weak_ptr_factory_(this) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   sock_ = base::UnixSocket::Listen(std::move(socket_fd), this, task_runner_,
@@ -199,7 +212,8 @@ void HostImpl::OnInvokeMethod(ClientConnection* client,
     });
   }
 
-  service->client_info_ = ClientInfo(client->id, client->sock->peer_uid());
+  service->client_info_ =
+      ClientInfo(client->id, GetPosixPeerUid(client->sock.get()));
   service->received_fd_ = &client->received_fd;
   method.invoker(service, *decoded_req_args, std::move(deferred_reply));
   service->received_fd_ = nullptr;
@@ -251,7 +265,8 @@ void HostImpl::OnDisconnect(base::UnixSocket* sock) {
   if (it == clients_by_socket_.end())
     return;
   ClientID client_id = it->second->id;
-  ClientInfo client_info(client_id, sock->peer_uid());
+
+  ClientInfo client_info(client_id, GetPosixPeerUid(sock));
   clients_by_socket_.erase(it);
   PERFETTO_DCHECK(clients_.count(client_id));
   clients_.erase(client_id);

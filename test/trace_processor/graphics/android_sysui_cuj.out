@@ -1,4 +1,5 @@
 android_sysui_cuj {
+ cuj_name: "SHADE_ROW_EXPAND"
  frames {
    number: 1
    ts: 0
@@ -13,9 +14,9 @@ android_sysui_cuj {
  frames {
    number: 3
    ts: 30000000
-   dur: 28000000
-   jank_cause: "MainThread - binder calls count"
+   dur: 22000000
    jank_cause: "RenderThread - long flush layers"
+   jank_cause: "MainThread - binder calls count"
  }
  frames {
    number: 4
@@ -30,4 +31,15 @@ android_sysui_cuj {
    dur: 18000000
    jank_cause: "RenderThread - scheduler"
  }
+  frames {
+    number: 6
+    ts: 100000000
+    dur: 22000000
+   jank_cause: "GPU completion - long completion time"
+  }
+  frames {
+    number: 7
+    ts: 200000000
+    dur: 10000000
+  }
 }

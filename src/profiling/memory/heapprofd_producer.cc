@@ -26,18 +26,27 @@
 #include <sys/types.h>
 #include <unistd.h>
 
+#include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/thread_task_runner.h"
 #include "perfetto/ext/base/watchdog_posix.h"
+#include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/data_source_descriptor.h"
+#include "src/profiling/common/producer_support.h"
+#include "src/profiling/common/profiler_guardrails.h"
 #include "src/profiling/memory/unwound_messages.h"
 #include "src/profiling/memory/wire_protocol.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+#include <sys/system_properties.h>
+#endif
 
 namespace perfetto {
 namespace profiling {
@@ -88,15 +97,6 @@ bool ConfigTargetsProcess(const HeapprofdConfig& cfg,
   return false;
 }
 
-// Return largest n such that pow(2, n) < value.
-size_t Log2LessThan(uint64_t value) {
-  size_t i = 0;
-  while (value) {
-    i++;
-    value >>= 1;
-  }
-  return i;
-}
 
 bool IsFile(int fd, const char* fn) {
   struct stat fdstat;
@@ -125,6 +125,10 @@ bool HeapprofdConfigToClientConfiguration(
   cli_config->block_client_timeout_us =
       heapprofd_config.block_client_timeout_us();
   cli_config->all_heaps = heapprofd_config.all_heaps();
+  cli_config->adaptive_sampling_shmem_threshold =
+      heapprofd_config.adaptive_sampling_shmem_threshold();
+  cli_config->adaptive_sampling_max_sampling_interval_bytes =
+      heapprofd_config.adaptive_sampling_max_sampling_interval_bytes();
   size_t n = 0;
   std::vector<std::string> heaps = heapprofd_config.heaps();
   std::vector<uint64_t> heap_intervals =
@@ -169,30 +173,6 @@ bool HeapprofdConfigToClientConfiguration(
   return true;
 }
 
-const uint64_t LogHistogram::kMaxBucket = 0;
-
-std::vector<std::pair<uint64_t, uint64_t>> LogHistogram::GetData() {
-  std::vector<std::pair<uint64_t, uint64_t>> data;
-  data.reserve(kBuckets);
-  for (size_t i = 0; i < kBuckets; ++i) {
-    if (i == kBuckets - 1)
-      data.emplace_back(kMaxBucket, values_[i]);
-    else
-      data.emplace_back(1 << i, values_[i]);
-  }
-  return data;
-}
-
-size_t LogHistogram::GetBucket(uint64_t value) {
-  if (value == 0)
-    return 0;
-
-  size_t hibit = Log2LessThan(value);
-  if (hibit >= kBuckets)
-    return kBuckets - 1;
-  return hibit;
-}
-
 // We create kUnwinderThreads unwinding threads. Bookkeeping is done on the main
 // thread.
 HeapprofdProducer::HeapprofdProducer(HeapprofdMode mode,
@@ -204,25 +184,8 @@ HeapprofdProducer::HeapprofdProducer(HeapprofdMode mode,
       unwinding_workers_(MakeUnwindingWorkers(this, kUnwinderThreads)),
       socket_delegate_(this),
       weak_factory_(this) {
-  auto stat_fd = base::OpenFile("/proc/self/stat", O_RDONLY | O_CLOEXEC);
-  if (!stat_fd) {
-    PERFETTO_ELOG(
-        "Failed to open /proc/self/stat. Cannot accept profiles "
-        "with CPU guardrails.");
-  } else {
-    profiler_cpu_guardrails_.emplace(std::move(stat_fd));
-    CheckDataSourceCpuTask();  // Kick off guardrail task.
-  }
-
-  auto status_fd = base::OpenFile("/proc/self/status", O_RDONLY | O_CLOEXEC);
-  if (!status_fd) {
-    PERFETTO_ELOG(
-        "Failed to open /proc/self/status. Cannot accept profiles "
-        "with memory guardrails.");
-  } else {
-    profiler_memory_guardrails_.emplace(std::move(status_fd));
-    CheckDataSourceMemoryTask();  // Kick off guardrail task.
-  }
+  CheckDataSourceCpuTask();
+  CheckDataSourceMemoryTask();
 }
 
 HeapprofdProducer::~HeapprofdProducer() = default;
@@ -231,10 +194,6 @@ void HeapprofdProducer::SetTargetProcess(pid_t target_pid,
                                          std::string target_cmdline) {
   target_process_.pid = target_pid;
   target_process_.cmdline = target_cmdline;
-}
-
-void HeapprofdProducer::SetInheritedSocket(base::ScopedFile inherited_socket) {
-  inherited_fd_ = std::move(inherited_socket);
 }
 
 void HeapprofdProducer::SetDataSourceCallback(std::function<void()> fn) {
@@ -345,22 +304,6 @@ void HeapprofdProducer::Restart() {
   ConnectWithRetries(socket_name);
 }
 
-void HeapprofdProducer::ScheduleActiveDataSourceWatchdog() {
-  PERFETTO_DCHECK(mode_ == HeapprofdMode::kChild);
-
-  // Post the first check after a delay, to let the freshly forked heapprofd
-  // to receive the active data sources from traced. The checks will reschedule
-  // themselves from that point onwards.
-  auto weak_producer = weak_factory_.GetWeakPtr();
-  task_runner_->PostDelayedTask(
-      [weak_producer]() {
-        if (!weak_producer)
-          return;
-        weak_producer->ActiveDataSourceWatchdogCheck();
-      },
-      kChildModeWatchdogPeriodMs);
-}
-
 void HeapprofdProducer::ActiveDataSourceWatchdogCheck() {
   PERFETTO_DCHECK(mode_ == HeapprofdMode::kChild);
 
@@ -464,19 +407,12 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
 
   base::Optional<uint64_t> start_cputime_sec;
   if (heapprofd_config.max_heapprofd_cpu_secs() > 0) {
-    if (profiler_cpu_guardrails_)
-      start_cputime_sec = profiler_cpu_guardrails_->GetCputimeSec();
+    start_cputime_sec = GetCputimeSecForCurrentProcess();
 
     if (!start_cputime_sec) {
       PERFETTO_ELOG("Failed to enforce CPU guardrail. Rejecting config.");
       return;
     }
-  }
-
-  if (heapprofd_config.has_max_heapprofd_memory_kb() &&
-      !profiler_memory_guardrails_) {
-    PERFETTO_ELOG("Failed to enforce memory guardrail. Rejecting config.");
-    return;
   }
 
   auto buffer_id = static_cast<BufferID>(ds_config.target_buffer());
@@ -486,30 +422,33 @@ void HeapprofdProducer::SetupDataSource(DataSourceInstanceID id,
   if (!HeapprofdConfigToClientConfiguration(heapprofd_config, &cli_config))
     return;
   data_source.config = heapprofd_config;
+  data_source.ds_config = ds_config;
   data_source.normalized_cmdlines = std::move(normalized_cmdlines.value());
   data_source.stop_timeout_ms = ds_config.stop_timeout_ms()
                                     ? ds_config.stop_timeout_ms()
                                     : 5000 /* kDataSourceStopTimeoutMs */;
-  data_source.start_cputime_sec = start_cputime_sec;
+  data_source.guardrail_config.cpu_start_secs = start_cputime_sec;
+  data_source.guardrail_config.memory_guardrail_kb =
+      heapprofd_config.max_heapprofd_memory_kb();
+  data_source.guardrail_config.cpu_guardrail_sec =
+      heapprofd_config.max_heapprofd_cpu_secs();
 
   InterningOutputTracker::WriteFixedInterningsPacket(
       data_source.trace_writer.get());
   data_sources_.emplace(id, std::move(data_source));
   PERFETTO_DLOG("Set up data source.");
 
-  if (mode_ == HeapprofdMode::kChild && inherited_fd_)
-    AdoptSocket(std::move(inherited_fd_));
   if (mode_ == HeapprofdMode::kChild && data_source_callback_)
     (*data_source_callback_)();
 }
 
 bool HeapprofdProducer::IsPidProfiled(pid_t pid) {
-  for (const auto& pair : data_sources_) {
-    const DataSource& ds = pair.second;
-    if (ds.process_states.find(pid) != ds.process_states.cend())
-      return true;
-  }
-  return false;
+  return std::any_of(
+      data_sources_.cbegin(), data_sources_.cend(),
+      [pid](const std::pair<const DataSourceInstanceID, DataSource>& p) {
+        const DataSource& ds = p.second;
+        return ds.process_states.count(pid) > 0;
+      });
 }
 
 void HeapprofdProducer::SetStartupProperties(DataSource* data_source) {
@@ -691,31 +630,51 @@ void HeapprofdProducer::DoContinuousDump(DataSourceInstanceID id,
       dump_interval);
 }
 
+// static
+void HeapprofdProducer::SetStats(
+    protos::pbzero::ProfilePacket::ProcessStats* stats,
+    const ProcessState& process_state) {
+  stats->set_unwinding_errors(process_state.unwinding_errors);
+  stats->set_heap_samples(process_state.heap_samples);
+  stats->set_map_reparses(process_state.map_reparses);
+  stats->set_total_unwinding_time_us(process_state.total_unwinding_time_us);
+  stats->set_client_spinlock_blocked_us(
+      process_state.client_spinlock_blocked_us);
+  auto* unwinding_hist = stats->set_unwinding_time_us();
+  for (const auto& p : process_state.unwinding_time_us.GetData()) {
+    auto* bucket = unwinding_hist->add_buckets();
+    if (p.first == LogHistogram::kMaxBucket)
+      bucket->set_max_bucket(true);
+    else
+      bucket->set_upper_limit(p.first);
+    bucket->set_count(p.second);
+  }
+}
+
 void HeapprofdProducer::DumpProcessState(DataSource* data_source,
                                          pid_t pid,
                                          ProcessState* process_state) {
-  for (auto& heap_id_and_heap_tracker : process_state->heap_trackers) {
-    uint32_t heap_id = heap_id_and_heap_tracker.first;
-    HeapTracker& heap_tracker = heap_id_and_heap_tracker.second;
+  for (auto& heap_id_and_heap_info : process_state->heap_infos) {
+    ProcessState::HeapInfo& heap_info = heap_id_and_heap_info.second;
 
     bool from_startup = data_source->signaled_pids.find(pid) ==
                         data_source->signaled_pids.cend();
     uint64_t dump_timestamp;
     if (data_source->config.dump_at_max())
-      dump_timestamp = heap_tracker.max_timestamp();
+      dump_timestamp = heap_info.heap_tracker.max_timestamp();
     else
-      dump_timestamp = heap_tracker.committed_timestamp();
+      dump_timestamp = heap_info.heap_tracker.committed_timestamp();
 
     const char* heap_name = nullptr;
-    auto it = process_state->heap_names.find(heap_id);
-    if (it != process_state->heap_names.end())
-      heap_name = it->second.c_str();
-    else
-      PERFETTO_ELOG("Invalid heap id %" PRIu32, heap_id);
+    if (!heap_info.heap_name.empty())
+      heap_name = heap_info.heap_name.c_str();
+    uint64_t sampling_interval = heap_info.sampling_interval;
+    uint64_t orig_sampling_interval = heap_info.orig_sampling_interval;
 
     auto new_heapsamples =
         [pid, from_startup, dump_timestamp, process_state, data_source,
-         heap_name](ProfilePacket::ProcessHeapSamples* proto) {
+         heap_name, sampling_interval,
+         orig_sampling_interval](ProfilePacket::ProcessHeapSamples* proto) {
           proto->set_pid(static_cast<uint64_t>(pid));
           proto->set_timestamp(dump_timestamp);
           proto->set_from_startup(from_startup);
@@ -725,30 +684,17 @@ void HeapprofdProducer::DumpProcessState(DataSource* data_source,
           proto->set_hit_guardrail(data_source->hit_guardrail);
           if (heap_name)
             proto->set_heap_name(heap_name);
+          proto->set_sampling_interval_bytes(sampling_interval);
+          proto->set_orig_sampling_interval_bytes(orig_sampling_interval);
           auto* stats = proto->set_stats();
-          stats->set_unwinding_errors(process_state->unwinding_errors);
-          stats->set_heap_samples(process_state->heap_samples);
-          stats->set_map_reparses(process_state->map_reparses);
-          stats->set_total_unwinding_time_us(
-              process_state->total_unwinding_time_us);
-          stats->set_client_spinlock_blocked_us(
-              process_state->client_spinlock_blocked_us);
-          auto* unwinding_hist = stats->set_unwinding_time_us();
-          for (const auto& p : process_state->unwinding_time_us.GetData()) {
-            auto* bucket = unwinding_hist->add_buckets();
-            if (p.first == LogHistogram::kMaxBucket)
-              bucket->set_max_bucket(true);
-            else
-              bucket->set_upper_limit(p.first);
-            bucket->set_count(p.second);
-          }
+          SetStats(stats, *process_state);
         };
 
     DumpState dump_state(data_source->trace_writer.get(),
                          std::move(new_heapsamples),
                          &data_source->intern_state);
 
-    heap_tracker.GetCallstackAllocations(
+    heap_info.heap_tracker.GetCallstackAllocations(
         [&dump_state,
          &data_source](const HeapTracker::CallstackAllocations& alloc) {
           dump_state.WriteAllocation(alloc, data_source->config.dump_at_max());
@@ -820,7 +766,7 @@ void HeapprofdProducer::FinishDataSourceFlush(FlushRequestID flush_id) {
 }
 
 void HeapprofdProducer::SocketDelegate::OnDisconnect(base::UnixSocket* self) {
-  auto it = producer_->pending_processes_.find(self->peer_pid());
+  auto it = producer_->pending_processes_.find(self->peer_pid_linux());
   if (it == producer_->pending_processes_.end()) {
     PERFETTO_DFATAL_OR_ELOG("Unexpected disconnect.");
     return;
@@ -834,7 +780,7 @@ void HeapprofdProducer::SocketDelegate::OnNewIncomingConnection(
     base::UnixSocket*,
     std::unique_ptr<base::UnixSocket> new_connection) {
   Process peer_process;
-  peer_process.pid = new_connection->peer_pid();
+  peer_process.pid = new_connection->peer_pid_linux();
   if (!GetCmdlineForPID(peer_process.pid, &peer_process.cmdline))
     PERFETTO_PLOG("Failed to get cmdline for %d", peer_process.pid);
 
@@ -843,7 +789,7 @@ void HeapprofdProducer::SocketDelegate::OnNewIncomingConnection(
 
 void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     base::UnixSocket* self) {
-  auto it = producer_->pending_processes_.find(self->peer_pid());
+  auto it = producer_->pending_processes_.find(self->peer_pid_linux());
   if (it == producer_->pending_processes_.end()) {
     PERFETTO_DFATAL_OR_ELOG("Unexpected data.");
     return;
@@ -872,14 +818,15 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     }
 
     std::string maps_file =
-        "/proc/" + std::to_string(self->peer_pid()) + "/maps";
+        "/proc/" + std::to_string(self->peer_pid_linux()) + "/maps";
     if (!IsFile(*fds[kHandshakeMaps], maps_file.c_str())) {
       producer_->pending_processes_.erase(it);
       PERFETTO_ELOG("Received invalid maps FD.");
       return;
     }
 
-    std::string mem_file = "/proc/" + std::to_string(self->peer_pid()) + "/mem";
+    std::string mem_file =
+        "/proc/" + std::to_string(self->peer_pid_linux()) + "/mem";
     if (!IsFile(*fds[kHandshakeMem], mem_file.c_str())) {
       producer_->pending_processes_.erase(it);
       PERFETTO_ELOG("Received invalid mem FD.");
@@ -887,11 +834,11 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     }
 
     data_source.process_states.emplace(
-        std::piecewise_construct, std::forward_as_tuple(self->peer_pid()),
+        std::piecewise_construct, std::forward_as_tuple(self->peer_pid_linux()),
         std::forward_as_tuple(&producer_->callsites_,
                               data_source.config.dump_at_max()));
 
-    PERFETTO_DLOG("%d: Received FDs.", self->peer_pid());
+    PERFETTO_DLOG("%d: Received FDs.", self->peer_pid_linux());
     int raw_fd = pending_process.shmem.fd();
     // TODO(fmayer): Full buffer could deadlock us here.
     if (!self->Send(&data_source.client_configuration,
@@ -912,14 +859,15 @@ void HeapprofdProducer::SocketDelegate::OnDataAvailable(
     handoff_data.client_config = data_source.client_configuration;
     handoff_data.stream_allocations = data_source.config.stream_allocations();
 
-    producer_->UnwinderForPID(self->peer_pid())
+    producer_->UnwinderForPID(self->peer_pid_linux())
         .PostHandoffSocket(std::move(handoff_data));
     producer_->pending_processes_.erase(it);
   } else if (fds[kHandshakeMaps] || fds[kHandshakeMem]) {
-    PERFETTO_DFATAL_OR_ELOG("%d: Received partial FDs.", self->peer_pid());
+    PERFETTO_DFATAL_OR_ELOG("%d: Received partial FDs.",
+                            self->peer_pid_linux());
     producer_->pending_processes_.erase(it);
   } else {
-    PERFETTO_ELOG("%d: Received no FDs.", self->peer_pid());
+    PERFETTO_ELOG("%d: Received no FDs.", self->peer_pid_linux());
   }
 }
 
@@ -953,11 +901,24 @@ void HeapprofdProducer::HandleClientConnection(
   }
   RecordOtherSourcesAsRejected(data_source, process);
 
+  // In fork mode, right now we check whether the target is not profileable
+  // in the client, because we cannot read packages.list there.
+  if (mode_ == HeapprofdMode::kCentral &&
+      !CanProfile(data_source->ds_config, new_connection->peer_uid_posix())) {
+    PERFETTO_ELOG("%d (%s) is not profileable.", process.pid,
+                  process.cmdline.c_str());
+    return;
+  }
+
   uint64_t shmem_size = data_source->config.shmem_size_bytes();
   if (!shmem_size)
     shmem_size = kDefaultShmemSize;
-  if (shmem_size > kMaxShmemSize)
+  if (shmem_size > kMaxShmemSize) {
+    PERFETTO_LOG("Specified shared memory size of %" PRIu64
+                 " exceeds maximum size of %" PRIu64 ". Reducing.",
+                 shmem_size, kMaxShmemSize);
     shmem_size = kMaxShmemSize;
+  }
 
   auto shmem = SharedRingBuffer::Create(static_cast<size_t>(shmem_size));
   if (!shmem || !shmem->is_valid()) {
@@ -965,7 +926,7 @@ void HeapprofdProducer::HandleClientConnection(
     return;
   }
 
-  pid_t peer_pid = new_connection->peer_pid();
+  pid_t peer_pid = new_connection->peer_pid_linux();
   if (peer_pid != process.pid) {
     PERFETTO_DFATAL_OR_ELOG("Invalid PID connected.");
     return;
@@ -1140,21 +1101,25 @@ void HeapprofdProducer::HandleHeapNameRecord(HeapNameRecord rec) {
 
   ProcessState& process_state = process_state_it->second;
   const HeapName& entry = rec.entry;
-  std::string heap_name = entry.heap_name;
-  if (heap_name.empty()) {
-    PERFETTO_ELOG("Ignoring empty heap name.");
-    return;
+  if (entry.heap_name[0] != '\0') {
+    std::string heap_name = entry.heap_name;
+    if (entry.heap_id == 0) {
+      PERFETTO_ELOG("Invalid zero heap ID.");
+      return;
+    }
+    ProcessState::HeapInfo& hi = process_state.GetHeapInfo(entry.heap_id);
+    if (!hi.heap_name.empty() && hi.heap_name != heap_name) {
+      PERFETTO_ELOG("Overriding heap name %s with %s", hi.heap_name.c_str(),
+                    heap_name.c_str());
+    }
+    hi.heap_name = entry.heap_name;
   }
-  if (entry.heap_id == 0) {
-    PERFETTO_ELOG("Invalid zero heap ID.");
-    return;
+  if (entry.sample_interval != 0) {
+    ProcessState::HeapInfo& hi = process_state.GetHeapInfo(entry.heap_id);
+    if (!hi.sampling_interval)
+      hi.orig_sampling_interval = entry.sample_interval;
+    hi.sampling_interval = entry.sample_interval;
   }
-  std::string& existing_heap_name = process_state.heap_names[entry.heap_id];
-  if (!existing_heap_name.empty() && existing_heap_name != heap_name) {
-    PERFETTO_ELOG("Overriding heap name %s with %s", existing_heap_name.c_str(),
-                  heap_name.c_str());
-  }
-  existing_heap_name = entry.heap_name;
 }
 
 void HeapprofdProducer::TerminateWhenDone() {
@@ -1228,12 +1193,14 @@ void HeapprofdProducer::CheckDataSourceCpuTask() {
       },
       kGuardrailIntervalMs);
 
-  PERFETTO_DCHECK(profiler_cpu_guardrails_);
-  profiler_cpu_guardrails_->CheckDataSourceCpu(
-      data_sources_.begin(), data_sources_.end(), [this](DataSource* ds) {
-        ds->hit_guardrail = true;
-        ShutdownDataSource(ds);
-      });
+  ProfilerCpuGuardrails gr;
+  for (auto& p : data_sources_) {
+    DataSource& ds = p.second;
+    if (gr.IsOverCpuThreshold(ds.guardrail_config)) {
+      ds.hit_guardrail = true;
+      ShutdownDataSource(&ds);
+    }
+  }
 }
 
 void HeapprofdProducer::CheckDataSourceMemoryTask() {
@@ -1245,13 +1212,14 @@ void HeapprofdProducer::CheckDataSourceMemoryTask() {
         weak_producer->CheckDataSourceMemoryTask();
       },
       kGuardrailIntervalMs);
-
-  PERFETTO_DCHECK(profiler_memory_guardrails_);
-  profiler_memory_guardrails_->CheckDataSourceMemory(
-      data_sources_.begin(), data_sources_.end(), [this](DataSource* ds) {
-        ds->hit_guardrail = true;
-        ShutdownDataSource(ds);
-      });
+  ProfilerMemoryGuardrails gr;
+  for (auto& p : data_sources_) {
+    DataSource& ds = p.second;
+    if (gr.IsOverMemoryThreshold(ds.guardrail_config)) {
+      ds.hit_guardrail = true;
+      ShutdownDataSource(&ds);
+    }
+  }
 }
 
 }  // namespace profiling

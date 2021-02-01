@@ -15,23 +15,24 @@
  */
 
 #include <fcntl.h>
-#include <getopt.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <unistd.h>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/getopt.h"
 #include "perfetto/ext/base/unix_task_runner.h"
 #include "perfetto/ext/base/version.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 
 #include "src/traced/probes/ftrace/ftrace_procfs.h"
+#include "src/traced/probes/kmem_activity_trigger.h"
 #include "src/traced/probes/probes_producer.h"
 
 namespace perfetto {
 
-int __attribute__((visibility("default"))) ProbesMain(int argc, char** argv) {
+int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
   enum LongOption {
     OPT_CLEANUP_AFTER_CRASH = 1000,
     OPT_VERSION,
@@ -42,9 +43,8 @@ int __attribute__((visibility("default"))) ProbesMain(int argc, char** argv) {
       {"version", no_argument, nullptr, OPT_VERSION},
       {nullptr, 0, nullptr, 0}};
 
-  int option_index;
   for (;;) {
-    int option = getopt_long(argc, argv, "", long_options, &option_index);
+    int option = getopt_long(argc, argv, "", long_options, nullptr);
     if (option == -1)
       break;
     switch (option) {
@@ -86,6 +86,10 @@ int __attribute__((visibility("default"))) ProbesMain(int argc, char** argv) {
   base::UnixTaskRunner task_runner;
   ProbesProducer producer;
   producer.ConnectWithRetries(GetProducerSocket(), &task_runner);
+
+  // Start the thread that polls mm_event instance and triggers
+  KmemActivityTriggerThread kmem_activity_trigger;
+
   task_runner.Run();
   return 0;
 }

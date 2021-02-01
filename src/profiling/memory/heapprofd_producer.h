@@ -35,11 +35,13 @@
 #include "perfetto/ext/tracing/core/tracing_service.h"
 #include "perfetto/tracing/core/data_source_config.h"
 
+#include "perfetto/tracing/core/forward_decls.h"
 #include "src/profiling/common/interning_output.h"
 #include "src/profiling/common/proc_utils.h"
 #include "src/profiling/common/profiler_guardrails.h"
 #include "src/profiling/memory/bookkeeping.h"
 #include "src/profiling/memory/bookkeeping_dump.h"
+#include "src/profiling/memory/log_histogram.h"
 #include "src/profiling/memory/system_property.h"
 #include "src/profiling/memory/unwinding.h"
 #include "src/profiling/memory/unwound_messages.h"
@@ -54,20 +56,6 @@ using HeapprofdConfig = protos::gen::HeapprofdConfig;
 struct Process {
   pid_t pid;
   std::string cmdline;
-};
-
-class LogHistogram {
- public:
-  static const uint64_t kMaxBucket;
-  static constexpr size_t kBuckets = 20;
-
-  void Add(uint64_t value) { values_[GetBucket(value)]++; }
-  std::vector<std::pair<uint64_t, uint64_t>> GetData();
-
- private:
-  size_t GetBucket(uint64_t value);
-
-  std::array<uint64_t, kBuckets> values_ = {};
 };
 
 // TODO(rsavitski): central daemon can do less work if it knows that the global
@@ -160,12 +148,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   // Valid only if mode_ == kChild.
   void SetTargetProcess(pid_t target_pid, std::string target_cmdline);
   void SetDataSourceCallback(std::function<void()> fn);
-  void SetInheritedSocket(base::ScopedFile inherited_socket);
-  // Valid only if mode_ == kChild. Kicks off a periodic check that the child
-  // heapprofd is actively working on a data source (which should correspond to
-  // the target process). The first check is delayed to let the freshly spawned
-  // producer get the data sources from the tracing service (i.e. traced).
-  void ScheduleActiveDataSourceWatchdog();
 
   // Exposed for testing.
   void SetProducerEndpoint(
@@ -192,6 +174,14 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   };
 
   struct ProcessState {
+    struct HeapInfo {
+      HeapInfo(GlobalCallstackTrie* cs, bool dam) : heap_tracker(cs, dam) {}
+
+      HeapTracker heap_tracker;
+      std::string heap_name;
+      uint64_t sampling_interval = 0u;
+      uint64_t orig_sampling_interval = 0u;
+    };
     ProcessState(GlobalCallstackTrie* c, bool d)
         : callsites(c), dump_at_max_mode(d) {}
     bool disconnected = false;
@@ -207,17 +197,20 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
     GlobalCallstackTrie* callsites;
     bool dump_at_max_mode;
     LogHistogram unwinding_time_us;
-    std::map<uint32_t, HeapTracker> heap_trackers;
-    std::map<uint32_t, std::string> heap_names;
+    std::map<uint32_t, HeapInfo> heap_infos;
 
-    HeapTracker& GetHeapTracker(uint32_t heap_id) {
-      auto it = heap_trackers.find(heap_id);
-      if (it == heap_trackers.end()) {
-        std::tie(it, std::ignore) = heap_trackers.emplace(
+    HeapInfo& GetHeapInfo(uint32_t heap_id) {
+      auto it = heap_infos.find(heap_id);
+      if (it == heap_infos.end()) {
+        std::tie(it, std::ignore) = heap_infos.emplace(
             std::piecewise_construct, std::forward_as_tuple(heap_id),
             std::forward_as_tuple(callsites, dump_at_max_mode));
       }
       return it->second;
+    }
+
+    HeapTracker& GetHeapTracker(uint32_t heap_id) {
+      return GetHeapInfo(heap_id).heap_tracker;
     }
   };
 
@@ -228,17 +221,9 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
       memset(&client_configuration, 0, sizeof(client_configuration));
     }
 
-    // For ProfilerCpuGuardrails.
-    uint64_t GetCpuGuardrailSecs() { return config.max_heapprofd_cpu_secs(); }
-
-    // For ProfilerCpuGuardrails.
-    base::Optional<uint64_t> GetCpuStartSecs() { return start_cputime_sec; }
-
-    // For CheckDataSourceMemory.
-    uint32_t GetMemoryGuardrailKb() { return config.max_heapprofd_memory_kb(); }
-
     DataSourceInstanceID id;
     std::unique_ptr<TraceWriter> trace_writer;
+    DataSourceConfig ds_config;
     HeapprofdConfig config;
     ClientConfiguration client_configuration;
     std::vector<SystemProperties::Handle> properties;
@@ -252,7 +237,7 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
     bool hit_guardrail = false;
     bool was_stopped = false;
     uint32_t stop_timeout_ms;
-    base::Optional<uint64_t> start_cputime_sec;
+    GuardrailConfig guardrail_config;
   };
 
   struct PendingProcess {
@@ -275,6 +260,8 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   void FinishDataSourceFlush(FlushRequestID flush_id);
   void DumpProcessesInDataSource(DataSource* ds);
   void DumpProcessState(DataSource* ds, pid_t pid, ProcessState* process);
+  static void SetStats(protos::pbzero::ProfilePacket::ProcessStats* stats,
+                       const ProcessState& process_state);
 
   void DoContinuousDump(DataSourceInstanceID id, uint32_t dump_interval);
 
@@ -333,15 +320,9 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
   // Specific to mode_ == kChild
   Process target_process_{base::kInvalidPid, ""};
-  // This is a valid FD only between SetInheritedSocket and
-  // AdoptSocket.
-  // Specific to mode_ == kChild
-  base::ScopedFile inherited_fd_;
   base::Optional<std::function<void()>> data_source_callback_;
 
   SocketDelegate socket_delegate_;
-  base::Optional<ProfilerCpuGuardrails> profiler_cpu_guardrails_;
-  base::Optional<ProfilerMemoryGuardrails> profiler_memory_guardrails_;
 
   base::WeakPtrFactory<HeapprofdProducer> weak_factory_;  // Keep last.
 };

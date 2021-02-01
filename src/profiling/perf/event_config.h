@@ -17,6 +17,7 @@
 #ifndef SRC_PROFILING_PERF_EVENT_CONFIG_H_
 #define SRC_PROFILING_PERF_EVENT_CONFIG_H_
 
+#include <functional>
 #include <string>
 
 #include <linux/perf_event.h>
@@ -47,7 +48,18 @@ struct TargetFilter {
 // perf_event_open syscall.
 class EventConfig {
  public:
-  static base::Optional<EventConfig> Create(const DataSourceConfig& ds_config);
+  using tracepoint_id_fn_t =
+      std::function<uint32_t(const std::string&, const std::string&)>;
+
+  static base::Optional<EventConfig> Create(
+      const DataSourceConfig& ds_config,
+      tracepoint_id_fn_t tracepoint_id_lookup =
+          [](const std::string&, const std::string&) { return 0; });
+
+  static base::Optional<EventConfig> Create(
+      const protos::pbzero::PerfEventConfig::Decoder& pb_config,
+      const DataSourceConfig& raw_ds_config,
+      tracepoint_id_fn_t tracepoint_id_lookup);
 
   uint32_t target_all_cpus() const { return target_all_cpus_; }
   uint32_t ring_buffer_pages() const { return ring_buffer_pages_; }
@@ -66,9 +78,12 @@ class EventConfig {
     return const_cast<perf_event_attr*>(&perf_event_attr_);
   }
 
+  const DataSourceConfig& raw_ds_config() const { return raw_ds_config_; }
+
  private:
   EventConfig(const protos::pbzero::PerfEventConfig::Decoder& cfg,
-              uint32_t sampling_frequency,
+              const DataSourceConfig& raw_ds_config,
+              const perf_event_attr& pe,
               uint32_t ring_buffer_pages,
               uint32_t read_tick_period_ms,
               uint32_t samples_per_tick_limit,
@@ -83,7 +98,7 @@ class EventConfig {
   const uint32_t ring_buffer_pages_;
 
   // Parameter struct for |perf_event_open| calls.
-  struct perf_event_attr perf_event_attr_ = {};
+  perf_event_attr perf_event_attr_ = {};
 
   // How often the ring buffers should be read.
   const uint32_t read_tick_period_ms_;
@@ -103,6 +118,9 @@ class EventConfig {
 
   // If true, include kernel frames in the callstacks.
   const bool kernel_frames_;
+
+  // The raw data source config, as a pbzero-generated C++ class.
+  const DataSourceConfig raw_ds_config_;
 };
 
 }  // namespace profiling

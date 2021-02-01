@@ -22,6 +22,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/string_writer.h"
 #include "perfetto/trace_processor/status.h"
+#include "src/trace_processor/importers/chrome_track_event.descriptor.h"
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/importers/common/event_tracker.h"
 #include "src/trace_processor/importers/common/flow_tracker.h"
@@ -30,7 +31,8 @@
 #include "src/trace_processor/importers/json/json_utils.h"
 #include "src/trace_processor/importers/proto/args_table_utils.h"
 #include "src/trace_processor/importers/proto/packet_sequence_state.h"
-#include "src/trace_processor/importers/proto/track_event.descriptor.h"
+#include "src/trace_processor/importers/proto/track_event_tracker.h"
+#include "src/trace_processor/importers/track_event.descriptor.h"
 #include "src/trace_processor/util/status_macros.h"
 
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
@@ -118,6 +120,7 @@ class TrackEventParser::EventImporter {
                 TrackEventData* event_data,
                 ConstBytes blob)
       : context_(parser->context_),
+        track_event_tracker_(parser->track_event_tracker_),
         storage_(context_->storage.get()),
         parser_(parser),
         ts_(ts),
@@ -157,9 +160,9 @@ class TrackEventParser::EventImporter {
 
     // TODO(eseckler): Replace phase with type and remove handling of
     // legacy_event_.phase() once it is no longer used by producers.
-    int32_t phase = ParsePhaseOrType();
+    char phase = static_cast<char>(ParsePhaseOrType());
 
-    switch (static_cast<char>(phase)) {
+    switch (phase) {
       case 'B':  // TRACE_EVENT_PHASE_BEGIN.
         return ParseThreadBeginEvent();
       case 'E':  // TRACE_EVENT_PHASE_END.
@@ -167,11 +170,9 @@ class TrackEventParser::EventImporter {
       case 'X':  // TRACE_EVENT_PHASE_COMPLETE.
         return ParseThreadCompleteEvent();
       case 's':  // TRACE_EVENT_PHASE_FLOW_BEGIN.
-        return ParseFlowEventV1('s');
       case 't':  // TRACE_EVENT_PHASE_FLOW_STEP.
-        return ParseFlowEventV1('t');
       case 'f':  // TRACE_EVENT_PHASE_FLOW_END.
-        return ParseFlowEventV1('f');
+        return ParseFlowEventV1(phase);
       case 'i':
       case 'I':  // TRACE_EVENT_PHASE_INSTANT.
         return ParseThreadInstantEvent();
@@ -288,11 +289,13 @@ class TrackEventParser::EventImporter {
     //   b) a default track.
     if (track_uuid_) {
       base::Optional<TrackId> opt_track_id =
-          track_tracker->GetDescriptorTrack(track_uuid_, name_id_);
+          track_event_tracker_->GetDescriptorTrack(track_uuid_, name_id_);
       if (!opt_track_id) {
-        track_tracker->ReserveDescriptorChildTrack(track_uuid_,
-                                                   /*parent_uuid=*/0, name_id_);
-        opt_track_id = track_tracker->GetDescriptorTrack(track_uuid_, name_id_);
+        track_event_tracker_->ReserveDescriptorChildTrack(track_uuid_,
+                                                          /*parent_uuid=*/0,
+                                                          name_id_);
+        opt_track_id =
+            track_event_tracker_->GetDescriptorTrack(track_uuid_, name_id_);
       }
       track_id_ = *opt_track_id;
 
@@ -366,7 +369,7 @@ class TrackEventParser::EventImporter {
         upid_ = storage_->thread_table().upid()[*utid_];
         track_id_ = track_tracker->InternThreadTrack(*utid_);
       } else {
-        track_id_ = track_tracker->GetOrCreateDefaultDescriptorTrack();
+        track_id_ = track_event_tracker_->GetOrCreateDefaultDescriptorTrack();
       }
     }
 
@@ -527,7 +530,7 @@ class TrackEventParser::EventImporter {
       PERFETTO_DCHECK(index < TrackEventData::kMaxNumExtraCounters);
 
       base::Optional<TrackId> track_id =
-          context_->track_tracker->GetDescriptorTrack(*track_uuid_it);
+          track_event_tracker_->GetDescriptorTrack(*track_uuid_it);
       base::Optional<uint32_t> counter_row =
           storage_->counter_track_table().id().IndexOf(*track_id);
 
@@ -674,7 +677,7 @@ class TrackEventParser::EventImporter {
           continue;
         }
         context_->flow_tracker->End(track_id_, flow_id,
-                                    /* bind_enclosing = */ true,
+                                    /* bind_enclosing_slice = */ true,
                                     /* close_flow = */ true);
       }
     }
@@ -720,7 +723,11 @@ class TrackEventParser::EventImporter {
     auto opt_slice_id = context_->slice_tracker->Scoped(
         ts_, track_id_, category_id_, name_id_, duration_ns,
         [this](BoundInserter* inserter) { ParseTrackEventArgs(inserter); });
-    if (utid_ && opt_slice_id.has_value()) {
+    if (!opt_slice_id.has_value()) {
+      return util::OkStatus();
+    }
+    MaybeParseFlowEvents();
+    if (utid_) {
       auto* thread_slices = storage_->mutable_thread_slices();
       PERFETTO_DCHECK(!thread_slices->slice_count() ||
                       thread_slices->slice_ids().back() < opt_slice_id.value());
@@ -735,9 +742,13 @@ class TrackEventParser::EventImporter {
     auto opt_slice_id = context_->slice_tracker->Begin(
         ts_, track_id_, category_id_, name_id_,
         [this](BoundInserter* inserter) { ParseTrackEventArgs(inserter); });
+    if (!opt_slice_id.has_value()) {
+      return util::OkStatus();
+    }
+    MaybeParseFlowEvents();
     // For the time beeing, we only create vtrack slice rows if we need to
     // store thread timestamps/counters.
-    if (legacy_event_.use_async_tts() && opt_slice_id.has_value()) {
+    if (legacy_event_.use_async_tts()) {
       auto* vtrack_slices = storage_->mutable_virtual_track_slices();
       PERFETTO_DCHECK(!vtrack_slices->slice_count() ||
                       vtrack_slices->slice_ids().back() < opt_slice_id.value());
@@ -770,7 +781,11 @@ class TrackEventParser::EventImporter {
     auto opt_slice_id = context_->slice_tracker->Scoped(
         ts_, track_id_, category_id_, name_id_, duration_ns,
         [this](BoundInserter* inserter) { ParseTrackEventArgs(inserter); });
-    if (legacy_event_.use_async_tts() && opt_slice_id.has_value()) {
+    if (!opt_slice_id.has_value()) {
+      return util::OkStatus();
+    }
+    MaybeParseFlowEvents();
+    if (legacy_event_.use_async_tts()) {
       auto* vtrack_slices = storage_->mutable_virtual_track_slices();
       PERFETTO_DCHECK(!vtrack_slices->slice_count() ||
                       vtrack_slices->slice_ids().back() < opt_slice_id.value());
@@ -1138,10 +1153,8 @@ class TrackEventParser::EventImporter {
 
   util::Status ParseHistogramName(ConstBytes blob, BoundInserter* inserter) {
     protos::pbzero::ChromeHistogramSample::Decoder sample(blob);
-    if (!sample.has_name_iid()) {
-      PERFETTO_DLOG("name_iid is not set for ChromeHistogramSample");
+    if (!sample.has_name_iid())
       return util::OkStatus();
-    }
 
     if (sample.has_name()) {
       return util::ErrStatus(
@@ -1161,6 +1174,7 @@ class TrackEventParser::EventImporter {
   }
 
   TraceProcessorContext* context_;
+  TrackEventTracker* track_event_tracker_;
   TraceStorage* storage_;
   TrackEventParser* parser_;
   int64_t ts_;
@@ -1185,8 +1199,10 @@ class TrackEventParser::EventImporter {
   base::Optional<UniqueTid> legacy_passthrough_utid_;
 };
 
-TrackEventParser::TrackEventParser(TraceProcessorContext* context)
+TrackEventParser::TrackEventParser(TraceProcessorContext* context,
+                                   TrackEventTracker* track_event_tracker)
     : context_(context),
+      track_event_tracker_(track_event_tracker),
       counter_name_thread_time_id_(
           context->storage->InternString("thread_time")),
       counter_name_thread_instruction_count_id_(
@@ -1297,26 +1313,59 @@ TrackEventParser::TrackEventParser(TraceProcessorContext* context)
            context_->storage->InternString("PpapiPlugin"),
            context_->storage->InternString("PpapiBroker")}},
       chrome_thread_name_ids_{
-          {kNullStringId, context_->storage->InternString("CrProcessMain"),
-           context_->storage->InternString("ChromeIOThread"),
-           context_->storage->InternString("ThreadPoolBackgroundWorker&"),
-           context_->storage->InternString("ThreadPoolForegroundWorker&"),
+          {protos::pbzero::ChromeThreadDescriptor_ThreadType_THREAD_UNSPECIFIED,
+           kNullStringId},
+          {protos::pbzero::ChromeThreadDescriptor_ThreadType_THREAD_MAIN,
+           context_->storage->InternString("CrProcessMain")},
+          {protos::pbzero::ChromeThreadDescriptor_ThreadType_THREAD_IO,
+           context_->storage->InternString("ChromeIOThread")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_NETWORK_SERVICE,
+           context_->storage->InternString("NetworkService")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_POOL_BG_WORKER,
+           context_->storage->InternString("ThreadPoolBackgroundWorker&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_POOL_FG_WORKER,
+           context_->storage->InternString("ThreadPoolForegroundWorker&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_POOL_BG_BLOCKING,
            context_->storage->InternString(
-               "ThreadPoolSingleThreadForegroundBlocking&"),
+               "ThreadPoolSingleThreadBackgroundBlocking&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_POOL_FG_BLOCKING,
            context_->storage->InternString(
-               "ThreadPoolSingleThreadBackgroundBlocking&"),
-           context_->storage->InternString("ThreadPoolService"),
-           context_->storage->InternString("Compositor"),
-           context_->storage->InternString("VizCompositorThread"),
-           context_->storage->InternString("CompositorTileWorker&"),
-           context_->storage->InternString("ServiceWorkerThread&"),
-           context_->storage->InternString("MemoryInfra"),
+               "ThreadPoolSingleThreadForegroundBlocking&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_POOL_SERVICE,
+           context_->storage->InternString("ThreadPoolService")},
+          {protos::pbzero::ChromeThreadDescriptor_ThreadType_THREAD_COMPOSITOR,
+           context_->storage->InternString("Compositor")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_VIZ_COMPOSITOR,
+           context_->storage->InternString("VizCompositorThread")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_COMPOSITOR_WORKER,
+           context_->storage->InternString("CompositorTileWorker&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_SERVICE_WORKER,
+           context_->storage->InternString("ServiceWorkerThread&")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_MEMORY_INFRA,
+           context_->storage->InternString("MemoryInfra")},
+          {protos::pbzero::
+               ChromeThreadDescriptor_ThreadType_THREAD_SAMPLING_PROFILER,
            context_->storage->InternString("StackSamplingProfiler")}},
       counter_unit_ids_{{kNullStringId, context_->storage->InternString("ns"),
                          context_->storage->InternString("count"),
                          context_->storage->InternString("bytes")}} {
   auto status = context_->proto_to_args_table_->AddProtoFileDescriptor(
       kTrackEventDescriptor.data(), kTrackEventDescriptor.size());
+
+  PERFETTO_DCHECK(status.ok());
+
+  status = context_->proto_to_args_table_->AddProtoFileDescriptor(
+      kChromeTrackEventDescriptor.data(), kChromeTrackEventDescriptor.size());
 
   PERFETTO_DCHECK(status.ok());
 
@@ -1355,8 +1404,7 @@ void TrackEventParser::ParseTrackDescriptor(
 
   // Ensure that the track and its parents are resolved. This may start a new
   // process and/or thread (i.e. new upid/utid).
-  TrackId track_id =
-      *context_->track_tracker->GetDescriptorTrack(decoder.uuid());
+  TrackId track_id = *track_event_tracker_->GetDescriptorTrack(decoder.uuid());
 
   if (decoder.has_thread()) {
     UniqueTid utid = ParseThreadDescriptor(decoder.thread());
@@ -1437,12 +1485,16 @@ UniqueTid TrackEventParser::ParseThreadDescriptor(
     name_id = context_->storage->InternString(decoder.thread_name());
   } else if (decoder.has_chrome_thread_type()) {
     // TODO(skyostil): Remove parsing for legacy chrome_thread_type field.
-    auto thread_type = decoder.chrome_thread_type();
-    size_t name_index =
-        static_cast<size_t>(thread_type) < chrome_thread_name_ids_.size()
-            ? static_cast<size_t>(thread_type)
-            : 0u;
-    name_id = chrome_thread_name_ids_[name_index];
+    uint32_t name_index = static_cast<uint32_t>(decoder.chrome_thread_type());
+    if (chrome_thread_name_ids_.find(name_index) !=
+        chrome_thread_name_ids_.end()) {
+      name_id = chrome_thread_name_ids_[name_index];
+    } else {
+      PERFETTO_DLOG(
+          "ParseThreadDescriptor error: Unknown chrome thread type %u",
+          name_index);
+      name_id = chrome_thread_name_ids_[0];
+    }
   }
   context_->process_tracker->UpdateThreadNameByUtid(
       utid, name_id, ThreadNamePriority::kTrackDescriptor);
@@ -1457,12 +1509,16 @@ void TrackEventParser::ParseChromeThreadDescriptor(
   if (!decoder.has_thread_type())
     return;
 
-  auto thread_type = decoder.thread_type();
-  size_t name_index =
-      static_cast<size_t>(thread_type) < chrome_thread_name_ids_.size()
-          ? static_cast<size_t>(thread_type)
-          : 0u;
-  StringId name_id = chrome_thread_name_ids_[name_index];
+  uint32_t name_index = static_cast<uint32_t>(decoder.thread_type());
+  StringId name_id = kNullStringId;
+  if (chrome_thread_name_ids_.find(name_index) !=
+      chrome_thread_name_ids_.end()) {
+    name_id = chrome_thread_name_ids_[name_index];
+  } else {
+    PERFETTO_DLOG("ParseThreadDescriptor error: Unknown chrome thread type %u",
+                  name_index);
+    name_id = chrome_thread_name_ids_[0];
+  }
   context_->process_tracker->UpdateThreadNameByUtid(
       utid, name_id, ThreadNamePriority::kTrackDescriptorThreadType);
 }

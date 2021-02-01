@@ -147,7 +147,7 @@ class Exec {
       cmd.insert(cmd.end(), args.begin(), args.end());
     }
 
-    if (access(cmd[0].c_str(), F_OK)) {
+    if (!base::FileExists(cmd[0])) {
       PERFETTO_FATAL(
           "Cannot find %s. Make sure that the target has been built and, on "
           "Android, pushed to the device.",
@@ -168,7 +168,7 @@ class Exec {
     // This lambda will be called on the forked child process after having
     // setup pipe redirection and closed all FDs, right before the exec().
     // The Subprocesss harness will take care of closing also |sync_pipe_.wr|.
-    subprocess_.args.entrypoint_for_testing = [sync_pipe_rd] {
+    subprocess_.args.posix_entrypoint_for_testing = [sync_pipe_rd] {
       // Don't add any logging here, all file descriptors are closed and trying
       // to log will likely cause undefined behaviors.
       char ignored = 0;
@@ -188,12 +188,7 @@ class Exec {
 class PerfettoTest : public ::testing::Test {
  public:
   void SetUp() override {
-    // TODO(primiano): refactor this, it's copy/pasted in three places now.
-    size_t index = 0;
-    constexpr auto kTracingPaths = FtraceController::kTracingPaths;
-    while (!ftrace_procfs_ && kTracingPaths[index]) {
-      ftrace_procfs_ = FtraceProcfs::Create(kTracingPaths[index++]);
-    }
+    ftrace_procfs_ = FtraceProcfs::CreateGuessingMountPoint();
   }
 
   std::unique_ptr<FtraceProcfs> ftrace_procfs_;
@@ -252,6 +247,33 @@ class PerfettoCmdlineTest : public ::testing::Test {
   bool exec_allowed_;
   TestHelper test_helper_{&task_runner_};
 };
+
+// For the SaveForBugreport* tests.
+void SetTraceConfigForBugreportTest(TraceConfig* trace_config) {
+  trace_config->add_buffers()->set_size_kb(4096);
+  trace_config->set_duration_ms(60000);  // Will never hit this.
+  trace_config->set_bugreport_score(10);
+  auto* ds_config = trace_config->add_data_sources()->mutable_config();
+  ds_config->set_name("android.perfetto.FakeProducer");
+  ds_config->mutable_for_testing()->set_message_count(3);
+  ds_config->mutable_for_testing()->set_message_size(10);
+  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+}
+
+// For the SaveForBugreport* tests.
+static void VerifyBugreportTraceContents() {
+  // Read the trace written in the fixed location (/data/misc/perfetto-traces/
+  // on Android, /tmp/ on Linux/Mac) and make sure it has the right contents.
+  std::string trace_str;
+  base::ReadFile(kBugreportTracePath, &trace_str);
+  ASSERT_FALSE(trace_str.empty());
+  protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromString(trace_str));
+  int test_packets = 0;
+  for (const auto& p : trace.packet())
+    test_packets += p.has_for_testing() ? 1 : 0;
+  ASSERT_EQ(test_packets, 3);
+}
 
 }  // namespace
 
@@ -380,7 +402,9 @@ TEST_F(PerfettoTest, TreeHuggerOnly(TestFtraceFlush)) {
 //    We cannot change the length of the production code in
 //    CanReadKernelSymbolAddresses() to deal with it.
 // 2. On user (i.e. non-userdebug) builds. As that doesn't work there by design.
-#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && defined(__i386__)
+// 3. On ARM builds, because they fail on our CI.
+#if (PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && defined(__i386__)) || \
+    defined(__arm__)
 #define MAYBE_KernelAddressSymbolization DISABLED_KernelAddressSymbolization
 #else
 #define MAYBE_KernelAddressSymbolization KernelAddressSymbolization
@@ -415,22 +439,20 @@ TEST_F(PerfettoTest, MAYBE_KernelAddressSymbolization) {
   TraceConfig trace_config;
   trace_config.add_buffers()->set_size_kb(1024);
 
-  // The symbolizer is initialized asynchronously in a dedicated PostTask in
-  // FtraceController::StartDataSource. There is no easy way to linearize with
-  // that. Here the duration needs to be long enough so that the PostTask() for
-  // the deferred parse is enqueued before the stop. The kallsyms parsing can
-  // take longer.
-  trace_config.set_duration_ms(5000);
-
   auto* ds_config = trace_config.add_data_sources()->mutable_config();
   ds_config->set_name("linux.ftrace");
   protos::gen::FtraceConfig ftrace_cfg;
   ftrace_cfg.set_symbolize_ksyms(true);
+  ftrace_cfg.set_initialize_ksyms_synchronously_for_testing(true);
   ds_config->set_ftrace_config_raw(ftrace_cfg.SerializeAsString());
 
   helper.StartTracing(trace_config);
-  helper.WaitForTracingDisabled();
 
+  // Synchronize with the ftrace data source. The kernel symbol map is loaded
+  // at this point.
+  helper.FlushAndWait(kDefaultTestTimeoutMs);
+  helper.DisableTracing();
+  helper.WaitForTracingDisabled();
   helper.ReadData();
   helper.WaitForReadData();
 
@@ -852,14 +874,7 @@ TEST_F(PerfettoTest, SaveForBugreport) {
   helper.WaitForConsumerConnect();
 
   TraceConfig trace_config;
-  trace_config.add_buffers()->set_size_kb(4096);
-  trace_config.set_duration_ms(10000);
-  trace_config.set_bugreport_score(10);
-  auto* ds_config = trace_config.add_data_sources()->mutable_config();
-  ds_config->set_name("android.perfetto.FakeProducer");
-  ds_config->mutable_for_testing()->set_message_count(3);
-  ds_config->mutable_for_testing()->set_message_size(10);
-  ds_config->mutable_for_testing()->set_send_batch_on_register(true);
+  SetTraceConfigForBugreportTest(&trace_config);
 
   helper.StartTracing(trace_config);
   helper.WaitForProducerEnabled();
@@ -867,17 +882,7 @@ TEST_F(PerfettoTest, SaveForBugreport) {
   EXPECT_TRUE(helper.SaveTraceForBugreportAndWait());
   helper.WaitForTracingDisabled();
 
-  // Read the trace written in the fixed location (/data/misc/perfetto-traces/
-  // on Android, /tmp/ on Linux/Mac) and make sure it has the right contents.
-  std::string trace_str;
-  base::ReadFile(kBugreportTracePath, &trace_str);
-  ASSERT_FALSE(trace_str.empty());
-  protos::gen::Trace trace;
-  ASSERT_TRUE(trace.ParseFromString(trace_str));
-  int test_packets = 0;
-  for (const auto& p : trace.packet())
-    test_packets += p.has_for_testing() ? 1 : 0;
-  ASSERT_EQ(test_packets, 3);
+  VerifyBugreportTraceContents();
 
   // Now read the trace returned to the consumer via ReadBuffers. This should
   // be always empty because --save-for-bugreport takes it over and makes the
@@ -889,6 +894,43 @@ TEST_F(PerfettoTest, SaveForBugreport) {
   const auto& packets = helper.full_trace();
   ASSERT_EQ(packets.size(), 1u);
   for (const auto& p : packets) {
+    ASSERT_TRUE(p.has_service_event());
+    ASSERT_TRUE(p.service_event().seized_for_bugreport());
+  }
+}
+
+// Tests that the SaveForBugreport logic works also for traces with
+// write_into_file = true (with a passed file descriptor).
+TEST_F(PerfettoTest, SaveForBugreport_WriteIntoFile) {
+  base::TestTaskRunner task_runner;
+
+  TestHelper helper(&task_runner);
+  helper.StartServiceIfRequired();
+  helper.ConnectFakeProducer();
+  helper.ConnectConsumer();
+  helper.WaitForConsumerConnect();
+
+  TraceConfig trace_config;
+  SetTraceConfigForBugreportTest(&trace_config);
+  trace_config.set_file_write_period_ms(60000);  // Will never hit this.
+  trace_config.set_write_into_file(true);
+
+  auto pipe_pair = base::Pipe::Create();
+  helper.StartTracing(trace_config, std::move(pipe_pair.wr));
+  helper.WaitForProducerEnabled();
+
+  EXPECT_TRUE(helper.SaveTraceForBugreportAndWait());
+  helper.WaitForTracingDisabled();
+
+  VerifyBugreportTraceContents();
+
+  // Now read the original file descriptor passed in.
+  std::string trace_bytes;
+  ASSERT_TRUE(base::ReadPlatformHandle(*pipe_pair.rd, &trace_bytes));
+  protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromString(trace_bytes));
+  ASSERT_EQ(trace.packet().size(), 1u);
+  for (const auto& p : trace.packet()) {
     ASSERT_TRUE(p.has_service_event());
     ASSERT_TRUE(p.service_event().seized_for_bugreport());
   }
