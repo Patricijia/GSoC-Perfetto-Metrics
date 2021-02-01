@@ -18,11 +18,14 @@ syntax = "proto2";
 
 package perfetto.protos;
 
-import "protos/perfetto/metrics/metrics.proto";
-import "protos/perfetto/metrics/chrome/frame_times.proto";
-import "protos/perfetto/metrics/chrome/test_chrome_metric.proto";
+message AndroidJankMetrics {
+  repeated Warning warnings = 1;
 
-extend TraceMetrics {
-  optional TestChromeMetric test_chrome_metric = 1001;
-  optional FrameTimes frame_times = 1002;
+  message Warning {
+    optional int64 ts = 1;
+    optional int64 dur = 2;
+
+    optional string process_name = 3;
+    optional string warning_text = 4;
+  }
 }

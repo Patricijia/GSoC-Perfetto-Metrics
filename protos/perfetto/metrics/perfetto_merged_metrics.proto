@@ -377,6 +377,21 @@ message AndroidIonMetric {
 
 // End of protos/perfetto/metrics/android/ion_metric.proto
 
+// Begin of protos/perfetto/metrics/android/jank_metric.proto
+
+message AndroidJankMetrics {
+  repeated Warning warnings = 1;
+
+  message Warning {
+    optional int64 ts = 1;
+    optional int64 dur = 2;
+
+    optional string process_name = 3;
+    optional string warning_text = 4;
+  }
+}
+// End of protos/perfetto/metrics/android/jank_metric.proto
+
 // Begin of protos/perfetto/metrics/android/java_heap_histogram.proto
 
 message JavaHeapHistogram {
@@ -701,6 +716,11 @@ message AndroidStartupMetric {
     optional AndroidProcessMetadata process = 7;
 
     optional HscMetrics hsc = 8;
+
+    // The time taken in the startup from intent recieved to the start time
+    // of the reportFullyDrawn slice. This should be longer than the time to
+    // first frame as the application decides this after it starts rendering.
+    optional Slice report_fully_drawn = 9;
   }
 
   repeated Startup startup = 1;
@@ -902,6 +922,9 @@ message TraceMetrics {
 
   // Metric associated with hwcomposer.
   optional AndroidHwcomposerMetrics android_hwcomposer = 28;
+
+  // Detects common bad patterns that might lead to jank.
+  optional AndroidJankMetrics android_jank = 29;
 
   // Demo extensions.
   extensions 450 to 499;
