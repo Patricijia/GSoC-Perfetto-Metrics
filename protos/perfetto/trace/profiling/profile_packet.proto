@@ -88,6 +88,11 @@ message ProfilePacket {
 
   repeated ProcessHeapSamples process_dumps = 5;
   message ProcessHeapSamples {
+    enum ClientError {
+      CLIENT_ERROR_NONE = 0;
+      CLIENT_ERROR_HIT_TIMEOUT = 1;
+      CLIENT_ERROR_INVALID_STACK_BOUNDS = 2;
+    }
     optional uint64 pid = 1;
 
     // This process was profiled from startup.
@@ -104,7 +109,11 @@ message ProfilePacket {
 
     // If disconnected, this disconnect was caused by the client overrunning
     // the buffer.
+    // Equivalent to client_error == CLIENT_ERROR_HIT_TIMEOUT
+    // on new S builds.
     optional bool buffer_overran = 7;
+
+    optional ClientError client_error = 14;
 
     // If disconnected, this disconnected was caused by the shared memory
     // buffer being corrupted. THIS IS ALWAYS A BUG IN HEAPPROFD OR CLIENT
@@ -226,6 +235,9 @@ message PerfSample {
 
   // Execution state that the process was sampled at.
   optional Profiling.CpuMode cpu_mode = 5;
+
+  // Value of the timebase counter (since the beginning).
+  optional uint64 timebase_count = 6;
 
   // Unwound callstack. Might be partial, in which case a synthetic "error"
   // frame is appended, and |unwind_error| is set appropriately.

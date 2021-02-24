@@ -144,6 +144,9 @@ def main():
   else:
     host_file = args.out
     host_dir = os.path.dirname(host_file)
+    if host_dir == '':
+      host_dir = '.'
+      host_file = './' + host_file
   if not os.path.exists(host_dir):
     shutil.os.makedirs(host_dir)
 
@@ -183,7 +186,7 @@ def main():
 
   if not args.no_open:
     prt('\n')
-    prt('Opening the trace in the browser')
+    prt('Opening the trace (%s) in the browser' % host_file)
     open_trace_in_browser(host_file)
 
 
@@ -206,7 +209,9 @@ def find_adb():
     except OSError:
       continue
   if adb_path is None:
-    prt('Could not find a suitable adb binary', ANSI.RED)
+    sdk_url = 'https://developer.android.com/studio/releases/platform-tools'
+    prt('Could not find a suitable adb binary in the PATH. ', ANSI.RED)
+    prt('You can download adb from %s' % sdk_url, ANSI.RED)
     sys.exit(1)
 
 
@@ -226,8 +231,12 @@ def open_trace_in_browser(path):
 
 def adb(*args, stdin=devnull, stdout=None):
   cmd = [adb_path, *args]
-  proc = subprocess.Popen(
-      cmd, stdin=stdin, stdout=stdout, preexec_fn=lambda: os.setpgrp())
+  setpgrp = None
+  if os.name != 'nt':
+    # On Linux/Mac, start a new process group so all child processes are killed
+    # on exit. Unsupported on Windows.
+    setpgrp = lambda: os.setpgrp()
+  proc = subprocess.Popen(cmd, stdin=stdin, stdout=stdout, preexec_fn=setpgrp)
   procs.append(proc)
   return proc
 

@@ -17,9 +17,13 @@ import {Draft} from 'immer';
 import {assertExists} from '../base/logging';
 import {randomColor} from '../common/colorizer';
 import {ConvertTrace, ConvertTraceToPprof} from '../controller/trace_converter';
+import {ACTUAL_FRAMES_SLICE_TRACK_KIND} from '../tracks/actual_frames/common';
 import {ASYNC_SLICE_TRACK_KIND} from '../tracks/async_slices/common';
 import {COUNTER_TRACK_KIND} from '../tracks/counter/common';
 import {DEBUG_SLICE_TRACK_KIND} from '../tracks/debug_slices/common';
+import {
+  EXPECTED_FRAMES_SLICE_TRACK_KIND
+} from '../tracks/expected_frames/common';
 import {HEAP_PROFILE_TRACK_KIND} from '../tracks/heap_profile/common';
 import {
   PROCESS_SCHEDULING_TRACK_KIND
@@ -146,7 +150,8 @@ export const StateActions = {
 
   // TODO(b/141359485): Actions should only modify state.
   convertTraceToJson(
-      _: StateDraft, args: {file: Blob, truncate?: 'start'|'end'}): void {
+      state: StateDraft, args: {file: Blob, truncate?: 'start'|'end'}): void {
+    state.traceConversionInProgress = true;
     ConvertTrace(args.file, args.truncate);
   },
 
@@ -154,6 +159,10 @@ export const StateActions = {
       _: StateDraft,
       args: {pid: number, src: TraceSource, ts1: number, ts2?: number}): void {
     ConvertTraceToPprof(args.pid, args.src, args.ts1, args.ts2);
+  },
+
+  clearConversionInProgress(state: StateDraft, _args: {}): void {
+    state.traceConversionInProgress = false;
   },
 
   addTracks(state: StateDraft, args: {tracks: AddTrackArgs[]}) {
@@ -240,6 +249,8 @@ export const StateActions = {
     const threadTrackOrder = [
       PROCESS_SCHEDULING_TRACK_KIND,
       PROCESS_SUMMARY_TRACK,
+      EXPECTED_FRAMES_SLICE_TRACK_KIND,
+      ACTUAL_FRAMES_SLICE_TRACK_KIND,
       HEAP_PROFILE_TRACK_KIND,
       COUNTER_TRACK_KIND,
       ASYNC_SLICE_TRACK_KIND
@@ -270,6 +281,7 @@ export const StateActions = {
       });
     }
   },
+
 
   updateAggregateSorting(
       state: StateDraft, args: {id: string, column: string}) {

@@ -346,6 +346,7 @@ source_set("end_to_end_tests") {
     "../../../test:test_helper",
     "../../base",
     "../../base:test_support",
+    "../../trace_processor:lib",
   ]
   sources = [ "heapprofd_end_to_end_test.cc" ]
   if (perfetto_build_with_android) {
@@ -390,4 +391,19 @@ perfetto_fuzzer_test("shared_ring_buffer_write_fuzzer") {
     "../../../gn:default_deps",
     "../../base",
   ]
+}
+
+if (enable_perfetto_benchmarks) {
+  source_set("benchmarks") {
+    testonly = true
+    deps = [
+      ":client",
+      ":client_api",
+      "../../../gn:benchmark",
+      "../../../gn:default_deps",
+      "../../base",
+      "../../base:test_support",
+    ]
+    sources = [ "client_api_benchmark.cc" ]
+  }
 }

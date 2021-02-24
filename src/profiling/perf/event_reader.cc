@@ -221,7 +221,7 @@ base::Optional<EventReader> EventReader::ConfigureEvents(
     const EventConfig& event_cfg) {
   auto perf_fd = PerfEventOpen(cpu, event_cfg);
   if (!perf_fd) {
-    PERFETTO_PLOG("failed perf_event_open");
+    PERFETTO_PLOG("Failed perf_event_open");
     return base::nullopt;
   }
 
@@ -229,6 +229,16 @@ base::Optional<EventReader> EventReader::ConfigureEvents(
       PerfRingBuffer::Allocate(perf_fd.get(), event_cfg.ring_buffer_pages());
   if (!ring_buffer.has_value()) {
     return base::nullopt;
+  }
+
+  // If counting tracepoints, set an event filter if requested.
+  const auto& event = event_cfg.timebase_event();
+  if (event.type == PERF_TYPE_TRACEPOINT && !event.tracepoint_filter.empty()) {
+    if (ioctl(perf_fd.get(), PERF_EVENT_IOC_SET_FILTER,
+              event.tracepoint_filter.c_str()) != 0) {
+      PERFETTO_PLOG("Failed ioctl to set event filter");
+      return base::nullopt;
+    }
   }
 
   return base::make_optional<EventReader>(cpu, *event_cfg.perf_attr(),
@@ -288,7 +298,8 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
                                             const char* record_start) {
   if (event_attr_.sample_type &
       (~uint64_t(PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_STACK_USER |
-                 PERF_SAMPLE_REGS_USER | PERF_SAMPLE_CALLCHAIN))) {
+                 PERF_SAMPLE_REGS_USER | PERF_SAMPLE_CALLCHAIN |
+                 PERF_SAMPLE_READ))) {
     PERFETTO_FATAL("Unsupported sampling option");
   }
 
@@ -296,8 +307,8 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
   size_t sample_size = event_hdr->size;
 
   ParsedSample sample = {};
-  sample.cpu = cpu;
-  sample.cpu_mode = event_hdr->misc & PERF_RECORD_MISC_CPUMODE_MASK;
+  sample.common.cpu = cpu;
+  sample.common.cpu_mode = event_hdr->misc & PERF_RECORD_MISC_CPUMODE_MASK;
 
   // Parse the payload, which consists of concatenated data for each
   // |attr.sample_type| flag.
@@ -308,12 +319,16 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
     uint32_t tid = 0;
     parse_pos = ReadValue(&pid, parse_pos);
     parse_pos = ReadValue(&tid, parse_pos);
-    sample.pid = static_cast<pid_t>(pid);
-    sample.tid = static_cast<pid_t>(tid);
+    sample.common.pid = static_cast<pid_t>(pid);
+    sample.common.tid = static_cast<pid_t>(tid);
   }
 
   if (event_attr_.sample_type & PERF_SAMPLE_TIME) {
-    parse_pos = ReadValue(&sample.timestamp, parse_pos);
+    parse_pos = ReadValue(&sample.common.timestamp, parse_pos);
+  }
+
+  if (event_attr_.sample_type & PERF_SAMPLE_READ) {
+    parse_pos = ReadValue(&sample.common.timebase_count, parse_pos);
   }
 
   if (event_attr_.sample_type & PERF_SAMPLE_CALLCHAIN) {
@@ -361,7 +376,12 @@ ParsedSample EventReader::ParseSampleRecord(uint32_t cpu,
   return sample;
 }
 
-void EventReader::PauseEvents() {
+void EventReader::EnableEvents() {
+  int ret = ioctl(perf_fd_.get(), PERF_EVENT_IOC_ENABLE);
+  PERFETTO_CHECK(ret == 0);
+}
+
+void EventReader::DisableEvents() {
   int ret = ioctl(perf_fd_.get(), PERF_EVENT_IOC_DISABLE);
   PERFETTO_CHECK(ret == 0);
 }
