@@ -1,5 +1,5 @@
 --
--- Copyright 2020 The Android Open Source Project
+-- Copyright 2021 The Android Open Source Project
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -13,12 +13,22 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
-select ts, dur, process.pid as pid, display_frame_token, surface_frame_token, layer_name,
-    present_type, on_time_finish, gpu_composition, jank_type, prediction_type
-from
-  (select t.*, process_track.name as track_name from
-    process_track left join actual_frame_timeline_slice t
-    on process_track.id = t.track_id) s
-join process using(upid)
-where s.track_name = 'Actual Timeline'
-order by ts
+
+SELECT RUN_METRIC(
+  'android/g2d_duration.sql',
+  'g2d_type', 'sw',
+  'output_table', 'g2d_sw_duration_metric'
+);
+
+SELECT RUN_METRIC(
+  'android/g2d_duration.sql',
+  'g2d_type', 'hw',
+  'output_table', 'g2d_hw_duration_metric'
+);
+
+DROP VIEW IF EXISTS g2d_output;
+CREATE VIEW g2d_output AS
+SELECT G2dMetrics(
+  'g2d_hw', (SELECT metric FROM g2d_hw_duration_metric),
+  'g2d_sw', (SELECT metric FROM g2d_sw_duration_metric)
+);
