@@ -46,10 +46,11 @@ if (enable_perfetto_trace_processor && enable_perfetto_trace_processor_sqlite) {
 }
 
 if (enable_perfetto_heapprofd) {
-  all_targets += [
-    "src/profiling/memory:heapprofd",
-    "src/profiling/memory:heapprofd_glibc_preload",
-  ]
+  all_targets += [ "src/profiling/memory:heapprofd" ]
+
+  if (is_linux && !is_android) {
+    all_targets += [ "src/profiling/memory:heapprofd_glibc_preload" ]
+  }
   if (perfetto_build_with_android) {
     all_targets += [
       "src/profiling/memory:heapprofd_client",
@@ -134,11 +135,6 @@ if (perfetto_build_standalone) {
     "protos/perfetto/config:cpp",
     "protos/perfetto/common:cpp",
 
-    # The diff testing framework depends on these descriptors.
-    "protos/perfetto/metrics:descriptor",
-    "protos/perfetto/trace:descriptor",
-    "protos/perfetto/trace:test_extensions_descriptor",
-
     # Used in the when updating the ftrace protos
     "protos/perfetto/trace/ftrace:descriptor",
 
@@ -180,10 +176,6 @@ group("default") {
 if (enable_perfetto_ui) {
   group("ui") {
     deps = [ "ui" ]
-  }
-
-  group("site") {
-    deps = [ "infra/perfetto.dev:site" ]
   }
 }
 
@@ -294,5 +286,13 @@ if (build_with_chromium) {
     configs -= [ "//build/config/compiler:chromium_code" ]
     configs += [ "//build/config/compiler:no_chromium_code" ]
     public_deps = [ "include/perfetto/trace_processor" ]
+  }
+  component("perfetto_test_support") {
+    testonly = true
+    public_configs = [ "gn:public_config" ]
+    configs -= [ "//build/config/compiler:chromium_code" ]
+    configs += [ "//build/config/compiler:no_chromium_code" ]
+    public_deps = [ "include/perfetto/test:test_support" ]
+    deps = [ "src/tracing/test:test_support" ]
   }
 }

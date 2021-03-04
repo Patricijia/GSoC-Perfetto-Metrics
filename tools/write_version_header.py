@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (C) 2020 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -101,6 +101,7 @@ def main():
       help='Skips running git rev-parse, emits only the version from CHANGELOG')
   parser.add_argument('--cpp_out', help='Path of the generated .h file.')
   parser.add_argument('--ts_out', help='Path of the generated .ts file.')
+  parser.add_argument('--stdout', help='Write to stdout', action='store_true')
   parser.add_argument('--changelog', help='Path to CHANGELOG.')
   args = parser.parse_args()
 
@@ -141,6 +142,9 @@ def main():
     lines.append('export const SCM_REVISION = "%s";' % git_sha1)
     content = '\n'.join(lines)
     write_if_unchanged(args.ts_out, content)
+
+  if args.stdout:
+    print(version)
 
 
 if __name__ == '__main__':

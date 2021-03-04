@@ -125,8 +125,9 @@ void ProtoTraceParser::ParseTracePacketImpl(
   // TODO(eseckler): Propagate statuses from modules.
   auto& modules = context_->modules_by_field;
   for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
-    if (modules[field_id] && packet.Get(field_id).valid()) {
-      modules[field_id]->ParsePacket(packet, ttp, field_id);
+    if (!modules[field_id].empty() && packet.Get(field_id).valid()) {
+      for (ProtoImporterModule* module : modules[field_id])
+        module->ParsePacket(packet, ttp, field_id);
       return;
     }
   }
@@ -311,15 +312,29 @@ void ProtoTraceParser::ParseProfilePacket(
     if (entry.buffer_corrupted())
       context_->storage->IncrementIndexedStats(
           stats::heapprofd_buffer_corrupted, pid);
-    if (entry.buffer_overran())
+    if (entry.buffer_overran() ||
+        entry.client_error() ==
+            protos::pbzero::ProfilePacket::ProcessHeapSamples::
+                CLIENT_ERROR_HIT_TIMEOUT) {
       context_->storage->IncrementIndexedStats(stats::heapprofd_buffer_overran,
                                                pid);
+    }
+    if (entry.client_error()) {
+      context_->storage->SetIndexedStats(stats::heapprofd_client_error, pid,
+                                         entry.client_error());
+    }
     if (entry.rejected_concurrent())
       context_->storage->IncrementIndexedStats(
           stats::heapprofd_rejected_concurrent, pid);
     if (entry.hit_guardrail())
       context_->storage->IncrementIndexedStats(stats::heapprofd_hit_guardrail,
                                                pid);
+    if (entry.orig_sampling_interval_bytes()) {
+      context_->storage->SetIndexedStats(
+          stats::heapprofd_sampling_interval_adjusted, pid,
+          static_cast<int64_t>(entry.sampling_interval_bytes()) -
+              static_cast<int64_t>(entry.orig_sampling_interval_bytes()));
+    }
 
     for (auto sample_it = entry.samples(); sample_it; ++sample_it) {
       protos::pbzero::ProfilePacket::HeapSample::Decoder sample(*sample_it);
@@ -457,12 +472,13 @@ void ProtoTraceParser::ParsePerfSample(
   uint64_t callstack_iid = sample.callstack_iid();
   base::Optional<CallsiteId> cs_id =
       stack_tracker.FindOrInsertCallstack(callstack_iid, &intern_lookup);
+  // TODO(rsavitski): make the callsite optional in the table, as we're
+  // starting to support counter-only samples, for which an empty callsite is
+  // not an error. On the other hand, if we could classify a sequence as
+  // requiring stack samples, then this would still count as an error.
+  // For now, use an invalid callsite id.
   if (!cs_id) {
-    context_->storage->IncrementStats(stats::stackprofile_parser_error);
-    PERFETTO_ELOG("PerfSample referencing invalid callstack iid [%" PRIu64
-                  "] at timestamp [%" PRIi64 "]",
-                  callstack_iid, ts);
-    return;
+    cs_id = base::make_optional<CallsiteId>(static_cast<uint32_t>(-1));
   }
 
   UniqueTid utid =

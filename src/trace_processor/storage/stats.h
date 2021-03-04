@@ -136,6 +136,9 @@ namespace stats {
   F(heapprofd_buffer_overran,           kIndexed, kDataLoss, kTrace,           \
       "The shared memory buffer between the target and heapprofd overran. "    \
       "The profile was truncated early. Indexed by target upid."),             \
+  F(heapprofd_client_error,             kIndexed, kError,    kTrace,           \
+      "The heapprofd client ran into a problem and disconnected. "             \
+      "See profile_packet.proto  for error codes."),                           \
   F(heapprofd_client_disconnected,      kIndexed, kInfo,     kTrace,    ""),   \
   F(heapprofd_malformed_packet,         kIndexed, kError,    kTrace,    ""),   \
   F(heapprofd_missing_packet,           kSingle,  kError,    kTrace,    ""),   \
@@ -143,6 +146,10 @@ namespace stats {
       "The target was already profiled by another tracing session, so the "    \
       "profile was not taken. Indexed by target upid."),                       \
   F(heapprofd_non_finalized_profile,    kSingle,  kError,    kTrace,    ""),   \
+  F(heapprofd_sampling_interval_adjusted,                                      \
+      kIndexed, kInfo,    kTrace,                                              \
+      "By how many byes the interval for PID was increased "                   \
+      "by adaptive sampling."),                                                \
   F(metatrace_overruns,                 kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_parse_errors,     kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_read_errors,      kSingle,  kError,    kTrace,    ""),   \

@@ -42,6 +42,7 @@
 #include "src/profiling/memory/bookkeeping.h"
 #include "src/profiling/memory/bookkeeping_dump.h"
 #include "src/profiling/memory/log_histogram.h"
+#include "src/profiling/memory/shared_ring_buffer.h"
 #include "src/profiling/memory/system_property.h"
 #include "src/profiling/memory/unwinding.h"
 #include "src/profiling/memory/unwound_messages.h"
@@ -148,12 +149,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
   // Valid only if mode_ == kChild.
   void SetTargetProcess(pid_t target_pid, std::string target_cmdline);
   void SetDataSourceCallback(std::function<void()> fn);
-  void SetInheritedSocket(base::ScopedFile inherited_socket);
-  // Valid only if mode_ == kChild. Kicks off a periodic check that the child
-  // heapprofd is actively working on a data source (which should correspond to
-  // the target process). The first check is delayed to let the freshly spawned
-  // producer get the data sources from the tracing service (i.e. traced).
-  void ScheduleActiveDataSourceWatchdog();
 
   // Exposed for testing.
   void SetProducerEndpoint(
@@ -185,12 +180,13 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
       HeapTracker heap_tracker;
       std::string heap_name;
-      uint64_t sampling_interval;
+      uint64_t sampling_interval = 0u;
+      uint64_t orig_sampling_interval = 0u;
     };
     ProcessState(GlobalCallstackTrie* c, bool d)
         : callsites(c), dump_at_max_mode(d) {}
     bool disconnected = false;
-    bool buffer_overran = false;
+    SharedRingBuffer::ErrorState error_state;
     bool buffer_corrupted = false;
 
     uint64_t heap_samples = 0;
@@ -325,10 +321,6 @@ class HeapprofdProducer : public Producer, public UnwindingWorker::Delegate {
 
   // Specific to mode_ == kChild
   Process target_process_{base::kInvalidPid, ""};
-  // This is a valid FD only between SetInheritedSocket and
-  // AdoptSocket.
-  // Specific to mode_ == kChild
-  base::ScopedFile inherited_fd_;
   base::Optional<std::function<void()>> data_source_callback_;
 
   SocketDelegate socket_delegate_;

@@ -44,6 +44,8 @@
 #include "src/profiling/perf/proc_descriptors.h"
 #include "src/profiling/perf/unwinding.h"
 #include "src/tracing/core/metatrace_writer.h"
+// TODO(rsavitski): move to e.g. src/tracefs/.
+#include "src/traced/probes/ftrace/ftrace_procfs.h"
 
 namespace perfetto {
 namespace profiling {
@@ -166,7 +168,7 @@ class PerfProducer : public Producer,
   // on the amount of samples that will be parsed, which might be more than the
   // number of underlying records (as there might be non-sample records).
   bool ReadAndParsePerCpuBuffer(EventReader* reader,
-                                uint32_t max_samples,
+                                uint64_t max_samples,
                                 DataSourceInstanceID ds_id,
                                 DataSourceState* ds);
 
@@ -246,6 +248,10 @@ class PerfProducer : public Producer,
 
   // Unwinding stage, running on a dedicated thread.
   UnwinderHandle unwinding_worker_;
+
+  // Used for tracepoint name -> id lookups. Initialized lazily, and in general
+  // best effort - can be null if tracefs isn't accessible.
+  std::unique_ptr<FtraceProcfs> tracefs_;
 
   base::WeakPtrFactory<PerfProducer> weak_factory_;  // keep last
 };

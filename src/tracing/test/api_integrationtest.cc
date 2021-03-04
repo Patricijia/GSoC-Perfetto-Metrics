@@ -98,7 +98,6 @@ PERFETTO_DEFINE_CATEGORIES(
     perfetto::Category("cat").SetTags("slow"),
     perfetto::Category("cat.verbose").SetTags("debug"),
     perfetto::Category("cat-with-dashes"),
-    perfetto::Category("cat with spaces"),
     perfetto::Category::Group("foo,bar"),
     perfetto::Category::Group("baz,bar,quux"),
     perfetto::Category::Group("red,green,blue,foo"),
@@ -303,6 +302,7 @@ struct TestIncrementalState {
   ~TestIncrementalState() { destroyed = true; }
 
   int count = 100;
+  bool flag = false;
   static bool constructed;
   static bool destroyed;
 };
@@ -407,9 +407,15 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
 
   TestTracingSessionHandle* NewTrace(const perfetto::TraceConfig& cfg,
                                      int fd = -1) {
+    return NewTrace(cfg, /*backend_type=*/GetParam(), fd);
+  }
+
+  TestTracingSessionHandle* NewTrace(const perfetto::TraceConfig& cfg,
+                                     perfetto::BackendType backend_type,
+                                     int fd = -1) {
     sessions_.emplace_back();
     TestTracingSessionHandle* handle = &sessions_.back();
-    handle->session = perfetto::Tracing::NewTrace(/*BackendType=*/GetParam());
+    handle->session = perfetto::Tracing::NewTrace(backend_type);
     handle->session->SetOnStopCallback([handle] { handle->on_stop.Notify(); });
     handle->session->Setup(cfg, fd);
     return handle;
@@ -496,6 +502,7 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
     std::map<uint64_t, std::string> categories;
     std::map<uint64_t, std::string> event_names;
     std::map<uint64_t, std::string> debug_annotation_names;
+    std::set<uint64_t> seen_tracks;
     perfetto::protos::gen::Trace parsed_trace;
     EXPECT_TRUE(
         parsed_trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
@@ -509,6 +516,14 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
         categories.clear();
         event_names.clear();
         debug_annotation_names.clear();
+        seen_tracks.clear();
+      }
+
+      if (packet.has_track_descriptor()) {
+        // Make sure we haven't seen any events on this track before the
+        // descriptor was written.
+        EXPECT_EQ(seen_tracks.find(packet.track_descriptor().uuid()),
+                  seen_tracks.end());
       }
 
       if (!packet.has_track_event())
@@ -542,6 +557,7 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
       std::string slice;
 
       if (track_event.has_track_uuid()) {
+        seen_tracks.insert(track_event.track_uuid());
         std::stringstream track;
         track << "[track=" << track_event.track_uuid() << "]";
         slice += track.str();
@@ -959,6 +975,44 @@ TEST_P(PerfettoApiTest, TrackEventCategories) {
   EXPECT_THAT(trace, Not(HasSubstr("NotEnabled")));
 }
 
+TEST_P(PerfettoApiTest, ClearIncrementalState) {
+  perfetto::DataSourceDescriptor dsd;
+  dsd.set_name("incr_data_source");
+  TestIncrementalDataSource::Register(dsd);
+  perfetto::test::SyncProducers();
+
+  // Setup the trace config with an incremental state clearing period.
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("incr_data_source");
+  auto* is_cfg = cfg.mutable_incremental_state_config();
+  is_cfg->set_clear_period_ms(10);
+
+  // Create a new trace session.
+  auto* tracing_session = NewTrace(cfg);
+  tracing_session->get()->StartBlocking();
+
+  // Observe at least 5 incremental state resets.
+  constexpr size_t kMaxLoops = 100;
+  size_t loops = 0;
+  size_t times_cleared = 0;
+  while (times_cleared < 5) {
+    ASSERT_LT(loops++, kMaxLoops);
+    TestIncrementalDataSource::Trace(
+        [&](TestIncrementalDataSource::TraceContext ctx) {
+          auto* incr_state = ctx.GetIncrementalState();
+          if (!incr_state->flag) {
+            incr_state->flag = true;
+            times_cleared++;
+          }
+        });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  tracing_session->get()->StopBlocking();
+}
+
 TEST_P(PerfettoApiTest, TrackEventRegistrationWithModule) {
   MockTracingMuxer muxer;
 
@@ -990,7 +1044,7 @@ TEST_P(PerfettoApiTest, TrackEventDescriptor) {
 
   // Check that the advertised categories match PERFETTO_DEFINE_CATEGORIES (see
   // above).
-  EXPECT_EQ(8, desc.available_categories_size());
+  EXPECT_EQ(7, desc.available_categories_size());
   EXPECT_EQ("test", desc.available_categories()[0].name());
   EXPECT_EQ("This is a test category",
             desc.available_categories()[0].description());
@@ -1002,9 +1056,8 @@ TEST_P(PerfettoApiTest, TrackEventDescriptor) {
   EXPECT_EQ("cat.verbose", desc.available_categories()[4].name());
   EXPECT_EQ("debug", desc.available_categories()[4].tags()[0]);
   EXPECT_EQ("cat-with-dashes", desc.available_categories()[5].name());
-  EXPECT_EQ("cat with spaces", desc.available_categories()[6].name());
-  EXPECT_EQ("disabled-by-default-cat", desc.available_categories()[7].name());
-  EXPECT_EQ("slow", desc.available_categories()[7].tags()[0]);
+  EXPECT_EQ("disabled-by-default-cat", desc.available_categories()[6].name());
+  EXPECT_EQ("slow", desc.available_categories()[6].tags()[0]);
 }
 
 TEST_P(PerfettoApiTest, TrackEventSharedIncrementalState) {
@@ -1411,6 +1464,34 @@ TEST_P(PerfettoApiTest, TrackEventCustomTrack) {
   EXPECT_TRUE(found_descriptor);
   EXPECT_EQ(4, event_count);
   perfetto::TrackEvent::EraseTrackDescriptor(track);
+}
+
+TEST_P(PerfettoApiTest, TrackDescriptorWrittenBeforeEvent) {
+  // Create a new trace session.
+  auto* tracing_session = NewTraceWithCategories({"bar"});
+  tracing_session->get()->StartBlocking();
+
+  // Emit an event on a custom track.
+  TRACE_EVENT_INSTANT("bar", "Event", perfetto::Track(8086));
+  perfetto::TrackEvent::Flush();
+  tracing_session->get()->StopBlocking();
+
+  std::vector<char> raw_trace = tracing_session->get()->ReadTraceBlocking();
+  perfetto::protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
+
+  // Check that the descriptor was written before the event.
+  std::set<uint64_t> seen_descriptors;
+  for (const auto& packet : trace.packet()) {
+    if (packet.has_track_descriptor())
+      seen_descriptors.insert(packet.track_descriptor().uuid());
+
+    if (!packet.has_track_event())
+      continue;
+    auto track_event = packet.track_event();
+    EXPECT_TRUE(seen_descriptors.find(track_event.track_uuid()) !=
+                seen_descriptors.end());
+  }
 }
 
 TEST_P(PerfettoApiTest, TrackEventCustomTrackAndTimestamp) {
@@ -1921,6 +2002,10 @@ TEST_P(PerfettoApiTest, TrackEventDebugAnnotations) {
   TRACE_EVENT_BEGIN("test", "E", "enum_arg", ENUM_BAR);
   TRACE_EVENT_BEGIN("test", "E", "signed_enum_arg", SIGNED_ENUM_FOO);
   TRACE_EVENT_BEGIN("test", "E", "class_enum_arg", MyClassEnum::VALUE);
+  TRACE_EVENT_BEGIN("test", "E", "traced_value",
+                    [&](perfetto::TracedValue context) {
+                      std::move(context).WriteInt64(42);
+                    });
   perfetto::TrackEvent::Flush();
 
   tracing_session->get()->StopBlocking();
@@ -1935,7 +2020,7 @@ TEST_P(PerfettoApiTest, TrackEventDebugAnnotations) {
           "B:test.E(ptr_arg=(pointer)baadf00d)",
           "B:test.E(size_t_arg=(uint)42)", "B:test.E(ptrdiff_t_arg=(int)-7)",
           "B:test.E(enum_arg=(uint)1)", "B:test.E(signed_enum_arg=(int)-1)",
-          "B:test.E(class_enum_arg=(int)0)"));
+          "B:test.E(class_enum_arg=(int)0)", "B:test.E(traced_value=(int)42)"));
 }
 
 TEST_P(PerfettoApiTest, TrackEventCustomDebugAnnotations) {
@@ -2729,6 +2814,28 @@ TEST_P(PerfettoApiTest, OnErrorCallback) {
   tracing_session->get()->StopBlocking();
 }
 
+TEST_P(PerfettoApiTest, UnsupportedBackend) {
+  // Create a new trace session with an invalid backend type specified.
+  // Specifically, the custom backend isn't initialized for these tests.
+  perfetto::TraceConfig cfg;
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* tracing_session = NewTrace(cfg, perfetto::BackendType::kCustomBackend);
+
+  // Creating the consumer should cause an asynchronous disconnect error.
+  WaitableTestEvent got_error;
+  tracing_session->get()->SetOnErrorCallback([&](perfetto::TracingError error) {
+    EXPECT_EQ(perfetto::TracingError::kDisconnected, error.code);
+    EXPECT_FALSE(error.message.empty());
+    got_error.Notify();
+  });
+  got_error.Wait();
+
+  // Clear the callback for test tear down.
+  tracing_session->get()->SetOnErrorCallback(nullptr);
+  // Synchronize the consumer channel to ensure the callback has propagated.
+  tracing_session->get()->StopBlocking();
+}
+
 TEST_P(PerfettoApiTest, GetTraceStats) {
   perfetto::TraceConfig cfg;
   cfg.set_duration_ms(500);
@@ -3024,10 +3131,8 @@ TEST_P(PerfettoApiTest, CategoryEnabledState) {
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("dynamic"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("dynamic_2"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED(dynamic));
-  EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("cat with spaces"));
 
-  auto* tracing_session =
-      NewTraceWithCategories({"foo", "dynamic", "cat with spaces"});
+  auto* tracing_session = NewTraceWithCategories({"foo", "dynamic"});
   tracing_session->get()->StartBlocking();
   EXPECT_TRUE(TRACE_EVENT_CATEGORY_ENABLED("foo"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("bar"));
@@ -3035,7 +3140,6 @@ TEST_P(PerfettoApiTest, CategoryEnabledState) {
   EXPECT_TRUE(TRACE_EVENT_CATEGORY_ENABLED("dynamic"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("dynamic_2"));
   EXPECT_TRUE(TRACE_EVENT_CATEGORY_ENABLED(dynamic));
-  EXPECT_TRUE(TRACE_EVENT_CATEGORY_ENABLED("cat with spaces"));
 
   tracing_session->get()->StopBlocking();
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("foo"));
@@ -3044,7 +3148,6 @@ TEST_P(PerfettoApiTest, CategoryEnabledState) {
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("dynamic"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("dynamic_2"));
   EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED(dynamic));
-  EXPECT_FALSE(TRACE_EVENT_CATEGORY_ENABLED("cat with spaces"));
 }
 
 class TestInterceptor : public perfetto::Interceptor<TestInterceptor> {

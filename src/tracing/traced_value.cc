@@ -22,8 +22,17 @@
 
 namespace perfetto {
 
+namespace internal {
+
+TracedValue CreateTracedValueFromProto(
+    protos::pbzero::DebugAnnotation* context) {
+  return TracedValue::CreateFromProto(context);
+}
+
+}  // namespace internal
+
 // static
-TracedValue TracedValue::CreateForTest(
+TracedValue TracedValue::CreateFromProto(
     protos::pbzero::DebugAnnotation* context) {
   return TracedValue(context, nullptr);
 }
@@ -73,6 +82,15 @@ void TracedValue::WriteString(const char* value) && {
   }
 }
 
+void TracedValue::WriteString(const char* value, size_t len) && {
+  PERFETTO_DCHECK(checked_scope_.is_active());
+  if (nested_context_) {
+    nested_context_->set_string_value(value, len);
+  } else {
+    root_context_->set_string_value(value, len);
+  }
+}
+
 void TracedValue::WriteString(const std::string& value) && {
   PERFETTO_DCHECK(checked_scope_.is_active());
   if (nested_context_) {
@@ -87,7 +105,7 @@ void TracedValue::WritePointer(const void* value) && {
   if (nested_context_) {
     nested_context_->set_int_value(reinterpret_cast<int64_t>(value));
   } else {
-    root_context_->set_uint_value(reinterpret_cast<uint64_t>(value));
+    root_context_->set_pointer_value(reinterpret_cast<uint64_t>(value));
   }
 }
 

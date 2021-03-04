@@ -43,7 +43,8 @@
 #include "src/profiling/perf/common_types.h"
 #include "src/profiling/perf/event_reader.h"
 
-#include "protos/perfetto/config/profiling/perf_event_config.pbzero.h"
+#include "protos/perfetto/common/builtin_clock.pbzero.h"
+#include "protos/perfetto/config/profiling/perf_event_config.gen.h"
 #include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
@@ -198,7 +199,6 @@ PerfProducer::PerfProducer(ProcDescriptorGetter* proc_fd_getter,
   proc_fd_getter->SetDelegate(this);
 }
 
-// TODO(rsavitski): consider configure at setup + enable at start instead.
 void PerfProducer::SetupDataSource(DataSourceInstanceID,
                                    const DataSourceConfig&) {}
 
@@ -216,20 +216,28 @@ void PerfProducer::StartDataSource(DataSourceInstanceID ds_id,
   if (config.name() != kDataSourceName)
     return;
 
-  protos::pbzero::PerfEventConfig::Decoder event_config_pb(
-      config.perf_event_config_raw());
+  // Tracepoint name -> id lookup in case the config asks for tracepoints:
+  auto tracepoint_id_lookup = [this](const std::string& group,
+                                     const std::string& name) {
+    if (!tracefs_)  // lazy init or retry
+      tracefs_ = FtraceProcfs::CreateGuessingMountPoint();
+    if (!tracefs_)  // still didn't find an accessible tracefs
+      return 0u;
+    return tracefs_->ReadEventId(group, name);
+  };
+
+  protos::gen::PerfEventConfig event_config_pb;
+  if (!event_config_pb.ParseFromString(config.perf_event_config_raw())) {
+    PERFETTO_ELOG("PerfEventConfig could not be parsed.");
+    return;
+  }
   base::Optional<EventConfig> event_config =
-      EventConfig::Create(event_config_pb, config);
+      EventConfig::Create(event_config_pb, config, tracepoint_id_lookup);
   if (!event_config.has_value()) {
     PERFETTO_ELOG("PerfEventConfig rejected.");
     return;
   }
 
-  // TODO(rsavitski): consider supporting specific cpu subsets.
-  if (!event_config->target_all_cpus()) {
-    PERFETTO_ELOG("PerfEventConfig{all_cpus} required");
-    return;
-  }
   size_t num_cpus = NumberOfCpus();
   std::vector<EventReader> per_cpu_readers;
   for (uint32_t cpu = 0; cpu < num_cpus; cpu++) {
@@ -256,6 +264,11 @@ void PerfProducer::StartDataSource(DataSourceInstanceID ds_id,
                             std::move(per_cpu_readers)));
   PERFETTO_CHECK(inserted);
   DataSourceState& ds = ds_it->second;
+
+  // Start the configured events.
+  for (auto& per_cpu_reader : ds.per_cpu_readers) {
+    per_cpu_reader.EnableEvents();
+  }
 
   // Write out a packet to initialize the incremental state for this sequence.
   InterningOutputTracker::WriteFixedInterningsPacket(
@@ -413,7 +426,7 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
   PERFETTO_METATRACE_SCOPED(TAG_PRODUCER, PROFILER_READ_TICK);
 
   // Make a pass over all per-cpu readers.
-  uint32_t max_samples = ds.event_config.samples_per_tick_limit();
+  uint64_t max_samples = ds.event_config.samples_per_tick_limit();
   bool more_records_available = false;
   for (EventReader& reader : ds.per_cpu_readers) {
     if (ReadAndParsePerCpuBuffer(&reader, max_samples, ds_id, &ds)) {
@@ -441,7 +454,7 @@ void PerfProducer::TickDataSourceRead(DataSourceInstanceID ds_id) {
 }
 
 bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
-                                            uint32_t max_samples,
+                                            uint64_t max_samples,
                                             DataSourceInstanceID ds_id,
                                             DataSourceState* ds) {
   PERFETTO_METATRACE_SCOPED(TAG_PRODUCER, PROFILER_READ_CPU);
@@ -456,19 +469,29 @@ bool PerfProducer::ReadAndParsePerCpuBuffer(EventReader* reader,
     });
   };
 
-  for (uint32_t i = 0; i < max_samples; i++) {
+  for (uint64_t i = 0; i < max_samples; i++) {
     base::Optional<ParsedSample> sample =
         reader->ReadUntilSample(records_lost_callback);
     if (!sample) {
       return false;  // caught up to the writer
     }
 
+    // Counter-only mode: skip the unwinding stage, enqueue the sample for
+    // output immediately.
+    if (!ds->event_config.sample_callstacks()) {
+      CompletedSample output;
+      output.common = sample->common;
+      PostEmitSample(ds_id, std::move(output));
+      continue;
+    }
+
+    // If sampling callstacks, we're not interested in kernel threads/workers.
     if (!sample->regs) {
-      continue;  // skip kernel threads/workers
+      continue;
     }
 
     // Request proc-fds for the process if this is the first time we see it.
-    pid_t pid = sample->pid;
+    pid_t pid = sample->common.pid;
     auto& process_state = ds->process_states[pid];  // insert if new
 
     if (process_state == ProcessTrackingStatus::kExpired) {
@@ -653,7 +676,8 @@ void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
 
   // start packet
   auto packet = ds.trace_writer->NewTracePacket();
-  packet->set_timestamp(sample.timestamp);
+  packet->set_timestamp(sample.common.timestamp);
+  packet->set_timestamp_clock_id(protos::pbzero::BUILTIN_CLOCK_MONOTONIC_RAW);
 
   // write new interning data (if any)
   protos::pbzero::InternedData* interned_out = packet->set_interned_data();
@@ -662,10 +686,11 @@ void PerfProducer::EmitSample(DataSourceInstanceID ds_id,
 
   // write the sample itself
   auto* perf_sample = packet->set_perf_sample();
-  perf_sample->set_cpu(sample.cpu);
-  perf_sample->set_pid(static_cast<uint32_t>(sample.pid));
-  perf_sample->set_tid(static_cast<uint32_t>(sample.tid));
-  perf_sample->set_cpu_mode(ToCpuModeEnum(sample.cpu_mode));
+  perf_sample->set_cpu(sample.common.cpu);
+  perf_sample->set_pid(static_cast<uint32_t>(sample.common.pid));
+  perf_sample->set_tid(static_cast<uint32_t>(sample.common.tid));
+  perf_sample->set_cpu_mode(ToCpuModeEnum(sample.common.cpu_mode));
+  perf_sample->set_timebase_count(sample.common.timebase_count);
   perf_sample->set_callstack_iid(callstack_iid);
   if (sample.unwind_error != unwindstack::ERROR_NONE) {
     perf_sample->set_unwind_error(ToProtoEnum(sample.unwind_error));
@@ -724,12 +749,13 @@ void PerfProducer::EmitSkippedSample(DataSourceInstanceID ds_id,
   DataSourceState& ds = ds_it->second;
 
   auto packet = ds.trace_writer->NewTracePacket();
-  packet->set_timestamp(sample.timestamp);
+  packet->set_timestamp(sample.common.timestamp);
+  packet->set_timestamp_clock_id(protos::pbzero::BUILTIN_CLOCK_MONOTONIC_RAW);
   auto* perf_sample = packet->set_perf_sample();
-  perf_sample->set_cpu(sample.cpu);
-  perf_sample->set_pid(static_cast<uint32_t>(sample.pid));
-  perf_sample->set_tid(static_cast<uint32_t>(sample.tid));
-  perf_sample->set_cpu_mode(ToCpuModeEnum(sample.cpu_mode));
+  perf_sample->set_cpu(sample.common.cpu);
+  perf_sample->set_pid(static_cast<uint32_t>(sample.common.pid));
+  perf_sample->set_tid(static_cast<uint32_t>(sample.common.tid));
+  perf_sample->set_cpu_mode(ToCpuModeEnum(sample.common.cpu_mode));
 
   using PerfSample = protos::pbzero::PerfSample;
   switch (reason) {
@@ -754,7 +780,7 @@ void PerfProducer::InitiateReaderStop(DataSourceState* ds) {
 
   ds->status = DataSourceState::Status::kShuttingDown;
   for (auto& event_reader : ds->per_cpu_readers) {
-    event_reader.PauseEvents();
+    event_reader.DisableEvents();
   }
 }
 

@@ -34,7 +34,11 @@
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 #include <sys/system_properties.h>
-#endif
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#include "src/android_internal/lazy_library_loader.h"    // nogncheck
+#include "src/android_internal/tracing_service_proxy.h"  // nogncheck
+#endif // PERFETTO_ANDROID_BUILD
+#endif // PERFETTO_OS_ANDROID
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
@@ -116,6 +120,7 @@ constexpr int kMaxConcurrentTracingSessionsForStatsdUid = 10;
 constexpr int64_t kMinSecondsBetweenTracesGuardrail = 5 * 60;
 
 constexpr uint32_t kMillisPerHour = 3600000;
+constexpr uint32_t kMillisPerDay = kMillisPerHour * 24;
 constexpr uint32_t kMaxTracingDurationMillis = 7 * 24 * kMillisPerHour;
 
 // These apply only if enable_extra_guardrails is true.
@@ -294,6 +299,8 @@ TracingServiceImpl::TracingServiceImpl(
       shm_factory_(std::move(shm_factory)),
       uid_(base::GetCurrentUserId()),
       buffer_ids_(kMaxTraceBufferID),
+      trigger_probability_rand_(
+          static_cast<uint32_t>(base::GetWallTimeNs().count())),
       weak_ptr_factory_(this) {
   PERFETTO_DCHECK(task_runner_);
 }
@@ -629,9 +636,11 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
       if (kv.second.config.unique_session_name() == name) {
         MaybeLogUploadEvent(
             cfg, PerfettoStatsdAtom::kTracedEnableTracingDuplicateSessionName);
-        return PERFETTO_SVC_ERR(
-            "A trace with this unique session name (%s) already exists",
-            name.c_str());
+        static const char fmt[] =
+            "A trace with this unique session name (%s) already exists";
+        // This happens frequently, don't make it an "E"LOG.
+        PERFETTO_LOG(fmt, name.c_str());
+        return base::ErrStatus(fmt, name.c_str());
       }
     }
   }
@@ -1299,6 +1308,8 @@ void TracingServiceImpl::ActivateTriggers(
 
   int64_t now_ns = base::GetBootTimeNs().count();
   for (const auto& trigger_name : triggers) {
+    PERFETTO_DLOG("Received ActivateTriggers request for \"%s\"",
+                  trigger_name.c_str());
     base::Hash hash;
     hash.Update(trigger_name.c_str(), trigger_name.size());
 
@@ -1330,9 +1341,26 @@ void TracingServiceImpl::ActivateTriggers(
         continue;
       }
 
+      // Use a random number between 0 and 1 to check if we should allow this
+      // trigger through or not.
+      double trigger_rnd =
+          trigger_rnd_override_for_testing_ > 0
+              ? trigger_rnd_override_for_testing_
+              : trigger_probability_dist_(trigger_probability_rand_);
+      PERFETTO_DCHECK(trigger_rnd >= 0 && trigger_rnd < 1);
+      if (trigger_rnd < iter->skip_probability()) {
+        MaybeLogTriggerEvent(tracing_session.config,
+                             PerfettoTriggerAtom::kTracedLimitProbability,
+                             trigger_name);
+        continue;
+      }
+
       // If we already triggered more times than the limit, silently ignore
       // this trigger.
       if (iter->max_per_24_h() > 0 && count_in_window >= iter->max_per_24_h()) {
+        MaybeLogTriggerEvent(tracing_session.config,
+                             PerfettoTriggerAtom::kTracedLimitMaxPer24h,
+                             trigger_name);
         continue;
       }
       trigger_applied = true;
@@ -2133,18 +2161,27 @@ void TracingServiceImpl::FreeBuffers(TracingSessionID tsid) {
     buffers_.erase(buffer_id);
   }
   bool notify_traceur = tracing_session->config.notify_traceur();
+  bool is_long_trace = (tracing_session->config.write_into_file() &&
+          tracing_session->config.file_write_period_ms() < kMillisPerDay);
+  bool seized_for_bugreport = tracing_session->seized_for_bugreport;
   tracing_sessions_.erase(tsid);
+  tracing_session = nullptr;
   UpdateMemoryGuardrail();
 
   PERFETTO_LOG("Tracing session %" PRIu64 " ended, total sessions:%zu", tsid,
                tracing_sessions_.size());
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  static const char kTraceurProp[] = "sys.trace.trace_end_signal";
-  if (notify_traceur && __system_property_set(kTraceurProp, "1"))
-    PERFETTO_ELOG("Failed to setprop %s=1", kTraceurProp);
+#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD) && \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+  if (notify_traceur && (seized_for_bugreport || is_long_trace)) {
+    PERFETTO_LAZY_LOAD(android_internal::NotifyTraceSessionEnded, notify_fn);
+    if (!notify_fn || !notify_fn(seized_for_bugreport))
+      PERFETTO_ELOG("Failed to notify Traceur long tracing has ended");
+  }
 #else
   base::ignore_result(notify_traceur);
+  base::ignore_result(is_long_trace);
+  base::ignore_result(seized_for_bugreport);
 #endif
 }
 
@@ -3064,6 +3101,15 @@ void TracingServiceImpl::MaybeLogUploadEvent(const TraceConfig& cfg,
 
   android_stats::MaybeLogUploadEvent(atom, cfg.trace_uuid_lsb(),
                                      cfg.trace_uuid_msb(), trigger_name);
+}
+
+void TracingServiceImpl::MaybeLogTriggerEvent(const TraceConfig& cfg,
+                                              PerfettoTriggerAtom atom,
+                                              const std::string& trigger_name) {
+  // Only log events when extra guardrails are enabled.
+  if (!cfg.enable_extra_guardrails())
+    return;
+  android_stats::MaybeLogTriggerEvent(atom, trigger_name);
 }
 
 size_t TracingServiceImpl::PurgeExpiredAndCountTriggerInWindow(
