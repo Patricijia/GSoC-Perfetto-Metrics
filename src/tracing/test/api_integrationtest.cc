@@ -71,6 +71,7 @@
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 #include "protos/perfetto/trace/track_event/chrome_process_descriptor.gen.h"
 #include "protos/perfetto/trace/track_event/chrome_process_descriptor.pbzero.h"
+#include "protos/perfetto/trace/track_event/counter_descriptor.gen.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.gen.h"
 #include "protos/perfetto/trace/track_event/debug_annotation.pbzero.h"
 #include "protos/perfetto/trace/track_event/log_message.gen.h"
@@ -302,6 +303,7 @@ struct TestIncrementalState {
   ~TestIncrementalState() { destroyed = true; }
 
   int count = 100;
+  bool flag = false;
   static bool constructed;
   static bool destroyed;
 };
@@ -972,6 +974,44 @@ TEST_P(PerfettoApiTest, TrackEventCategories) {
   // TODO(skyostil): Come up with a nicer way to verify trace contents.
   EXPECT_THAT(trace, HasSubstr("Enabled"));
   EXPECT_THAT(trace, Not(HasSubstr("NotEnabled")));
+}
+
+TEST_P(PerfettoApiTest, ClearIncrementalState) {
+  perfetto::DataSourceDescriptor dsd;
+  dsd.set_name("incr_data_source");
+  TestIncrementalDataSource::Register(dsd);
+  perfetto::test::SyncProducers();
+
+  // Setup the trace config with an incremental state clearing period.
+  perfetto::TraceConfig cfg;
+  cfg.set_duration_ms(500);
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* ds_cfg = cfg.add_data_sources()->mutable_config();
+  ds_cfg->set_name("incr_data_source");
+  auto* is_cfg = cfg.mutable_incremental_state_config();
+  is_cfg->set_clear_period_ms(10);
+
+  // Create a new trace session.
+  auto* tracing_session = NewTrace(cfg);
+  tracing_session->get()->StartBlocking();
+
+  // Observe at least 5 incremental state resets.
+  constexpr size_t kMaxLoops = 100;
+  size_t loops = 0;
+  size_t times_cleared = 0;
+  while (times_cleared < 5) {
+    ASSERT_LT(loops++, kMaxLoops);
+    TestIncrementalDataSource::Trace(
+        [&](TestIncrementalDataSource::TraceContext ctx) {
+          auto* incr_state = ctx.GetIncrementalState();
+          if (!incr_state->flag) {
+            incr_state->flag = true;
+            times_cleared++;
+          }
+        });
+    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+  }
+  tracing_session->get()->StopBlocking();
 }
 
 TEST_P(PerfettoApiTest, TrackEventRegistrationWithModule) {
@@ -3531,6 +3571,86 @@ TEST_P(PerfettoApiTest, ThreadSafetyAnnotation) {
                                   "B:cat.ScopedLegacy(value=(int)1)", "E"));
 }
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_COMPILER_CLANG)
+
+TEST_P(PerfettoApiTest, Counters) {
+  auto* tracing_session = NewTraceWithCategories({"cat"});
+  tracing_session->get()->StartBlocking();
+
+  // Describe a counter track.
+  perfetto::CounterTrack fps_track = perfetto::CounterTrack("Framerate", "fps");
+
+  // Emit an integer sample.
+  TRACE_COUNTER("cat", fps_track, 120);
+
+  // Global tracks can be constructed at build time.
+  constexpr auto goats_track =
+      perfetto::CounterTrack::Global("Goats teleported", "goats x 1000")
+          .set_unit_multiplier(1000);
+  static_assert(goats_track.uuid == 0x6072fc234f82df11,
+                "Counter track uuid mismatch");
+
+  // Emit some floating point samples.
+  TRACE_COUNTER("cat", goats_track, 0.25);
+  TRACE_COUNTER("cat", goats_track, 0.5);
+  TRACE_COUNTER("cat", goats_track, 0.75);
+
+  // Emit a sample using an inline track name.
+  TRACE_COUNTER("cat", "Voltage", 220);
+
+  // Emit sample with a custom timestamp.
+  TRACE_COUNTER("cat",
+                perfetto::CounterTrack("Power", "GW").set_category("dmc"),
+                MyTimestamp(1985u), 1.21f);
+  perfetto::TrackEvent::Flush();
+
+  tracing_session->get()->StopBlocking();
+  std::vector<char> raw_trace = tracing_session->get()->ReadTraceBlocking();
+
+  perfetto::protos::gen::Trace trace;
+  ASSERT_TRUE(trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
+  std::map<uint64_t, std::string> counter_names;
+  std::vector<std::string> counter_samples;
+  for (const auto& packet : trace.packet()) {
+    if (packet.has_track_event()) {
+      auto event = packet.track_event();
+      EXPECT_EQ(perfetto::protos::gen::TrackEvent_Type_TYPE_COUNTER,
+                event.type());
+      std::stringstream sample;
+      std::string counter_name = counter_names[event.track_uuid()];
+      sample << counter_name << " = ";
+      if (event.has_counter_value()) {
+        sample << event.counter_value();
+      } else if (event.has_double_counter_value()) {
+        sample << event.double_counter_value();
+      }
+      if (counter_name == "Power") {
+        EXPECT_EQ(1985u, packet.timestamp());
+      }
+      counter_samples.push_back(sample.str());
+    }
+
+    if (!packet.has_track_descriptor() ||
+        !packet.track_descriptor().has_counter()) {
+      continue;
+    }
+    auto desc = packet.track_descriptor();
+    counter_names[desc.uuid()] = desc.name();
+    if (desc.name() == "Framerate") {
+      EXPECT_EQ("fps", desc.counter().unit_name());
+    } else if (desc.name() == "Goats teleported") {
+      EXPECT_EQ("goats x 1000", desc.counter().unit_name());
+      EXPECT_EQ(1000, desc.counter().unit_multiplier());
+    } else if (desc.name() == "Power") {
+      EXPECT_EQ("GW", desc.counter().unit_name());
+      EXPECT_EQ("dmc", desc.counter().categories()[0]);
+    }
+  }
+  EXPECT_EQ(4u, counter_names.size());
+  EXPECT_THAT(counter_samples,
+              ElementsAre("Framerate = 120", "Goats teleported = 0.25",
+                          "Goats teleported = 0.5", "Goats teleported = 0.75",
+                          "Voltage = 220", "Power = 1.21"));
+}
 
 struct BackendTypeAsString {
   std::string operator()(

@@ -130,10 +130,12 @@ TEST_F(ExportJsonTest, StorageWithOneSlice) {
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
-  context_.storage->mutable_slice_table()->Insert(
-      {kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0});
+  SliceId slice_id =
+      context_.storage->mutable_slice_table()
+          ->Insert({kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0})
+          .id;
   context_.storage->mutable_thread_slices()->AddThreadSlice(
-      0, kThreadTimestamp, kThreadDuration, kThreadInstructionCount,
+      slice_id, kThreadTimestamp, kThreadDuration, kThreadInstructionCount,
       kThreadInstructionDelta);
 
   base::TempFile temp_file = base::TempFile::Create();
@@ -176,10 +178,12 @@ TEST_F(ExportJsonTest, StorageWithOneUnfinishedSlice) {
   context_.args_tracker->Flush();  // Flush track args.
   StringId cat_id = context_.storage->InternString(base::StringView(kCategory));
   StringId name_id = context_.storage->InternString(base::StringView(kName));
-  context_.storage->mutable_slice_table()->Insert(
-      {kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0});
+  SliceId slice_id =
+      context_.storage->mutable_slice_table()
+          ->Insert({kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0})
+          .id;
   context_.storage->mutable_thread_slices()->AddThreadSlice(
-      0, kThreadTimestamp, kThreadDuration, kThreadInstructionCount,
+      slice_id, kThreadTimestamp, kThreadDuration, kThreadInstructionCount,
       kThreadInstructionDelta);
 
   base::TempFile temp_file = base::TempFile::Create();
@@ -1222,7 +1226,7 @@ TEST_F(ExportJsonTest, AsyncEventWithThreadTimestamp) {
   auto id_and_row =
       slices->Insert({kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0});
   context_.storage->mutable_virtual_track_slices()->AddVirtualTrackSlice(
-      id_and_row.id.value, kThreadTimestamp, kThreadDuration, 0, 0);
+      id_and_row.id, kThreadTimestamp, kThreadDuration, 0, 0);
 
   base::TempFile temp_file = base::TempFile::Create();
   FILE* output = fopen(temp_file.path().c_str(), "w+");
@@ -1279,7 +1283,7 @@ TEST_F(ExportJsonTest, UnfinishedAsyncEvent) {
           ->Insert({kTimestamp, kDuration, track, cat_id, name_id, 0, 0, 0})
           .id;
   context_.storage->mutable_virtual_track_slices()->AddVirtualTrackSlice(
-      slice_id.value, kThreadTimestamp, kThreadDuration, 0, 0);
+      slice_id, kThreadTimestamp, kThreadDuration, 0, 0);
 
   base::TempFile temp_file = base::TempFile::Create();
   FILE* output = fopen(temp_file.path().c_str(), "w+");
@@ -1536,6 +1540,12 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
   storage->mutable_cpu_profile_stack_sample_table()->Insert(
       {kTimestamp, frame_callsite_2.id, utid, kProcessPriority});
 
+  storage->mutable_cpu_profile_stack_sample_table()->Insert(
+      {kTimestamp + 10000, frame_callsite_1.id, utid, kProcessPriority});
+
+  storage->mutable_cpu_profile_stack_sample_table()->Insert(
+      {kTimestamp + 20000, frame_callsite_1.id, utid, kProcessPriority});
+
   base::TempFile temp_file = base::TempFile::Create();
   FILE* output = fopen(temp_file.path().c_str(), "w+");
   util::Status status = ExportJson(storage, output);
@@ -1544,7 +1554,10 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
 
   Json::Value result = ToJsonValue(ReadFile(output));
 
-  EXPECT_EQ(result["traceEvents"].size(), 1u);
+  // The first sample should generate only a single instant event;
+  // the two following samples should also generate an additional [b, e] pair
+  // (the async duration event).
+  EXPECT_EQ(result["traceEvents"].size(), 5u);
   Json::Value event = result["traceEvents"][0];
   EXPECT_EQ(event["ph"].asString(), "n");
   EXPECT_EQ(event["id"].asString(), "0x1");
@@ -1557,6 +1570,29 @@ TEST_F(ExportJsonTest, CpuProfileEvent) {
             "foo_func - foo_module_name [foo_module_id]\nbar_func - "
             "bar_module_name [bar_module_id]\n");
   EXPECT_EQ(event["args"]["process_priority"].asInt(), kProcessPriority);
+
+  event = result["traceEvents"][1];
+  EXPECT_EQ(event["ph"].asString(), "n");
+  EXPECT_EQ(event["id"].asString(), "0x2");
+  EXPECT_EQ(event["ts"].asInt64(), (kTimestamp + 10000) / 1000);
+
+  event = result["traceEvents"][2];
+  EXPECT_EQ(event["ph"].asString(), "n");
+  EXPECT_EQ(event["id"].asString(), "0x2");
+  EXPECT_EQ(event["ts"].asInt64(), (kTimestamp + 20000) / 1000);
+  Json::String second_callstack_ = event["args"]["frames"].asString();
+  EXPECT_EQ(second_callstack_, "foo_func - foo_module_name [foo_module_id]\n");
+
+  event = result["traceEvents"][3];
+  EXPECT_EQ(event["ph"].asString(), "b");
+  EXPECT_EQ(event["id"].asString(), "0x2");
+  EXPECT_EQ(event["ts"].asInt64(), (kTimestamp + 10000) / 1000 - 1);
+  EXPECT_EQ(event["args"]["frames"].asString(), second_callstack_);
+
+  event = result["traceEvents"][4];
+  EXPECT_EQ(event["ph"].asString(), "e");
+  EXPECT_EQ(event["id"].asString(), "0x2");
+  EXPECT_EQ(event["ts"].asInt64(), (kTimestamp + 20000) / 1000);
 }
 
 TEST_F(ExportJsonTest, ArgumentFilter) {
@@ -1806,27 +1842,29 @@ TEST_F(ExportJsonTest, MemorySnapshotOsDumpEvent) {
   EXPECT_EQ(region["pf"].asInt64(), kProtectionFlags);
   EXPECT_EQ(region["sa"].asString(), base::Uint64ToHexStringNoPrefix(
                                          static_cast<uint64_t>(kStartAddress)));
-  EXPECT_EQ(region["sz"].asString(),
-            base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(kSizeKb)));
+  EXPECT_EQ(
+      region["sz"].asString(),
+      base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(kSizeKb * 1024)));
   EXPECT_EQ(region["id"].asString(), kModuleDebugid);
   EXPECT_EQ(region["df"].asString(), kModuleDebugPath);
   EXPECT_EQ(region["bs"]["pc"].asString(),
             base::Uint64ToHexStringNoPrefix(
-                static_cast<uint64_t>(kPrivateCleanResidentKb)));
-  EXPECT_EQ(
-      region["bs"]["pd"].asString(),
-      base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(kPrivateDirtyKb)));
+                static_cast<uint64_t>(kPrivateCleanResidentKb * 1024)));
+  EXPECT_EQ(region["bs"]["pd"].asString(),
+            base::Uint64ToHexStringNoPrefix(
+                static_cast<uint64_t>(kPrivateDirtyKb * 1024)));
   EXPECT_EQ(region["bs"]["pss"].asString(),
             base::Uint64ToHexStringNoPrefix(
-                static_cast<uint64_t>(kProportionalResidentKb)));
+                static_cast<uint64_t>(kProportionalResidentKb * 1024)));
   EXPECT_EQ(region["bs"]["sc"].asString(),
             base::Uint64ToHexStringNoPrefix(
-                static_cast<uint64_t>(kSharedCleanResidentKb)));
+                static_cast<uint64_t>(kSharedCleanResidentKb * 1024)));
   EXPECT_EQ(region["bs"]["sd"].asString(),
             base::Uint64ToHexStringNoPrefix(
-                static_cast<uint64_t>(kSharedDirtyResidentKb)));
-  EXPECT_EQ(region["bs"]["sw"].asString(),
-            base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(kSwapKb)));
+                static_cast<uint64_t>(kSharedDirtyResidentKb * 1024)));
+  EXPECT_EQ(
+      region["bs"]["sw"].asString(),
+      base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(kSwapKb * 1024)));
 }
 
 TEST_F(ExportJsonTest, MemorySnapshotChromeDumpEvent) {

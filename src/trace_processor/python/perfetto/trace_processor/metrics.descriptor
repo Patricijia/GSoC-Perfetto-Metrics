@@ -62,6 +62,16 @@ avgFreqKhze
 total_duplicate_frames (RtotalDuplicateFrames6
 duplicate_frames_logged (RduplicateFramesLogged7
 total_dpu_underrun_count (RtotalDpuUnderrunCount
+¯
+4protos/perfetto/metrics/android/fastrpc_metric.protoperfetto.protos"Æ
+AndroidFastrpcMetricM
+	subsystem (2/.perfetto.protos.AndroidFastrpcMetric.SubsystemR	subsystem∆
+	Subsystem
+name (	Rname$
+avg_size_bytes (RavgSizeBytes$
+min_size_bytes (RminSizeBytes$
+max_size_bytes (RmaxSizeBytes3
+total_alloc_size_bytes (RtotalAllocSizeBytes
 ˇ
 0protos/perfetto/metrics/android/g2d_metric.protoperfetto.protos"π
 
@@ -149,13 +159,14 @@ selfAllocsQ
 profile_delta_bytes (RprofileDeltaBytes.
 profile_total_bytes (RprofileTotalBytes;
 max_anon_rss_and_swap_bytes (RmaxAnonRssAndSwapBytes
-…
-0protos/perfetto/metrics/android/hwcomposer.protoperfetto.protos"É
+ä
+0protos/perfetto/metrics/android/hwcomposer.protoperfetto.protos"ƒ
 AndroidHwcomposerMetrics8
 composition_total_layers (RcompositionTotalLayers4
 composition_dpu_layers (RcompositionDpuLayers4
 composition_gpu_layers (RcompositionGpuLayersA
-composition_dpu_cached_layers (RcompositionDpuCachedLayers
+composition_dpu_cached_layers (RcompositionDpuCachedLayers?
+composition_sf_cached_layers (RcompositionSfCachedLayers
 Ü
 1protos/perfetto/metrics/android/hwui_metric.protoperfetto.protos"„
 ProcessRenderInfo!
@@ -353,8 +364,8 @@ PowerRails
 name (	RnameN
 energy_data (2-.perfetto.protos.AndroidPowerRails.EnergyDataR
 energyData
-›
-4protos/perfetto/metrics/android/startup_metric.protoperfetto.protos6protos/perfetto/metrics/android/process_metadata.proto"€
+†
+4protos/perfetto/metrics/android/startup_metric.protoperfetto.protos6protos/perfetto/metrics/android/process_metadata.proto"û
 AndroidStartupMetricG
 startup (2-.perfetto.protos.AndroidStartupMetric.StartupRstartup‡
 TaskStateBreakdown$
@@ -364,7 +375,7 @@ energyData
 interruptible_sleep_dur_ns (RinterruptibleSleepDurNs5
 Slice
 dur_ns (RdurNs
-dur_ms (RdurMs·
+dur_ms (RdurMs∂
 ToFirstFrame
 dur_ns (RdurNs
 dur_ms (RdurMsr
@@ -376,7 +387,9 @@ energyData
 time_activity_start (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeActivityStart]
 time_activity_resume (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeActivityResume_
 time_activity_restart (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeActivityRestartZ
-time_choreographer	 (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeChoreographerf
+time_choreographer	 (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeChoreographerN
+time_inflate (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeInflateY
+time_get_resources (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeGetResourcesf
 time_before_start_process
  (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeBeforeStartProcessf
 time_during_start_process (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeDuringStartProcessM
@@ -384,37 +397,55 @@ energyData
 toPostForkb
 to_activity_thread_main (2+.perfetto.protos.AndroidStartupMetric.SliceRtoActivityThreadMain[
 to_bind_application (2+.perfetto.protos.AndroidStartupMetric.SliceRtoBindApplicationQ
-time_post_fork (2+.perfetto.protos.AndroidStartupMetric.SliceRtimePostForkJJJJ\
+time_post_fork (2+.perfetto.protos.AndroidStartupMetric.SliceRtimePostForkO
+time_dex_open (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeDexOpenW
+time_verify_class (2+.perfetto.protos.AndroidStartupMetric.SliceRtimeVerifyClassJJJJ\
 
 HscMetricsN
-full_startup (2+.perfetto.protos.AndroidStartupMetric.SliceRfullStartupù
+full_startup (2+.perfetto.protos.AndroidStartupMetric.SliceRfullStartupy
+Activity
+name (	Rname
+method (	RmethodA
+slice (2+.perfetto.protos.AndroidStartupMetric.SliceRsliceØ
+OptimizationStatus
+odex_status (	R
+odexStatus-
+compilation_filter (	RcompilationFilter-
+compilation_reason (	RcompilationReason
+location (	Rlocationﬁ
 Startup
 
 startup_id (R	startupId!
 package_name (	RpackageName!
-process_name (	RprocessName,
+process_name (	RprocessNameN
+
+activities (2..perfetto.protos.AndroidStartupMetric.ActivityR
+activities,
 zygote_new_process (RzygoteNewProcessC
 activity_hosting_process_count (RactivityHostingProcessCountX
 to_first_frame (22.perfetto.protos.AndroidStartupMetric.ToFirstFrameRtoFirstFrameA
 process (2'.perfetto.protos.AndroidProcessMetadataRprocessB
 hsc (20.perfetto.protos.AndroidStartupMetric.HscMetricsRhscY
-report_fully_drawn	 (2+.perfetto.protos.AndroidStartupMetric.SliceRreportFullyDrawn
+report_fully_drawn	 (2+.perfetto.protos.AndroidStartupMetric.SliceRreportFullyDrawni
+optimization_status (28.perfetto.protos.AndroidStartupMetric.OptimizationStatusRoptimizationStatusJ
+
 ‰
 4protos/perfetto/metrics/android/surfaceflinger.protoperfetto.protos"ö
 AndroidSurfaceflingerMetric#
 missed_frames (RmissedFrames*
 missed_hwc_frames (RmissedHwcFrames*
 missed_gpu_frames (RmissedGpuFrames
-⁄
-7protos/perfetto/metrics/android/sysui_cuj_metrics.protoperfetto.protos6protos/perfetto/metrics/android/process_metadata.proto"’
+
+7protos/perfetto/metrics/android/sysui_cuj_metrics.protoperfetto.protos6protos/perfetto/metrics/android/process_metadata.proto"Î
 AndroidSysUiCujMetricsE
 frames (2-.perfetto.protos.AndroidSysUiCujMetrics.FrameRframes
 cuj_name (	RcujName
 	cuj_start (RcujStart
 cuj_dur (RcujDurA
-process (2'.perfetto.protos.AndroidProcessMetadataRprocess`
+process (2'.perfetto.protos.AndroidProcessMetadataRprocessv
 Frame
-number (Rnumber
+number (Rnumber
+vsync (Rvsync
 ts (Rts
 dur (Rdur
 
@@ -457,8 +488,8 @@ mainThreadr
 module (	Rmodule
 build_id (	RbuildId
 address (Raddress
-˘
-%protos/perfetto/metrics/metrics.protoperfetto.protos1protos/perfetto/metrics/android/batt_metric.proto0protos/perfetto/metrics/android/cpu_metric.proto5protos/perfetto/metrics/android/display_metrics.proto0protos/perfetto/metrics/android/g2d_metric.proto0protos/perfetto/metrics/android/gpu_metric.proto<protos/perfetto/metrics/android/heap_profile_callsites.proto0protos/perfetto/metrics/android/hwcomposer.proto1protos/perfetto/metrics/android/hwui_metric.proto0protos/perfetto/metrics/android/ion_metric.proto1protos/perfetto/metrics/android/jank_metric.proto9protos/perfetto/metrics/android/java_heap_histogram.proto5protos/perfetto/metrics/android/java_heap_stats.proto0protos/perfetto/metrics/android/lmk_metric.proto7protos/perfetto/metrics/android/lmk_reason_metric.proto0protos/perfetto/metrics/android/mem_metric.proto6protos/perfetto/metrics/android/mem_unagg_metric.proto2protos/perfetto/metrics/android/package_list.proto5protos/perfetto/metrics/android/powrails_metric.proto4protos/perfetto/metrics/android/startup_metric.proto4protos/perfetto/metrics/android/surfaceflinger.proto7protos/perfetto/metrics/android/sysui_cuj_metrics.proto0protos/perfetto/metrics/android/task_names.protoAprotos/perfetto/metrics/android/thread_time_in_state_metric.proto9protos/perfetto/metrics/android/unsymbolized_frames.proto"î
+´
+%protos/perfetto/metrics/metrics.protoperfetto.protos1protos/perfetto/metrics/android/batt_metric.proto0protos/perfetto/metrics/android/cpu_metric.proto5protos/perfetto/metrics/android/display_metrics.proto4protos/perfetto/metrics/android/fastrpc_metric.proto0protos/perfetto/metrics/android/g2d_metric.proto0protos/perfetto/metrics/android/gpu_metric.proto<protos/perfetto/metrics/android/heap_profile_callsites.proto0protos/perfetto/metrics/android/hwcomposer.proto1protos/perfetto/metrics/android/hwui_metric.proto0protos/perfetto/metrics/android/ion_metric.proto1protos/perfetto/metrics/android/jank_metric.proto9protos/perfetto/metrics/android/java_heap_histogram.proto5protos/perfetto/metrics/android/java_heap_stats.proto0protos/perfetto/metrics/android/lmk_metric.proto7protos/perfetto/metrics/android/lmk_reason_metric.proto0protos/perfetto/metrics/android/mem_metric.proto6protos/perfetto/metrics/android/mem_unagg_metric.proto2protos/perfetto/metrics/android/package_list.proto5protos/perfetto/metrics/android/powrails_metric.proto4protos/perfetto/metrics/android/startup_metric.proto4protos/perfetto/metrics/android/surfaceflinger.proto7protos/perfetto/metrics/android/sysui_cuj_metrics.proto0protos/perfetto/metrics/android/task_names.protoAprotos/perfetto/metrics/android/thread_time_in_state_metric.proto9protos/perfetto/metrics/android/unsymbolized_frames.proto"¿
 TraceMetadata*
 trace_duration_ns (RtraceDurationNs
 
@@ -468,7 +499,9 @@ trace_uuid (	R	traceUuid:
 trace_size_bytes (RtraceSizeBytes#
 trace_trigger (	RtraceTrigger.
 unique_session_name (	RuniqueSessionName,
-trace_config_pbtxt	 (	RtraceConfigPbtxtJ"ò
+trace_config_pbtxt	 (	RtraceConfigPbtxt*
+sched_duration_ns
+ (RschedDurationNsJ"Ë
 TraceMetricsH
 android_batt (2%.perfetto.protos.AndroidBatteryMetricRandroidBattB
 android_cpu (2!.perfetto.protos.AndroidCpuMetricR
@@ -478,7 +511,8 @@ androidMem\
 android_mem_unagg (20.perfetto.protos.AndroidMemoryUnaggregatedMetricRandroidMemUnaggU
 android_package_list (2#.perfetto.protos.AndroidPackageListRandroidPackageListB
 android_ion	 (2!.perfetto.protos.AndroidIonMetricR
-androidIonB
+androidIonN
+android_fastrpc (2%.perfetto.protos.AndroidFastrpcMetricRandroidFastrpcB
 android_lmk (2!.perfetto.protos.AndroidLmkMetricR
 androidLmkM
 android_powrails (2".perfetto.protos.AndroidPowerRailsRandroidPowrailsN

@@ -6,6 +6,22 @@ android_startup {
     process: {
       name: "com.google.android.calendar"
     }
+    activities {
+      name: "com.google.android.calendar.MainActivity"
+      method: "performCreate"
+      slice {
+        dur_ns: 4
+        dur_ms: 4e-06
+      }
+    }
+    activities {
+      name: "com.google.android.calendar.MainActivity"
+      method: "performResume"
+      slice {
+        dur_ns: 1
+        dur_ms: 1e-06
+      }
+    }
     zygote_new_process: true
     to_first_frame {
       dur_ns: 108
@@ -37,6 +53,26 @@ android_startup {
         dur_ns: 83
         dur_ms: 8.3e-05
       }
+      time_inflate {
+        dur_ns: 3
+        dur_ms: 3e-06
+      }
+      time_get_resources {
+        dur_ns: 1
+        dur_ms: 1e-06
+      }
+    }
+    optimization_status {
+      odex_status: "up-to-date"
+      compilation_filter: "speed"
+      compilation_reason: "prebuilt"
+      location: "/system/framework/oat/arm/com.android.location.provider.odex"
+    }
+    optimization_status {
+      odex_status: "io-error-no-oat"
+      compilation_filter: "run-from-apk"
+      compilation_reason: "unknown"
+      location: "error"
     }
     activity_hosting_process_count: 1
   }

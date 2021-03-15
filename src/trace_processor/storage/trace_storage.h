@@ -125,7 +125,7 @@ class TraceStorage {
 
   class ThreadSlices {
    public:
-    inline uint32_t AddThreadSlice(uint32_t slice_id,
+    inline uint32_t AddThreadSlice(SliceId slice_id,
                                    int64_t thread_timestamp_ns,
                                    int64_t thread_duration_ns,
                                    int64_t thread_instruction_count,
@@ -142,7 +142,7 @@ class TraceStorage {
       return static_cast<uint32_t>(slice_ids_.size());
     }
 
-    const std::deque<uint32_t>& slice_ids() const { return slice_ids_; }
+    const std::deque<SliceId>& slice_ids() const { return slice_ids_; }
     const std::deque<int64_t>& thread_timestamp_ns() const {
       return thread_timestamp_ns_;
     }
@@ -156,7 +156,7 @@ class TraceStorage {
       return thread_instruction_deltas_;
     }
 
-    base::Optional<uint32_t> FindRowForSliceId(uint32_t slice_id) const {
+    base::Optional<uint32_t> FindRowForSliceId(SliceId slice_id) const {
       auto it =
           std::lower_bound(slice_ids().begin(), slice_ids().end(), slice_id);
       if (it != slice_ids().end() && *it == slice_id) {
@@ -165,7 +165,7 @@ class TraceStorage {
       return base::nullopt;
     }
 
-    void UpdateThreadDeltasForSliceId(uint32_t slice_id,
+    void UpdateThreadDeltasForSliceId(SliceId slice_id,
                                       int64_t end_thread_timestamp_ns,
                                       int64_t end_thread_instruction_count) {
       auto opt_row = FindRowForSliceId(slice_id);
@@ -180,7 +180,7 @@ class TraceStorage {
     }
 
    private:
-    std::deque<uint32_t> slice_ids_;
+    std::deque<SliceId> slice_ids_;
     std::deque<int64_t> thread_timestamp_ns_;
     std::deque<int64_t> thread_duration_ns_;
     std::deque<int64_t> thread_instruction_counts_;
@@ -189,7 +189,7 @@ class TraceStorage {
 
   class VirtualTrackSlices {
    public:
-    inline uint32_t AddVirtualTrackSlice(uint32_t slice_id,
+    inline uint32_t AddVirtualTrackSlice(SliceId slice_id,
                                          int64_t thread_timestamp_ns,
                                          int64_t thread_duration_ns,
                                          int64_t thread_instruction_count,
@@ -206,7 +206,7 @@ class TraceStorage {
       return static_cast<uint32_t>(slice_ids_.size());
     }
 
-    const std::deque<uint32_t>& slice_ids() const { return slice_ids_; }
+    const std::deque<SliceId>& slice_ids() const { return slice_ids_; }
     const std::deque<int64_t>& thread_timestamp_ns() const {
       return thread_timestamp_ns_;
     }
@@ -220,7 +220,7 @@ class TraceStorage {
       return thread_instruction_deltas_;
     }
 
-    base::Optional<uint32_t> FindRowForSliceId(uint32_t slice_id) const {
+    base::Optional<uint32_t> FindRowForSliceId(SliceId slice_id) const {
       auto it =
           std::lower_bound(slice_ids().begin(), slice_ids().end(), slice_id);
       if (it != slice_ids().end() && *it == slice_id) {
@@ -229,7 +229,7 @@ class TraceStorage {
       return base::nullopt;
     }
 
-    void UpdateThreadDeltasForSliceId(uint32_t slice_id,
+    void UpdateThreadDeltasForSliceId(SliceId slice_id,
                                       int64_t end_thread_timestamp_ns,
                                       int64_t end_thread_instruction_count) {
       auto opt_row = FindRowForSliceId(slice_id);
@@ -244,7 +244,7 @@ class TraceStorage {
     }
 
    private:
-    std::deque<uint32_t> slice_ids_;
+    std::deque<SliceId> slice_ids_;
     std::deque<int64_t> thread_timestamp_ns_;
     std::deque<int64_t> thread_duration_ns_;
     std::deque<int64_t> thread_instruction_counts_;
@@ -442,6 +442,13 @@ class TraceStorage {
   }
   tables::GpuCounterGroupTable* mutable_gpu_counter_group_table() {
     return &gpu_counter_group_table_;
+  }
+
+  const tables::PerfCounterTrackTable& perf_counter_track_table() const {
+    return perf_counter_track_table_;
+  }
+  tables::PerfCounterTrackTable* mutable_perf_counter_track_table() {
+    return &perf_counter_track_table_;
   }
 
   const tables::SchedSliceTable& sched_slice_table() const {
@@ -793,6 +800,8 @@ class TraceStorage {
   tables::GpuCounterTrackTable gpu_counter_track_table_{&string_pool_,
                                                         &counter_track_table_};
   tables::GpuCounterGroupTable gpu_counter_group_table_{&string_pool_, nullptr};
+  tables::PerfCounterTrackTable perf_counter_track_table_{
+      &string_pool_, &counter_track_table_};
 
   // Args for all other tables.
   tables::ArgTable arg_table_{&string_pool_, nullptr};
@@ -855,8 +864,7 @@ class TraceStorage {
       &string_pool_, nullptr};
   tables::CpuProfileStackSampleTable cpu_profile_stack_sample_table_{
       &string_pool_, &stack_sample_table_};
-  tables::PerfSampleTable perf_sample_table_{&string_pool_,
-                                             &stack_sample_table_};
+  tables::PerfSampleTable perf_sample_table_{&string_pool_, nullptr};
   tables::PackageListTable package_list_table_{&string_pool_, nullptr};
   tables::ProfilerSmapsTable profiler_smaps_table_{&string_pool_, nullptr};
 
