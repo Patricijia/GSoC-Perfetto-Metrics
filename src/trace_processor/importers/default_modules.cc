@@ -16,6 +16,8 @@
 
 #include "src/trace_processor/importers/default_modules.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
+#include "src/trace_processor/importers/proto/chrome_system_probes_module.h"
+#include "src/trace_processor/importers/proto/memory_tracker_snapshot_module.h"
 #include "src/trace_processor/importers/proto/profile_module.h"
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
 #include "src/trace_processor/importers/proto/track_event_module.h"
@@ -30,6 +32,8 @@ void RegisterDefaultModules(TraceProcessorContext* context) {
   context->ftrace_module =
       static_cast<FtraceModule*>(context->modules.back().get());
 
+  context->modules.emplace_back(new MemoryTrackerSnapshotModule(context));
+  context->modules.emplace_back(new ChromeSystemProbesModule(context));
   context->modules.emplace_back(new TrackEventModule(context));
   context->modules.emplace_back(new ProfileModule(context));
 }

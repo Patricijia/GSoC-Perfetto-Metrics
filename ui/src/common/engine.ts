@@ -15,11 +15,10 @@
 import {
   ComputeMetricArgs,
   ComputeMetricResult,
-  GetMetricDescriptorsArgs,
-  GetMetricDescriptorsResult,
   RawQueryArgs,
-  RawQueryResult,
+  RawQueryResult
 } from './protos';
+import {slowlyCountRows} from './query_iterator';
 import {TimeSpan} from './time';
 
 export interface LoadingTracker {
@@ -74,16 +73,10 @@ export abstract class Engine {
   abstract rawQuery(rawQueryArgs: Uint8Array): Promise<Uint8Array>;
 
   /*
-   * Performs computation of metrics and returns a proto-encoded TraceMetrics
-   * object.
+   * Performs computation of metrics and returns metric result and any errors.
+   * Metric result is a proto binary or text encoded TraceMetrics object.
    */
   abstract rawComputeMetric(computeMetricArgs: Uint8Array): Promise<Uint8Array>;
-
-  /*
-   * Gets all the metric related proto descriptors from engine.
-   */
-  abstract rawGetMetricDescriptors(getMetricArgs: Uint8Array):
-      Promise<Uint8Array>;
 
   /**
    * Shorthand for sending a SQL query to the engine.
@@ -121,6 +114,7 @@ export abstract class Engine {
   async computeMetric(metrics: string[]): Promise<ComputeMetricResult> {
     const args = new ComputeMetricArgs();
     args.metricNames = metrics;
+    args.format = ComputeMetricArgs.ResultFormat.TEXTPROTO;
     const argsEncoded = ComputeMetricArgs.encode(args).finish();
     const respEncoded = await this.rawComputeMetric(argsEncoded);
     const result = ComputeMetricResult.decode(respEncoded);
@@ -130,21 +124,10 @@ export abstract class Engine {
     return result;
   }
 
-  /**
-   * Shorthand for getting metric descriptors from engine.
-   * Deals with {,un}marshalling of request/response args.
-   */
-  async getMetricDescriptors(): Promise<GetMetricDescriptorsResult> {
-    const args = new GetMetricDescriptorsArgs();
-    const argsEncoded = GetMetricDescriptorsArgs.encode(args).finish();
-    const respEncoded = await this.rawGetMetricDescriptors(argsEncoded);
-    return GetMetricDescriptorsResult.decode(respEncoded);
-  }
-
   async queryOneRow(query: string): Promise<number[]> {
     const result = await this.query(query);
     const res: number[] = [];
-    if (result.numRecords === 0) return res;
+    if (slowlyCountRows(result) === 0) return res;
     for (const col of result.columns) {
       if (col.longValues!.length === 0) {
         console.error(
@@ -164,7 +147,7 @@ export abstract class Engine {
     if (!this._cpus) {
       const result =
           await this.query('select distinct(cpu) from sched order by cpu;');
-      if (result.numRecords === 0) return [];
+      if (slowlyCountRows(result) === 0) return [];
       this._cpus = result.columns[0].longValues!.map(n => +n);
     }
     return this._cpus;

@@ -15,6 +15,7 @@
 
 SELECT RUN_METRIC('android/cpu_info.sql');
 
+DROP TABLE IF EXISTS {{output_table}};
 CREATE TABLE {{output_table}} AS
 SELECT
   utid,
@@ -27,7 +28,7 @@ SELECT
   -- We use millicycles as we want to preserve this level of precision
   -- for future calculations.
   SUM(dur * freq_khz / 1000) AS millicycles,
-  CAST(SUM(dur * freq_khz / 1000000 / 1000000) AS INT) AS mcycles,
+  CAST(SUM(dur * freq_khz / 1000) / 1e9 AS INT) AS mcycles,
   SUM(dur) AS runtime_ns,
   MIN(freq_khz) AS min_freq_khz,
   MAX(freq_khz) AS max_freq_khz,

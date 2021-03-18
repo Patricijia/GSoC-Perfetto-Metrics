@@ -62,6 +62,7 @@ android_async_slice.textproto process_track_slices.sql process_track_slices_andr
 # Check the systrace conversion code in the raw table.
 # Print events
 ../../data/lmk_userspace.pb print_systrace.sql print_systrace_lmk_userspace.out
+kernel_tmw_counter.textproto thread_counter_and_track.sql kernel_tmw_counter_thread_counter_and_track.out
 # Unsigned integers
 print_systrace_unsigned.py print_systrace.sql print_systrace_unsigned.out
 
@@ -97,11 +98,6 @@ synth_oom.py oom_query.sql synth_oom_oom_query.out
 # Syscalls
 syscall.py sys.sql sys_syscall.out
 
-# Power rails
-../../data/power_rails.pb power_rails.sql power_rails_power_rails.out
-power_rails_custom_clock.textproto power_rails_event.sql power_rails_event_power_rails_custom_clock.out
-power_rails.textproto power_rails_timestamp_sort.sql power_rails_timestamp_sort.out
-
 # Thread time_in_state
 thread_time_in_state.textproto thread_time_in_state.sql thread_time_in_state.out
 thread_time_in_state_event.py thread_time_in_state_event.sql thread_time_in_state_event.out
@@ -131,13 +127,13 @@ process_metadata_matching.textproto process_metadata_matching.sql process_metada
 flow_events_json_v1.json flow_events.sql flow_events_json_v1.out
 flow_events_json_v2.json flow_events.sql flow_events_json_v2.out
 
-# Flow events importing from proto
-flow_events_proto_v2.textproto flow_events.sql flow_events_proto_v2.out
-flow_events_proto_v1.textproto flow_events.sql flow_events_proto_v1.out
-
 # Importing displayTimeUnit
 ../../data/display_time_unit.json slices.sql display_time_unit_slices.out
 
 # Parsing sched_blocked_reason
 sched_blocked_proto.py sched_blocked_reason.sql sched_blocked_proto_sched_blocked_reason.out
 sched_blocked_systrace.systrace sched_blocked_reason.sql sched_blocked_systrace_sched_blocked_reason.out
+
+# Kernel symbolization
+sched_blocked_reason_symbolized.textproto sched_blocked_reason_function.sql sched_blocked_reason_symbolized_sched_blocked_reason_function.out
+sched_blocked_reason_symbolized.textproto ../common/to_systrace.sql sched_blocked_reason_symbolized_to_systrace.out

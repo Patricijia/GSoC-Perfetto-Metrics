@@ -37,7 +37,7 @@ class SliceTracker {
   virtual ~SliceTracker();
 
   // virtual for testing
-  virtual base::Optional<uint32_t> Begin(
+  virtual base::Optional<SliceId> Begin(
       int64_t timestamp,
       TrackId track_id,
       StringId category,
@@ -50,16 +50,22 @@ class SliceTracker {
   // as the latest time we saw a begin event. For legacy Android use only. See
   // the comment in SystraceParser::ParseSystracePoint for information on why
   // this method exists.
-  void BeginLegacyUnnestable(tables::SliceTable::Row row);
+  void BeginLegacyUnnestable(tables::SliceTable::Row row,
+                             SetArgsCallback args_callback);
 
-  void BeginGpu(tables::GpuSliceTable::Row row,
-                SetArgsCallback args_callback = SetArgsCallback());
-
-  void BeginFrameEvent(tables::GraphicsFrameSliceTable::Row row,
-                       SetArgsCallback args_callback = SetArgsCallback());
+  template <typename Table>
+  base::Optional<SliceId> BeginTyped(
+      Table* table,
+      typename Table::Row row,
+      SetArgsCallback args_callback = SetArgsCallback()) {
+    // Ensure that the duration is pending for this row.
+    row.dur = kPendingDuration;
+    return StartSlice(row.ts, row.track_id, args_callback,
+                      [table, &row]() { return table->Insert(row).id; });
+  }
 
   // virtual for testing
-  virtual base::Optional<uint32_t> Scoped(
+  virtual base::Optional<SliceId> Scoped(
       int64_t timestamp,
       TrackId track_id,
       StringId category,
@@ -67,14 +73,18 @@ class SliceTracker {
       int64_t duration,
       SetArgsCallback args_callback = SetArgsCallback());
 
-  void ScopedGpu(const tables::GpuSliceTable::Row& row,
-                 SetArgsCallback args_callback = SetArgsCallback());
-
-  SliceId ScopedFrameEvent(const tables::GraphicsFrameSliceTable::Row& row,
-                           SetArgsCallback args_callback = SetArgsCallback());
+  template <typename Table>
+  base::Optional<SliceId> ScopedTyped(
+      Table* table,
+      const typename Table::Row& row,
+      SetArgsCallback args_callback = SetArgsCallback()) {
+    PERFETTO_DCHECK(row.dur >= 0);
+    return StartSlice(row.ts, row.track_id, args_callback,
+                      [table, &row]() { return table->Insert(row).id; });
+  }
 
   // virtual for testing
-  virtual base::Optional<uint32_t> End(
+  virtual base::Optional<SliceId> End(
       int64_t timestamp,
       TrackId track_id,
       StringId opt_category = {},
@@ -89,18 +99,6 @@ class SliceTracker {
                                    StringId name,
                                    SetArgsCallback args_callback);
 
-  // TODO(lalitm): eventually this method should become End and End should
-  // be renamed EndChrome.
-  base::Optional<SliceId> EndGpu(
-      int64_t ts,
-      TrackId track_id,
-      SetArgsCallback args_callback = SetArgsCallback());
-
-  base::Optional<SliceId> EndFrameEvent(
-      int64_t ts,
-      TrackId track_id,
-      SetArgsCallback args_callback = SetArgsCallback());
-
   void FlushPendingSlices();
 
   void SetOnSliceBeginCallback(OnSliceBeginCallback callback);
@@ -108,6 +106,10 @@ class SliceTracker {
   base::Optional<SliceId> GetTopmostSliceOnTrack(TrackId track_id) const;
 
  private:
+  // Slices which have been opened but haven't been closed yet will be marked
+  // with this duration placeholder.
+  static constexpr int64_t kPendingDuration = -1;
+
   struct SliceInfo {
     uint32_t row;
     ArgsTracker args_tracker;
@@ -124,10 +126,10 @@ class SliceTracker {
   };
   using StackMap = std::unordered_map<TrackId, TrackInfo>;
 
-  base::Optional<uint32_t> StartSlice(int64_t timestamp,
-                                      TrackId track_id,
-                                      SetArgsCallback args_callback,
-                                      std::function<SliceId()> inserter);
+  base::Optional<SliceId> StartSlice(int64_t timestamp,
+                                     TrackId track_id,
+                                     SetArgsCallback args_callback,
+                                     std::function<SliceId()> inserter);
 
   base::Optional<SliceId> CompleteSlice(
       int64_t timestamp,

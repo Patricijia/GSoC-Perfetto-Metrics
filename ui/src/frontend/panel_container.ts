@@ -39,7 +39,7 @@ const SCROLLING_CANVAS_OVERDRAW_FACTOR = 1.2;
 
 // We need any here so we can accept vnodes with arbitrary attrs.
 // tslint:disable-next-line:no-any
-export type AnyAttrsVnode = m.Vnode<any, {}>;
+export type AnyAttrsVnode = m.Vnode<any, any>;
 
 export interface Attrs {
   panels: AnyAttrsVnode[];
@@ -372,9 +372,10 @@ export class PanelContainer implements m.ClassComponent<Attrs> {
     }
 
     this.drawTopLayerOnCanvas();
+    this.flowEventsRenderer.render(this.ctx, flowEventsRendererArgs);
+    // Collect performance as the last thing we do.
     const redrawDur = debugNow() - redrawStart;
     this.updatePerfStats(redrawDur, panels.length, totalOnCanvas);
-    this.flowEventsRenderer.render(this.ctx, flowEventsRendererArgs);
   }
 
   // The panels each draw on the canvas but some details need to be drawn across

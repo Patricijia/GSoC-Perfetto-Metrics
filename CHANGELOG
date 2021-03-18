@@ -1,12 +1,169 @@
 Unreleased:
   Tracing service and probes:
-    * Added API for querying registered data sources and their capabilities.
-    * Support malloc heap profiles from GLibc Linux using LD_PRELOAD.
+    *
   Trace Processor:
-    *
+    * Remove |force_full_sort| flag from config. This has been replaced
+      by setting the sorting mode to force a full sort.
   UI:
-    * Flow events are now drawn as arrows for the currently selected slice.
     *
+
+
+v13.0 - 2021-03-01:
+  Tracing service and probes:
+    * Added ability to sample callstacks using kernel tracepoints as timebase.
+    * Added abililty to record the perf timebase counter values into the trace,
+      both combined callstack+counter or counter-only.
+    * Added abillity to trigger traces based on VM pressure on Android. Requires
+      a dedicated tracing instance in $tracefs/instances/mm_events.
+  Trace Processor:
+    * Added sorting mode to trace processor config to specify how trace
+      processor should sort events. The |force_full_sort| flag has been
+      deprecated (with replacement) and will be removed in the next version.
+    * Added ingestion of frame timeline events into the
+      {expected,actual}_frame_timeline_slice tables.
+    * Added support for Mali's trace_marker_write ftrace event.
+    * Added memory metric based on newer android_fastrpc kernel events.
+  UI:
+    * Added flow events support for instant events and async tracks.
+    * Added support for Android frame timeline events. They allow inspecting
+      end-to-end expected vs actual app-to-surfaceflinger frame times.
+    * Added ability to switch between Canary and Stable channels in the UI.
+    * Added ability to drag&drop to open trace files.
+    * Changed UI serving infrastructure, old ui versions can be now retrieved by
+      directly opening https://ui.perfetto.dev/v12.1.269/ .
+    * Removed thread state track for threads that have no activity.
+  SDK:
+    * Use process start time hashed with the process id as a unique process
+      identifier, allowing multiple independent users of the SDK in the same
+      process to interleave their events on shared tracks.
+    * Record process and thread names into the trace.
+    * Add ring buffer tracing support, i.e., periodic clearing of incremental
+      state.
+  Misc:
+    * Convert python scripts to python3.
+
+
+v12.1 - 2021-02-01:
+  Misc:
+    * Fixed CHANGELOG which was missed in the 12.0 branch cut, causing
+      mis-labeling of the version code in the v12.x branch as v11.0..N
+
+
+v12.0 - 2021-02-01:
+  Tracing service and probes:
+    * Added more helpful error messages if the client library is used without
+      having been initialized.
+    * Added //tools/record_android_trace script to facilitate recording traces
+      from Android devices, automating start + stop-via-ctrl+c + pull + open.
+    * Added auto-attachment of traces to Android bugreports if dumpstate is
+      invoked when a trace with bugreport_score > 0 is running.
+  SDK:
+    * Added ability to customize the timestamp of events via
+      ConvertTimestampToTraceTimeNs().
+    * Fixed support for category names that contain a space.
+  Trace Processor:
+    * Added ingestion and query support for Android end-to-end frame timing
+      events through the {actual, expected}_frame_timeline_slice tables.
+    * Added time-to-reportFullyDrawn (Android's API) to startup metrics.
+    * Fixed excessive memory usage when decoding traces containing callstacks
+      (https://github.com/google/perfetto/issues/83).
+  UI:
+    * Added ability to inspect the full trace config string from the
+      'Info and stats' page.
+    * Fixed 'TABLE/VIEW XXX already exists' in the Metrics page when running the
+      same metric twice.
+    * Fixed sorting of tracks using numeric sorting instead of lexicographic:
+      Thread {1, 2, 10, 11, 20} rather than Thread {1, 10, 11, 2, 20}.
+    * Fixed CSP-related bug that was preventing the UI to work on Firefox.
+    * Changed max zoom resolution to allow to zoom to sub-us events.
+
+
+v11.0 - 2021-01-01:
+  Tracing service and probes:
+    * Added trace packet interceptor API for rerouting trace data into
+      non-Perfetto systems.
+    * Added support for printing track events to the console.
+    * Added a way to observe track event tracing sessions starting and
+      stopping.
+  Trace Processor:
+    * Added "ancestor_slice" and "experimental_ancestor_stack_profile_callsite"
+      table functions to look up ancestors of CPU stack samples in profiler
+      tables.
+    * Added power metric reporting suspend/resume time periods.
+  UI:
+    * Fixed CPU time calculation in example queries.
+    * Added tracks to debug Android SystemUI jank.
+
+
+v10.0 - 2020-12-01:
+  Tracing service and probes:
+    * Fixed crash of tracing service if a client is unresponsive on the IPC
+      channel. Clients are disconnected if they don't respond to IPCs for 10s.
+    * Added cmdline arguments for integration within ChromeOS system image
+      (--{producer,consumer}-socket-{group,mode} for chmod-ing sockets).
+    * Changed path lookup logic for traced socket. /run/perfetto/ is used if the
+      directory exists, falling back on /tmp/ otherwise.
+    * Added support for kernel frame symbolization to the traced_perf callstack
+      sampler.
+    * Added support for resolving ftrace event arguments that require
+      symbolization against printk_format.
+  Trace Processor:
+    * Added .read command to inject a SQL query file, similar to the -q cmdline.
+    * Added trace-based metrics to root cause jank in Android System UI.
+    * Added symbolization support for ELF files on Windows for heap and
+      callstack profilers.
+    * Added support for symbolizing names of workqueue ftrace events.
+    * Improved Android startup metric with activity restart time.
+  UI:
+    * Added support for navigating flows with Ctrl+[ / Ctr+].
+    * Improved query result panel, moved to the bottom group allowing
+      simultaneous query result and timeline views.
+    * Fixed data corruption when recording traces via the WebUSB-based Record
+      page in the UI.
+
+
+v9.0 - 2020-11-01:
+  Tracing service and probes:
+    * Added support for recording traces from a system service through the
+      client API.
+    * The client library now reconnects producers automatically if the
+      connection to the tracing service is lost. Also fixed crashes in ongoing
+      tracing sessions when a disconnect occurs.
+    * Added support for dpu and g2d ftrace events.
+    * Enabled commit batching and producer side patching of chunks.
+    * Add support for symbolizing kernel symbols for ftrace events.
+  Trace Processor:
+    * Fixed type affinity of string columns.
+  UI:
+    * Added initial support for running metrics from the UI.
+    * Added support for displaying all flows when a slice or area is selected.
+    * Highlight nodes that match the 'focus' string in the flamegraph.
+    * Added search within slice args.
+    * Fixed details panel height and moved query panel into details panel.
+    * Enabled re-sharing of postMessage traces by echoing back the original URL.
+    * Improved record page error messages.
+
+
+v8.0 - 2020-10-01:
+  Tracing service and probes:
+    * Added API for querying registered data sources and their capabilities.
+    * Added support for profiling heap allocations on Linux via LD_PRELOAD.
+    * Fixed possible race when initializing the consumer library.
+    * Fixed subtle bugs on systems with 16KB system pages.
+  Trace Processor:
+    * Added a table which lists available metrics.
+    * Added Python bindings on PyPi in the 'perfetto' package.
+    * Added support for running trace_processor_shell on Android.
+    * Added per-process metrics for GPU memory usage.
+    * Added support for exporting flow events to JSON.
+    * Added dynamic tables for navigating between slices of flows.
+  UI:
+    * Changed time marking: horizontal selection doesn't gray out anymore,
+      pressing 'm' marks the range.
+    * Added initial support for displaying flow event arrows.
+    * Improved ordering of all thread tracks under process grouping.
+    * Fixed UI crashes due to metric errors
+    * Fixed selection of thread state slices.
 
 
 v7.0 - 2020-09-01:

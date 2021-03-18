@@ -15,6 +15,7 @@
 import {assertExists} from '../base/logging';
 import {DeferredAction} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
+import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 import {CallsiteInfo, createEmptyState, State} from '../common/state';
 import {fromNs, toNs} from '../common/time';
@@ -53,6 +54,7 @@ export interface FlowPoint {
   trackId: number;
 
   sliceName: string;
+  sliceCategory: string;
   sliceId: number;
   sliceStartTs: number;
   sliceEndTs: number;
@@ -61,8 +63,13 @@ export interface FlowPoint {
 }
 
 export interface Flow {
+  id: number;
+
   begin: FlowPoint;
   end: FlowPoint;
+
+  category?: string;
+  name?: string;
 }
 
 export interface CounterDetails {
@@ -118,10 +125,20 @@ export interface ThreadDesc {
 }
 type ThreadMap = Map<number, ThreadDesc>;
 
+function getRoot() {
+  // Works out the root directory where the content should be served from
+  // e.g. `http://origin/v1.2.3/`.
+  let root = (document.currentScript as HTMLScriptElement).src;
+  root = root.substr(0, root.lastIndexOf('/') + 1);
+  return root;
+}
+
 /**
  * Global accessors for state/dispatch in the frontend.
  */
 class Globals {
+  readonly root = getRoot();
+
   private _dispatch?: Dispatch = undefined;
   private _controllerWorker?: Worker = undefined;
   private _state?: State = undefined;
@@ -129,6 +146,8 @@ class Globals {
   private _rafScheduler?: RafScheduler = undefined;
   private _serviceWorkerController?: ServiceWorkerController = undefined;
   private _logging?: Analytics = undefined;
+  private _isInternalUser: boolean|undefined = undefined;
+  private _channel: string|undefined = undefined;
 
   // TODO(hjd): Unify trackDataStore, queryResults, overviewStore, threads.
   private _trackDataStore?: TrackDataStore = undefined;
@@ -138,7 +157,9 @@ class Globals {
   private _threadMap?: ThreadMap = undefined;
   private _sliceDetails?: SliceDetails = undefined;
   private _threadStateDetails?: ThreadStateDetails = undefined;
-  private _boundFlows?: Flow[] = undefined;
+  private _connectedFlows?: Flow[] = undefined;
+  private _selectedFlows?: Flow[] = undefined;
+  private _visibleFlowCategories?: Map<string, boolean> = undefined;
   private _counterDetails?: CounterDetails = undefined;
   private _heapProfileDetails?: HeapProfileDetails = undefined;
   private _cpuProfileDetails?: CpuProfileDetails = undefined;
@@ -147,6 +168,7 @@ class Globals {
   private _recordingLog?: string = undefined;
   private _traceErrors?: number = undefined;
   private _metricError?: string = undefined;
+  private _metricResult?: MetricResult = undefined;
 
   private _currentSearchResults: CurrentSearchResults = {
     sliceIds: [],
@@ -161,11 +183,6 @@ class Globals {
     tsEnds: new Float64Array(0),
     count: new Uint8Array(0),
   };
-
-  // This variable is set by the is_internal_user.js script if the user is a
-  // googler. This is used to avoid exposing features that are not ready yet
-  // for public consumption. The gated features themselves are not secret.
-  isInternalUser = false;
 
   initialize(dispatch: Dispatch, controllerWorker: Worker) {
     this._dispatch = dispatch;
@@ -183,7 +200,9 @@ class Globals {
     this._aggregateDataStore = new Map<string, AggregateData>();
     this._threadMap = new Map<number, ThreadDesc>();
     this._sliceDetails = {};
-    this._boundFlows = [];
+    this._connectedFlows = [];
+    this._selectedFlows = [];
+    this._visibleFlowCategories = new Map<string, boolean>();
     this._counterDetails = {};
     this._threadStateDetails = {};
     this._heapProfileDetails = {};
@@ -251,12 +270,28 @@ class Globals {
     this._threadStateDetails = assertExists(click);
   }
 
-  get boundFlows() {
-    return assertExists(this._boundFlows);
+  get connectedFlows() {
+    return assertExists(this._connectedFlows);
   }
 
-  set boundFlows(boundFlows: Flow[]) {
-    this._boundFlows = assertExists(boundFlows);
+  set connectedFlows(connectedFlows: Flow[]) {
+    this._connectedFlows = assertExists(connectedFlows);
+  }
+
+  get selectedFlows() {
+    return assertExists(this._selectedFlows);
+  }
+
+  set selectedFlows(selectedFlows: Flow[]) {
+    this._selectedFlows = assertExists(selectedFlows);
+  }
+
+  get visibleFlowCategories() {
+    return assertExists(this._visibleFlowCategories);
+  }
+
+  set visibleFlowCategories(visibleFlowCategories: Map<string, boolean>) {
+    this._visibleFlowCategories = assertExists(visibleFlowCategories);
   }
 
   get counterDetails() {
@@ -293,6 +328,14 @@ class Globals {
 
   setMetricError(arg: string) {
     this._metricError = arg;
+  }
+
+  get metricResult() {
+    return this._metricResult;
+  }
+
+  setMetricResult(result: MetricResult) {
+    this._metricResult = result;
   }
 
   get cpuProfileDetails() {
@@ -383,6 +426,7 @@ class Globals {
     this._threadStateDetails = undefined;
     this._aggregateDataStore = undefined;
     this._numQueriesQueued = 0;
+    this._metricResult = undefined;
     this._currentSearchResults = {
       sliceIds: [],
       tsStarts: [],
@@ -391,6 +435,31 @@ class Globals {
       sources: [],
       totalResults: 0,
     };
+  }
+
+  // This variable is set by the is_internal_user.js script if the user is a
+  // googler. This is used to avoid exposing features that are not ready yet
+  // for public consumption. The gated features themselves are not secret.
+  // If a user has been detected as a Googler once, make that sticky in
+  // localStorage, so that we keep treating them as such when they connect over
+  // public networks.
+  get isInternalUser() {
+    if (this._isInternalUser === undefined) {
+      this._isInternalUser = localStorage.getItem('isInternalUser') === '1';
+    }
+    return this._isInternalUser;
+  }
+
+  set isInternalUser(value: boolean) {
+    localStorage.setItem('isInternalUser', value ? '1' : '0');
+    this._isInternalUser = value;
+  }
+
+  get channel() {
+    if (this._channel === undefined) {
+      this._channel = localStorage.getItem('perfettoUiChannel') || 'stable';
+    }
+    return this._channel;
   }
 
   // Used when switching to the legacy TraceViewer UI.

@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -69,7 +68,6 @@ def main():
   except OSError as e:
     print('Error running: "%s" (%s)' % (args.cmd[0], e.strerror))
     print('PATH=%s' % env.get('PATH'))
-    print('CWD=%s' % os.path.abspath(os.path.curdir))
     return 127
 
 

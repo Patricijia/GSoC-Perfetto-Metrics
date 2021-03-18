@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (C) 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -32,8 +32,8 @@ import tempfile
 
 
 TRACE_TO_TEXT_SHAS = {
-    'linux': 'd45a0e8bea98344c65c095c51cc64e9542b67241',
-    'mac': '38d9b76e707b6c3a2f03c7456dd9a213721ba630',
+    'linux': 'a37bad26ec5f216e5a249db4ff6ce8b1ecb35ec1',
+    'mac': 'ffb4ecb6e0d100188f203821f16b3972ac179a7d',
 }
 TRACE_TO_TEXT_PATH = tempfile.gettempdir()
 TRACE_TO_TEXT_BASE_URL = ('https://storage.googleapis.com/perfetto/')

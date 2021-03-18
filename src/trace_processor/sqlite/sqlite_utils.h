@@ -68,27 +68,6 @@ inline bool IsOpLt(int op) {
   return op == SQLITE_INDEX_CONSTRAINT_LT;
 }
 
-inline std::string OpToString(int op) {
-  switch (op) {
-    case SQLITE_INDEX_CONSTRAINT_EQ:
-      return "=";
-    case SQLITE_INDEX_CONSTRAINT_NE:
-      return "!=";
-    case SQLITE_INDEX_CONSTRAINT_GE:
-      return ">=";
-    case SQLITE_INDEX_CONSTRAINT_GT:
-      return ">";
-    case SQLITE_INDEX_CONSTRAINT_LE:
-      return "<=";
-    case SQLITE_INDEX_CONSTRAINT_LT:
-      return "<";
-    case SQLITE_INDEX_CONSTRAINT_LIKE:
-      return "like";
-    default:
-      PERFETTO_FATAL("Operator to string conversion not impemented for %d", op);
-  }
-}
-
 inline bool IsOpIsNull(int op) {
   return op == SQLITE_INDEX_CONSTRAINT_ISNULL;
 }
@@ -421,7 +400,8 @@ inline util::Status GetColumnsForTable(
     }
 
     SqlValue::Type type;
-    if (base::CaseInsensitiveEqual(raw_type, "STRING")) {
+    if (base::CaseInsensitiveEqual(raw_type, "STRING") ||
+        base::CaseInsensitiveEqual(raw_type, "TEXT")) {
       type = SqlValue::Type::kString;
     } else if (base::CaseInsensitiveEqual(raw_type, "DOUBLE")) {
       type = SqlValue::Type::kDouble;

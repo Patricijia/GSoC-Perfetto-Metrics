@@ -21,11 +21,11 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/uuid.h"
 #include "perfetto/tracing/core/trace_config.h"
 #include "src/android_internal/incident_service.h"
 #include "src/android_internal/lazy_library_loader.h"
-#include "src/android_internal/statsd_logging.h"
 
 namespace perfetto {
 namespace {
@@ -87,7 +87,8 @@ void PerfettoCmd::SaveOutputToIncidentTraceOrCrash() {
   off_t offset = 0;
   size_t remaining = static_cast<size_t>(bytes_written_);
 
-  base::TimeNanos start = base::GetBootTimeNs();
+  // Count time in terms of CPU to avoid timeouts due to suspend:
+  base::TimeNanos start = base::GetThreadCPUTimeNs();
   for (;;) {
     errno = 0;
     PERFETTO_DCHECK(static_cast<size_t>(offset) + remaining == bytes_written_);
@@ -102,11 +103,14 @@ void PerfettoCmd::SaveOutputToIncidentTraceOrCrash() {
     if (remaining == 0) {
       break;
     }
-    if ((base::GetBootTimeNs() - start).count() > kSendfileTimeoutNs) {
+    base::TimeNanos now = base::GetThreadCPUTimeNs();
+    if (now < start || (now - start).count() > kSendfileTimeoutNs) {
       PERFETTO_FATAL("sendfile() timed out wsize=%zd, off=%" PRId64
-                     ", initial=%" PRIu64 ", remaining=%zu",
+                     ", initial=%" PRIu64
+                     ", remaining=%zu, start=%lld, now=%lld",
                      wsize, static_cast<int64_t>(offset), bytes_written_,
-                     remaining);
+                     remaining, static_cast<long long int>(start.count()),
+                     static_cast<long long int>(now.count()));
     }
   }
 
@@ -125,14 +129,6 @@ base::ScopedFile PerfettoCmd::OpenDropboxTmpFile() {
   if (!fd)
     PERFETTO_PLOG("Could not create a temporary trace file in %s", kStateDir);
   return fd;
-}
-
-void PerfettoCmd::LogUploadEventAndroid(PerfettoStatsdAtom atom) {
-  if (!is_uploading_)
-    return;
-  PERFETTO_LAZY_LOAD(android_internal::StatsdLogEvent, log_event_fn);
-  base::Uuid uuid(uuid_);
-  log_event_fn(atom, uuid.lsb(), uuid.msb());
 }
 
 }  // namespace perfetto
