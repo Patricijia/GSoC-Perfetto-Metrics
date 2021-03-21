@@ -137,6 +137,21 @@ message AndroidDisplayMetrics {
 
 // End of protos/perfetto/metrics/android/display_metrics.proto
 
+// Begin of protos/perfetto/metrics/android/dma_heap_metric.proto
+
+// dma-buf heap memory stats on Android.
+message AndroidDmaHeapMetric {
+    optional double avg_size_bytes = 1;
+    optional double min_size_bytes = 2;
+    optional double max_size_bytes = 3;
+
+    // Total allocation size.
+    // Essentially the sum of positive allocs.
+    optional double total_alloc_size_bytes = 4;
+}
+
+// End of protos/perfetto/metrics/android/dma_heap_metric.proto
+
 // Begin of protos/perfetto/metrics/android/fastrpc_metric.proto
 
 // fastrpc memory stats on Android.
@@ -319,6 +334,10 @@ message AndroidHwcomposerMetrics {
 
   // Counts the number of composition dpu cached layers in the trace. (non-weighted average)
   optional double composition_dpu_cached_layers = 4;
+
+  // Counts the number of composition surfaceflinger cached layers in the trace.
+  // (non-weighted average)
+  optional double composition_sf_cached_layers = 5;
 }
 
 // End of protos/perfetto/metrics/android/hwcomposer.proto
@@ -694,7 +713,7 @@ message AndroidStartupMetric {
 
   // Timing information spanning the intent received by the
   // activity manager to the first frame drawn.
-  // Next id: 22.
+  // Next id: 26.
   message ToFirstFrame {
     optional int64 dur_ns = 1;
     optional double dur_ms = 17;
@@ -715,6 +734,8 @@ message AndroidStartupMetric {
     optional Slice time_activity_resume = 8;
     optional Slice time_activity_restart = 21;
     optional Slice time_choreographer = 9;
+    optional Slice time_inflate = 22;
+    optional Slice time_get_resources = 23;
 
     // If we are starting a new process, record the duration from the
     // intent being received to the time we call the zygote.
@@ -729,6 +750,10 @@ message AndroidStartupMetric {
 
     optional Slice time_post_fork = 16;
 
+    // The total time spent on opening dex files.
+    optional Slice time_dex_open = 24;
+    // Total time spent verifying classes during app startup.
+    optional Slice time_verify_class = 25;
     // Deprecated was other_process_to_activity_cpu_ratio
     reserved 12;
 
@@ -744,7 +769,25 @@ message AndroidStartupMetric {
     optional Slice full_startup = 1;
   }
 
-  // Next id: 8
+  message Activity {
+    optional string name = 1;
+    optional string method = 2;
+    optional Slice slice = 3;
+  }
+
+  // Metrics with information about the status of odex files and the outcome
+  // of the loading process.
+  // Multiple files might be loaded for a single startup. Platform might also
+  // decide to discard an odex file and instead load a fallback, for example
+  // in case the OS or apk were updated.
+  message OptimizationStatus {
+    optional string odex_status = 1;
+    optional string compilation_filter = 2;
+    optional string compilation_reason = 3;
+    optional string location = 4;
+  }
+
+  // Next id: 13
   message Startup {
     // Random id uniquely identifying an app startup in this trace.
     optional uint32 startup_id = 1;
@@ -754,6 +797,9 @@ message AndroidStartupMetric {
 
     // Name of the process launched
     optional string process_name = 3;
+
+    // Details about the activities launched
+    repeated Activity activities = 11;
 
     // Did we ask the zygote for a new process
     optional bool zygote_new_process = 4;
@@ -775,6 +821,10 @@ message AndroidStartupMetric {
     // of the reportFullyDrawn slice. This should be longer than the time to
     // first frame as the application decides this after it starts rendering.
     optional Slice report_fully_drawn = 9;
+
+    repeated OptimizationStatus optimization_status = 12;
+
+    reserved 10;
   }
 
   repeated Startup startup = 1;
@@ -815,6 +865,7 @@ message AndroidSysUiCujMetrics {
   message Frame {
     // Index of the frame within the single user journey.
     optional int64 number = 1;
+    optional int64 vsync = 5;
     optional int64 ts = 2;
     optional int64 dur = 3;
 
@@ -906,11 +957,12 @@ message TraceMetadata {
   repeated string trace_trigger = 7;
   optional string unique_session_name = 8;
   optional string trace_config_pbtxt = 9;
+  optional int64 sched_duration_ns = 10;
 }
 
 // Root message for all Perfetto-based metrics.
 //
-// Next id: 32
+// Next id: 33
 message TraceMetrics {
   reserved 4, 10, 13, 14, 19;
 
@@ -990,6 +1042,9 @@ message TraceMetrics {
 
   // G2D metrics.
   optional G2dMetrics g2d = 30;
+
+  // Dmabuf heap metrics.
+  optional AndroidDmaHeapMetric android_dma_heap = 32;
 
   // Demo extensions.
   extensions 450 to 499;

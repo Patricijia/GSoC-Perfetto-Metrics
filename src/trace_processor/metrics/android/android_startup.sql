@@ -71,7 +71,11 @@ DROP TABLE IF EXISTS main_process_slice;
 CREATE TABLE main_process_slice AS
 SELECT
   launches.id AS launch_id,
-  slice.name AS name,
+  CASE
+    WHEN slice.name LIKE 'OpenDexFilesFromOat%' THEN 'OpenDexFilesFromOat'
+    WHEN slice.name LIKE 'VerifyClass%' THEN 'VerifyClass'
+    ELSE slice.name
+  END AS name,
   AndroidStartupMetric_Slice(
     'dur_ns', SUM(slice.dur),
     'dur_ms', SUM(slice.dur) / 1e6
@@ -90,8 +94,14 @@ WHERE slice.name IN (
   'activityStart',
   'activityRestart',
   'activityResume',
-  'Choreographer#doFrame',
-  'inflate')
+  'inflate',
+  'ResourcesManager#getResources')
+  OR slice.name LIKE 'performResume:%'
+  OR slice.name LIKE 'performCreate:%'
+  OR slice.name LIKE 'location=% status=% filter=% reason=%'
+  OR slice.name LIKE 'OpenDexFilesFromOat%'
+  OR slice.name LIKE 'VerifyClass%'
+  OR slice.name LIKE 'Choreographer#doFrame%'
 GROUP BY 1, 2;
 
 DROP TABLE IF EXISTS report_fully_drawn_per_launch;
@@ -152,6 +162,16 @@ SELECT
         WHERE p.launch_id = launches.id
         LIMIT 1
       )
+    ),
+    'activities', (
+      SELECT RepeatedField(AndroidStartupMetric_Activity(
+        'name', (SELECT STR_SPLIT(s.name, ':', 1)),
+        'method', (SELECT STR_SPLIT(s.name, ':', 0)),
+        'slice', s.slice_proto
+      ))
+      FROM main_process_slice s
+      WHERE s.launch_id = launches.id
+      AND (name LIKE 'performResume:%' OR name LIKE 'performCreate:%')
     ),
     'zygote_new_process', EXISTS(SELECT TRUE FROM zygote_forks_by_id WHERE id = launches.id),
     'activity_hosting_process_count', (
@@ -244,7 +264,7 @@ SELECT
       'time_choreographer', (
         SELECT slice_proto
         FROM main_process_slice s
-        WHERE s.launch_id = launches.id AND name = 'Choreographer#doFrame'
+        WHERE s.launch_id = launches.id AND name LIKE 'Choreographer#doFrame%'
       ),
       'time_before_start_process', (
         SELECT AndroidStartupMetric_Slice(
@@ -261,6 +281,27 @@ SELECT
         )
         FROM zygote_forks_by_id z
         WHERE z.id = launches.id
+      ),
+      'time_inflate', (
+        SELECT slice_proto
+        FROM main_process_slice s
+        WHERE s.launch_id = launches.id AND name = 'inflate'
+      ),
+      'time_get_resources', (
+        SELECT slice_proto
+        FROM main_process_slice s
+        WHERE s.launch_id = launches.id
+        AND name = 'ResourcesManager#getResources'
+      ),
+      'time_dex_open', (
+        SELECT slice_proto
+        FROM main_process_slice s
+        WHERE s.launch_id = launches.id AND name = 'OpenDexFilesFromOat'
+      ),
+      'time_verify_class', (
+        SELECT slice_proto
+        FROM main_process_slice s
+        WHERE s.launch_id = launches.id AND name = 'VerifyClass'
       )
     ),
     'hsc', (
@@ -282,6 +323,16 @@ SELECT
       ))
       FROM report_fully_drawn_per_launch r
       WHERE r.launch_id = launches.id
+    ),
+    'optimization_status',(
+      SELECT RepeatedField(AndroidStartupMetric_OptimizationStatus(
+        'location', SUBSTR(STR_SPLIT(name, ' status=', 0), LENGTH('location=') + 1),
+        'odex_status', STR_SPLIT(STR_SPLIT(name, ' status=', 1), ' filter=', 0),
+        'compilation_filter', STR_SPLIT(STR_SPLIT(name, ' filter=', 1), ' reason=', 0),
+        'compilation_reason', STR_SPLIT(name, ' reason=', 1)
+      ))
+      FROM main_process_slice s
+      WHERE name LIKE 'location=% status=% filter=% reason=%'
     )
   ) as startup
 FROM launches;

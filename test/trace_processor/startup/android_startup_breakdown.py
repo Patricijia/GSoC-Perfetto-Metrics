@@ -42,7 +42,41 @@ trace.add_atrace_begin(ts=125, tid=1, pid=1, buf='bindApplication')
 trace.add_atrace_end(ts=195, tid=1, pid=1)
 
 trace.add_atrace_begin(ts=185, tid=3, pid=3, buf='bindApplication')
+trace.add_atrace_begin(
+    ts=188,
+    tid=3,
+    pid=3,
+    buf='performCreate:com.google.android.calendar.MainActivity')
+trace.add_atrace_begin(ts=188, tid=3, pid=3, buf='inflate')
+trace.add_atrace_end(ts=189, tid=3, pid=3)
+trace.add_atrace_begin(
+    ts=188, tid=3, pid=3, buf='ResourcesManager#getResources')
+trace.add_atrace_end(ts=189, tid=3, pid=3)
+trace.add_atrace_begin(ts=190, tid=3, pid=3, buf='inflate')
+trace.add_atrace_end(ts=192, tid=3, pid=3)
+trace.add_atrace_end(ts=192, tid=3, pid=3)
+trace.add_atrace_begin(
+    ts=193,
+    tid=3,
+    pid=3,
+    buf='performResume:com.google.android.calendar.MainActivity')
+trace.add_atrace_end(ts=194, tid=3, pid=3)
 trace.add_atrace_end(ts=195, tid=3, pid=3)
+
+trace.add_atrace_begin(
+    ts=200,
+    tid=3,
+    pid=3,
+    buf='location=error status=io-error-no-oat ' \
+        'filter=run-from-apk reason=unknown')
+trace.add_atrace_end(ts=202, tid=3, pid=3)
+trace.add_atrace_begin(
+    ts=204,
+    tid=3,
+    pid=3,
+    buf='location=/system/framework/oat/arm/com.android.location.provider' \
+        '.odex status=up-to-date filter=speed reason=prebuilt')
+trace.add_atrace_end(ts=205, tid=3, pid=3)
 
 trace.add_atrace_async_end(
     ts=210, tid=2, pid=2, buf='launching: com.google.android.calendar')

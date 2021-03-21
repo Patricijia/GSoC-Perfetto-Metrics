@@ -73,6 +73,9 @@ message ChromeFrameReporter {
     SCROLL_NONE = 0;
     SCROLL_MAIN_THREAD = 1;
     SCROLL_COMPOSITOR_THREAD = 2;
+
+    // Used when it can't be determined wheter a scroll is in progress or not.
+    SCROLL_UNKNOWN = 3;
   }
 
   // The type of active scroll
@@ -84,4 +87,8 @@ message ChromeFrameReporter {
   optional bool has_compositor_animation = 8;
   // If any touch-driven UX (not scroll) is active during this frame.
   optional bool has_smooth_input_main = 9;
+
+  // Whether the frame contained any missing content (i.e. whether there was
+  // checkerboarding in the frame).
+  optional bool has_missing_content = 10;
 }
