@@ -17,6 +17,7 @@
 #include "src/perfetto_cmd/packet_writer.h"
 
 #include <string.h>
+#include <unistd.h>
 
 #include <random>
 

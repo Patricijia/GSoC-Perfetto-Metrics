@@ -17,12 +17,6 @@
 #ifndef SRC_TRACING_IPC_POSIX_SHARED_MEMORY_H_
 #define SRC_TRACING_IPC_POSIX_SHARED_MEMORY_H_
 
-#include "perfetto/base/build_config.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
-
 #include <stddef.h>
 
 #include <memory>
@@ -56,7 +50,7 @@ class PosixSharedMemory : public SharedMemory {
 
   ~PosixSharedMemory() override;
 
-  int fd() const { return fd_.get(); }
+  int fd() const override { return fd_.get(); }
 
   // SharedMemory implementation.
   void* start() const override { return start_; }
@@ -76,5 +70,4 @@ class PosixSharedMemory : public SharedMemory {
 
 }  // namespace perfetto
 
-#endif  // OS_LINUX || OS_ANDROID || OS_APPLE
 #endif  // SRC_TRACING_IPC_POSIX_SHARED_MEMORY_H_

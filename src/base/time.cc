@@ -15,9 +15,7 @@
  */
 
 #include "perfetto/base/time.h"
-
 #include "perfetto/base/build_config.h"
-#include "perfetto/base/logging.h"
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <Windows.h>
@@ -35,8 +33,7 @@ TimeNanos GetWallTimeNs() {
   ::QueryPerformanceFrequency(&freq);
   LARGE_INTEGER counter;
   ::QueryPerformanceCounter(&counter);
-  double elapsed_nanoseconds = (1e9 * static_cast<double>(counter.QuadPart)) /
-                               static_cast<double>(freq.QuadPart);
+  double elapsed_nanoseconds = (1e9 * counter.QuadPart) / freq.QuadPart;
   return TimeNanos(static_cast<uint64_t>(elapsed_nanoseconds));
 }
 
@@ -67,16 +64,6 @@ void SleepMicroseconds(unsigned interval_us) {
 }
 
 #endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-
-std::string GetTimeFmt(const std::string& fmt) {
-  time_t raw_time;
-  time(&raw_time);
-  struct tm* local_tm;
-  local_tm = localtime(&raw_time);
-  char buf[128];
-  PERFETTO_CHECK(strftime(buf, 80, fmt.c_str(), local_tm) > 0);
-  return buf;
-}
 
 }  // namespace base
 }  // namespace perfetto

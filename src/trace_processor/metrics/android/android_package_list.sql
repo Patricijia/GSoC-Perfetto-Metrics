@@ -14,7 +14,6 @@
 -- limitations under the License.
 --
 
-DROP VIEW IF EXISTS android_package_list_output;
 CREATE VIEW android_package_list_output AS
 SELECT AndroidPackageList(
   'packages', (

@@ -61,12 +61,8 @@ class GerritChangesHandler(webapp2.RequestHandler):
     url = 'https://%s/changes/?q=project:%s+' % (GERRIT_HOST, GERRIT_PROJECT)
     url += self.request.query_string
     result = urlfetch.fetch(url)
-    self.response.headers['Content-Type'] = 'text/plain'
     self.response.status_int = result.status_code
-    if (result.status_code == 200):
-      self.response.write(result.content[4:])  # 4: -> Strip Gerrit XSSI chars.
-    else:
-      self.response.write('HTTP error %s' % result.status_code)
+    self.response.write(result.content[4:])  # 4: -> Strip Gerrit XSSI chars.
 
 
 app = webapp2.WSGIApplication([

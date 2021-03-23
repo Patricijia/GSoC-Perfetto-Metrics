@@ -16,7 +16,6 @@ import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
 import {EngineConfig} from '../common/state';
-import * as version from '../gen/perfetto_version';
 
 import {globals} from './globals';
 import {executeSearch} from './search_handler';
@@ -199,8 +198,15 @@ class NewVersionNotification implements m.ClassComponent {
     }
     return m(
         '.new-version-toast',
-        `Updated to ${version.VERSION} and ready for offline use!`,
+        'A new version of the UI is available!',
         m('button.notification-btn.preferred',
+          {
+            onclick: () => {
+              location.reload();
+            }
+          },
+          'Reload'),
+        m('button.notification-btn',
           {
             onclick: () => {
               globals.frontendLocalState.newVersionAvailable = false;
@@ -258,9 +264,6 @@ export class Topbar implements m.ClassComponent {
   view() {
     return m(
         '.topbar',
-        {
-          class: globals.frontendLocalState.sidebarVisible ? '' : 'hide-sidebar'
-        },
         globals.frontendLocalState.newVersionAvailable ?
             m(NewVersionNotification) :
             m(Omnibox),

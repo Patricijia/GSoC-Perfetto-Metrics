@@ -14,7 +14,6 @@
 
 import {ColumnDef, ThreadStateExtra} from '../../common/aggregation_data';
 import {Engine} from '../../common/engine';
-import {slowlyCountRows} from '../../common/query_iterator';
 import {Area, Sorting} from '../../common/state';
 import {translateState} from '../../common/thread_state';
 import {toNs} from '../../common/time';
@@ -81,7 +80,7 @@ export class ThreadAggregationController extends AggregationController {
       thread_state.ts < ${toNs(area.endSec)}
       GROUP BY state, io_wait`;
     const result = await engine.query(query);
-    const numRows = slowlyCountRows(result);
+    const numRows = +result.numRecords;
 
     const summary: ThreadStateExtra = {
       kind: 'THREAD_STATE',

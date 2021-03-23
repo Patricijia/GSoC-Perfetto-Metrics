@@ -15,7 +15,6 @@
 import * as m from 'mithril';
 import {inflate} from 'pako';
 import {assertTrue} from '../base/logging';
-import {globals} from './globals';
 import {showModal} from './modal';
 
 const CTRACE_HEADER = 'TRACE:\n';
@@ -127,7 +126,9 @@ export function openBufferWithLegacyTraceViewer(
 
   // The location.pathname mangling is to make this code work also when hosted
   // in a non-root sub-directory, for the case of CI artifacts.
-  const catapultUrl = globals.root + 'assets/catapult_trace_viewer.html';
+  const urlParts = location.pathname.split('/');
+  urlParts[urlParts.length - 1] = 'assets/catapult_trace_viewer.html';
+  const catapultUrl = urlParts.join('/');
   const newWin = window.open(catapultUrl) as Window;
   if (newWin) {
     // Popup succeedeed.

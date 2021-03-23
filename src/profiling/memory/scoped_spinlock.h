@@ -17,7 +17,6 @@
 #ifndef SRC_PROFILING_MEMORY_SCOPED_SPINLOCK_H_
 #define SRC_PROFILING_MEMORY_SCOPED_SPINLOCK_H_
 
-#include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/utils.h"
 
@@ -28,13 +27,6 @@
 namespace perfetto {
 namespace profiling {
 
-struct Spinlock {
-  std::atomic<bool> locked;
-  std::atomic<bool> poisoned;
-};
-
-void PoisonSpinlock(Spinlock* lock);
-
 class ScopedSpinlock {
  public:
   enum class Mode {
@@ -44,12 +36,8 @@ class ScopedSpinlock {
     Blocking
   };
 
-  ScopedSpinlock(Spinlock* lock, Mode mode) : lock_(lock) {
-    if (PERFETTO_UNLIKELY(lock_->poisoned.load(std::memory_order_relaxed))) {
-      return;
-    }
-    if (PERFETTO_LIKELY(
-            !lock_->locked.exchange(true, std::memory_order_acquire))) {
+  ScopedSpinlock(std::atomic<bool>* lock, Mode mode) : lock_(lock) {
+    if (PERFETTO_LIKELY(!lock_->exchange(true, std::memory_order_acquire))) {
       locked_ = true;
       return;
     }
@@ -76,8 +64,8 @@ class ScopedSpinlock {
 
   void Unlock() {
     if (locked_) {
-      PERFETTO_DCHECK(lock_->locked.load());
-      lock_->locked.store(false, std::memory_order_release);
+      PERFETTO_DCHECK(lock_->load());
+      lock_->store(false, std::memory_order_release);
     }
     locked_ = false;
   }
@@ -87,7 +75,7 @@ class ScopedSpinlock {
 
  private:
   void LockSlow(Mode mode);
-  Spinlock* lock_;
+  std::atomic<bool>* lock_;
   size_t blocked_us_ = 0;
   bool locked_ = false;
 };

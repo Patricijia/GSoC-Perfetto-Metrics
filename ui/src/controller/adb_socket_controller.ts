@@ -161,11 +161,7 @@ export class AdbSocketConsumerPort extends AdbBaseConsumerPort {
   }
 
   private parseMessage(frameBuffer: Uint8Array) {
-    // Copy message to new array:
-    const buf = new ArrayBuffer(frameBuffer.byteLength);
-    const arr = new Uint8Array(buf);
-    arr.set(frameBuffer);
-    const frame = perfetto.protos.IPCFrame.decode(arr);
+    const frame = perfetto.protos.IPCFrame.decode(frameBuffer);
     this.handleIncomingFrame(frame);
   }
 

@@ -52,7 +52,6 @@ export function findColumnIndex(
   const disallowNulls = columnType === STR || columnType === NUM;
   const expectsStrings = columnType === STR || columnType === STR_NULL;
   const expectsNumbers = columnType === NUM || columnType === NUM_NULL;
-  const isEmpty = +result.numRecords === 0;
 
   for (let i = 0; i < result.columnDescriptors.length; ++i) {
     const descriptor = result.columnDescriptors[i];
@@ -69,16 +68,16 @@ export function findColumnIndex(
       throw new Error(`Multiple columns with the name ${name}`);
     }
 
-    if (expectsStrings && !hasStrings && !isEmpty) {
+    if (expectsStrings && (hasDoubles || hasLongs)) {
       throw new Error(`Expected strings for column ${name} but found numbers`);
     }
 
-    if (expectsNumbers && !hasDoubles && !hasLongs && !isEmpty) {
+    if (expectsNumbers && hasStrings) {
       throw new Error(`Expected numbers for column ${name} but found strings`);
     }
 
     if (disallowNulls) {
-      for (let j = 0; j < +result.numRecords; ++j) {
+      for (let j = 0; j < result.numRecords; ++j) {
         if (column.isNulls![j] === true) {
           throw new Error(`Column ${name} contains nulls`);
         }
@@ -119,18 +118,13 @@ class ColumnarRowIterator {
       this.columnCount_++;
       this.columnNames_.push(columnName);
       let values: string[]|Array<number|Long> = [];
-      const isNum = columnType === NUM || columnType === NUM_NULL;
-      const isString = columnType === STR || columnType === STR_NULL;
-      if (isNum && column.longValues &&
-          column.longValues.length === this.rowCount_) {
+      if (column.longValues && column.longValues.length > 0) {
         values = column.longValues;
       }
-      if (isNum && column.doubleValues &&
-          column.doubleValues.length === this.rowCount_) {
+      if (column.doubleValues && column.doubleValues.length > 0) {
         values = column.doubleValues;
       }
-      if (isString && column.stringValues &&
-          column.stringValues.length === this.rowCount_) {
+      if (column.stringValues && column.stringValues.length > 0) {
         values = column.stringValues;
       }
       this.columns_.push(values as string[]);

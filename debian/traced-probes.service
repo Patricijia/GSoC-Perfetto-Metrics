@@ -1,5 +1,5 @@
 [Unit]
-Description=Perfetto data sources for system tracing (ftrace and /proc pollers)
+Description=Perfetto probes daemon
 
 [Service]
 ExecStart=/usr/sbin/traced_probes

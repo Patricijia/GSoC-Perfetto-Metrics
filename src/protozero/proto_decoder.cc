@@ -19,7 +19,6 @@
 #include <string.h>
 #include <limits>
 
-#include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/proto_utils.h"
@@ -28,7 +27,7 @@ namespace protozero {
 
 using namespace proto_utils;
 
-#if !PERFETTO_IS_LITTLE_ENDIAN()
+#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 #error Unimplemented for big endian archs.
 #endif
 

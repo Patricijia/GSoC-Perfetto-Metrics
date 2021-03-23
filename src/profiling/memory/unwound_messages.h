@@ -35,8 +35,7 @@ struct AllocRecord {
   uint64_t data_source_instance_id;
   uint64_t timestamp;
   AllocMetadata alloc_metadata;
-  std::vector<unwindstack::FrameData> frames;
-  std::vector<std::string> build_ids;
+  std::vector<FrameData> frames;
 };
 
 // Batch of deallocations.

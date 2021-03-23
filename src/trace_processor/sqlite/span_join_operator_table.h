@@ -165,16 +165,8 @@ class SpanJoinOperatorTable : public SqliteTable {
     Query(Query&&) noexcept = default;
     Query& operator=(Query&&) = default;
 
-    enum class InitialEofBehavior {
-      kTreatAsEof,
-      kTreatAsMissingPartitionShadow
-    };
-
     // Initializes the query with the given constraints and query parameters.
-    util::Status Initialize(
-        const QueryConstraints& qc,
-        sqlite3_value** argv,
-        InitialEofBehavior eof_behavior = InitialEofBehavior::kTreatAsEof);
+    util::Status Initialize(const QueryConstraints& qc, sqlite3_value** argv);
 
     // Forwards the query to the next valid slice.
     util::Status Next();

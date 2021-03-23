@@ -26,5 +26,3 @@ import './process_summary/frontend';
 import './thread_state/frontend';
 import './async_slices/frontend';
 import './debug_slices/frontend';
-import './actual_frames/frontend';
-import './expected_frames/frontend';

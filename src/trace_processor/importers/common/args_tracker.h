@@ -90,7 +90,6 @@ class ArgsTracker {
   };
 
   explicit ArgsTracker(TraceProcessorContext*);
-  ArgsTracker(const ArgsTracker&) = default;
   virtual ~ArgsTracker();
 
   BoundInserter AddArgsTo(RawId id) {
@@ -111,11 +110,6 @@ class ArgsTracker {
 
   BoundInserter AddArgsTo(tables::FlowTable::Id id) {
     return AddArgsTo(context_->storage->mutable_flow_table(), id);
-  }
-
-  BoundInserter AddArgsTo(tables::MemorySnapshotNodeTable::Id id) {
-    return AddArgsTo(context_->storage->mutable_memory_snapshot_node_table(),
-                     id);
   }
 
   BoundInserter AddArgsTo(MetadataId id) {

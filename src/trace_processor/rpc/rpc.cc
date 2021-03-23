@@ -85,9 +85,7 @@ void Rpc::MaybePrintProgress() {
   }
 }
 
-void Rpc::Query(const uint8_t* args,
-                size_t len,
-                QueryResultBatchCallback result_callback) {
+std::vector<uint8_t> Rpc::Query(const uint8_t* args, size_t len) {
   protos::pbzero::RawQueryArgs::Decoder query(args, len);
   std::string sql = query.sql_query().ToStdString();
   PERFETTO_DLOG("[RPC] Query < %s", sql.c_str());
@@ -99,20 +97,18 @@ void Rpc::Query(const uint8_t* args,
     PERFETTO_ELOG("[RPC] %s", kErr);
     protozero::HeapBuffered<protos::pbzero::QueryResult> result;
     result->set_error(kErr);
-    auto vec = result.SerializeAsArray();
-    result_callback(vec.data(), vec.size(), /*has_more=*/false);
-    return;
+    return result.SerializeAsArray();
   }
 
   auto it = trace_processor_->ExecuteQuery(sql.c_str());
   QueryResultSerializer serializer(std::move(it));
 
+  // TODO(primiano): propagate chunks instead of piling up batches in the same
+  // result.
   std::vector<uint8_t> res;
-  for (bool has_more = true; has_more;) {
-    has_more = serializer.Serialize(&res);
-    result_callback(res.data(), res.size(), has_more);
-    res.clear();
+  while (serializer.Serialize(&res)) {
   }
+  return res;
 }
 
 std::vector<uint8_t> Rpc::RawQuery(const uint8_t* args, size_t len) {

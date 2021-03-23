@@ -30,8 +30,6 @@ class CounterTrackController extends TrackController<Config, Data> {
   private setup = false;
   private maximumValueSeen = 0;
   private minimumValueSeen = 0;
-  private maximumDeltaSeen = 0;
-  private minimumDeltaSeen = 0;
   private maxDurNs = 0;
 
   async onBoundsChange(start: number, end: number, resolution: number):
@@ -53,8 +51,7 @@ class CounterTrackController extends TrackController<Config, Data> {
             id,
             ts,
             dur,
-            value,
-            delta
+            value
           from experimental_counter_dur
           where track_id = ${this.config.trackId};
         `);
@@ -65,7 +62,6 @@ class CounterTrackController extends TrackController<Config, Data> {
             id,
             ts,
             lead(ts, 1, ts) over (order by ts) - ts as dur,
-            lead(value, 1, value) over (order by ts) - value as delta,
             value
           from ${this.namespaceTable('counter')}
           where track_id = ${this.config.trackId};
@@ -79,21 +75,15 @@ class CounterTrackController extends TrackController<Config, Data> {
             )
           from ${this.tableName('counter_view')}
       `);
-      if (slowlyCountRows(maxDurResult) === 1) {
+      if (maxDurResult.numRecords === 1) {
         this.maxDurNs = maxDurResult.columns[0].longValues![0];
       }
 
       const result = await this.query(`
-        select
-          max(value) as maxValue,
-          min(value) as minValue,
-          max(delta) as maxDelta,
-          min(delta) as minDelta
+        select max(value), min(value)
         from ${this.tableName('counter_view')}`);
       this.maximumValueSeen = +result.columns[0].doubleValues![0];
       this.minimumValueSeen = +result.columns[1].doubleValues![0];
-      this.maximumDeltaSeen = +result.columns[2].doubleValues![0];
-      this.minimumDeltaSeen = +result.columns[3].doubleValues![0];
 
       this.setup = true;
     }
@@ -103,7 +93,6 @@ class CounterTrackController extends TrackController<Config, Data> {
         (ts + ${bucketNs / 2}) / ${bucketNs} * ${bucketNs} as tsq,
         min(value) as minValue,
         max(value) as maxValue,
-        sum(delta) as totalDelta,
         value_at_max_ts(ts, id) as lastId,
         value_at_max_ts(ts, value) as lastValue
       from ${this.tableName('counter_view')}
@@ -120,15 +109,12 @@ class CounterTrackController extends TrackController<Config, Data> {
       length: numRows,
       maximumValue: this.maximumValue(),
       minimumValue: this.minimumValue(),
-      maximumDelta: this.maximumDeltaSeen,
-      minimumDelta: this.minimumDeltaSeen,
       resolution,
       timestamps: new Float64Array(numRows),
       lastIds: new Float64Array(numRows),
       minValues: new Float64Array(numRows),
       maxValues: new Float64Array(numRows),
       lastValues: new Float64Array(numRows),
-      totalDeltas: new Float64Array(numRows),
     };
 
     const it = iter(
@@ -137,8 +123,7 @@ class CounterTrackController extends TrackController<Config, Data> {
           'lastId': NUM,
           'minValue': NUM,
           'maxValue': NUM,
-          'lastValue': NUM,
-          'totalDelta': NUM,
+          'lastValue': NUM
         },
         rawResult);
     for (let i = 0; it.valid(); ++i, it.next()) {
@@ -147,7 +132,6 @@ class CounterTrackController extends TrackController<Config, Data> {
       data.minValues[i] = it.row.minValue;
       data.maxValues[i] = it.row.maxValue;
       data.lastValues[i] = it.row.lastValue;
-      data.totalDeltas[i] = it.row.totalDelta;
     }
 
     return data;

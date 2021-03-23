@@ -80,25 +80,19 @@ tools/install-build-deps --ui
 Build the UI:
 
 ```bash
-# Will build into ./out/ui by default. Can be changed with --out path/
-# The final bundle will be available at ./ui/out/dist/.
-# The build script creates a symlink from ./ui/out to $OUT_PATH/ui/.
-ui/build
+gn args out/default  # The only relevant arg is is_debug=true|false
+
+# This will generate the static content for serving the UI in out/default/ui/.
+tools/ninja -C out/default ui
 ```
 
 Test your changes on a local server using:
 
 ```bash
-# This will automatically build the UI. There is no need to manually run
-# ui/build before running ui/run-dev-server.
-ui/run-dev-server
+ui/run-dev-server out/default
 ```
 
 Navigate to http://localhost:10000/ to see the changes.
-
-The server supports live reloading of CSS and TS/JS contents. Whenever a ui
-source file is changed it, the script will automatically re-build it and show a
-prompt in the web page.
 
 ## IDE setup
 
@@ -106,7 +100,7 @@ Use a following command in the checkout directory in order to generate the
 compilation database file:
 
 ```bash
-tools/gn gen out/default --export-compile-commands
+tools/ninja -C out/default -t compdb cc cxx > compile_commands.json
 ```
 
 After generating, it can be used in CLion (File -> Open -> Open As Project),

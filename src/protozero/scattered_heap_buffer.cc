@@ -69,21 +69,10 @@ protozero::ContiguousMemoryRange ScatteredHeapBuffer::GetNewBuffer() {
   return slices_.back().GetTotalRange();
 }
 
-const std::vector<ScatteredHeapBuffer::Slice>&
-ScatteredHeapBuffer::GetSlices() {
-  AdjustUsedSizeOfCurrentSlice();
-  return slices_;
-}
-
 std::vector<uint8_t> ScatteredHeapBuffer::StitchSlices() {
-  size_t stitched_size = 0u;
-  const auto& slices = GetSlices();
-  for (const auto& slice : slices)
-    stitched_size += slice.size() - slice.unused_bytes();
-
+  AdjustUsedSizeOfCurrentSlice();
   std::vector<uint8_t> buffer;
-  buffer.reserve(stitched_size);
-  for (const auto& slice : slices) {
+  for (const auto& slice : slices_) {
     auto used_range = slice.GetUsedRange();
     buffer.insert(buffer.end(), used_range.begin, used_range.end);
   }
@@ -91,8 +80,9 @@ std::vector<uint8_t> ScatteredHeapBuffer::StitchSlices() {
 }
 
 std::vector<protozero::ContiguousMemoryRange> ScatteredHeapBuffer::GetRanges() {
+  AdjustUsedSizeOfCurrentSlice();
   std::vector<protozero::ContiguousMemoryRange> ranges;
-  for (const auto& slice : GetSlices())
+  for (const auto& slice : slices_)
     ranges.push_back(slice.GetUsedRange());
   return ranges;
 }

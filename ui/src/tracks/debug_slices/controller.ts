@@ -14,7 +14,6 @@
 
 import {assertTrue} from '../../base/logging';
 import {Actions} from '../../common/actions';
-import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNs} from '../../common/time';
 import {globals} from '../../controller/globals';
 import {
@@ -29,9 +28,8 @@ class DebugSliceTrackController extends TrackController<Config, Data> {
 
   async onReload() {
     const rawResult = await this.query(`select max(depth) from debug_slices`);
-    const maxDepth = (slowlyCountRows(rawResult) === 0) ?
-        1 :
-        rawResult.columns[0].longValues![0];
+    const maxDepth =
+        (rawResult.numRecords === 0) ? 1 : rawResult.columns[0].longValues![0];
     globals.dispatch(
         Actions.updateTrackConfig({id: this.trackId, config: {maxDepth}}));
   }
@@ -48,7 +46,7 @@ class DebugSliceTrackController extends TrackController<Config, Data> {
     const tsValues = tsCol.longValues! || tsCol.doubleValues!;
     const durValues = durCol.longValues! || durCol.doubleValues!;
 
-    const numRows = slowlyCountRows(rawResult);
+    const numRows = rawResult.numRecords;
     const slices: Data = {
       start,
       end,
@@ -61,7 +59,6 @@ class DebugSliceTrackController extends TrackController<Config, Data> {
       depths: new Uint16Array(numRows),
       titles: new Uint16Array(numRows),
       isInstant: new Uint16Array(numRows),
-      isIncomplete: new Uint16Array(numRows),
     };
 
     const stringIndexes = new Map<string, number>();
@@ -74,7 +71,7 @@ class DebugSliceTrackController extends TrackController<Config, Data> {
       return idx;
     }
 
-    for (let i = 0; i < slowlyCountRows(rawResult); i++) {
+    for (let i = 0; i < rawResult.numRecords; i++) {
       let sliceStart: number, sliceEnd: number;
       if (tsCol.isNulls![i] || durCol.isNulls![i]) {
         sliceStart = sliceEnd = -1;
@@ -91,7 +88,6 @@ class DebugSliceTrackController extends TrackController<Config, Data> {
           nameCol.isNulls![i] ? '[null]' : nameCol.stringValues![i];
       slices.titles[i] = internString(sliceName);
       slices.isInstant[i] = 0;
-      slices.isIncomplete[i] = 0;
     }
 
     return slices;

@@ -32,6 +32,7 @@ LOGLEVEL = 'info'
 
 # Cloud config (GCE = Google Compute Engine, GAE = Google App Engine)
 PROJECT = 'perfetto-ci'
+ZONE = 'us-west1-b'
 GAE_VERSION = 'prod'
 DB_ROOT = 'https://%s.firebaseio.com' % PROJECT
 DB = DB_ROOT + '/ci'
@@ -40,18 +41,17 @@ WORKER_IMG = 'eu.gcr.io/%s/worker' % PROJECT
 CI_SITE = 'https://ci.perfetto.dev'
 GCS_ARTIFACTS = 'perfetto-ci-artifacts'
 
-JOB_TIMEOUT_SEC = 45 * 60
+JOB_TIMEOUT_SEC = 60 * 30
 CL_TIMEOUT_SEC = 60 * 60 * 3
 LOGS_TTL_DAYS = 15
 TRUSTED_EMAILS = '^.*@google.com$'
 
-GCE_ZONES = 'us-central1-b us-east1-b us-west1-b'
 GCE_VM_NAME = 'ci-worker'
-GCE_VM_TYPE = 'c2-standard-8'
+GCE_VM_TYPE = 'e2-standard-16'
 GCE_TEMPLATE = 'ci-worker-template'
 GCE_GROUP_NAME = 'ci'
-NUM_VMS = 3
-NUM_WORKERS_PER_VM = 2
+NUM_VMS = 6
+NUM_WORKERS_PER_VM = 5
 
 GCE_SCOPES = [
     'https://www.googleapis.com/auth/cloud-platform',
@@ -109,6 +109,10 @@ JOB_CONFIGS = {
     'linux-clang-x86_64-bazel': {
         'PERFETTO_TEST_GN_ARGS': '',
         'PERFETTO_TEST_SCRIPT': 'test/ci/bazel_tests.sh',
+    },
+    'ui-clang-x86_64-debug': {
+        'PERFETTO_TEST_GN_ARGS': 'is_debug=true',
+        'PERFETTO_TEST_SCRIPT': 'test/ci/ui_tests.sh',
     },
     'ui-clang-x86_64-release': {
         'PERFETTO_TEST_GN_ARGS': 'is_debug=false',

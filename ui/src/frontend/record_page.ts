@@ -26,7 +26,6 @@ import {
   isAndroidP,
   isAndroidTarget,
   isChromeTarget,
-  isCrOSTarget,
   RecordingTarget
 } from '../common/state';
 import {MAX_TIME, RecordMode} from '../common/state';
@@ -44,9 +43,7 @@ import {
   Slider,
   SliderAttrs,
   Textarea,
-  TextareaAttrs,
-  Toggle,
-  ToggleAttrs
+  TextareaAttrs
 } from './record_widgets';
 import {Router} from './router';
 
@@ -113,7 +110,6 @@ FTRACE_CATEGORIES.set('sync/*', 'sync');
 FTRACE_CATEGORIES.set('task/*', 'task');
 FTRACE_CATEGORIES.set('task/*', 'task');
 FTRACE_CATEGORIES.set('vmscan/*', 'vmscan');
-FTRACE_CATEGORIES.set('fastrpc/*', 'fastrpc');
 
 function RecSettings(cssClass: string) {
   const S = (x: number) => x * 1000;
@@ -137,7 +133,7 @@ function RecSettings(cssClass: string) {
     return m(
         `label${cfg.mode === mode ? '.selected' : ''}`,
         m(`input[type=radio][name=rec_mode]`, checkboxArgs),
-        m(`img[src=${globals.root}assets/${img}]`),
+        m(`img[src=assets/${img}]`),
         m('span', title));
   };
 
@@ -188,32 +184,14 @@ function RecSettings(cssClass: string) {
 }
 
 function PowerSettings(cssClass: string) {
-  const DOC_URL = 'https://perfetto.dev/docs/data-sources/battery-counters';
-  const descr =
-      [m('div',
-         m('span', `Polls charge counters and instantaneous power draw from
-                    the battery power management IC and the power rails from
-                    the PowerStats HAL (`),
-         m('a', {href: DOC_URL, target: '_blank'}, 'see docs for more'),
-         m('span', ')'))];
-  if (globals.isInternalUser) {
-    descr.push(m(
-        'div',
-        m('span', 'Googlers: See '),
-        m('a',
-          {href: 'http://go/power-rails-internal-doc', target: '_blank'},
-          'this doc'),
-        m('span', ` for instructions on how to change the refault rail selection
-                  on internal devices.`),
-        ));
-  }
   return m(
       `.record-section${cssClass}`,
       m(Probe,
         {
-          title: 'Battery drain & power rails',
+          title: 'Battery drain',
           img: 'rec_battery_counters.png',
-          descr,
+          descr: `Polls charge counters and instantaneous power draw from
+                    the battery power management IC.`,
           setEnabled: (cfg, val) => cfg.batteryDrain = val,
           isEnabled: (cfg) => cfg.batteryDrain
         } as ProbeAttrs,
@@ -390,22 +368,7 @@ function HeapSettings(cssClass: string) {
         min: 0,
         set: (cfg, val) => cfg.hpSharedMemoryBuffer = val,
         get: (cfg) => cfg.hpSharedMemoryBuffer
-      } as SliderAttrs),
-      m(Toggle, {
-        title: 'Block client',
-        cssClass: '.thin',
-        descr: `Slow down target application if profiler cannot keep up.`,
-        setEnabled: (cfg, val) => cfg.hpBlockClient = val,
-        isEnabled: (cfg) => cfg.hpBlockClient
-      } as ToggleAttrs),
-      m(Toggle, {
-        title: 'All custom allocators (Q+)',
-        cssClass: '.thin',
-        descr: `If the target application exposes custom allocators, also
-sample from those.`,
-        setEnabled: (cfg, val) => cfg.hpAllHeaps = val,
-        isEnabled: (cfg) => cfg.hpAllHeaps
-      } as ToggleAttrs)
+      } as SliderAttrs)
       // TODO(taylori): Add advanced options.
   );
 }
@@ -878,7 +841,7 @@ function onTargetChange(target: string) {
 function Instructions(cssClass: string) {
   return m(
       `.record-section.instructions${cssClass}`,
-      m('header', 'Trace command'),
+      m('header', 'Instructions'),
       localStorage.hasOwnProperty(LOCAL_STORAGE_SHOW_CONFIG) ?
           m('button.permalinkconfig',
             {
@@ -983,59 +946,44 @@ function BufferUsageProgressBar() {
 }
 
 function RecordingNotes() {
-  const sideloadUrl =
-      'https://perfetto.dev/docs/contributing/build-instructions#get-the-code';
-  const linuxUrl = 'https://perfetto.dev/docs/quickstart/linux-tracing';
-  const cmdlineUrl =
-      'https://perfetto.dev/docs/quickstart/android-tracing#perfetto-cmdline';
+  const docUrl = '//docs.perfetto.dev/#/build-instructions?id=get-the-code';
   const extensionURL = `https://chrome.google.com/webstore/detail/
       perfetto-ui/lfmkphfpdbjijhpomgecfikhfohaoine`;
 
   const notes: m.Children = [];
+  const doc =
+      m('span', 'Follow the ', m('a', {href: docUrl}, 'instructions here.'));
 
   const msgFeatNotSupported =
-      m('span', `Some probes are only supported in Perfetto versions running
-      on Android Q+. `);
+      m('div', `Some of the probes are only supported in the
+      last version of perfetto running on Android Q+`);
 
   const msgPerfettoNotSupported =
-      m('span', `Perfetto is not supported natively before Android P. `);
-
-  const msgSideload =
-      m('span',
-        `If you have a rooted device you can `,
-        m('a',
-          {href: sideloadUrl, target: '_blank'},
-          `sideload the latest version of
-         Perfetto.`));
+      m('div', `Perfetto is not supported natively before Android P.`);
 
   const msgRecordingNotSupported =
-      m('.note',
-        `Recording Perfetto traces from the UI is not supported natively
+      m('div', `Recording Perfetto traces from the UI is not supported natively
      before Android Q. If you are using a P device, please select 'Android P'
-     as the 'Target Platform' and `,
-        m('a',
-          {href: cmdlineUrl, target: '_blank'},
-          `collect the trace using ADB.`));
+     as the 'Target Platform' and collect the trace using ADB`);
+
+  const msgSideload =
+      m('div',
+        `If you have a rooted device you can sideload the latest version of
+         perfetto. `,
+        doc);
 
   const msgChrome =
-      m('.note',
+      m('div',
         `To trace Chrome from the Perfetto UI, you need to install our `,
-        m('a', {href: extensionURL, target: '_blank'}, 'Chrome extension'),
+        m('a', {href: extensionURL}, 'Chrome extension'),
         ' and then reload this page.');
 
   const msgLinux =
-      m('.note',
-        `Use this `,
-        m('a', {href: linuxUrl, target: '_blank'}, `quickstart guide`),
-        ` to get started with tracing on Linux.`);
-
-  const msgLongTraces = m(
-      '.note',
-      `Recording in long trace mode through the UI is not supported. Please copy
-    the command and `,
-      m('a',
-        {href: cmdlineUrl, target: '_blank'},
-        `collect the trace using ADB.`));
+      m('div',
+        `In order to use perfetto on Linux you need to
+      compile it and run the following command from the build
+      output directory. `,
+        doc);
 
   if (isAdbTarget(globals.state.recordingTarget)) {
     notes.push(msgRecordingNotSupported);
@@ -1044,10 +992,12 @@ function RecordingNotes() {
     case 'Q':
       break;
     case 'P':
-      notes.push(m('.note', msgFeatNotSupported, msgSideload));
+      notes.push(msgFeatNotSupported);
+      notes.push(msgSideload);
       break;
     case 'O':
-      notes.push(m('.note', msgPerfettoNotSupported, msgSideload));
+      notes.push(msgPerfettoNotSupported);
+      notes.push(msgSideload);
       break;
     case 'L':
       notes.push(msgLinux);
@@ -1055,16 +1005,10 @@ function RecordingNotes() {
     case 'C':
       if (!globals.state.extensionInstalled) notes.push(msgChrome);
       break;
-    case 'CrOS':
-      if (!globals.state.extensionInstalled) notes.push(msgChrome);
-      break;
     default:
   }
-  if (globals.state.recordConfig.mode === 'LONG_TRACE') {
-    notes.unshift(msgLongTraces);
-  }
 
-  return notes.length > 0 ? m('div', notes) : [];
+  return notes.length > 0 ? m('.note', notes) : [];
 }
 
 function RecordingSnippet() {
@@ -1135,8 +1079,7 @@ function recordingButtons() {
   const buttons: m.Children = [];
 
   if (isAndroidTarget(target)) {
-    if (!recInProgress && isAdbTarget(target) &&
-        globals.state.recordConfig.mode !== 'LONG_TRACE') {
+    if (!recInProgress && isAdbTarget(target)) {
       buttons.push(start);
     }
   } else if (isChromeTarget(target) && state.extensionInstalled) {
@@ -1302,8 +1245,8 @@ function recordMenu(routePage: string) {
         m('a[href="#!/record?p=instructions"]',
           m(`li${routePage === 'instructions' ? '.active' : ''}`,
             m('i.material-icons.rec', 'fiber_manual_record'),
-            m('.title', 'Trace command'),
-            m('.sub', 'Manually record trace'))),
+            m('.title', 'Instructions'),
+            m('.sub', 'Generate config and instructions'))),
         localStorage.hasOwnProperty(LOCAL_STORAGE_SHOW_CONFIG) ?
             m('a[href="#!/record?p=config"]',
               {
@@ -1317,40 +1260,39 @@ function recordMenu(routePage: string) {
                 m('.sub', 'Manage local configs'))) :
             null),
       m('header', 'Probes'),
-      m('ul',
-        isChromeTarget(target) && !isCrOSTarget(target) ? [chromeProbe] : [
-          m('a[href="#!/record?p=cpu"]',
-            m(`li${routePage === 'cpu' ? '.active' : ''}`,
-              m('i.material-icons', 'subtitles'),
-              m('.title', 'CPU'),
-              m('.sub', 'CPU usage, scheduling, wakeups'))),
-          m('a[href="#!/record?p=gpu"]',
-            m(`li${routePage === 'gpu' ? '.active' : ''}`,
-              m('i.material-icons', 'aspect_ratio'),
-              m('.title', 'GPU'),
-              m('.sub', 'GPU frequency, memory'))),
-          m('a[href="#!/record?p=power"]',
-            m(`li${routePage === 'power' ? '.active' : ''}`,
-              m('i.material-icons', 'battery_charging_full'),
-              m('.title', 'Power'),
-              m('.sub', 'Battery and other energy counters'))),
-          m('a[href="#!/record?p=memory"]',
-            m(`li${routePage === 'memory' ? '.active' : ''}`,
-              m('i.material-icons', 'memory'),
-              m('.title', 'Memory'),
-              m('.sub', 'Physical mem, VM, LMK'))),
-          m('a[href="#!/record?p=android"]',
-            m(`li${routePage === 'android' ? '.active' : ''}`,
-              m('i.material-icons', 'android'),
-              m('.title', 'Android apps & svcs'),
-              m('.sub', 'atrace and logcat'))),
-          chromeProbe,
-          m('a[href="#!/record?p=advanced"]',
-            m(`li${routePage === 'advanced' ? '.active' : ''}`,
-              m('i.material-icons', 'settings'),
-              m('.title', 'Advanced settings'),
-              m('.sub', 'Complicated stuff for wizards')))
-        ]));
+      m('ul', isChromeTarget(target) ? [chromeProbe] : [
+        m('a[href="#!/record?p=cpu"]',
+          m(`li${routePage === 'cpu' ? '.active' : ''}`,
+            m('i.material-icons', 'subtitles'),
+            m('.title', 'CPU'),
+            m('.sub', 'CPU usage, scheduling, wakeups'))),
+        m('a[href="#!/record?p=gpu"]',
+          m(`li${routePage === 'gpu' ? '.active' : ''}`,
+            m('i.material-icons', 'aspect_ratio'),
+            m('.title', 'GPU'),
+            m('.sub', 'GPU frequency, memory'))),
+        m('a[href="#!/record?p=power"]',
+          m(`li${routePage === 'power' ? '.active' : ''}`,
+            m('i.material-icons', 'battery_charging_full'),
+            m('.title', 'Power'),
+            m('.sub', 'Battery and other energy counters'))),
+        m('a[href="#!/record?p=memory"]',
+          m(`li${routePage === 'memory' ? '.active' : ''}`,
+            m('i.material-icons', 'memory'),
+            m('.title', 'Memory'),
+            m('.sub', 'Physical mem, VM, LMK'))),
+        m('a[href="#!/record?p=android"]',
+          m(`li${routePage === 'android' ? '.active' : ''}`,
+            m('i.material-icons', 'android'),
+            m('.title', 'Android apps & svcs'),
+            m('.sub', 'atrace and logcat'))),
+        chromeProbe,
+        m('a[href="#!/record?p=advanced"]',
+          m(`li${routePage === 'advanced' ? '.active' : ''}`,
+            m('i.material-icons', 'settings'),
+            m('.title', 'Advanced settings'),
+            m('.sub', 'Complicated stuff for wizards')))
+      ]));
 }
 
 

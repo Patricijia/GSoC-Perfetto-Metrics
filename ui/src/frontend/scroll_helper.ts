@@ -117,11 +117,6 @@ export function findUiTrackId(traceTrackId: number) {
   for (const [uiTrackId, trackState] of Object.entries(globals.state.tracks)) {
     const config = trackState.config as {trackId: number};
     if (config.trackId === traceTrackId) return uiTrackId;
-    const multiple = trackState.config as {trackIds: number[]};
-    if (multiple.trackIds !== undefined &&
-        multiple.trackIds.includes(traceTrackId)) {
-      return uiTrackId;
-    }
   }
   return null;
 }

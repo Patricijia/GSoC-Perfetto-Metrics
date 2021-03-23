@@ -41,10 +41,6 @@ class MetadataTracker {
   // Returns the id of the new entry.
   MetadataId AppendMetadata(metadata::KeyId key, Variadic value);
 
-  // Reads back a set metadata value.
-  // For use in tests only.
-  SqlValue GetMetadataForTesting(metadata::KeyId key);
-
  private:
   static constexpr size_t kNumKeys =
       static_cast<size_t>(metadata::KeyId::kNumKeys);

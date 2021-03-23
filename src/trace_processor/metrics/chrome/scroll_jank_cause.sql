@@ -31,30 +31,25 @@ SELECT RUN_METRIC('chrome/scroll_jank.sql');
 -- 5) modify the scroll_jank_cause_explained_jank to include your cause.
 SELECT RUN_METRIC('chrome/scroll_jank_cause_blocking_touch_move.sql');
 SELECT RUN_METRIC('chrome/scroll_jank_cause_blocking_task.sql');
-SELECT RUN_METRIC('chrome/scroll_jank_cause_get_bitmap.sql');
 
 DROP VIEW IF EXISTS scroll_jank_cause_joined;
+
 CREATE VIEW scroll_jank_cause_joined AS
   SELECT
     COALESCE(move.blocking_touch_move, 0) AS blocking_touch_move,
     COALESCE(task.blocked_by_language_detection, 0)
         AS blocked_by_language_detection,
     COALESCE(task.blocked_by_copy_request, 0) AS blocked_by_copy_request,
-    COALESCE(bitmap.blocked_by_bitmap, 0) AS blocked_by_bitmap,
-    COALESCE(bitmap.blocked_by_toolbar, 0) AS blocked_by_toolbar,
-    COALESCE(bitmap.blocked_by_bitmap_no_toolbar, 0)
-        AS blocked_by_bitmap_no_toolbar,
     jank.*
   FROM
     scroll_jank jank LEFT JOIN
     scroll_jank_cause_blocking_touch_move move
         ON jank.id = move.scroll_id LEFT JOIN
     scroll_jank_cause_blocking_task task
-        ON jank.id = task.scroll_id LEFT JOIN
-    scroll_jank_cause_get_bitmap bitmap
-        ON jank.id = bitmap.scroll_id;
+        ON jank.id = task.scroll_id;
 
 DROP VIEW IF EXISTS scroll_jank_cause_explained_jank;
+
 CREATE VIEW scroll_jank_cause_explained_jank AS
   SELECT
     CASE WHEN
@@ -65,8 +60,7 @@ CREATE VIEW scroll_jank_cause_explained_jank AS
       CASE WHEN
         blocking_touch_move OR
         blocked_by_language_detection OR
-        blocked_by_copy_request OR
-        blocked_by_bitmap
+        blocked_by_copy_request
       THEN
         TRUE
       ELSE
@@ -77,6 +71,7 @@ CREATE VIEW scroll_jank_cause_explained_jank AS
   FROM scroll_jank_cause_joined jank;
 
 DROP VIEW IF EXISTS scroll_jank_cause;
+
 CREATE VIEW scroll_jank_cause AS
   SELECT
     jank AND NOT explained_jank AS unexplained_jank,

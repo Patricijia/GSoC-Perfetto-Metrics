@@ -29,7 +29,6 @@ function fakeTrack(state: State, id: string): TrackState {
     engineId: '1',
     kind: 'SOME_TRACK_KIND',
     name: 'A track',
-    isMainThread: false,
     trackGroup: SCROLLING_TRACK_GROUP,
     config: {},
   };
@@ -50,7 +49,6 @@ test('add scrolling tracks', () => {
       engineId: '1',
       kind: 'cpu',
       name: 'Cpu 1',
-      isMainThread: false,
       trackGroup: SCROLLING_TRACK_GROUP,
       config: {},
     });
@@ -60,7 +58,6 @@ test('add scrolling tracks', () => {
       engineId: '2',
       kind: 'cpu',
       name: 'Cpu 2',
-      isMainThread: false,
       trackGroup: SCROLLING_TRACK_GROUP,
       config: {},
     });
@@ -90,7 +87,6 @@ test('add track to track group', () => {
       engineId: '1',
       kind: 'slices',
       name: 'renderer 1',
-      isMainThread: false,
       trackGroup: '123-123-123',
       config: {},
     });
@@ -106,14 +102,12 @@ test('reorder tracks', () => {
       engineId: '1',
       kind: 'cpu',
       name: 'Cpu 1',
-      isMainThread: false,
       config: {},
     });
     StateActions.addTrack(draft, {
       engineId: '2',
       kind: 'cpu',
       name: 'Cpu 2',
-      isMainThread: false,
       config: {},
     });
   });
@@ -274,7 +268,6 @@ test('open second trace from file', () => {
       engineId: '1',
       kind: 'cpu',
       name: 'Cpu 1',
-      isMainThread: false,
       config: {},
     });
   });
@@ -292,25 +285,4 @@ test('open second trace from file', () => {
   expect(thrice.pinnedTracks.length).toBe(0);
   expect(thrice.scrollingTracks.length).toBe(0);
   expect(thrice.route).toBe('/viewer');
-});
-
-test('setEngineReady with missing engine is ignored', () => {
-  const state = createEmptyState();
-  produce(state, draft => {
-    StateActions.setEngineReady(
-        draft, {engineId: '1', ready: true, mode: 'WASM'});
-  });
-});
-
-test('setEngineReady', () => {
-  const state = createEmptyState();
-  state.nextId = 100;
-  const after = produce(state, draft => {
-    StateActions.openTraceFromUrl(draft, {
-      url: 'https://example.com/bar',
-    });
-    StateActions.setEngineReady(
-        draft, {engineId: '100', ready: true, mode: 'WASM'});
-  });
-  expect(after.engines['100'].ready).toBe(true);
 });

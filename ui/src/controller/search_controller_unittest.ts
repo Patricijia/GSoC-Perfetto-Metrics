@@ -15,8 +15,7 @@
 import {escapeQuery} from './search_controller';
 
 test('escapeQuery', () => {
-  expect(escapeQuery(``)).toEqual(`'%%' escape '^'`);
-  expect(escapeQuery(`hello`)).toEqual(`'%hello%' escape '^'`);
-  expect(escapeQuery('foo\'bar')).toEqual(`'%foo''bar%' escape '^'`);
-  expect(escapeQuery('%_%')).toEqual(`'%^%^_^%%' escape '^'`);
+  expect(escapeQuery(``)).toEqual(`'%%'`);
+  expect(escapeQuery(`hello`)).toEqual(`'%hello%'`);
+  expect(escapeQuery('foo\'bar')).toEqual(`'%foo''bar%'`);
 });

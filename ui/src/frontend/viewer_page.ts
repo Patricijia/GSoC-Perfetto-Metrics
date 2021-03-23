@@ -25,6 +25,7 @@ import {OverviewTimelinePanel} from './overview_timeline_panel';
 import {createPage} from './pages';
 import {PanAndZoomHandler} from './pan_and_zoom_handler';
 import {AnyAttrsVnode, PanelContainer} from './panel_container';
+import {QueryTable} from './query_table';
 import {TickmarkPanel} from './tickmark_panel';
 import {TimeAxisPanel} from './time_axis_panel';
 import {computeZoom} from './time_scale';
@@ -166,11 +167,11 @@ class TraceViewer implements m.ClassComponent {
                 globals.state.areas[selection.areaId].tracks);
           }
         } else {
-          let startPx = Math.min(dragStartX, currentX) - TRACK_SHELL_WIDTH;
-          let endPx = Math.max(dragStartX, currentX) - TRACK_SHELL_WIDTH;
-          if (startPx < 0 && endPx < 0) return;
-          startPx = Math.max(startPx, scale.startPx);
-          endPx = Math.min(endPx, scale.endPx);
+          const startPx = Math.max(
+              Math.min(dragStartX, currentX) - TRACK_SHELL_WIDTH,
+              scale.startPx);
+          const endPx = Math.min(
+              Math.max(dragStartX, currentX) - TRACK_SHELL_WIDTH, scale.endPx);
           frontendLocalState.selectArea(
               scale.pxToTime(startPx), scale.pxToTime(endPx));
           frontendLocalState.areaY.start = dragStartY;
@@ -230,6 +231,7 @@ class TraceViewer implements m.ClassComponent {
         }));
       }
     }
+    scrollingPanels.unshift(m(QueryTable, {key: 'query', queryId: 'command'}));
 
     return m(
         '.page',

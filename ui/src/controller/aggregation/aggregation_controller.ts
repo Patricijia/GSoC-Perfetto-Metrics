@@ -19,7 +19,6 @@ import {
   ThreadStateExtra,
 } from '../../common/aggregation_data';
 import {Engine} from '../../common/engine';
-import {slowlyCountRows} from '../../common/query_iterator';
 import {Area, Sorting} from '../../common/state';
 import {Controller} from '../controller';
 import {globals} from '../globals';
@@ -119,7 +118,7 @@ export abstract class AggregationController extends Controller<'main'> {
     const query = `select ${colIds} from ${this.kind} order by ${sorting}`;
     const result = await this.args.engine.query(query);
 
-    const numRows = slowlyCountRows(result);
+    const numRows = +result.numRecords;
     const columns = defs.map(def => this.columnFromColumnDef(def, numRows));
     const columnSums = await Promise.all(defs.map(def => this.getSum(def)));
     const extraData = await this.getExtra(this.args.engine, area);

@@ -207,10 +207,7 @@ class PERFETTO_EXPORT TrackEventCategoryRegistry {
   size_t category_count() const { return category_count_; }
 
   // Returns a category based on its index.
-  const Category* GetCategory(size_t index) const {
-    PERFETTO_DCHECK(index < category_count_);
-    return &categories_[index];
-  }
+  const Category* GetCategory(size_t index) const;
 
   // Turn tracing on or off for the given category in a track event data source
   // instance.

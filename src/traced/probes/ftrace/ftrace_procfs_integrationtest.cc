@@ -50,10 +50,11 @@ namespace perfetto {
 namespace {
 
 std::string GetFtracePath() {
-  auto ftrace_procfs = FtraceProcfs::CreateGuessingMountPoint();
-  if (!ftrace_procfs)
-    return "";
-  return ftrace_procfs->GetRootPath();
+  size_t i = 0;
+  while (!FtraceProcfs::Create(FtraceController::kTracingPaths[i])) {
+    i++;
+  }
+  return std::string(FtraceController::kTracingPaths[i]);
 }
 
 std::string ReadFile(const std::string& name) {

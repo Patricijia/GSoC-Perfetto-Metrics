@@ -22,10 +22,10 @@ def CheckChange(input, output):
   def long_line_sources(x):
     return input.FilterSourceFile(
         x,
-        files_to_check='.*',
-        files_to_skip=[
+        allow_list=".*",
+        block_list=[
             'Android[.]bp', '.*[.]json$', '.*[.]sql$', '.*[.]out$',
-            'test/trace_processor/.*/index$', '(.*/)?BUILD$', 'WORKSPACE',
+            'test/trace_processor/.*/index$', '.*\bBUILD$', 'WORKSPACE',
             '.*/Makefile$', '/perfetto_build_flags.h$'
         ])
 
@@ -46,7 +46,6 @@ def CheckChange(input, output):
   results += CheckMergedTraceConfigProto(input, output)
   results += CheckProtoEventList(input, output)
   results += CheckBannedCpp(input, output)
-  results += CheckSqlMetrics(input, output)
   return results
 
 
@@ -64,7 +63,7 @@ def CheckBuild(input_api, output_api):
   # If no GN files were modified, bail out.
   def build_file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=('.*BUILD[.]gn$', '.*[.]gni$', 'BUILD\.extras', tool))
+        x, allow_list=('.*BUILD[.]gn$', '.*[.]gni$', 'BUILD\.extras', tool))
 
   if not input_api.AffectedSourceFiles(build_file_filter):
     return []
@@ -82,7 +81,7 @@ def CheckAndroidBlueprint(input_api, output_api):
   # If no GN files were modified, bail out.
   def build_file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=('.*BUILD[.]gn$', '.*[.]gni$', tool))
+        x, allow_list=('.*BUILD[.]gn$', '.*[.]gni$', tool))
 
   if not input_api.AffectedSourceFiles(build_file_filter):
     return []
@@ -99,7 +98,7 @@ def CheckIncludeGuards(input_api, output_api):
 
   def file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=['.*[.]cc$', '.*[.]h$', tool])
+        x, allow_list=['.*[.]cc$', '.*[.]h$', tool])
 
   if not input_api.AffectedSourceFiles(file_filter):
     return []
@@ -135,7 +134,7 @@ def CheckBannedCpp(input_api, output_api):
   ]
 
   def file_filter(x):
-    return input_api.FilterSourceFile(x, files_to_check=[r'.*\.h$', r'.*\.cc$'])
+    return input_api.FilterSourceFile(x, allow_list=[r'.*\.h$', r'.*\.cc$'])
 
   errors = []
   for f in input_api.AffectedSourceFiles(file_filter):
@@ -152,8 +151,7 @@ def CheckIncludeViolations(input_api, output_api):
   tool = 'tools/check_include_violations'
 
   def file_filter(x):
-    return input_api.FilterSourceFile(
-        x, files_to_check=['include/.*[.]h$', tool])
+    return input_api.FilterSourceFile(x, allow_list=['include/.*[.]h$', tool])
 
   if not input_api.AffectedSourceFiles(file_filter):
     return []
@@ -167,7 +165,7 @@ def CheckBinaryDescriptors(input_api, output_api):
 
   def file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=['protos/perfetto/.*[.]proto$', '.*[.]h', tool])
+        x, allow_list=['protos/perfetto/.*[.]proto$', '.*[.]h', tool])
 
   if not input_api.AffectedSourceFiles(file_filter):
     return []
@@ -184,7 +182,7 @@ def CheckMergedTraceConfigProto(input_api, output_api):
 
   def build_file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=['protos/perfetto/.*[.]proto$', tool])
+        x, allow_list=['protos/perfetto/.*[.]proto$', tool])
 
   if not input_api.AffectedSourceFiles(build_file_filter):
     return []
@@ -218,21 +216,7 @@ def CheckProtoComments(input_api, output_api):
 
   def file_filter(x):
     return input_api.FilterSourceFile(
-        x, files_to_check=['protos/perfetto/.*[.]proto$', tool])
-
-  if not input_api.AffectedSourceFiles(file_filter):
-    return []
-  if subprocess.call([tool]):
-    return [output_api.PresubmitError(tool + ' failed')]
-  return []
-
-
-def CheckSqlMetrics(input_api, output_api):
-  tool = 'tools/check_sql_metrics.py'
-
-  def file_filter(x):
-    return input_api.FilterSourceFile(
-        x, files_to_check=['src/trace_processor/metrics/.*[.]sql$', tool])
+        x, allow_list=['protos/perfetto/.*[.]proto$', tool])
 
   if not input_api.AffectedSourceFiles(file_filter):
     return []

@@ -32,7 +32,7 @@ namespace {
 std::string TypeToString(SqlValue::Type type) {
   switch (type) {
     case SqlValue::Type::kString:
-      return "TEXT";
+      return "STRING";
     case SqlValue::Type::kLong:
       return "BIG INT";
     case SqlValue::Type::kDouble:

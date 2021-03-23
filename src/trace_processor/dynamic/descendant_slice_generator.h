@@ -19,7 +19,6 @@
 
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 
-#include "perfetto/ext/base/optional.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
@@ -41,13 +40,6 @@ class DescendantSliceGenerator : public DbSqliteTable::DynamicTableGenerator {
   util::Status ValidateConstraints(const QueryConstraints&) override;
   std::unique_ptr<Table> ComputeTable(const std::vector<Constraint>& cs,
                                       const std::vector<Order>& ob) override;
-
-  // Returns a RowMap of slice IDs which are descendants of |slice_id|. Returns
-  // NULL if an invalid |slice_id| is given. This is used by
-  // ConnectedFlowGenerator to traverse flow indirectly connected flow events.
-  static base::Optional<RowMap> GetDescendantSlices(
-      const tables::SliceTable& slices,
-      SliceId slice_id);
 
  private:
   TraceProcessorContext* context_ = nullptr;

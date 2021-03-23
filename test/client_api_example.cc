@@ -88,7 +88,6 @@ class MyDataSource : public perfetto::DataSource<MyDataSource> {
 
 }  // namespace
 
-PERFETTO_DECLARE_DATA_SOURCE_STATIC_MEMBERS(MyDataSource);
 PERFETTO_DEFINE_DATA_SOURCE_STATIC_MEMBERS(MyDataSource);
 
 int main() {

@@ -43,8 +43,7 @@ class QueryTableRow implements m.ClassComponent<QueryTableRowAttrs> {
     return true;
   }
 
-  static rowOnClickHandler(
-      event: Event, row: Row, nextTab: 'CurrentSelection'|'QueryResults') {
+  static rowOnClickHandler(event: Event, row: Row) {
     // TODO(dproy): Make click handler work from analyze page.
     if (globals.state.route !== '/viewer') return;
     // If the click bubbles up to the pan and zoom handler that will deselect
@@ -60,18 +59,10 @@ class QueryTableRow implements m.ClassComponent<QueryTableRowAttrs> {
     if (uiTrackId === null) return;
     verticalScrollToTrack(uiTrackId, true);
     horizontalScrollAndZoomToRange(sliceStart, sliceEnd);
-    let sliceId: number|undefined;
-    if (row.type?.toString().includes('slice')) {
-      sliceId = row.id as number | undefined;
-    } else {
-      sliceId = row.slice_id as number | undefined;
-    }
+    const sliceId = row.slice_id as number | undefined;
     if (sliceId !== undefined) {
-      globals.makeSelection(
-          Actions.selectChromeSlice(
-              {id: sliceId, trackId: uiTrackId, table: 'slice'}),
-          nextTab === 'QueryResults' ? globals.frontendLocalState.currentTab :
-                                       'current_selection');
+      globals.makeSelection(Actions.selectChromeSlice(
+          {id: sliceId, trackId: uiTrackId, table: 'slice'}));
     }
   }
 
@@ -84,21 +75,11 @@ class QueryTableRow implements m.ClassComponent<QueryTableRowAttrs> {
     const containsSliceLocation =
         QueryTableRow.columnsContainsSliceLocation(columns);
     const maybeOnClick = containsSliceLocation ?
-        (e: Event) => QueryTableRow.rowOnClickHandler(e, row, 'QueryResults') :
-        null;
-    const maybeOnDblClick = containsSliceLocation ?
-        (e: Event) =>
-            QueryTableRow.rowOnClickHandler(e, row, 'CurrentSelection') :
+        (e: Event) => QueryTableRow.rowOnClickHandler(e, row) :
         null;
     return m(
         'tr',
-        {
-          onclick: maybeOnClick,
-          // TODO(altimin): Consider improving the logic here (e.g. delay?) to
-          // account for cases when dblclick fires late.
-          ondblclick: maybeOnDblClick,
-          'clickable': containsSliceLocation
-        },
+        {onclick: maybeOnClick, 'clickable': containsSliceLocation},
         cells);
   }
 }

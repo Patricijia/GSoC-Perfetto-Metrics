@@ -17,12 +17,7 @@
 #include "perfetto/ext/base/temp_file.h"
 
 #include <sys/stat.h>
-
-#include "perfetto/base/build_config.h"
-
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <unistd.h>
-#endif
 
 #include "test/gtest_and_gmock.h"
 
@@ -65,10 +60,7 @@ TEST(TempFileTest, Create) {
   // The file should be deleted and closed now.
   ASSERT_FALSE(PathExists(path));
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  // Windows UCRT aborts when trying to write into a closed FD.
   ASSERT_EQ(-1, write(fd, "foo", 4));
-#endif
 }
 
 TEST(TempFileTest, CreateUnlinked) {
@@ -80,11 +72,7 @@ TEST(TempFileTest, CreateUnlinked) {
     ASSERT_GE(fd, 0);
     ASSERT_GE(write(fd, "foo", 4), 0);
   }
-
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  // Windows UCRT aborts when trying to write into a closed FD.
   ASSERT_EQ(-1, write(fd, "foo", 4));
-#endif
 }
 
 TEST(TempFileTest, ReleaseUnlinked) {

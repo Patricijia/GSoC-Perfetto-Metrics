@@ -13,7 +13,6 @@
 // limitations under the License.
 
 import {Engine} from '../common/engine';
-import {slowlyCountRows} from '../common/query_iterator';
 import {translateState} from '../common/thread_state';
 import {fromNs, toNs} from '../common/time';
 import {
@@ -93,7 +92,7 @@ export class SelectionController extends Controller<'main'> {
       this.args.engine.query(sqlQuery).then(result => {
         // Check selection is still the same on completion of query.
         const selection = globals.state.currentSelection;
-        if (slowlyCountRows(result) === 1 && selection &&
+        if (result.numRecords === 1 && selection &&
             selection.kind === selectedKind && selection.id === selectedId) {
           const ts = result.columns[0].longValues![0];
           const timeFromStart = fromNs(ts) - globals.state.traceTime.startSec;
@@ -132,7 +131,7 @@ export class SelectionController extends Controller<'main'> {
       where slice_id = ${id}
     `;
     const result = await this.args.engine.query(query);
-    for (let i = 0; i < slowlyCountRows(result); i++) {
+    for (let i = 0; i < result.numRecords; i++) {
       const description = result.columns[0].stringValues![i];
       const docLink = result.columns[1].stringValues![i];
       map.set('Description', description);
@@ -151,7 +150,7 @@ export class SelectionController extends Controller<'main'> {
       WHERE arg_set_id = ${argId}
     `;
     const result = await this.args.engine.query(query);
-    for (let i = 0; i < slowlyCountRows(result); i++) {
+    for (let i = 0; i < result.numRecords; i++) {
       const name = result.columns[0].stringValues![i];
       const value = result.columns[1].stringValues![i];
       if (name === 'destination slice id' && !isNaN(Number(value))) {
@@ -191,7 +190,7 @@ export class SelectionController extends Controller<'main'> {
     this.args.engine.query(query).then(result => {
       const selection = globals.state.currentSelection;
       const cols = result.columns;
-      if (slowlyCountRows(result) === 1 && selection) {
+      if (result.numRecords === 1 && selection) {
         const ts = cols[0].longValues![0];
         const timeFromStart = fromNs(ts) - globals.state.traceTime.startSec;
         const dur = fromNs(cols[1].longValues![0]);
@@ -217,7 +216,7 @@ export class SelectionController extends Controller<'main'> {
     this.args.engine.query(sqlQuery).then(result => {
       // Check selection is still the same on completion of query.
       const selection = globals.state.currentSelection;
-      if (slowlyCountRows(result) === 1 && selection) {
+      if (result.numRecords === 1 && selection) {
         const ts = result.columns[0].longValues![0];
         const timeFromStart = fromNs(ts) - globals.state.traceTime.startSec;
         const dur = fromNs(result.columns[1].longValues![0]);
@@ -272,8 +271,8 @@ export class SelectionController extends Controller<'main'> {
         `select * from instants where name = 'sched_waking' limit 1`);
     const wakeup = await this.args.engine.query(
         `select * from instants where name = 'sched_wakeup' limit 1`);
-    if (slowlyCountRows(waking) === 0) {
-      if (slowlyCountRows(wakeup) === 0) return undefined;
+    if (waking.numRecords === 0) {
+      if (wakeup.numRecords === 0) return undefined;
       // Only use sched_wakeup if waking is not in the trace.
       event = 'sched_wakeup';
     }

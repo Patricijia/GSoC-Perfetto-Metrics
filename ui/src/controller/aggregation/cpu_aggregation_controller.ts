@@ -54,7 +54,7 @@ export class CpuAggregationController extends AggregationController {
   }
 
   getTabName() {
-    return 'CPU by thread';
+    return 'CPU Slices';
   }
 
   async getExtra() {}

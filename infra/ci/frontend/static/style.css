@@ -194,7 +194,6 @@ input[type=text].term-search:focus {
 
 .main-table tbody td:first-child {
     padding-left: 20px;
-    max-width: 55vw;
 }
 
 .main-table thead {

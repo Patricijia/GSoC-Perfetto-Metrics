@@ -14,7 +14,7 @@
 
 import {produce} from 'immer';
 
-import {assertExists} from '../base/logging';
+import {assertExists, assertTrue} from '../base/logging';
 import {Actions} from '../common/actions';
 import {createEmptyState, State} from '../common/state';
 import {RecordConfig, STATE_VERSION} from '../common/state';
@@ -105,7 +105,9 @@ export class PermalinkController extends Controller<'main'> {
     if (isRecordingConfig) {
       uploadState = globals.state.recordConfig;
     } else {
-      const engine = assertExists(Object.values(globals.state.engines)[0]);
+      const engines = Object.values(globals.state.engines);
+      assertTrue(engines.length === 1);
+      const engine = engines[0];
       let dataToUpload: File|ArrayBuffer|undefined = undefined;
       let traceName = `trace ${engine.id}`;
       if (engine.source.type === 'FILE') {

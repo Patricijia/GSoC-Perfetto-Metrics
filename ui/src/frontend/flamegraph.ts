@@ -53,7 +53,6 @@ export interface NodeRendering {
 export class Flamegraph {
   private nodeRendering: NodeRendering = {};
   private flamegraphData: CallsiteInfo[];
-  private highlightSomeNodes = false;
   private maxDepth = -1;
   private totalSize = -1;
   // Initialised on first draw() call
@@ -80,15 +79,7 @@ export class Flamegraph {
     this.maxDepth = Math.max(...this.flamegraphData.map(value => value.depth));
   }
 
-  // Instead of highlighting the interesting nodes, we actually want to
-  // de-emphasize the non-highlighted nodes. Returns true if there
-  // are any highlighted nodes in the flamegraph.
-  private highlightingExists() {
-    this.highlightSomeNodes = this.flamegraphData.some((e) => e.highlighted);
-  }
-
-  generateColor(name: string, isGreyedOut = false, highlighted: boolean):
-      string {
+  generateColor(name: string, isGreyedOut = false): string {
     if (isGreyedOut) {
       return '#d9d9d9';
     }
@@ -100,12 +91,7 @@ export class Flamegraph {
       x += name.charCodeAt(i) % 64;
     }
     x = x % 360;
-    let l = '76';
-    // Make non-highlighted node lighter.
-    if (this.highlightSomeNodes && !highlighted) {
-      l = '90';
-    }
-    return `hsl(${x}deg, 45%, ${l}%)`;
+    return `hsl(${x}deg, 45%, 76%)`;
   }
 
   /**
@@ -123,7 +109,6 @@ export class Flamegraph {
     this.flamegraphData = flamegraphData;
     this.clickedCallsite = clickedCallsite;
     this.findMaxDepth();
-    this.highlightingExists();
     // Finding total size of roots.
     this.totalSize = findRootSize(flamegraphData);
   }
@@ -156,7 +141,7 @@ export class Flamegraph {
     this.xStartsPerDepth = new Map();
 
     // Draw root node.
-    ctx.fillStyle = this.generateColor('root', false, false);
+    ctx.fillStyle = this.generateColor('root', false);
     ctx.fillRect(x, currentY, width, NODE_HEIGHT - 1);
     const text = cropText(
         `root: ${
@@ -199,7 +184,7 @@ export class Flamegraph {
 
       // Draw node.
       const name = this.getCallsiteName(value);
-      ctx.fillStyle = this.generateColor(name, isGreyedOut, value.highlighted);
+      ctx.fillStyle = this.generateColor(name, isGreyedOut);
       ctx.fillRect(currentX, currentY, width, NODE_HEIGHT - 1);
 
       // Set current node's data in map for children to use.

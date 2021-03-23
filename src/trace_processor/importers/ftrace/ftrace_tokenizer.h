@@ -25,19 +25,15 @@
 namespace perfetto {
 namespace trace_processor {
 
-class PacketSequenceState;
-
 class FtraceTokenizer {
  public:
   explicit FtraceTokenizer(TraceProcessorContext* context)
       : context_(context) {}
 
-  void TokenizeFtraceBundle(TraceBlobView bundle, PacketSequenceState*);
+  void TokenizeFtraceBundle(TraceBlobView bundle);
 
  private:
-  void TokenizeFtraceEvent(uint32_t cpu,
-                           TraceBlobView event,
-                           PacketSequenceState*);
+  void TokenizeFtraceEvent(uint32_t cpu, TraceBlobView event);
   void TokenizeFtraceCompactSched(uint32_t cpu,
                                   const uint8_t* data,
                                   size_t size);

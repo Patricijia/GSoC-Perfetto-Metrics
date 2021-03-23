@@ -41,7 +41,6 @@ import {
   isAdbTarget,
   isAndroidP,
   isChromeTarget,
-  isCrOSTarget,
   MAX_TIME,
   RecordConfig,
   RecordingTarget
@@ -54,9 +53,7 @@ import {ChromeExtensionConsumerPort} from './chrome_proxy_record_controller';
 import {
   ConsumerPortResponse,
   GetTraceStatsResponse,
-  isDisableTracingResponse,
   isEnableTracingResponse,
-  isFreeBuffersResponse,
   isGetTraceStatsResponse,
   isReadBuffersResponse,
 } from './consumer_port_types';
@@ -108,11 +105,6 @@ export function genConfig(
       protoCfg.fileWritePeriodMs = uiCfg.fileWritePeriodMs;
       protoCfg.maxFileSizeBytes = uiCfg.maxFileSizeMb * 1e6;
     }
-
-    // Clear incremental state every 5 seconds when tracing into a ring buffer.
-    const incStateConfig = new TraceConfig.IncrementalStateConfig();
-    incStateConfig.clearPeriodMs = 5000;
-    protoCfg.incrementalStateConfig = incStateConfig;
   }
 
   const ftraceEvents = new Set<string>(uiCfg.ftrace ? uiCfg.ftraceEvents : []);
@@ -149,12 +141,10 @@ export function genConfig(
   if (uiCfg.gpuMemTotal) {
     ftraceEvents.add('gpu_mem/gpu_mem_total');
 
-    if (!isChromeTarget(target) || isCrOSTarget(target)) {
-      const ds = new TraceConfig.DataSource();
-      ds.config = new DataSourceConfig();
-      ds.config.name = 'android.gpu.memory';
-      protoCfg.dataSources.push(ds);
-    }
+    const ds = new TraceConfig.DataSource();
+    ds.config = new DataSourceConfig();
+    ds.config.name = 'android.gpu.memory';
+    protoCfg.dataSources.push(ds);
   }
 
   if (uiCfg.cpuSyscall) {
@@ -181,9 +171,7 @@ export function genConfig(
       AndroidPowerConfig.BatteryCounters.BATTERY_COUNTER_CURRENT,
     ];
     ds.config.androidPowerConfig.collectPowerRails = true;
-    if (!isChromeTarget(target) || isCrOSTarget(target)) {
-      protoCfg.dataSources.push(ds);
-    }
+    protoCfg.dataSources.push(ds);
   }
 
   if (uiCfg.boardSensors) {
@@ -274,10 +262,8 @@ export function genConfig(
         cdc.dumpPhaseMs = uiCfg.hpContinuousDumpsPhase;
       }
     }
-    cfg.blockClient = uiCfg.hpBlockClient;
-    if (uiCfg.hpAllHeaps) {
-      cfg.allHeaps = true;
-    }
+    // TODO(fmayer): Add a toggle for this to the UI?
+    cfg.blockClient = true;
     heapprofd = cfg;
   }
 
@@ -315,9 +301,7 @@ export function genConfig(
     if (procThreadAssociationPolling || trackInitialOomScore) {
       ds.config.processStatsConfig.scanAllProcessesOnStart = true;
     }
-    if (!isChromeTarget(target) || isCrOSTarget(target)) {
-      protoCfg.dataSources.push(ds);
-    }
+    protoCfg.dataSources.push(ds);
   }
 
   if (uiCfg.androidLogs) {
@@ -330,9 +314,7 @@ export function genConfig(
       return AndroidLogId[name as any as number] as any as number;
     });
 
-    if (!isChromeTarget(target) || isCrOSTarget(target)) {
-      protoCfg.dataSources.push(ds);
-    }
+    protoCfg.dataSources.push(ds);
   }
 
   if (uiCfg.chromeLogs) {
@@ -395,17 +377,10 @@ export function genConfig(
     } else {
       chromeRecordMode = 'record-continuously';
     }
-    const configStruct = {
+    const traceConfigJson = JSON.stringify({
       record_mode: chromeRecordMode,
       included_categories: [...chromeCategories.values()],
-      memory_dump_config: {},
-    };
-    if (chromeCategories.has('disabled-by-default-memory-infra')) {
-      configStruct.memory_dump_config = {
-        triggers: [{mode: 'detailed', periodic_interval_ms: 10000}]
-      };
-    }
-    const traceConfigJson = JSON.stringify(configStruct);
+    });
 
     const traceDs = new TraceConfig.DataSource();
     traceDs.config = new DataSourceConfig();
@@ -429,8 +404,7 @@ export function genConfig(
 
   // Keep these last. The stages above can enrich them.
 
-  if (sysStatsCfg !== undefined &&
-      (!isChromeTarget(target) || isCrOSTarget(target))) {
+  if (sysStatsCfg !== undefined) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.name = 'linux.sys_stats';
@@ -438,8 +412,7 @@ export function genConfig(
     protoCfg.dataSources.push(ds);
   }
 
-  if (heapprofd !== undefined &&
-      (!isChromeTarget(target) || isCrOSTarget(target))) {
+  if (heapprofd !== undefined) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.targetBuffer = 0;
@@ -448,8 +421,7 @@ export function genConfig(
     protoCfg.dataSources.push(ds);
   }
 
-  if (javaHprof !== undefined &&
-      (!isChromeTarget(target) || isCrOSTarget(target))) {
+  if (javaHprof !== undefined) {
     const ds = new TraceConfig.DataSource();
     ds.config = new DataSourceConfig();
     ds.config.targetBuffer = 0;
@@ -505,9 +477,7 @@ export function genConfig(
     ds.config.ftraceConfig.ftraceEvents = ftraceEventsArray;
     ds.config.ftraceConfig.atraceCategories = Array.from(atraceCats);
     ds.config.ftraceConfig.atraceApps = Array.from(atraceApps);
-    if (!isChromeTarget(target) || isCrOSTarget(target)) {
-      protoCfg.dataSources.push(ds);
-    }
+    protoCfg.dataSources.push(ds);
   }
 
   return protoCfg;
@@ -681,10 +651,6 @@ export class RecordController extends Controller<'main'> implements Consumer {
       if (percentage) {
         globals.publish('BufferUsage', {percentage});
       }
-    } else if (isFreeBuffersResponse(data)) {
-      // No action required.
-    } else if (isDisableTracingResponse(data)) {
-      // No action required.
     } else {
       console.error('Unrecognized consumer port response:', data);
     }

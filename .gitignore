@@ -1,5 +1,4 @@
 .android_config
-.cache
 .ccls
 .ccls-cache
 .clangd
@@ -13,15 +12,15 @@
 .project
 .recipe_deps/
 .settings/
-.vscode
-*.code-workspace
 *.iml
 *.pyc
-*.sock
 *.swp
 /bazel-*
-/compile_commands.json
-/fuzz_out/
-/node_modules/
 /out*
 TAGS
+/node_modules/
+/compile_commands.json
+.vscode
+*.code-workspace
+/fuzz_out/
+/bazel-*

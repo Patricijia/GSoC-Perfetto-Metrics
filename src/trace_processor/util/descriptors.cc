@@ -20,7 +20,6 @@
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "protos/perfetto/common/descriptor.pbzero.h"
 #include "protos/perfetto/trace_processor/trace_processor.pbzero.h"
-#include "src/trace_processor/util/status_macros.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -87,13 +86,26 @@ util::Status DescriptorPool::AddExtensionField(
   return util::OkStatus();
 }
 
-util::Status DescriptorPool::AddNestedProtoDescriptors(
+void DescriptorPool::CheckPreviousDefinition(
+    const std::string& file_name,
+    const std::string& descriptor_name) {
+  auto prev_idx = FindDescriptorIdx(descriptor_name);
+  if (prev_idx.has_value()) {
+    auto prev_file = descriptors_[*prev_idx].file_name();
+    // We should already make sure we process each file once, so if we're
+    // hitting this path, it means the same message was defined in multiple
+    // files.
+    PERFETTO_FATAL("%s: %s was already defined in file %s", file_name.c_str(),
+                   descriptor_name.c_str(), prev_file.c_str());
+  }
+}
+
+void DescriptorPool::AddNestedProtoDescriptors(
     const std::string& file_name,
     const std::string& package_name,
     base::Optional<uint32_t> parent_idx,
     protozero::ConstBytes descriptor_proto,
-    std::vector<ExtensionInfo>* extensions,
-    bool merge_existing_messages) {
+    std::vector<ExtensionInfo>* extensions) {
   protos::pbzero::DescriptorProto::Decoder decoder(descriptor_proto);
 
   auto parent_name =
@@ -101,70 +113,34 @@ util::Status DescriptorPool::AddNestedProtoDescriptors(
   auto full_name =
       parent_name + "." + base::StringView(decoder.name()).ToStdString();
 
-  auto prev_idx = FindDescriptorIdx(full_name);
-  if (prev_idx.has_value() && !merge_existing_messages) {
-    const auto& existing_descriptor = descriptors_[*prev_idx];
-    return util::ErrStatus("%s: %s was already defined in file %s",
-                           file_name.c_str(), full_name.c_str(),
-                           existing_descriptor.file_name().c_str());
-  }
-  if (!prev_idx.has_value()) {
-    prev_idx = static_cast<unsigned int>(descriptors_.size());
-    ProtoDescriptor proto_descriptor(file_name, package_name, full_name,
-                                     ProtoDescriptor::Type::kMessage,
-                                     parent_idx);
-    descriptors_.emplace_back(std::move(proto_descriptor));
-  }
-  ProtoDescriptor& proto_descriptor = descriptors_[*prev_idx];
-  if (proto_descriptor.type() != ProtoDescriptor::Type::kMessage) {
-    return util::ErrStatus("%s was enum, redefined as message",
-                           full_name.c_str());
-  }
+  CheckPreviousDefinition(file_name, full_name);
 
   using FieldDescriptorProto = protos::pbzero::FieldDescriptorProto;
+  ProtoDescriptor proto_descriptor(file_name, package_name, full_name,
+                                   ProtoDescriptor::Type::kMessage, parent_idx);
   for (auto it = decoder.field(); it; ++it) {
     FieldDescriptorProto::Decoder f_decoder(*it);
-    auto field = CreateFieldFromDecoder(f_decoder, /*is_extension=*/false);
-    auto existing_field = proto_descriptor.FindFieldByTag(field.number());
-    if (!existing_field) {
-      proto_descriptor.AddField(std::move(field));
-    } else {
-      if (field.type() != existing_field->type()) {
-        return util::ErrStatus("Field %s is re-introduced with different type",
-                               field.name().c_str());
-      }
-      if (field.type() == FieldDescriptorProto::TYPE_MESSAGE &&
-          field.resolved_type_name() != existing_field->resolved_type_name()) {
-        return util::ErrStatus(
-            "Field %s is re-introduced with different type %s (was %s)",
-            field.name().c_str(), field.resolved_type_name().c_str(),
-            existing_field->resolved_type_name().c_str());
-      }
-    }
+    proto_descriptor.AddField(CreateFieldFromDecoder(f_decoder, false));
   }
+  descriptors_.emplace_back(std::move(proto_descriptor));
 
   auto idx = static_cast<uint32_t>(descriptors_.size()) - 1;
   for (auto it = decoder.enum_type(); it; ++it) {
-    AddEnumProtoDescriptors(file_name, package_name, idx, *it,
-                            merge_existing_messages);
+    AddEnumProtoDescriptors(file_name, package_name, idx, *it);
   }
   for (auto it = decoder.nested_type(); it; ++it) {
-    RETURN_IF_ERROR(AddNestedProtoDescriptors(file_name, package_name, idx, *it,
-                                              extensions,
-                                              merge_existing_messages));
+    AddNestedProtoDescriptors(file_name, package_name, idx, *it, extensions);
   }
   for (auto ext_it = decoder.extension(); ext_it; ++ext_it) {
     extensions->emplace_back(package_name, *ext_it);
   }
-  return util::OkStatus();
 }
 
-util::Status DescriptorPool::AddEnumProtoDescriptors(
+void DescriptorPool::AddEnumProtoDescriptors(
     const std::string& file_name,
     const std::string& package_name,
     base::Optional<uint32_t> parent_idx,
-    protozero::ConstBytes descriptor_proto,
-    bool merge_existing_messages) {
+    protozero::ConstBytes descriptor_proto) {
   protos::pbzero::EnumDescriptorProto::Decoder decoder(descriptor_proto);
 
   auto parent_name =
@@ -172,40 +148,22 @@ util::Status DescriptorPool::AddEnumProtoDescriptors(
   auto full_name =
       parent_name + "." + base::StringView(decoder.name()).ToStdString();
 
-  auto prev_idx = FindDescriptorIdx(full_name);
-  if (prev_idx.has_value() && !merge_existing_messages) {
-    const auto& existing_descriptor = descriptors_[*prev_idx];
-    return util::ErrStatus("%s: %s was already defined in file %s",
-                           file_name.c_str(), full_name.c_str(),
-                           existing_descriptor.file_name().c_str());
-  }
-  if (!prev_idx.has_value()) {
-    prev_idx = static_cast<unsigned int>(descriptors_.size());
-    ProtoDescriptor proto_descriptor(file_name, package_name, full_name,
-                                     ProtoDescriptor::Type::kEnum,
-                                     base::nullopt);
-    descriptors_.emplace_back(std::move(proto_descriptor));
-  }
-  ProtoDescriptor& proto_descriptor = descriptors_[*prev_idx];
-  if (proto_descriptor.type() != ProtoDescriptor::Type::kEnum) {
-    return util::ErrStatus("%s was message, redefined as enum",
-                           full_name.c_str());
-  }
+  CheckPreviousDefinition(file_name, full_name);
 
+  ProtoDescriptor proto_descriptor(file_name, package_name, full_name,
+                                   ProtoDescriptor::Type::kEnum, base::nullopt);
   for (auto it = decoder.value(); it; ++it) {
     protos::pbzero::EnumValueDescriptorProto::Decoder enum_value(it->data(),
                                                                  it->size());
     proto_descriptor.AddEnumValue(enum_value.number(),
                                   enum_value.name().ToStdString());
   }
-
-  return util::OkStatus();
+  descriptors_.emplace_back(std::move(proto_descriptor));
 }
 
 util::Status DescriptorPool::AddFromFileDescriptorSet(
     const uint8_t* file_descriptor_set_proto,
-    size_t size,
-    bool merge_existing_messages) {
+    size_t size) {
   // First pass: extract all the message descriptors from the file and add them
   // to the pool.
   protos::pbzero::FileDescriptorSet::Decoder proto(file_descriptor_set_proto,
@@ -221,13 +179,11 @@ util::Status DescriptorPool::AddFromFileDescriptorSet(
     processed_files_.insert(file_name);
     std::string package = "." + base::StringView(file.package()).ToStdString();
     for (auto message_it = file.message_type(); message_it; ++message_it) {
-      RETURN_IF_ERROR(AddNestedProtoDescriptors(
-          file_name, package, base::nullopt, *message_it, &extensions,
-          merge_existing_messages));
+      AddNestedProtoDescriptors(file_name, package, base::nullopt, *message_it,
+                                &extensions);
     }
     for (auto enum_it = file.enum_type(); enum_it; ++enum_it) {
-      AddEnumProtoDescriptors(file_name, package, base::nullopt, *enum_it,
-                              merge_existing_messages);
+      AddEnumProtoDescriptors(file_name, package, base::nullopt, *enum_it);
     }
     for (auto ext_it = file.extension(); ext_it; ++ext_it) {
       extensions.emplace_back(package, *ext_it);
@@ -244,8 +200,7 @@ util::Status DescriptorPool::AddFromFileDescriptorSet(
   // Third pass: resolve the types of all the fields to the correct indiices.
   using FieldDescriptorProto = protos::pbzero::FieldDescriptorProto;
   for (auto& descriptor : descriptors_) {
-    for (auto& entry : *descriptor.mutable_fields()) {
-      auto& field = entry.second;
+    for (auto& field : *descriptor.mutable_fields()) {
       if (!field.resolved_type_name().empty())
         continue;
 
@@ -283,8 +238,7 @@ std::vector<uint8_t> DescriptorPool::SerializeAsDescriptorSet() {
     protos::pbzero::DescriptorProto* proto_descriptor =
         descs->add_descriptors();
     proto_descriptor->set_name(desc.full_name());
-    for (auto& entry : desc.fields()) {
-      auto& field = entry.second;
+    for (auto& field : desc.fields()) {
       protos::pbzero::FieldDescriptorProto* field_descriptor =
           proto_descriptor->add_field();
       field_descriptor->set_name(field.name());

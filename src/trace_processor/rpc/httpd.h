@@ -18,7 +18,6 @@
 #define SRC_TRACE_PROCESSOR_RPC_HTTPD_H_
 
 #include <memory>
-#include <string>
 
 namespace perfetto {
 namespace trace_processor {

@@ -14,33 +14,18 @@
  * limitations under the License.
  */
 
-#include "perfetto/heap_profile.h"
-#include "src/profiling/memory/heap_profile_internal.h"
+#include "perfetto/profiling/memory/heap_profile.h"
 
 #include <inttypes.h>
-
-__attribute__((visibility("default"))) uint64_t
-AHeapProfileEnableCallbackInfo_getSamplingInterval(
-    const AHeapProfileEnableCallbackInfo*) {
-  return 0;
-}
 
 __attribute__((visibility("default"))) AHeapInfo* AHeapInfo_create(
     const char*) {
   return nullptr;
 }
 
-__attribute__((visibility("default"))) AHeapInfo* AHeapInfo_setEnabledCallback(
+__attribute__((visibility("default"))) AHeapInfo* AHeapInfo_setCallback(
     AHeapInfo*,
-    void (*)(void*, const AHeapProfileEnableCallbackInfo*),
-    void*) {
-  return nullptr;
-}
-
-__attribute__((visibility("default"))) AHeapInfo* AHeapInfo_setDisabledCallback(
-    AHeapInfo*,
-    void (*)(void*, const AHeapProfileDisableCallbackInfo*),
-    void*) {
+    void (*)(bool enabled)) {
   return nullptr;
 }
 
@@ -51,11 +36,6 @@ __attribute__((visibility("default"))) uint32_t AHeapProfile_registerHeap(
 
 __attribute__((visibility("default"))) bool
 AHeapProfile_reportAllocation(uint32_t, uint64_t, uint64_t) {
-  return false;
-}
-
-__attribute__((visibility("default"))) bool
-AHeapProfile_reportSample(uint32_t, uint64_t, uint64_t) {
   return false;
 }
 

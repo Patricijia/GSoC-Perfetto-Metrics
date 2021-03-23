@@ -21,7 +21,8 @@ select
   slice.ts,
   slice.dur,
   slice.category,
-  slice.name
+  slice.name,
+  slice.arg_set_id
 from slice
 left join track on slice.track_id = track.id
 left join process_track on slice.track_id = process_track.id

@@ -16,6 +16,7 @@
 
 #include <math.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
@@ -189,7 +190,6 @@ void StressTestDataSource::Worker::FillPayload(
 }
 }  // namespace
 
-PERFETTO_DECLARE_DATA_SOURCE_STATIC_MEMBERS(StressTestDataSource);
 PERFETTO_DEFINE_DATA_SOURCE_STATIC_MEMBERS(StressTestDataSource);
 
 }  // namespace perfetto
@@ -199,7 +199,7 @@ int main() {
   args.backends = perfetto::kSystemBackend;
 
   std::string config_blob;
-  if (isatty(fileno(stdin)))
+  if (isatty(STDIN_FILENO))
     PERFETTO_LOG("Reading StressTestConfig proto from stdin");
   perfetto::base::ReadFileStream(stdin, &config_blob);
 
@@ -219,6 +219,6 @@ int main() {
   perfetto::StressTestDataSource::Register(dsd);
 
   for (;;) {
-    std::this_thread::sleep_for(std::chrono::seconds(30));
+    pause();
   }
 }

@@ -16,10 +16,9 @@
 
 #include "perfetto/protozero/field.h"
 
-#include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
 
-#if !PERFETTO_IS_LITTLE_ENDIAN()
+#if __BYTE_ORDER__ != __ORDER_LITTLE_ENDIAN__
 // The memcpy() for fixed32/64 below needs to be adjusted if we want to
 // support big endian CPUs. There doesn't seem to be a compelling need today.
 #error Unimplemented for big endian archs.

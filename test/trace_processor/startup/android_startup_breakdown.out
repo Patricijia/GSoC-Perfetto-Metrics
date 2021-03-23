@@ -6,7 +6,6 @@ android_startup {
     process: {
       name: "com.google.android.calendar"
     }
-    activity_name: "com.google.android.calendar.MainActivity"
     zygote_new_process: true
     to_first_frame {
       dur_ns: 108

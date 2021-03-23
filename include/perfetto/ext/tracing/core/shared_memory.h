@@ -22,7 +22,6 @@
 #include <memory>
 
 #include "perfetto/base/export.h"
-#include "perfetto/base/platform_handle.h"
 
 namespace perfetto {
 
@@ -47,6 +46,7 @@ class PERFETTO_EXPORT SharedMemory {
 
   virtual void* start() const = 0;
   virtual size_t size() const = 0;
+  virtual int fd() const = 0;
 };
 
 }  // namespace perfetto

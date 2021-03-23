@@ -87,7 +87,7 @@ class TracingSession : public Consumer {
   // perfetto::Consumer implementation.
   void OnConnect() override;
   void OnDisconnect() override;
-  void OnTracingDisabled(const std::string& error) override;
+  void OnTracingDisabled() override;
   void OnTraceData(std::vector<TracePacket>, bool has_more) override;
   void OnDetach(bool) override;
   void OnAttach(bool, const TraceConfig&) override;
@@ -198,9 +198,9 @@ void TracingSession::StartTracing() {
   consumer_endpoint_->StartTracing();
 }
 
-void TracingSession::OnTracingDisabled(const std::string& error) {
+void TracingSession::OnTracingDisabled() {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  PERFETTO_DLOG("OnTracingDisabled %s", error.c_str());
+  PERFETTO_DLOG("OnTracingDisabled");
 
   struct stat stat_buf {};
   int res = fstat(buf_fd_.get(), &stat_buf);
