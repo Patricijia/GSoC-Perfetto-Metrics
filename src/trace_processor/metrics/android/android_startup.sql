@@ -16,9 +16,41 @@
 
 -- Create the base tables and views containing the launch spans.
 SELECT RUN_METRIC('android/android_startup_launches.sql');
-SELECT RUN_METRIC('android/android_task_state.sql');
 SELECT RUN_METRIC('android/process_metadata.sql');
 SELECT RUN_METRIC('android/hsc_startups.sql');
+
+-- Create the base CPU span join table.
+SELECT RUN_METRIC('android/android_cpu_agg.sql');
+
+-- Create a span join safe launches view; since both views
+-- being span joined have an "id" column, we need to rename
+-- the id column for launches to disambiguate the two.
+DROP VIEW IF EXISTS launches_span_join_safe;
+CREATE VIEW launches_span_join_safe AS
+SELECT ts, dur, id AS launch_id
+FROM launches;
+
+-- Span join the CPU table with the launches table to get the
+-- breakdown per-cpu.
+DROP TABLE IF EXISTS cpu_freq_sched_per_thread_per_launch;
+CREATE VIRTUAL TABLE cpu_freq_sched_per_thread_per_launch
+USING SPAN_JOIN(
+  launches_span_join_safe,
+  cpu_freq_sched_per_thread PARTITIONED cpu
+);
+
+SELECT RUN_METRIC('android/cpu_info.sql');
+
+DROP VIEW IF EXISTS mcycles_per_core_type_per_launch;
+CREATE VIEW mcycles_per_core_type_per_launch AS
+SELECT
+  launch_id,
+  IFNULL(core_type_per_cpu.core_type, 'unknown') AS core_type,
+  CAST(SUM(dur * freq_khz / 1000) / 1e9 AS INT) AS mcycles
+FROM cpu_freq_sched_per_thread_per_launch
+LEFT JOIN core_type_per_cpu USING (cpu)
+WHERE utid != 0
+GROUP BY 1, 2;
 
 -- Slices for forked processes. Never present in hot starts.
 -- Prefer this over process start_ts, since the process might have
@@ -54,11 +86,20 @@ JOIN process USING(upid)
 JOIN thread ON (process.upid = thread.upid AND process.pid = thread.tid)
 ORDER BY ts;
 
+DROP VIEW IF EXISTS thread_state_extended;
+CREATE VIEW thread_state_extended AS
+SELECT
+  ts,
+  IIF(dur = -1, (SELECT end_ts FROM trace_bounds), dur) AS dur,
+  utid,
+  state
+FROM thread_state;
+
 DROP TABLE IF EXISTS main_thread_state;
 CREATE VIRTUAL TABLE main_thread_state
 USING SPAN_JOIN(
   launch_main_threads PARTITIONED utid,
-  task_state PARTITIONED utid);
+  thread_state_extended PARTITIONED utid);
 
 DROP VIEW IF EXISTS launch_by_thread_state;
 CREATE VIEW launch_by_thread_state AS
@@ -185,23 +226,45 @@ SELECT
         'running_dur_ns', IFNULL(
             (
             SELECT dur FROM launch_by_thread_state l
-            WHERE l.launch_id = launches.id AND state = 'running'
+            WHERE l.launch_id = launches.id AND state = 'Running'
             ), 0),
         'runnable_dur_ns', IFNULL(
             (
             SELECT dur FROM launch_by_thread_state l
-            WHERE l.launch_id = launches.id AND state = 'runnable'
+            WHERE l.launch_id = launches.id AND state = 'R'
             ), 0),
         'uninterruptible_sleep_dur_ns', IFNULL(
             (
             SELECT dur FROM launch_by_thread_state l
-            WHERE l.launch_id = launches.id AND state = 'uninterruptible'
+            WHERE l.launch_id = launches.id AND (state = 'D' or state = 'DK')
             ), 0),
         'interruptible_sleep_dur_ns', IFNULL(
             (
             SELECT dur FROM launch_by_thread_state l
-            WHERE l.launch_id = launches.id AND state = 'interruptible'
+            WHERE l.launch_id = launches.id AND state = 'S'
             ), 0)
+      ),
+      'mcycles_by_core_type', AndroidStartupMetric_McyclesByCoreType(
+        'little', (
+          SELECT mcycles
+          FROM mcycles_per_core_type_per_launch m
+          WHERE m.launch_id = launches.id AND m.core_type = 'little'
+        ),
+        'big', (
+          SELECT mcycles
+          FROM mcycles_per_core_type_per_launch m
+          WHERE m.launch_id = launches.id AND m.core_type = 'big'
+        ),
+        'bigger', (
+          SELECT mcycles
+          FROM mcycles_per_core_type_per_launch m
+          WHERE m.launch_id = launches.id AND m.core_type = 'bigger'
+        ),
+        'unknown', (
+          SELECT mcycles
+          FROM mcycles_per_core_type_per_launch m
+          WHERE m.launch_id = launches.id AND m.core_type = 'unknown'
+        )
       ),
       'to_post_fork', (
         SELECT slice_proto

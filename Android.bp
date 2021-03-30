@@ -620,8 +620,7 @@ cc_library_shared {
     "src/android_internal/atrace_hal.cc",
     "src/android_internal/health_hal.cc",
     "src/android_internal/incident_service.cc",
-    "src/android_internal/power_stats_aidl.cc",
-    "src/android_internal/power_stats_hal.cc",
+    "src/android_internal/power_stats.cc",
     "src/android_internal/statsd_logging.cc",
     "src/android_internal/tracing_service_proxy.cc",
   ],
@@ -7724,7 +7723,6 @@ genrule {
     "src/trace_processor/metrics/android/android_surfaceflinger.sql",
     "src/trace_processor/metrics/android/android_sysui_cuj.sql",
     "src/trace_processor/metrics/android/android_task_names.sql",
-    "src/trace_processor/metrics/android/android_task_state.sql",
     "src/trace_processor/metrics/android/android_thread_time_in_state.sql",
     "src/trace_processor/metrics/android/composition_layers.sql",
     "src/trace_processor/metrics/android/cpu_info.sql",
@@ -8331,7 +8329,6 @@ filegroup {
   name: "perfetto_src_traced_probes_power_power",
   srcs: [
     "src/traced/probes/power/android_power_data_source.cc",
-    "src/traced/probes/power/android_power_stats_data_source.cc",
   ],
 }
 
@@ -8440,6 +8437,7 @@ filegroup {
     "src/tracing/platform.cc",
     "src/tracing/traced_value.cc",
     "src/tracing/tracing.cc",
+    "src/tracing/tracing_policy.cc",
     "src/tracing/track.cc",
     "src/tracing/track_event_category_registry.cc",
     "src/tracing/track_event_legacy.cc",

@@ -508,6 +508,7 @@ filegroup(
 filegroup(
     name = "include_perfetto_tracing_tracing",
     srcs = [
+        "include/perfetto/tracing/backend_type.h",
         "include/perfetto/tracing/buffer_exhausted_policy.h",
         "include/perfetto/tracing/console_interceptor.h",
         "include/perfetto/tracing/data_source.h",
@@ -535,6 +536,7 @@ filegroup(
         "include/perfetto/tracing/traced_value_forward.h",
         "include/perfetto/tracing/tracing.h",
         "include/perfetto/tracing/tracing_backend.h",
+        "include/perfetto/tracing/tracing_policy.h",
         "include/perfetto/tracing/track.h",
         "include/perfetto/tracing/track_event.h",
         "include/perfetto/tracing/track_event_category_registry.h",
@@ -551,8 +553,7 @@ filegroup(
         "src/android_internal/atrace_hal.h",
         "src/android_internal/health_hal.h",
         "src/android_internal/incident_service.h",
-        "src/android_internal/power_stats_aidl.h",
-        "src/android_internal/power_stats_hal.h",
+        "src/android_internal/power_stats.h",
         "src/android_internal/statsd_logging.h",
         "src/android_internal/tracing_service_proxy.h",
     ],
@@ -921,7 +922,6 @@ genrule(
         "src/trace_processor/metrics/android/android_surfaceflinger.sql",
         "src/trace_processor/metrics/android/android_sysui_cuj.sql",
         "src/trace_processor/metrics/android/android_task_names.sql",
-        "src/trace_processor/metrics/android/android_task_state.sql",
         "src/trace_processor/metrics/android/android_thread_time_in_state.sql",
         "src/trace_processor/metrics/android/composition_layers.sql",
         "src/trace_processor/metrics/android/cpu_info.sql",
@@ -1454,8 +1454,6 @@ filegroup(
     srcs = [
         "src/traced/probes/power/android_power_data_source.cc",
         "src/traced/probes/power/android_power_data_source.h",
-        "src/traced/probes/power/android_power_stats_data_source.cc",
-        "src/traced/probes/power/android_power_stats_data_source.h",
     ],
 )
 
@@ -1629,6 +1627,7 @@ filegroup(
         "src/tracing/platform.cc",
         "src/tracing/traced_value.cc",
         "src/tracing/tracing.cc",
+        "src/tracing/tracing_policy.cc",
         "src/tracing/track.cc",
         "src/tracing/track_event_category_registry.cc",
         "src/tracing/track_event_legacy.cc",
