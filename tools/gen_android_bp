@@ -1,4 +1,4 @@
-#!/usr/bin/env python
+#!/usr/bin/env python3
 # Copyright (C) 2017 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -59,6 +59,7 @@ default_targets = [
     '//src/perfetto_cmd:trigger_perfetto',
     '//src/profiling/memory:heapprofd_client',
     '//src/profiling/memory:heapprofd_client_api',
+    '//src/profiling/memory:heapprofd_api_noop',
     '//src/profiling/memory:heapprofd',
     '//src/profiling/memory:heapprofd_standalone_client',
     '//src/profiling/perf:traced_perf',
@@ -106,8 +107,10 @@ shared_library_allowlist = [
     'android.hardware.atrace@1.0',
     'android.hardware.health@2.0',
     'android.hardware.power.stats@1.0',
+    "android.hardware.power.stats-V1-cpp",
     'base',
     'binder',
+    'binder_ndk',
     'cutils',
     'hidlbase',
     'hidltransport',
@@ -116,6 +119,7 @@ shared_library_allowlist = [
     'log',
     'services',
     'statssocket',
+    "tracingproxy",
     'utils',
 ]
 
@@ -171,13 +175,25 @@ def enumerate_data_deps():
 # Additional arguments to apply to Android.bp rules.
 additional_args = {
     'heapprofd_client_api': [
-        ('include_dirs', {'bionic/libc'}),
         ('static_libs', {'libasync_safe'}),
         # heapprofd_client_api MUST NOT have global constructors. Because it
         # is loaded in an __attribute__((constructor)) of libc, we cannot
         # guarantee that the global constructors get run before it is used.
         ('cflags', {'-Wglobal-constructors', '-Werror=global-constructors'}),
         ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
+        ('stubs', {
+          'versions': ['S'],
+          'symbol_file': 'src/profiling/memory/heapprofd_client_api.map.txt',
+        }),
+        ('export_include_dirs', {'src/profiling/memory/include'}),
+    ],
+    'heapprofd_api_noop': [
+        ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
+        ('stubs', {
+          'versions': ['S'],
+          'symbol_file': 'src/profiling/memory/heapprofd_client_api.map.txt',
+        }),
+        ('export_include_dirs', {'src/profiling/memory/include'}),
     ],
     'heapprofd_client': [
         ('include_dirs', {'bionic/libc'}),
@@ -186,6 +202,7 @@ additional_args = {
     'heapprofd_standalone_client': [
         ('static_libs', {'libasync_safe'}),
         ('version_script', 'src/profiling/memory/heapprofd_client_api.map.txt'),
+        ('export_include_dirs', {'src/profiling/memory/include'}),
         ('stl', 'libc++_static'),
     ],
     'perfetto_unittests': [
@@ -193,9 +210,8 @@ additional_args = {
         ('include_dirs', {'bionic/libc/kernel'}),
     ],
     'perfetto_integrationtests': [
-      # heapprofd_end_to_end needs root to set a system property.
-      ('require_root', True),
       ('test_suites', {'general-tests'}),
+      ('test_config', 'PerfettoIntegrationTests.xml'),
     ],
     'traced_probes': [
         ('required', {'libperfetto_android_internal',
@@ -204,9 +220,9 @@ additional_args = {
     ],
     'libperfetto_android_internal': [('static_libs', {'libhealthhalutils'}),],
     'trace_processor_shell': [
+      ('strip', {'all': True}),
       ('host', {
         'stl': 'libc++_static',
-        'strip': {'all': True},
         'dist': {'targets': ['sdk_repo']},
       }),
     ],
@@ -215,13 +231,19 @@ additional_args = {
         '//apex_available:platform',
         'com.android.art',
         'com.android.art.debug'}),
+      ('min_sdk_version', 'S'),
       ('shared_libs', {'liblog'}),
+      ('export_include_dirs', {'include', buildflags_dir}),
     ],
     'perfetto_trace_protos': [
       ('apex_available', {
         '//apex_available:platform',
         'com.android.art',
         'com.android.art.debug'}),
+      ('min_sdk_version', 'S'),
+    ],
+    'libperfetto': [
+      ('export_include_dirs', {'include', buildflags_dir}),
     ],
 }
 
@@ -445,14 +467,16 @@ class Module(object):
     self.strip = dict()
     self.data = set()
     self.apex_available = set()
+    self.min_sdk_version = None
     # The genrule_XXX below are properties that must to be propagated back
     # on the module(s) that depend on the genrule.
     self.genrule_headers = set()
     self.genrule_srcs = set()
     self.genrule_shared_libs = set()
     self.version_script = None
-    self.require_root = None
     self.test_suites = set()
+    self.test_config = None
+    self.stubs = {}
 
   def to_string(self, output):
     if self.comment:
@@ -482,9 +506,11 @@ class Module(object):
     self._output_field(output, 'data')
     self._output_field(output, 'stl')
     self._output_field(output, 'apex_available')
+    self._output_field(output, 'min_sdk_version')
     self._output_field(output, 'version_script')
-    self._output_field(output, 'require_root')
     self._output_field(output, 'test_suites')
+    self._output_field(output, 'test_config')
+    self._output_field(output, 'stubs')
 
     target_out = []
     self._output_field(target_out, 'android')
@@ -793,7 +819,6 @@ def create_modules_from_target(blueprint, gn, gn_target_name):
   if bp_module_name in blueprint.modules:
     return blueprint.modules[bp_module_name]
   target = gn.get_target(gn_target_name)
-  export_include_dirs = {'include', buildflags_dir}
 
   if target.type == 'executable':
     if target.toolchain == gn_utils.HOST_TOOLCHAIN:
@@ -805,10 +830,8 @@ def create_modules_from_target(blueprint, gn, gn_target_name):
     module = Module(module_type, bp_module_name, gn_target_name)
   elif target.type == 'static_library':
     module = Module('cc_library_static', bp_module_name, gn_target_name)
-    module.export_include_dirs = export_include_dirs
   elif target.type == 'shared_library':
     module = Module('cc_library_shared', bp_module_name, gn_target_name)
-    module.export_include_dirs = export_include_dirs
   elif target.type == 'source_set':
     module = Module('filegroup', bp_module_name, gn_target_name)
   elif target.type == 'group':
@@ -851,8 +874,9 @@ def create_modules_from_target(blueprint, gn, gn_target_name):
     module.defaults = [defaults_module]
     for lib in target.libs:
       # Generally library names should be mangled as 'libXXX', unless they
-      # are HAL libraries (e.g., android.hardware.health@2.0).
-      android_lib = lib if '@' in lib else 'lib' + lib
+      # are HAL libraries (e.g., android.hardware.health@2.0) or AIDL c++
+      # libraries (e.g. "android.hardware.power.stats-V1-cpp")
+      android_lib = lib if '@' in lib or "-cpp" in lib else 'lib' + lib
       if lib in shared_library_allowlist:
         module.add_android_shared_lib(android_lib)
       if lib in static_library_allowlist:
@@ -876,7 +900,8 @@ def create_modules_from_target(blueprint, gn, gn_target_name):
     elif isinstance(add_val, dict) and isinstance(curr, Target):
       curr.__dict__.update(add_val)
     else:
-      raise Error('Unimplemented type of additional_args: %r' % key)
+      raise Error('Unimplemented type %r of additional_args: %r' %
+                  (type(add_val), key))
 
   # dep_name is an unmangled GN target name (e.g. //foo:bar(toolchain)).
   for dep_name in target.deps | target.source_set_deps | target.proto_deps:
@@ -943,7 +968,8 @@ def create_blueprint_for_targets(gn, desc, targets):
   # become relative to the Android.bp that *uses* cc_defaults (not the one
   # that defines it).s
   defaults.include_dirs = {
-      tree_path, tree_path + '/include', tree_path + '/' + buildflags_dir
+      tree_path, tree_path + '/include', tree_path + '/' + buildflags_dir,
+      tree_path + '/src/profiling/memory/include'
   }
   defaults.cflags = [
       '-Wno-error=return-type',

@@ -38,13 +38,18 @@
 #include "perfetto/tracing/data_source.h"
 #include "perfetto/tracing/internal/data_source_internal.h"
 #include "perfetto/tracing/internal/interceptor_trace_writer.h"
+#include "perfetto/tracing/internal/tracing_backend_fake.h"
 #include "perfetto/tracing/trace_writer_base.h"
 #include "perfetto/tracing/tracing.h"
 #include "perfetto/tracing/tracing_backend.h"
 
 #include "protos/perfetto/config/interceptor_config.gen.h"
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include "src/tracing/internal/tracing_muxer_fake.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+#include <io.h>  // For dup()
+#else
 #include <unistd.h>  // For dup()
 #endif
 
@@ -166,11 +171,12 @@ void TracingMuxerImpl::ProducerImpl::Flush(FlushRequestID flush_id,
 }
 
 void TracingMuxerImpl::ProducerImpl::ClearIncrementalState(
-    const DataSourceInstanceID*,
-    size_t) {
+    const DataSourceInstanceID* instances,
+    size_t instance_count) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  // TODO(skyostil): Mark each affected data source's incremental state as
-  // needing to be cleared.
+  for (size_t inst_idx = 0; inst_idx < instance_count; inst_idx++) {
+    muxer_->ClearDataSourceIncrementalState(backend_id_, instances[inst_idx]);
+  }
 }
 
 void TracingMuxerImpl::ProducerImpl::SweepDeadServices() {
@@ -364,7 +370,7 @@ void TracingMuxerImpl::ConsumerImpl::OnTraceData(
   auto callback = read_trace_callback_;
   muxer_->task_runner_->PostTask([callback, buf, has_more] {
     TracingSession::ReadTraceCallbackArgs callback_arg{};
-    callback_arg.data = buf->size() ? &(*buf)[0] : nullptr;
+    callback_arg.data = buf->empty() ? nullptr : &(*buf)[0];
     callback_arg.size = buf->size();
     callback_arg.has_more = has_more;
     callback(callback_arg);
@@ -429,8 +435,9 @@ void TracingMuxerImpl::ConsumerImpl::OnAttach(bool, const TraceConfig&) {}
 
 TracingMuxerImpl::TracingSessionImpl::TracingSessionImpl(
     TracingMuxerImpl* muxer,
-    TracingSessionGlobalID session_id)
-    : muxer_(muxer), session_id_(session_id) {}
+    TracingSessionGlobalID session_id,
+    BackendType backend_type)
+    : muxer_(muxer), session_id_(session_id), backend_type_(backend_type) {}
 
 // Can be destroyed from any thread.
 TracingMuxerImpl::TracingSessionImpl::~TracingSessionImpl() {
@@ -447,14 +454,17 @@ void TracingMuxerImpl::TracingSessionImpl::Setup(const TraceConfig& cfg,
   auto session_id = session_id_;
   std::shared_ptr<TraceConfig> trace_config(new TraceConfig(cfg));
   if (fd >= 0) {
+    base::ignore_result(backend_type_);  // For -Wunused in the amalgamation.
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-    PERFETTO_FATAL(
-        "Passing a file descriptor to TracingSession::Setup() is not supported "
-        "on Windows yet. Use TracingSession::ReadTrace() instead");
-#else
+    if (backend_type_ != kInProcessBackend) {
+      PERFETTO_FATAL(
+          "Passing a file descriptor to TracingSession::Setup() is only "
+          "supported with the kInProcessBackend on Windows. Use "
+          "TracingSession::ReadTrace() instead");
+    }
+#endif
     trace_config->set_write_into_file(true);
     fd = dup(fd);
-#endif
   }
   muxer->task_runner_->PostTask([muxer, session_id, trace_config, fd] {
     muxer->SetupTracingSession(session_id, trace_config, base::ScopedFile(fd));
@@ -564,6 +574,8 @@ void TracingMuxerImpl::TracingSessionImpl::SetOnStartCallback(
   auto session_id = session_id_;
   muxer->task_runner_->PostTask([muxer, session_id, cb] {
     auto* consumer = muxer->FindConsumer(session_id);
+    if (!consumer)
+      return;
     consumer->start_complete_callback_ = cb;
   });
 }
@@ -575,8 +587,12 @@ void TracingMuxerImpl::TracingSessionImpl::SetOnErrorCallback(
   auto session_id = session_id_;
   muxer->task_runner_->PostTask([muxer, session_id, cb] {
     auto* consumer = muxer->FindConsumer(session_id);
-    if (!consumer)
+    if (!consumer) {
+      // Notify the client about concurrent disconnection of the session.
+      if (cb)
+        cb(TracingError{TracingError::kDisconnected, "Peer disconnected"});
       return;
+    }
     consumer->error_callback_ = cb;
   });
 }
@@ -588,6 +604,8 @@ void TracingMuxerImpl::TracingSessionImpl::SetOnStopCallback(
   auto session_id = session_id_;
   muxer->task_runner_->PostTask([muxer, session_id, cb] {
     auto* consumer = muxer->FindConsumer(session_id);
+    if (!consumer)
+      return;
     consumer->stop_complete_callback_ = cb;
   });
 }
@@ -615,7 +633,7 @@ void TracingMuxerImpl::TracingSessionImpl::QueryServiceState(
 // ----- End of TracingMuxerImpl::TracingSessionImpl
 
 // static
-TracingMuxer* TracingMuxer::instance_ = nullptr;
+TracingMuxer* TracingMuxer::instance_ = TracingMuxerFake::Get();
 
 // This is called by perfetto::Tracing::Initialize().
 // Can be called on any thread. Typically, but not necessarily, that will be
@@ -634,6 +652,8 @@ TracingMuxerImpl::TracingMuxerImpl(const TracingInitArgs& args)
 
 void TracingMuxerImpl::Initialize(const TracingInitArgs& args) {
   PERFETTO_DCHECK_THREAD(thread_checker_);  // Rebind the thread checker.
+
+  policy_ = args.tracing_policy;
 
   auto add_backend = [this, &args](TracingBackend* backend, BackendType type) {
     if (!backend) {
@@ -678,6 +698,12 @@ void TracingMuxerImpl::Initialize(const TracingInitArgs& args) {
   if (args.backends & ~(kSystemBackend | kInProcessBackend | kCustomBackend)) {
     PERFETTO_FATAL("Unsupported tracing backend type");
   }
+
+  // Fallback backend for consumer creation for an unsupported backend type.
+  // This backend simply fails any attempt to start a tracing session.
+  // NOTE: This backend instance has to be added last.
+  add_backend(internal::TracingBackendFake::GetInstance(),
+              BackendType::kUnspecifiedBackend);
 }
 
 // Can be called from any thread (but not concurrently).
@@ -733,7 +759,8 @@ void TracingMuxerImpl::RegisterInterceptor(
           }
         }
         // Only allow certain interceptors for now.
-        if (descriptor.name() != "test_interceptor") {
+        if (descriptor.name() != "test_interceptor" &&
+            descriptor.name() != "console") {
           PERFETTO_ELOG(
               "Interceptors are experimental. If you want to use them, please "
               "get in touch with the project maintainers "
@@ -960,6 +987,23 @@ void TracingMuxerImpl::StopDataSource_AsyncEnd(
   producer->SweepDeadServices();
 }
 
+void TracingMuxerImpl::ClearDataSourceIncrementalState(
+    TracingBackendId backend_id,
+    DataSourceInstanceID instance_id) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  PERFETTO_DLOG("Clearing incremental state for data source %" PRIu64,
+                instance_id);
+  auto ds = FindDataSource(backend_id, instance_id);
+  if (!ds) {
+    PERFETTO_ELOG("Could not find data source to clear incremental state for");
+    return;
+  }
+  // Make DataSource::TraceContext::GetIncrementalState() eventually notice that
+  // the incremental state should be cleared.
+  ds.static_state->incremental_state_generation.fetch_add(
+      1, std::memory_order_relaxed);
+}
+
 void TracingMuxerImpl::SyncProducersForTesting() {
   std::mutex mutex;
   std::condition_variable cv;
@@ -1071,6 +1115,7 @@ void TracingMuxerImpl::UpdateDataSourcesOnAllBackends() {
 
       rds.descriptor.set_will_notify_on_start(true);
       rds.descriptor.set_will_notify_on_stop(true);
+      rds.descriptor.set_handles_incremental_state_clear(true);
       backend.producer->service_->RegisterDataSource(rds.descriptor);
       backend.producer->registered_data_sources_.set(rds.static_state->index);
     }
@@ -1318,12 +1363,29 @@ TracingMuxerImpl::ConsumerImpl* TracingMuxerImpl::FindConsumer(
   for (RegisteredBackend& backend : backends_) {
     for (auto& consumer : backend.consumers) {
       if (consumer->session_id_ == session_id) {
-        PERFETTO_DCHECK(consumer->service_);
         return consumer.get();
       }
     }
   }
   return nullptr;
+}
+
+void TracingMuxerImpl::InitializeConsumer(TracingSessionGlobalID session_id) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+
+  auto* consumer = FindConsumer(session_id);
+  if (!consumer)
+    return;
+
+  TracingBackendId backend_id = consumer->backend_id_;
+  // |backends_| is append-only, Backend instances are always valid.
+  PERFETTO_CHECK(backend_id < backends_.size());
+  RegisteredBackend& backend = backends_[backend_id];
+
+  TracingBackend::ConnectConsumerArgs conn_args;
+  conn_args.consumer = consumer;
+  conn_args.task_runner = task_runner_.get();
+  consumer->Initialize(backend.backend->ConnectConsumer(conn_args));
 }
 
 void TracingMuxerImpl::OnConsumerDisconnected(ConsumerImpl* consumer) {
@@ -1426,38 +1488,78 @@ std::unique_ptr<TraceWriterBase> TracingMuxerImpl::CreateTraceWriter(
 // This is called via the public API Tracing::NewTrace().
 // Can be called from any thread.
 std::unique_ptr<TracingSession> TracingMuxerImpl::CreateTracingSession(
-    BackendType backend_type) {
+    BackendType requested_backend_type) {
   TracingSessionGlobalID session_id = ++next_tracing_session_id_;
 
   // |backend_type| can only specify one backend, not an OR-ed mask.
-  PERFETTO_CHECK((backend_type & (backend_type - 1)) == 0);
+  PERFETTO_CHECK((requested_backend_type & (requested_backend_type - 1)) == 0);
 
   // Capturing |this| is fine because the TracingMuxer is a leaky singleton.
-  task_runner_->PostTask([this, backend_type, session_id] {
+  task_runner_->PostTask([this, requested_backend_type, session_id] {
     for (RegisteredBackend& backend : backends_) {
-      if (backend_type && backend.type != backend_type)
+      if (requested_backend_type && backend.type &&
+          backend.type != requested_backend_type) {
         continue;
+      }
 
+      TracingBackendId backend_id = backend.id;
+
+      // Create the consumer now, even if we have to ask the embedder below, so
+      // that any other tasks executing after this one can find the consumer and
+      // change its pending attributes.
       backend.consumers.emplace_back(
           new ConsumerImpl(this, backend.type, backend.id, session_id));
-      auto& consumer = backend.consumers.back();
-      TracingBackend::ConnectConsumerArgs conn_args;
-      conn_args.consumer = consumer.get();
-      conn_args.task_runner = task_runner_.get();
-      consumer->Initialize(backend.backend->ConnectConsumer(conn_args));
+
+      // The last registered backend in |backends_| is the unsupported backend
+      // without a valid type.
+      if (!backend.type) {
+        PERFETTO_ELOG(
+            "No tracing backend ready for type=%d, consumer will disconnect",
+            requested_backend_type);
+        InitializeConsumer(session_id);
+        return;
+      }
+
+      // Check if the embedder wants to be asked for permission before
+      // connecting the consumer.
+      if (!policy_) {
+        InitializeConsumer(session_id);
+        return;
+      }
+
+      TracingPolicy::ShouldAllowConsumerSessionArgs args;
+      args.backend_type = backend.type;
+      args.result_callback = [this, backend_id, session_id](bool allow) {
+        task_runner_->PostTask([this, backend_id, session_id, allow] {
+          if (allow) {
+            InitializeConsumer(session_id);
+            return;
+          }
+
+          PERFETTO_ELOG(
+              "Consumer session for backend type type=%d forbidden, "
+              "consumer will disconnect",
+              backends_[backend_id].type);
+
+          auto* consumer = FindConsumer(session_id);
+          if (!consumer)
+            return;
+
+          consumer->OnDisconnect();
+        });
+      };
+      policy_->ShouldAllowConsumerSession(args);
       return;
     }
-    PERFETTO_ELOG(
-        "Cannot create tracing session, no tracing backend ready for type=%d",
-        backend_type);
+    PERFETTO_DFATAL("Not reached");
   });
 
   return std::unique_ptr<TracingSession>(
-      new TracingSessionImpl(this, session_id));
+      new TracingSessionImpl(this, session_id, requested_backend_type));
 }
 
 void TracingMuxerImpl::InitializeInstance(const TracingInitArgs& args) {
-  if (instance_)
+  if (instance_ != TracingMuxerFake::Get())
     PERFETTO_FATAL("Tracing already initialized");
   instance_ = new TracingMuxerImpl(args);
 }

@@ -18,7 +18,6 @@
 
 #include <fcntl.h>
 #include <inttypes.h>
-#include <unistd.h>
 
 #include <utility>
 
@@ -37,6 +36,11 @@
 namespace perfetto {
 namespace ipc {
 
+namespace {
+constexpr base::SockFamily kClientSockFamily =
+    kUseTCPSocket ? base::SockFamily::kInet : base::SockFamily::kUnix;
+}  // namespace
+
 // static
 std::unique_ptr<Client> Client::CreateInstance(ConnArgs conn_args,
                                                base::TaskRunner* task_runner) {
@@ -54,9 +58,8 @@ ClientImpl::ClientImpl(ConnArgs conn_args, base::TaskRunner* task_runner)
     // Create the client using a connected socket. This code path will never hit
     // OnConnect().
     sock_ = base::UnixSocket::AdoptConnected(
-        std::move(conn_args.socket_fd), this, task_runner_,
-        base::SockFamily::kUnix, base::SockType::kStream,
-        base::SockPeerCredMode::kIgnore);
+        std::move(conn_args.socket_fd), this, task_runner_, kClientSockFamily,
+        base::SockType::kStream, base::SockPeerCredMode::kIgnore);
   } else {
     // Connect using the socket name.
     TryConnect();
@@ -72,9 +75,9 @@ ClientImpl::~ClientImpl() {
 
 void ClientImpl::TryConnect() {
   PERFETTO_DCHECK(socket_name_);
-  sock_ = base::UnixSocket::Connect(
-      socket_name_, this, task_runner_, base::SockFamily::kUnix,
-      base::SockType::kStream, base::SockPeerCredMode::kIgnore);
+  sock_ = base::UnixSocket::Connect(socket_name_, this, task_runner_,
+                                    kClientSockFamily, base::SockType::kStream,
+                                    base::SockPeerCredMode::kIgnore);
 }
 
 void ClientImpl::BindService(base::WeakPtr<ServiceProxy> service_proxy) {
@@ -198,12 +201,16 @@ void ClientImpl::OnDataAvailable(base::UnixSocket*) {
     auto buf = frame_deserializer_.BeginReceive();
     base::ScopedFile fd;
     rsize = sock_->Receive(buf.data, buf.size, &fd);
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+    PERFETTO_DCHECK(!fd);
+#else
     if (fd) {
       PERFETTO_DCHECK(!received_fd_);
       int res = fcntl(*fd, F_SETFD, FD_CLOEXEC);
       PERFETTO_DCHECK(res == 0);
       received_fd_ = std::move(fd);
     }
+#endif
     if (!frame_deserializer_.EndReceive(rsize)) {
       // The endpoint tried to send a frame that is way too large.
       return sock_->Shutdown(true);  // In turn will trigger an OnDisconnect().

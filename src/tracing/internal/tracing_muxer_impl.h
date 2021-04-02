@@ -124,6 +124,7 @@ class TracingMuxerImpl : public TracingMuxer {
   void StartDataSource(TracingBackendId, DataSourceInstanceID);
   void StopDataSource_AsyncBegin(TracingBackendId, DataSourceInstanceID);
   void StopDataSource_AsyncEnd(TracingBackendId, DataSourceInstanceID);
+  void ClearDataSourceIncrementalState(TracingBackendId, DataSourceInstanceID);
   void SyncProducersForTesting();
 
   // Consumer-side bookkeeping methods.
@@ -327,7 +328,7 @@ class TracingMuxerImpl : public TracingMuxer {
   // Tracing::CreateTracingSession().
   class TracingSessionImpl : public TracingSession {
    public:
-    TracingSessionImpl(TracingMuxerImpl*, TracingSessionGlobalID);
+    TracingSessionImpl(TracingMuxerImpl*, TracingSessionGlobalID, BackendType);
     ~TracingSessionImpl() override;
     void Setup(const TraceConfig&, int fd) override;
     void Start() override;
@@ -346,6 +347,7 @@ class TracingMuxerImpl : public TracingMuxer {
    private:
     TracingMuxerImpl* const muxer_;
     TracingSessionGlobalID const session_id_;
+    BackendType const backend_type_;
   };
 
   struct RegisteredDataSource {
@@ -378,6 +380,7 @@ class TracingMuxerImpl : public TracingMuxer {
   explicit TracingMuxerImpl(const TracingInitArgs&);
   void Initialize(const TracingInitArgs& args);
   ConsumerImpl* FindConsumer(TracingSessionGlobalID session_id);
+  void InitializeConsumer(TracingSessionGlobalID session_id);
   void OnConsumerDisconnected(ConsumerImpl* consumer);
   void OnProducerDisconnected(ProducerImpl* producer);
 
@@ -397,6 +400,7 @@ class TracingMuxerImpl : public TracingMuxer {
   std::vector<RegisteredDataSource> data_sources_;
   std::vector<RegisteredBackend> backends_;
   std::vector<RegisteredInterceptor> interceptors_;
+  TracingPolicy* policy_ = nullptr;
 
   std::atomic<TracingSessionGlobalID> next_tracing_session_id_{};
 

@@ -224,6 +224,13 @@ class DataSource : public DataSourceBase {
     }
 
     typename DataSourceTraits::IncrementalStateType* GetIncrementalState() {
+      // Recreate incremental state data if it has been reset by the service.
+      if (tls_inst_->incremental_state_generation !=
+          static_state_.incremental_state_generation.load(
+              std::memory_order_relaxed)) {
+        tls_inst_->incremental_state.reset();
+        CreateIncrementalState(tls_inst_);
+      }
       return reinterpret_cast<typename DataSourceTraits::IncrementalStateType*>(
           tls_inst_->incremental_state.get());
     }
@@ -263,7 +270,9 @@ class DataSource : public DataSourceBase {
   // instances. It is given an instance state parameter, which should be passed
   // to TraceWithInstances() to actually record trace data.
   template <typename Traits = DefaultTracePointTraits, typename Callback>
-  static void CallIfEnabled(Callback callback) PERFETTO_ALWAYS_INLINE {
+  static void CallIfEnabled(Callback callback,
+                            typename Traits::TracePointData trace_point_data =
+                                {}) PERFETTO_ALWAYS_INLINE {
     // |instances| is a per-class bitmap that tells:
     // 1. If the data source is enabled at all.
     // 2. The index of the slot within |static_state_| that holds the instance
@@ -273,8 +282,8 @@ class DataSource : public DataSourceBase {
     // - |instances| is re-read with an acquire barrier below if this succeeds.
     // - The code between this point and the acquire-load is based on static
     //    storage which has indefinite lifetime.
-    uint32_t instances =
-        Traits::GetActiveInstances()->load(std::memory_order_relaxed);
+    uint32_t instances = Traits::GetActiveInstances(trace_point_data)
+                             ->load(std::memory_order_relaxed);
 
     // This is the tracing fast-path. Bail out immediately if tracing is not
     // enabled (or tracing is enabled but not for this data source).
@@ -289,11 +298,19 @@ class DataSource : public DataSourceBase {
   // CallIfEnabled().
   // |tracing_fn| will be called to record trace data as in Trace().
   //
+  // |trace_point_data| is an optional parameter given to |Traits::
+  // GetActiveInstances| to make it possible to use custom storage for
+  // the data source enabled state. This is, for example, used by TrackEvent to
+  // implement per-tracing category enabled states.
+  //
   // TODO(primiano): all the stuff below should be outlined from the trace
   // point. Or at least we should have some compile-time traits like
   // kOptimizeBinarySize / kOptimizeTracingLatency.
   template <typename Traits = DefaultTracePointTraits, typename Lambda>
-  static void TraceWithInstances(uint32_t instances, Lambda tracing_fn) {
+  static void TraceWithInstances(
+      uint32_t instances,
+      Lambda tracing_fn,
+      typename Traits::TracePointData trace_point_data = {}) {
     PERFETTO_DCHECK(instances);
     constexpr auto kMaxDataSourceInstances = internal::kMaxDataSourceInstances;
 
@@ -356,12 +373,18 @@ class DataSource : public DataSourceBase {
       // handshaking to make this extremely unrealistic.
 
       auto& tls_inst = tls_state_->per_instance[i];
+
+      // Avoid re-entering the trace point recursively.
+      if (PERFETTO_UNLIKELY(tls_inst.is_in_trace_point))
+        continue;
+      ScopedReentrancyAnnotator scoped_annotator(tls_inst);
+
       if (PERFETTO_UNLIKELY(!tls_inst.trace_writer)) {
         // Here we need an acquire barrier, which matches the release-store made
         // by TracingMuxerImpl::SetupDataSource(), to ensure that the backend_id
         // and buffer_id are consistent.
-        instances =
-            Traits::GetActiveInstances()->load(std::memory_order_acquire);
+        instances = Traits::GetActiveInstances(trace_point_data)
+                        ->load(std::memory_order_acquire);
         instance_state = static_state_.TryGetCached(instances, i);
         if (!instance_state || !instance_state->trace_lambda_enabled)
           continue;
@@ -374,10 +397,7 @@ class DataSource : public DataSourceBase {
         tls_inst.trace_writer = tracing_impl->CreateTraceWriter(
             &static_state_, i, instance_state,
             DataSourceType::kBufferExhaustedPolicy);
-        CreateIncrementalState(
-            &tls_inst,
-            static_cast<typename DataSourceTraits::IncrementalStateType*>(
-                nullptr));
+        CreateIncrementalState(&tls_inst);
 
         // Even in the case of out-of-IDs, SharedMemoryArbiterImpl returns a
         // NullTraceWriter. The returned pointer should never be null.
@@ -396,18 +416,21 @@ class DataSource : public DataSourceBase {
   // Can return false to signal failure if attemping to register more than
   // kMaxDataSources (32) data sources types or if tracing hasn't been
   // initialized.
-  static bool Register(const DataSourceDescriptor& descriptor) {
+  // The optional |constructor_args| will be passed to the data source when it
+  // is constructed.
+  template <class... Args>
+  static bool Register(const DataSourceDescriptor& descriptor,
+                       const Args&... constructor_args) {
     // Silences -Wunused-variable warning in case the trace method is not used
     // by the translation unit that declares the data source.
     (void)static_state_;
     (void)tls_state_;
 
-    auto factory = [] {
-      return std::unique_ptr<DataSourceBase>(new DataSourceType());
+    auto factory = [constructor_args...]() {
+      return std::unique_ptr<DataSourceBase>(
+          new DataSourceType(constructor_args...));
     };
     auto* tracing_impl = internal::TracingMuxer::Get();
-    if (!tracing_impl)
-      return false;
     return tracing_impl->RegisterDataSource(descriptor, factory,
                                             &static_state_);
   }
@@ -422,27 +445,56 @@ class DataSource : public DataSourceBase {
     //
     // DANGER: when doing this, the data source must use the appropriate memory
     // fences when changing the state of the bitmap.
-    static constexpr std::atomic<uint32_t>* GetActiveInstances() {
+    //
+    // |TraceWithInstances| may be optionally given an additional parameter for
+    // looking up the enable flags. That parameter is passed as |TracePointData|
+    // to |GetActiveInstances|. This is, for example, used by TrackEvent to
+    // implement per-category enabled states.
+    struct TracePointData {};
+    static constexpr std::atomic<uint32_t>* GetActiveInstances(TracePointData) {
       return &static_state_.valid_instances;
     }
+  };
+
+  struct ScopedReentrancyAnnotator {
+    ScopedReentrancyAnnotator(
+        internal::DataSourceInstanceThreadLocalState& tls_inst)
+        : tls_inst_(tls_inst) {
+      tls_inst_.is_in_trace_point = true;
+    }
+    ~ScopedReentrancyAnnotator() { tls_inst_.is_in_trace_point = false; }
+
+   private:
+    internal::DataSourceInstanceThreadLocalState& tls_inst_;
   };
 
   // Create the user provided incremental state in the given thread-local
   // storage. Note: The second parameter here is used to specialize the case
   // where there is no incremental state type.
   template <typename T>
-  static void CreateIncrementalState(
+  static void CreateIncrementalStateImpl(
       internal::DataSourceInstanceThreadLocalState* tls_inst,
       const T*) {
     PERFETTO_DCHECK(!tls_inst->incremental_state);
+    tls_inst->incremental_state_generation =
+        static_state_.incremental_state_generation.load(
+            std::memory_order_relaxed);
     tls_inst->incremental_state =
         internal::DataSourceInstanceThreadLocalState::IncrementalStatePointer(
             reinterpret_cast<void*>(new T()),
             [](void* p) { delete reinterpret_cast<T*>(p); });
   }
-  static void CreateIncrementalState(
+
+  static void CreateIncrementalStateImpl(
       internal::DataSourceInstanceThreadLocalState*,
       const void*) {}
+
+  static void CreateIncrementalState(
+      internal::DataSourceInstanceThreadLocalState* tls_inst) {
+    CreateIncrementalStateImpl(
+        tls_inst,
+        static_cast<typename DataSourceTraits::IncrementalStateType*>(nullptr));
+  }
 
   // Note that the returned object is one per-thread per-data-source-type, NOT
   // per data-source *instance*.
@@ -499,19 +551,35 @@ PERFETTO_THREAD_LOCAL internal::DataSourceThreadLocalState*
   PERFETTO_COMPONENT_EXPORT perfetto::internal::DataSourceStaticState \
       perfetto::DataSource<__VA_ARGS__>::static_state_;               \
   template <>                                                         \
-  PERFETTO_COMPONENT_EXPORT thread_local perfetto::internal::         \
-      DataSourceThreadLocalState*                                     \
+  PERFETTO_COMPONENT_EXPORT PERFETTO_THREAD_LOCAL                     \
+      perfetto::internal::DataSourceThreadLocalState*                 \
           perfetto::DataSource<__VA_ARGS__>::tls_state_
+
+// MSVC has a bug where explicit template member specialization declarations
+// can't have thread_local as the storage class specifier. The generated code
+// seems correct without the specifier, so drop it until the bug gets fixed.
+// See https://developercommunity2.visualstudio.com/t/Unable-to-specialize-
+// static-thread_local/1302689.
+#if PERFETTO_BUILDFLAG(PERFETTO_COMPILER_MSVC)
+#define PERFETTO_TEMPLATE_THREAD_LOCAL
+#else
+#define PERFETTO_TEMPLATE_THREAD_LOCAL PERFETTO_THREAD_LOCAL
+#endif
 
 // This macro must be used once for each data source in one source file to
 // allocate static storage for the data source's static state.
+//
+// Note: if MSVC fails with a C2086 (redefinition) error here, use the
+// permissive- flag to enable standards-compliant mode. See
+// https://developercommunity.visualstudio.com/content/problem/319447/
+// explicit-specialization-of-static-data-member-inco.html.
 #define PERFETTO_DEFINE_DATA_SOURCE_STATIC_MEMBERS(...)               \
   template <>                                                         \
   PERFETTO_COMPONENT_EXPORT perfetto::internal::DataSourceStaticState \
       perfetto::DataSource<__VA_ARGS__>::static_state_{};             \
   template <>                                                         \
-  PERFETTO_COMPONENT_EXPORT thread_local perfetto::internal::         \
-      DataSourceThreadLocalState*                                     \
+  PERFETTO_COMPONENT_EXPORT PERFETTO_TEMPLATE_THREAD_LOCAL            \
+      perfetto::internal::DataSourceThreadLocalState*                 \
           perfetto::DataSource<__VA_ARGS__>::tls_state_ = nullptr
 
 #endif  // INCLUDE_PERFETTO_TRACING_DATA_SOURCE_H_

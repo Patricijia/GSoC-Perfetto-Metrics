@@ -246,6 +246,7 @@ class GeneratorJob {
   void CollectDescriptors() {
     // Collect message descriptors in DFS order.
     std::vector<const Descriptor*> stack;
+    stack.reserve(static_cast<size_t>(source_->message_type_count()));
     for (int i = 0; i < source_->message_type_count(); ++i)
       stack.push_back(source_->message_type(i));
 
@@ -274,6 +275,9 @@ class GeneratorJob {
         messages_.push_back(message);
         for (int i = 0; i < message->nested_type_count(); ++i) {
           stack.push_back(message->nested_type(i));
+          // Emit a forward declaration of nested message types, as the outer
+          // class will refer to them when creating type aliases.
+          referenced_messages_.insert(message->nested_type(i));
         }
       }
     }

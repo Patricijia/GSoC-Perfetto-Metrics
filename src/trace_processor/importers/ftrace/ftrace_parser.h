@@ -66,11 +66,15 @@ class FtraceParser {
   void ParseG2dTracingMarkWrite(int64_t timestamp,
                                 uint32_t pid,
                                 protozero::ConstBytes);
+  void ParseMaliTracingMarkWrite(int64_t timestamp,
+                                 uint32_t pid,
+                                 protozero::ConstBytes);
   void ParseIonHeapGrowOrShrink(int64_t ts,
                                 uint32_t pid,
                                 protozero::ConstBytes,
                                 bool grow);
   void ParseIonStat(int64_t ts, uint32_t pid, protozero::ConstBytes);
+  void ParseDmaHeapStat(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseSignalGenerate(int64_t ts, protozero::ConstBytes);
   void ParseSignalDeliver(int64_t ts, uint32_t pid, protozero::ConstBytes);
   void ParseLowmemoryKill(int64_t ts, protozero::ConstBytes);
@@ -149,6 +153,8 @@ class FtraceParser {
   const StringId cpu_idle_name_id_;
   const StringId ion_total_id_;
   const StringId ion_change_id_;
+  const StringId dma_heap_total_id_;
+  const StringId dma_heap_change_id_;
   const StringId ion_total_unknown_id_;
   const StringId ion_change_unknown_id_;
   const StringId signal_generate_id_;
@@ -188,7 +194,8 @@ class FtraceParser {
   };
 
   static constexpr size_t kFastRpcCounterSize = 4;
-  std::array<StringId, kFastRpcCounterSize> fast_rpc_counter_names_;
+  std::array<StringId, kFastRpcCounterSize> fast_rpc_delta_names_;
+  std::array<StringId, kFastRpcCounterSize> fast_rpc_total_names_;
 
   // Keep kMmEventCounterSize equal to mm_event_type::MM_TYPE_NUM in the kernel.
   static constexpr size_t kMmEventCounterSize = 7;

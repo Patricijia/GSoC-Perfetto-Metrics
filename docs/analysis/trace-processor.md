@@ -347,26 +347,41 @@ SELECT
 FROM interesting_slices
 ```
 
-### Following/Preceding/Connected flows
-following_flow, preceding_flow, connected_flow are custom operator tables that
-take a [slice table's id column](/docs/analysis/sql-tables.autogen#slice) and
-collect all entries of [flow table](/docs/analysis/sql-tables.autogen#flow),
-that are directly or indirectly connected to the given starting slice.
+### Connected/Following/Preceding flows
 
-`FOLLOWING_FLOW(start_slice_id)` - contains all entries of
-[flow table](/docs/analysis/sql-tables.autogen#flow)
-that are present in any chain of kind: `flow[0] -> flow[1] -> ... -> flow[n]`,
-where `flow[i].slice_out = flow[i+1].slice_in` and
-`flow[0].slice_out = start_slice_id`.
+DIRECTLY_CONNECTED_FLOW, FOLLOWING_FLOW and PRECEDING_FLOW are custom operator
+tables that take a
+[slice table's id column](/docs/analysis/sql-tables.autogen#slice) and collect
+all entries of [flow table](/docs/analysis/sql-tables.autogen#flow), that are
+directly or indirectly connected to the given starting slice.
 
-`PRECEDING_FLOW(start_slice_id)` - contains all entries of
-[flow table](/docs/analysis/sql-tables.autogen#flow)
-that are present in any chain of kind: `flow[n] -> flow[n-1] -> ... -> flow[0]`,
-where `flow[i].slice_in = flow[i+1].slice_out` and
-`flow[0].slice_in = start_slice_id`.
+`DIRECTLY_CONNECTED_FLOW(start_slice_id)` - contains all entries of
+[flow table](/docs/analysis/sql-tables.autogen#flow) that are present in any
+chain of kind: `flow[0] -> flow[1] -> ... -> flow[n]`, where
+`flow[i].slice_out = flow[i+1].slice_in` and `flow[0].slice_out = start_slice_id
+OR start_slice_id = flow[n].slice_in`.
 
-`CONNECTED_FLOW(start_slice_id)` - contains a union of both
-`FOLLOWING_FLOW(start_slice_id)` and `PRECEDING_FLOW(start_slice_id)` tables.
+NOTE: Unlike the following/preceding flow functions, this function will not
+include flows connected to ancestors or descendants while searching for flows
+from a slice. It only includes the slices in the directly connected chain.
+
+`FOLLOWING_FLOW(start_slice_id)` - contains all flows which can be reached from
+a given slice via recursively following from flow's outgoing slice to its
+incoming one and from a reached slice to its child. The return table contains
+all entries of [flow table](/docs/analysis/sql-tables.autogen#flow) that are
+present in any chain of kind: `flow[0] -> flow[1] -> ... -> flow[n]`, where
+`flow[i+1].slice_out IN DESCENDANT_SLICE(flow[i].slice_in) OR
+flow[i+1].slice_out = flow[i].slice_in` and `flow[0].slice_out IN
+DESCENDANT_SLICE(start_slice_id) OR flow[0].slice_out = start_slice_id`.
+
+`PRECEDING_FLOW(start_slice_id)` - contains all flows which can be reached from
+a given slice via recursively following from flow's incoming slice to its
+outgoing one and from a reached slice to its parent. The return table contains
+all entries of [flow table](/docs/analysis/sql-tables.autogen#flow) that are
+present in any chain of kind: `flow[n] -> flow[n-1] -> ... -> flow[0]`, where
+`flow[i].slice_in IN ANCESTOR_SLICE(flow[i+1].slice_out) OR flow[i].slice_in =
+flow[i+1].slice_out` and `flow[0].slice_in IN ANCESTOR_SLICE(start_slice_id) OR
+flow[0].slice_in = start_slice_id`.
 
 ```sql
 --number of following flows for each slice
@@ -462,7 +477,7 @@ NOTE: The API is only compatible with Python3.
 ```python
 from perfetto.trace_processor import TraceProcessor
 # Initialise TraceProcessor with a trace file
-tp = TraceProcessor(file_path='trace.pftrace')
+tp = TraceProcessor(file_path='trace.perfetto-trace')
 ```
 
 NOTE: The TraceProcessor can be initialized in a combination of ways including:
@@ -470,9 +485,9 @@ NOTE: The TraceProcessor can be initialized in a combination of ways including:
       loaded trace (e.g. `TraceProcessor(addr='localhost:9001')`)
       <br> - An address at which there exists a running instance of `trace_processor` and
       needs a trace to be loaded in
-      (e.g. `TraceProcessor(addr='localhost:9001', file_path='trace.pftrace')`)
+      (e.g. `TraceProcessor(addr='localhost:9001', file_path='trace.perfetto-trace')`)
       <br> - A path to a `trace_processor` binary and the trace to be loaded in
-      (e.g. `TraceProcessor(bin_path='./trace_processor', file_path='trace.pftrace')`)
+      (e.g. `TraceProcessor(bin_path='./trace_processor', file_path='trace.perfetto-trace')`)
 
 
 ### API
@@ -487,7 +502,7 @@ of the result.
 
 ```python
 from perfetto.trace_processor import TraceProcessor
-tp = TraceProcessor(file_path='trace.pftrace')
+tp = TraceProcessor(file_path='trace.perfetto-trace')
 
 qr_it = tp.query('SELECT ts, dur, name FROM slice')
 for row in qr_it:
@@ -506,7 +521,7 @@ The QueryResultIterator can also be converted to a Pandas DataFrame, although th
 requires you to have both the `NumPy` and `Pandas` modules installed.
 ```python
 from perfetto.trace_processor import TraceProcessor
-tp = TraceProcessor(file_path='trace.pftrace')
+tp = TraceProcessor(file_path='trace.perfetto-trace')
 
 qr_it = tp.query('SELECT ts, dur, name FROM slice')
 qr_df = qr_it.as_pandas_dataframe()
@@ -527,7 +542,7 @@ Furthermore, you can use the query result in a Pandas DataFrame format to easily
 make visualisations from the trace data.
 ```python
 from perfetto.trace_processor import TraceProcessor
-tp = TraceProcessor(file_path='trace.pftrace')
+tp = TraceProcessor(file_path='trace.perfetto-trace')
 
 qr_it = tp.query('SELECT ts, value FROM counter WHERE track_id=50')
 qr_df = qr_it.as_pandas_dataframe()
@@ -544,7 +559,7 @@ The metric() function takes in a list of trace metrics and returns the results a
 
 ```python
 from perfetto.trace_processor import TraceProcessor
-tp = TraceProcessor(file_path='trace.pftrace')
+tp = TraceProcessor(file_path='trace.perfetto-trace')
 
 ad_cpu_metrics = tp.metric(['android_cpu'])
 print(ad_cpu_metrics)

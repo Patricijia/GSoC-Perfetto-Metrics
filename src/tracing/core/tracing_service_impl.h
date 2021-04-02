@@ -22,6 +22,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <set>
 #include <utility>
 #include <vector>
@@ -42,6 +43,7 @@
 #include "perfetto/tracing/core/data_source_descriptor.h"
 #include "perfetto/tracing/core/forward_decls.h"
 #include "perfetto/tracing/core/trace_config.h"
+#include "src/android_stats/perfetto_atoms.h"
 #include "src/tracing/core/id_allocator.h"
 
 namespace perfetto {
@@ -303,6 +305,17 @@ class TracingServiceImpl : public TracingService {
  private:
   friend class TracingServiceImplTest;
   friend class TracingIntegrationTest;
+
+  static constexpr int64_t kOneDayInNs = 24ll * 60 * 60 * 1000 * 1000 * 1000;
+
+  struct TriggerHistory {
+    int64_t timestamp_ns;
+    uint64_t name_hash;
+
+    bool operator<(const TriggerHistory& other) const {
+      return timestamp_ns < other.timestamp_ns;
+    }
+  };
 
   struct RegisteredDataSource {
     ProducerID producer_id;
@@ -613,6 +626,14 @@ class TracingServiceImpl : public TracingService {
   void PeriodicClearIncrementalStateTask(TracingSessionID, bool post_next_only);
   TraceBuffer* GetBufferByID(BufferID);
   void OnStartTriggersTimeout(TracingSessionID tsid);
+  void MaybeLogUploadEvent(const TraceConfig&,
+                           PerfettoStatsdAtom atom,
+                           const std::string& trigger_name = "");
+  void MaybeLogTriggerEvent(const TraceConfig&,
+                            PerfettoTriggerAtom atom,
+                            const std::string& trigger_name);
+  size_t PurgeExpiredAndCountTriggerInWindow(int64_t now_ns,
+                                             uint64_t trigger_name_hash);
 
   base::TaskRunner* const task_runner_;
   std::unique_ptr<SharedMemory::Factory> shm_factory_;
@@ -633,9 +654,19 @@ class TracingServiceImpl : public TracingService {
   std::map<BufferID, std::unique_ptr<TraceBuffer>> buffers_;
   std::map<std::string, int64_t> session_to_last_trace_s_;
 
+  // Contains timestamps of triggers.
+  // The queue is sorted by timestamp and invocations older than
+  // |trigger_window_ns_| are purged when a trigger happens.
+  base::CircularQueue<TriggerHistory> trigger_history_;
+
   bool smb_scraping_enabled_ = false;
   bool lockdown_mode_ = false;
   uint32_t min_write_period_ms_ = 100;  // Overridable for testing.
+  int64_t trigger_window_ns_ = kOneDayInNs;  // Overridable for testing.
+
+  std::minstd_rand trigger_probability_rand_;
+  std::uniform_real_distribution<> trigger_probability_dist_;
+  double trigger_rnd_override_for_testing_ = 0;  // Overridable for testing.
 
   uint8_t sync_marker_packet_[32];  // Lazily initialized.
   size_t sync_marker_packet_size_ = 0;

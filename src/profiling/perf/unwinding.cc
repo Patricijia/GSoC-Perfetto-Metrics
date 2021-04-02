@@ -100,7 +100,8 @@ void Unwinder::AdoptProcDescriptors(DataSourceInstanceID ds_id,
                 maps_fd.get(), mem_fd.get());
 
   auto it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(it != data_sources_.end());
+  if (it == data_sources_.end())
+    return;
   DataSourceState& ds = it->second;
 
   ProcessState& proc_state = ds.process_states[pid];  // insert if new
@@ -127,7 +128,8 @@ void Unwinder::RecordTimedOutProcDescriptors(DataSourceInstanceID ds_id,
                 static_cast<size_t>(ds_id), static_cast<int>(pid));
 
   auto it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(it != data_sources_.end());
+  if (it == data_sources_.end())
+    return;
   DataSourceState& ds = it->second;
 
   ProcessState& proc_state = ds.process_states[pid];  // insert if new
@@ -210,11 +212,15 @@ base::FlatSet<DataSourceInstanceID> Unwinder::ConsumeAndUnwindReadySamples() {
     if (!entry.valid)
       continue;  // already processed
 
+    // Data source might be gone due to an abrupt stop.
     auto it = data_sources_.find(entry.data_source_id);
-    PERFETTO_CHECK(it != data_sources_.end());
+    if (it == data_sources_.end()) {
+      entry = UnwindEntry::Invalid();
+      continue;
+    }
     DataSourceState& ds = it->second;
 
-    pid_t pid = entry.sample.pid;
+    pid_t pid = entry.sample.common.pid;
     ProcessState& proc_state = ds.process_states[pid];  // insert if new
 
     // Giving up on the sample (proc-fd lookup timed out).
@@ -288,11 +294,7 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
   PERFETTO_DCHECK(unwind_state);
 
   CompletedSample ret;
-  ret.cpu = sample.cpu;
-  ret.pid = sample.pid;
-  ret.tid = sample.tid;
-  ret.timestamp = sample.timestamp;
-  ret.cpu_mode = sample.cpu_mode;
+  ret.common = sample.common;
 
   // Overlay the stack bytes over /proc/<pid>/mem.
   std::shared_ptr<unwindstack::Memory> overlay_memory =
@@ -328,8 +330,8 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
     unwindstack::Unwinder unwinder(kUnwindingMaxFrames, &unwind_state->fd_maps,
                                    regs_copy.get(), overlay_memory);
 #if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-    unwinder.SetJitDebug(unwind_state->jit_debug.get());
-    unwinder.SetDexFiles(unwind_state->dex_files.get());
+    unwinder.SetJitDebug(unwind_state->GetJitDebug(regs_copy->Arch()));
+    unwinder.SetDexFiles(unwind_state->GetDexFiles(regs_copy->Arch()));
 #endif
     unwinder.Unwind(/*initial_map_names_to_skip=*/nullptr,
                     /*map_suffixes_to_ignore=*/nullptr);
@@ -354,12 +356,12 @@ CompletedSample Unwinder::UnwindSample(const ParsedSample& sample,
   // TODO(rsavitski): consider rate-limiting unwind retries.
   if (should_retry && sample.stack_maxed) {
     PERFETTO_DLOG("Skipping reparse/reunwind due to maxed stack for tid [%d]",
-                  static_cast<int>(sample.tid));
+                  static_cast<int>(sample.common.tid));
   } else if (should_retry) {
     {
       PERFETTO_METATRACE_SCOPED(TAG_PRODUCER, PROFILER_MAPS_REPARSE);
       PERFETTO_DLOG("Reparsing maps for pid [%d]",
-                    static_cast<int>(sample.pid));
+                    static_cast<int>(sample.common.pid));
       unwind_state->ReparseMaps();
     }
     // reunwind attempt
@@ -447,7 +449,8 @@ void Unwinder::InitiateDataSourceStop(DataSourceInstanceID ds_id) {
                 static_cast<size_t>(ds_id));
 
   auto it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(it != data_sources_.end());
+  if (it == data_sources_.end())
+    return;
   DataSourceState& ds = it->second;
 
   PERFETTO_CHECK(ds.status == DataSourceState::Status::kActive);
@@ -464,7 +467,8 @@ void Unwinder::FinishDataSourceStop(DataSourceInstanceID ds_id) {
                 static_cast<size_t>(ds_id));
 
   auto it = data_sources_.find(ds_id);
-  PERFETTO_CHECK(it != data_sources_.end());
+  if (it == data_sources_.end())
+    return;
   DataSourceState& ds = it->second;
 
   // Drop unwinder's state tied to the source.
@@ -479,6 +483,31 @@ void Unwinder::FinishDataSourceStop(DataSourceInstanceID ds_id) {
 
   // Inform service thread that the unwinder is done with the source.
   delegate_->PostFinishDataSourceStop(ds_id);
+}
+
+void Unwinder::PostPurgeDataSource(DataSourceInstanceID ds_id) {
+  task_runner_->PostTask([this, ds_id] { PurgeDataSource(ds_id); });
+}
+
+void Unwinder::PurgeDataSource(DataSourceInstanceID ds_id) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  PERFETTO_DLOG("Unwinder::PurgeDataSource(%zu)", static_cast<size_t>(ds_id));
+
+  auto it = data_sources_.find(ds_id);
+  if (it == data_sources_.end())
+    return;
+
+  data_sources_.erase(it);
+
+  // Clean up state if there are no more active sources.
+  if (data_sources_.empty()) {
+    kernel_symbolizer_.Destroy();
+    ResetAndEnableUnwindstackCache();
+    // Also purge scudo on Android, which would normally be done by the service
+    // thread in |FinishDataSourceStop|. This is important as most of the scudo
+    // overhead comes from libunwindstack.
+    base::MaybeReleaseAllocatorMemToOS();
+  }
 }
 
 void Unwinder::PostClearCachedStatePeriodic(DataSourceInstanceID ds_id,

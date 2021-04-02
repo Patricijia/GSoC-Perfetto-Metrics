@@ -29,15 +29,9 @@
 #include <unwindstack/MachineX86.h>
 #include <unwindstack/MachineX86_64.h>
 
-#include "perfetto/profiling/memory/heap_profile.h"
+#include "perfetto/heap_profile.h"
 #include "src/profiling/memory/shared_ring_buffer.h"
-
-// Make sure the alignment is the same on 32 and 64 bit architectures. This
-// is to ensure the structs below are laid out in exactly the same way for
-// both of those, at the same build.
-// The maximum alignment of every type T is sizeof(T), so we overalign that.
-// E.g., the alignment for uint64_t is 4 bytes on 32, and 8 bytes on 64 bit.
-#define PERFETTO_CROSS_ABI_ALIGNED(type) alignas(sizeof(type)) type
+#include "src/profiling/memory/util.h"
 
 namespace perfetto {
 
@@ -83,7 +77,7 @@ constexpr size_t kMaxRegisterDataSize =
 
 struct ClientConfigurationHeap {
   char name[HEAPPROFD_HEAP_NAME_SZ];
-  uint64_t interval;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) interval;
 };
 
 struct ClientConfiguration {
@@ -93,6 +87,9 @@ struct ClientConfiguration {
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) default_interval;
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) block_client_timeout_us;
   PERFETTO_CROSS_ABI_ALIGNED(uint64_t) num_heaps;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) adaptive_sampling_shmem_threshold;
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t)
+  adaptive_sampling_max_sampling_interval_bytes;
   alignas(8) ClientConfigurationHeap heaps[64];
   PERFETTO_CROSS_ABI_ALIGNED(bool) block_client;
   PERFETTO_CROSS_ABI_ALIGNED(bool) disable_fork_teardown;
@@ -134,6 +131,7 @@ struct FreeEntry {
 };
 
 struct HeapName {
+  PERFETTO_CROSS_ABI_ALIGNED(uint64_t) sample_interval;
   PERFETTO_CROSS_ABI_ALIGNED(uint32_t) heap_id;
   PERFETTO_CROSS_ABI_ALIGNED(char) heap_name[HEAPPROFD_HEAP_NAME_SZ];
 };
@@ -143,9 +141,9 @@ static_assert(sizeof(AllocMetadata) == 328,
               "AllocMetadata needs to be the same size across ABIs.");
 static_assert(sizeof(FreeEntry) == 24,
               "FreeEntry needs to be the same size across ABIs.");
-static_assert(sizeof(HeapName) == 68,
+static_assert(sizeof(HeapName) == 80,
               "HeapName needs to be the same size across ABIs.");
-static_assert(sizeof(ClientConfiguration) == 4640,
+static_assert(sizeof(ClientConfiguration) == 4656,
               "ClientConfiguration needs to be the same size across ABIs.");
 
 enum HandshakeFDs : size_t {

@@ -109,6 +109,9 @@ config("c++11") {
   # C++11 is the default on Windows.
   if (!is_win) {
     cflags_cc = [ "-std=c++11" ]
+  } else if (is_win && !is_clang) {
+    # Enable standards-conforming compiler behavior.
+    cflags_cc = [ "/permissive-" ]
   }
 }
 
@@ -143,7 +146,7 @@ config("default") {
   ldflags = []
   libs = []
 
-  if (is_android || is_linux) {
+  if ((is_android || is_linux) && !is_wasm) {
     ldflags += [ "-Wl,--build-id" ]
   }
 
@@ -169,7 +172,7 @@ config("default") {
     if (!use_custom_libcxx) {
       defines += [ "_HAS_EXCEPTIONS=0" ]  # Disables exceptions in MSVC STL.
     }
-  } else {  # !is_win
+  } else if (!is_wasm) {  # !is_win
     cflags += [
       "-g",
       "-fPIC",
@@ -289,6 +292,10 @@ config("default") {
       "-Wl,-z,now",
       "-Wl,--warn-shared-textrel",
       "-Wl,--fatal-warnings",
+
+      # New NDKs need setting this to not give "unable to find library -lc++".
+      # See https://github.com/android/ndk/issues/951#issuecomment-501017894.
+      "-nostdlib++",
     ]
     lib_dirs = [
       "$android_ndk_root/sources/cxx-stl/llvm-libc++/libs/$android_app_abi",
@@ -349,7 +356,7 @@ config("release") {
     ]
   } else if (is_mac) {
     ldflags = [ "-dead_strip" ]
-  } else if (!is_win) {
+  } else if (!is_win && !is_wasm) {
     ldflags = [
       "-Wl,--gc-sections",
       "-Wl,--icf=all",
@@ -370,7 +377,9 @@ config("executable") {
 
   # Android will refuse to run executables if they aren't position independent.
   # Instead on Linux there isn't any need and they break ASan (goo.gl/paFR6K).
-  if (is_android || is_linux) {
+  # The OSS-Fuzz provided AFL library is not PIC, so we we cannot use -fPIE
+  # for the fuzzer executables.
+  if ((is_android || is_linux) && !is_wasm && !is_fuzzer) {
     asmflags = [ "-fPIE" ]
     cflags = [ "-fPIE" ]
     ldflags += [ "-pie" ]
@@ -381,7 +390,7 @@ config("executable") {
   # supported only by Linux, not Android. But concretely we need this only when
   # use_custom_libcxx=true && custom_libcxx_is_static=false, which happens only
   # on Linux right now.
-  if (is_linux) {
+  if (is_linux && !is_wasm) {
     ldflags += [
       "-Wl,-rpath=\$ORIGIN/.",
       "-Wl,-rpath-link=.",

@@ -8,7 +8,7 @@
 #include "src/trace_processor/util/descriptors.h"
 
 // This is the highest level that this protozero to text supports.
-#include "src/trace_processor/importers/proto/track_event.descriptor.h"
+#include "src/trace_processor/importers/track_event.descriptor.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -142,7 +142,6 @@ void ConvertProtoTypeToFieldAndValueString(const FieldDescriptor& fd,
           fd.name().c_str(), fd.resolved_type_name().c_str(), fd.type());
     }
   }
-  return;
 }
 
 void IncreaseIndents(std::string* out) {
@@ -172,16 +171,14 @@ void ProtozeroToTextInternal(const std::string& type,
   protozero::ProtoDecoder decoder(protobytes.data, protobytes.size);
   for (auto field = decoder.ReadField(); field.valid();
        field = decoder.ReadField()) {
-    auto opt_field_descriptor_idx =
-        proto_descriptor.FindFieldIdxByTag(field.id());
-    if (!opt_field_descriptor_idx) {
+    auto opt_field_descriptor = proto_descriptor.FindFieldByTag(field.id());
+    if (!opt_field_descriptor) {
       StrAppend(
           output, output->empty() ? "" : "\n", *indents,
           "# Ignoring unknown field with id: ", std::to_string(field.id()));
       continue;
     }
-    const auto& field_descriptor =
-        proto_descriptor.fields()[*opt_field_descriptor_idx];
+    const auto& field_descriptor = *opt_field_descriptor;
 
     if (field_descriptor.type() ==
         protos::pbzero::FieldDescriptorProto::TYPE_MESSAGE) {

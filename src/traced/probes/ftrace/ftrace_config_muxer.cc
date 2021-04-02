@@ -61,7 +61,7 @@ std::set<GroupAndName> ReadEventsInGroupFromFs(
 
 std::pair<std::string, std::string> EventToStringGroupAndName(
     const std::string& event) {
-  auto slash_pos = event.find("/");
+  auto slash_pos = event.find('/');
   if (slash_pos == std::string::npos)
     return std::make_pair("", event);
   return std::make_pair(event.substr(0, slash_pos),
@@ -151,7 +151,8 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("mdss", "mdp_perf_set_qos_luts"));
         events.insert(GroupAndName("mdss", "mdp_sspp_change"));
         events.insert(GroupAndName("mdss", "mdp_sspp_set"));
-        AddEventGroup(table, "mali_systrace", &events);
+        AddEventGroup(table, "mali", &events);
+        events.insert(GroupAndName("mali", "tracing_mark_write"));
 
         AddEventGroup(table, "sde", &events);
         events.insert(GroupAndName("sde", "tracing_mark_write"));
@@ -266,6 +267,8 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         events.insert(GroupAndName("clk", "clk_enable"));
         events.insert(GroupAndName("power", "cpu_frequency_limits"));
         events.insert(GroupAndName("power", "suspend_resume"));
+        events.insert(GroupAndName("cpuhp", "cpuhp_enter"));
+        events.insert(GroupAndName("cpuhp", "cpuhp_exit"));
         AddEventGroup(table, "msm_bus", &events);
         events.insert(GroupAndName("msm_bus", "bus_update_request_end"));
         events.insert(GroupAndName("msm_bus", "bus_update_request"));
@@ -385,8 +388,6 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         AddEventGroup(table, "filemap", &events);
         events.insert(
             GroupAndName("filemap", "mm_filemap_delete_from_page_cache"));
-        events.insert(
-            GroupAndName("filemap", "mm_filemap_delete_from_page_cache"));
         events.insert(GroupAndName("filemap", "mm_filemap_add_to_page_cache"));
         events.insert(GroupAndName("filemap", "filemap_set_wb_err"));
         events.insert(GroupAndName("filemap", "file_check_and_advance_wb_err"));
@@ -400,6 +401,7 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         // ion_stat supersedes ion_heap_grow / shrink for kernel 4.19+
         events.insert(GroupAndName("ion", "ion_stat"));
         events.insert(GroupAndName("mm_event", "mm_event_record"));
+        events.insert(GroupAndName("dmabuf_heap", "dma_heap_stat"));
         continue;
       }
 

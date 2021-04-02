@@ -27,7 +27,14 @@
 #include <sys/types.h>
 
 #include <atomic>
+#include <string>
 
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+// Even if Windows has errno.h, the all syscall-restart behavior does not apply.
+// Trying to handle EINTR can cause more harm than good if errno is left stale.
+// Chromium does the same.
+#define PERFETTO_EINTR(x) (x)
+#else
 #define PERFETTO_EINTR(x)                                   \
   ([&] {                                                    \
     decltype(x) eintr_wrapper_result;                       \
@@ -36,9 +43,11 @@
     } while (eintr_wrapper_result == -1 && errno == EINTR); \
     return eintr_wrapper_result;                            \
   }())
+#endif
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-// TODO(brucedawson) - create a ::perfetto::base::IOSize to replace this.
+using uid_t = unsigned int;
+using pid_t = unsigned int;
 #if defined(_WIN64)
 using ssize_t = int64_t;
 #else
@@ -49,10 +58,8 @@ using ssize_t = long;
 namespace perfetto {
 namespace base {
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 constexpr uid_t kInvalidUid = static_cast<uid_t>(-1);
 constexpr pid_t kInvalidPid = static_cast<pid_t>(-1);
-#endif
 
 // Do not add new usages of kPageSize, consider using GetSysPageSize() below.
 // TODO(primiano): over time the semantic of kPageSize became too ambiguous.
@@ -82,8 +89,9 @@ struct FreeDeleter {
 
 template <typename T>
 constexpr T AssumeLittleEndian(T value) {
-  static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__,
-                "Unimplemented on big-endian archs");
+#if !PERFETTO_IS_LITTLE_ENDIAN()
+  static_assert(false, "Unimplemented on big-endian archs");
+#endif
   return value;
 }
 
@@ -98,10 +106,16 @@ inline bool IsAgain(int err) {
   return err == EAGAIN || err == EWOULDBLOCK;
 }
 
+// setenv(2)-equivalent. Deals with Windows vs Posix discrepancies.
+void SetEnv(const std::string& key, const std::string& value);
+
 // Calls mallopt(M_PURGE, 0) on Android. Does nothing on other platforms.
 // This forces the allocator to release freed memory. This is used to work
 // around various Scudo inefficiencies. See b/170217718.
 void MaybeReleaseAllocatorMemToOS();
+
+// geteuid() on POSIX OSes, returns 0 on Windows (See comment in utils.cc).
+uid_t GetCurrentUserId();
 
 }  // namespace base
 }  // namespace perfetto

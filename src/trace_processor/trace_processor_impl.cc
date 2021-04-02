@@ -541,6 +541,12 @@ void ExtractArg(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     sqlite3_result_error(ctx, "EXTRACT_ARG: 2 args required", -1);
     return;
   }
+
+  // If the arg set id is null, just return null as the result.
+  if (sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    sqlite3_result_null(ctx);
+    return;
+  }
   if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER) {
     sqlite3_result_error(ctx, "EXTRACT_ARG: 1st argument should be arg set id",
                          -1);
@@ -748,13 +754,13 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
       new DescendantSliceGenerator(&context_)));
   RegisterDynamicTable(
       std::unique_ptr<ConnectedFlowGenerator>(new ConnectedFlowGenerator(
-          ConnectedFlowGenerator::Direction::BOTH, &context_)));
+          ConnectedFlowGenerator::Mode::kDirectlyConnectedFlow, &context_)));
   RegisterDynamicTable(
       std::unique_ptr<ConnectedFlowGenerator>(new ConnectedFlowGenerator(
-          ConnectedFlowGenerator::Direction::FOLLOWING, &context_)));
+          ConnectedFlowGenerator::Mode::kPrecedingFlow, &context_)));
   RegisterDynamicTable(
       std::unique_ptr<ConnectedFlowGenerator>(new ConnectedFlowGenerator(
-          ConnectedFlowGenerator::Direction::PRECEDING, &context_)));
+          ConnectedFlowGenerator::Mode::kFollowingFlow, &context_)));
   RegisterDynamicTable(std::unique_ptr<ExperimentalSchedUpidGenerator>(
       new ExperimentalSchedUpidGenerator(storage->sched_slice_table(),
                                          storage->thread_table())));
@@ -787,6 +793,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->softirq_counter_track_table());
   RegisterDbTable(storage->gpu_counter_track_table());
   RegisterDbTable(storage->gpu_counter_group_table());
+  RegisterDbTable(storage->perf_counter_track_table());
 
   RegisterDbTable(storage->heap_graph_object_table());
   RegisterDbTable(storage->heap_graph_reference_table());
@@ -807,6 +814,9 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->vulkan_memory_allocations_table());
 
   RegisterDbTable(storage->graphics_frame_slice_table());
+
+  RegisterDbTable(storage->expected_frame_timeline_slice_table());
+  RegisterDbTable(storage->actual_frame_timeline_slice_table());
 
   RegisterDbTable(storage->metadata_table());
   RegisterDbTable(storage->cpu_table());
@@ -930,9 +940,8 @@ bool TraceProcessorImpl::IsRootMetricField(const std::string& metric_name) {
       pool_.FindDescriptorIdx(".perfetto.protos.TraceMetrics");
   if (!desc_idx.has_value())
     return false;
-  base::Optional<uint32_t> field_idx =
-      pool_.descriptors()[*desc_idx].FindFieldIdxByName(metric_name);
-  return field_idx.has_value();
+  auto field_idx = pool_.descriptors()[*desc_idx].FindFieldByName(metric_name);
+  return field_idx != nullptr;
 }
 
 util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
@@ -955,7 +964,7 @@ util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
     return util::OkStatus();
   }
 
-  auto sep_idx = path.rfind("/");
+  auto sep_idx = path.rfind('/');
   std::string basename =
       sep_idx == std::string::npos ? path : path.substr(sep_idx + 1);
 

@@ -73,6 +73,8 @@ GpuSliceTable::~GpuSliceTable() = default;
 GraphicsFrameSliceTable::~GraphicsFrameSliceTable() = default;
 DescribeSliceTable::~DescribeSliceTable() = default;
 ThreadStateTable::~ThreadStateTable() = default;
+ExpectedFrameTimelineSliceTable::~ExpectedFrameTimelineSliceTable() = default;
+ActualFrameTimelineSliceTable::~ActualFrameTimelineSliceTable() = default;
 
 // track_tables.h
 TrackTable::~TrackTable() = default;
@@ -86,6 +88,7 @@ CpuCounterTrackTable::~CpuCounterTrackTable() = default;
 IrqCounterTrackTable::~IrqCounterTrackTable() = default;
 SoftirqCounterTrackTable::~SoftirqCounterTrackTable() = default;
 GpuCounterTrackTable::~GpuCounterTrackTable() = default;
+PerfCounterTrackTable::~PerfCounterTrackTable() = default;
 
 // memory_tables.h
 MemorySnapshotTable::~MemorySnapshotTable() = default;

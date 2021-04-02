@@ -17,7 +17,12 @@
 #include "perfetto/ext/base/string_utils.h"
 
 #include <inttypes.h>
+#include <locale.h>
 #include <string.h>
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+#include <xlocale.h>
+#endif
 
 #include <algorithm>
 
@@ -25,6 +30,23 @@
 
 namespace perfetto {
 namespace base {
+namespace {
+constexpr char kBase64Table[] =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz0123456789+/";
+}
+
+// Locale-independant as possible version of strtod.
+double StrToD(const char* nptr, char** endptr) {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+  static auto c_locale = newlocale(LC_ALL, "C", nullptr);
+  return strtod_l(nptr, endptr, c_locale);
+#else
+  return strtod(nptr, endptr);
+#endif
+}
 
 std::string QuoteAndEscapeControlCodes(const std::string& raw) {
   std::string ret;
@@ -215,6 +237,44 @@ std::string ReplaceAll(std::string str,
 std::string TrimLeading(const std::string& str) {
   size_t idx = str.find_first_not_of(' ');
   return idx == std::string::npos ? str : str.substr(idx);
+}
+
+std::string Base64Encode(const void* raw, size_t size) {
+  // The following three cases are based on the tables in the example
+  // section in https://en.wikipedia.org/wiki/Base64. We process three
+  // input bytes at a time, emitting 4 output bytes at a time.
+  const uint8_t* ptr = static_cast<const uint8_t*>(raw);
+  size_t ii = 0;
+
+  std::string out;
+  out.reserve((size + 2) * 4 / 3);
+
+  // While possible, process three input bytes.
+  for (; ii + 3 <= size; ii += 3) {
+    uint32_t twentyfour_bits =
+        (uint32_t(ptr[ii]) << 16) | (uint32_t(ptr[ii + 1]) << 8) | ptr[ii + 2];
+    out.push_back(kBase64Table[(twentyfour_bits >> 18)]);
+    out.push_back(kBase64Table[(twentyfour_bits >> 12) & 0x3f]);
+    out.push_back(kBase64Table[(twentyfour_bits >> 6) & 0x3f]);
+    out.push_back(kBase64Table[twentyfour_bits & 0x3f]);
+  }
+  if (ii + 2 <= size) {  // Process two input bytes.
+    uint32_t twentyfour_bits =
+        (uint32_t(ptr[ii]) << 16) | (uint32_t(ptr[ii + 1]) << 8);
+    out.push_back(kBase64Table[(twentyfour_bits >> 18)]);
+    out.push_back(kBase64Table[(twentyfour_bits >> 12) & 0x3f]);
+    out.push_back(kBase64Table[(twentyfour_bits >> 6) & 0x3f]);
+    out.push_back('=');  // Emit padding.
+    return out;
+  }
+  if (ii + 1 <= size) {  // Process a single input byte.
+    uint32_t twentyfour_bits = (uint32_t(ptr[ii]) << 16);
+    out.push_back(kBase64Table[(twentyfour_bits >> 18)]);
+    out.push_back(kBase64Table[(twentyfour_bits >> 12) & 0x3f]);
+    out.push_back('=');  // Emit padding.
+    out.push_back('=');  // Emit padding.
+  }
+  return out;
 }
 
 }  // namespace base

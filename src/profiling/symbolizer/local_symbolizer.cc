@@ -1,4 +1,3 @@
-
 /*
  * Copyright (C) 2019 The Android Open Source Project
  *
@@ -30,12 +29,15 @@
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/string_utils.h"
 #include "src/profiling/symbolizer/filesystem.h"
 #include "src/profiling/symbolizer/scoped_read_mmap.h"
 
 namespace perfetto {
 namespace profiling {
 
+// TODO(fmayer): Fix up name. This suggests it always returns a symbolizer or
+// dies, which isn't the case.
 std::unique_ptr<Symbolizer> LocalSymbolizerOrDie(
     std::vector<std::string> binary_path,
     const char* mode) {
@@ -62,8 +64,6 @@ std::unique_ptr<Symbolizer> LocalSymbolizerOrDie(
 }  // namespace profiling
 }  // namespace perfetto
 
-// Most of this translation unit is built only on Linux and MacOS. See
-// //gn/BUILD.gn.
 #if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
@@ -547,7 +547,7 @@ base::Optional<FoundBinary> LocalBinaryFinder::FindBinaryInRoot(
     return result;
   }
 
-  if (filename.find(kApkPrefix) == 0) {
+  if (base::StartsWith(filename, kApkPrefix)) {
     symbol_file =
         root_str + "/" + dirname + "/" + filename.substr(sizeof(kApkPrefix));
     result = IsCorrectFile(symbol_file, build_id);
@@ -562,7 +562,7 @@ base::Optional<FoundBinary> LocalBinaryFinder::FindBinaryInRoot(
     return result;
   }
 
-  if (filename.find(kApkPrefix) == 0) {
+  if (base::StartsWith(filename, kApkPrefix)) {
     symbol_file = root_str + "/" + filename.substr(sizeof(kApkPrefix));
     result = IsCorrectFile(symbol_file, build_id);
     if (result) {

@@ -108,6 +108,11 @@ export function genConfig(
       protoCfg.fileWritePeriodMs = uiCfg.fileWritePeriodMs;
       protoCfg.maxFileSizeBytes = uiCfg.maxFileSizeMb * 1e6;
     }
+
+    // Clear incremental state every 5 seconds when tracing into a ring buffer.
+    const incStateConfig = new TraceConfig.IncrementalStateConfig();
+    incStateConfig.clearPeriodMs = 5000;
+    protoCfg.incrementalStateConfig = incStateConfig;
   }
 
   const ftraceEvents = new Set<string>(uiCfg.ftrace ? uiCfg.ftraceEvents : []);
@@ -207,6 +212,7 @@ export function genConfig(
     ftraceEvents.add('mm_event/mm_event_record');
     ftraceEvents.add('kmem/rss_stat');
     ftraceEvents.add('ion/ion_stat');
+    ftraceEvents.add('dmabuf_heap/dma_heap_stat');
     ftraceEvents.add('kmem/ion_heap_grow');
     ftraceEvents.add('kmem/ion_heap_shrink');
   }
@@ -269,8 +275,10 @@ export function genConfig(
         cdc.dumpPhaseMs = uiCfg.hpContinuousDumpsPhase;
       }
     }
-    // TODO(fmayer): Add a toggle for this to the UI?
-    cfg.blockClient = true;
+    cfg.blockClient = uiCfg.hpBlockClient;
+    if (uiCfg.hpAllHeaps) {
+      cfg.allHeaps = true;
+    }
     heapprofd = cfg;
   }
 
