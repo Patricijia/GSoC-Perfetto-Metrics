@@ -847,7 +847,7 @@ message PerfEvents {
 //     }
 //   }
 //
-// Next id: 17
+// Next id: 18
 message PerfEventConfig {
   // What event to sample on, and how often.
   // Defined in common/perf_events.proto.
@@ -874,6 +874,12 @@ message PerfEventConfig {
   //
   // Daemon's resource usage limits:
   //
+
+  // Drop samples if the heap memory held by the samples in the unwinder queue
+  // is above the given limit. This counts the memory across all concurrent data
+  // sources (not just this one's), and there is no fairness guarantee - the
+  // whole quota might be used up by a concurrent source.
+  optional uint64 max_enqueued_footprint_kb = 17;
 
   // Stop the data source if traced_perf's combined {RssAnon + Swap} memory
   // footprint exceeds this value.
@@ -2335,10 +2341,15 @@ message BackgroundTracingMetadata {
         NAVIGATION = 2;
         STARTUP = 3;
         REACHED_CODE = 4;
+        CONTENT_TRIGGER = 5;
 
         TEST_RULE = 1000;
       }
       optional EventType event_type = 1;
+
+      // If |event_type| is CONTENT_TRIGGER, then this stores the hash of the
+      // content-trigger that actually fired.
+      optional fixed64 content_trigger_name_hash = 2;
     }
     optional NamedRule named_rule = 3;
   }
@@ -8307,6 +8318,37 @@ message ChromeProcessDescriptor {
     PROCESS_GPU = 6;
     PROCESS_PPAPI_PLUGIN = 7;
     PROCESS_PPAPI_BROKER = 8;
+    PROCESS_SERVICE_NETWORK = 9;
+    PROCESS_SERVICE_TRACING = 10;
+    PROCESS_SERVICE_STORAGE = 11;
+    PROCESS_SERVICE_AUDIO = 12;
+    PROCESS_SERVICE_DATA_DECODER = 13;
+    PROCESS_SERVICE_UTIL_WIN = 14;
+    PROCESS_SERVICE_PROXY_RESOLVER = 15;
+    PROCESS_SERVICE_CDM = 16;
+    PROCESS_SERVICE_VIDEO_CAPTURE = 17;
+    PROCESS_SERVICE_UNZIPPER = 18;
+    PROCESS_SERVICE_MIRRORING = 19;
+    PROCESS_SERVICE_FILEPATCHER = 20;
+    PROCESS_SERVICE_TTS = 21;
+    PROCESS_SERVICE_PRINTING = 22;
+    PROCESS_SERVICE_QUARANTINE = 23;
+    PROCESS_SERVICE_CROS_LOCALSEARCH = 24;
+    PROCESS_SERVICE_CROS_ASSISTANT_AUDIO_DECODER = 25;
+    PROCESS_SERVICE_FILEUTIL = 26;
+    PROCESS_SERVICE_PRINTCOMPOSITOR = 27;
+    PROCESS_SERVICE_PAINTPREVIEW = 28;
+    PROCESS_SERVICE_SPEECHRECOGNITION = 29;
+    PROCESS_SERVICE_XRDEVICE = 30;
+    PROCESS_SERVICE_READICON = 31;
+    PROCESS_SERVICE_LANGUAGEDETECTION = 32;
+    PROCESS_SERVICE_SHARING = 33;
+    PROCESS_SERVICE_MEDIAPARSER = 34;
+    PROCESS_SERVICE_QRCODEGENERATOR = 35;
+    PROCESS_SERVICE_PROFILEIMPORT = 36;
+    PROCESS_SERVICE_IME = 37;
+    PROCESS_SERVICE_RECORDING = 38;
+    PROCESS_SERVICE_SHAPEDETECTION = 39;
   }
   optional ProcessType process_type = 1;
   optional int32 process_priority = 2;
@@ -8348,28 +8390,54 @@ message ChromeThreadDescriptor {
     THREAD_MAIN = 1;
     THREAD_IO = 2;
 
-    // Browser:
-    THREAD_NETWORK_SERVICE = 12;
-
-    // Scheduler:
     THREAD_POOL_BG_WORKER = 3;
     THREAD_POOL_FG_WORKER = 4;
-    THREAD_POOL_BG_BLOCKING = 6;
     THREAD_POOL_FG_BLOCKING = 5;
+    THREAD_POOL_BG_BLOCKING = 6;
     THREAD_POOL_SERVICE = 7;
 
-    // Compositor:
     THREAD_COMPOSITOR = 8;
     THREAD_VIZ_COMPOSITOR = 9;
     THREAD_COMPOSITOR_WORKER = 10;
 
-    // Renderer:
     THREAD_SERVICE_WORKER = 11;
+    THREAD_NETWORK_SERVICE = 12;
 
-    // Tracing related threads:
+    THREAD_CHILD_IO = 13;
+    THREAD_BROWSER_IO = 14;
+
+    THREAD_BROWSER_MAIN = 15;
+    THREAD_RENDERER_MAIN = 16;
+    THREAD_UTILITY_MAIN = 17;
+    THREAD_GPU_MAIN = 18;
+
+    THREAD_CACHE_BLOCKFILE = 19;
+    THREAD_MEDIA = 20;
+    THREAD_AUDIO_OUTPUTDEVICE = 21;
+    THREAD_AUDIO_INPUTDEVICE = 22;
+    THREAD_GPU_MEMORY = 23;
+    THREAD_GPU_VSYNC = 24;
+    THREAD_DXA_VIDEODECODER = 25;
+    THREAD_BROWSER_WATCHDOG = 26;
+    THREAD_WEBRTC_NETWORK = 27;
+    THREAD_WINDOW_OWNER = 28;
+    THREAD_WEBRTC_SIGNALING = 29;
+    THREAD_WEBRTC_WORKER = 30;
+    THREAD_PPAPI_MAIN = 31;
+    THREAD_GPU_WATCHDOG = 32;
+    THREAD_SWAPPER = 33;
+    THREAD_GAMEPAD_POLLING = 34;
+    THREAD_WEBCRYPTO = 35;
+    THREAD_DATABASE = 36;
+    THREAD_PROXYRESOLVER = 37;
+    THREAD_DEVTOOLSADB = 38;
+    THREAD_NETWORKCONFIGWATCHER = 39;
+    THREAD_WASAPI_RENDER = 40;
+
     THREAD_MEMORY_INFRA = 50;
     THREAD_SAMPLING_PROFILER = 51;
   };
+
   optional ThreadType thread_type = 1;
 
   // To support old UI. New UI should determine default sorting by thread_type.
@@ -8541,6 +8609,35 @@ message Trigger {
 
 // End of protos/perfetto/trace/trigger.proto
 
+// Begin of protos/perfetto/trace/ui_state.proto
+
+// Common state for UIs visualizing Perfetto traces.
+// This message can be appended as a TracePacket by UIs to save the
+// visible state (e.g. scroll position/zoom state) for future opening
+// of the trace.
+// Design doc: go/trace-ui-state.
+message UiState {
+  // The start and end bounds of the viewport of the UI in nanoseconds.
+  //
+  // This is the absolute time associated to slices and other events in
+  // trace processor tables (i.e. the |ts| column of most tables)
+  optional int64 timeline_start_ts = 1;
+  optional int64 timeline_end_ts = 2;
+
+  // Indicates that the given process should be highlighted by the UI.
+  message HighlightProcess {
+    // The pid of the process to highlight. This is useful for UIs to focus
+    // on tracks of a particular process in the trace.
+    //
+    // If more than one process in a trace has the same pid, it is UI
+    // implementation specific how the process to be focused will be
+    // chosen.
+    optional uint32 pid = 1;
+  }
+  optional HighlightProcess highlight_process = 3;
+}
+// End of protos/perfetto/trace/ui_state.proto
+
 // Begin of protos/perfetto/trace/trace_packet.proto
 
 // TracePacket is the root object of a Perfeto trace.
@@ -8563,7 +8660,7 @@ message Trigger {
 // See the [Buffers and Dataflow](/docs/concepts/buffers.md) doc for details.
 //
 // Next reserved id: 14 (up to 15).
-// Next id: 78.
+// Next id: 79.
 message TracePacket {
   // The timestamp of the TracePacket.
   // By default this timestamps refers to the trace clock (CLOCK_BOOTTIME on
@@ -8624,6 +8721,7 @@ message TracePacket {
     MemoryTrackerSnapshot memory_tracker_snapshot = 73;
     FrameTimelineEvent frame_timeline_event = 76;
     AndroidEnergyEstimationBreakdown android_energy_estimation_breakdown = 77;
+    UiState ui_state = 78;
 
     // Only used in profile packets.
     ProfiledFrameSymbols profiled_frame_symbols = 55;

@@ -111,9 +111,8 @@ using SourceLocation = std::tuple<const char* /* file_name */,
                                   const char* /* function_name */,
                                   uint32_t /* line_number */>;
 
-namespace std {
 template <>
-struct hash<SourceLocation> {
+struct std::hash<SourceLocation> {
   size_t operator()(const SourceLocation& value) const {
     auto hasher = hash<size_t>();
     return hasher(reinterpret_cast<size_t>(get<0>(value))) ^
@@ -121,7 +120,6 @@ struct hash<SourceLocation> {
            hasher(get<2>(value));
   }
 };
-}  // namespace std
 
 // Represents an opaque (from Perfetto's point of view) thread identifier (e.g.,
 // base::PlatformThreadId in Chromium).
@@ -166,14 +164,18 @@ bool ConvertThreadId(const MyThreadId& thread,
 }  // namespace legacy
 
 template <>
-TraceTimestamp ConvertTimestampToTraceTimeNs(const MyTimestamp& timestamp) {
-  return {TrackEvent::GetTraceClockId(), timestamp.ts};
-}
+struct TraceTimestampTraits<MyTimestamp> {
+  static TraceTimestamp ConvertTimestampToTraceTimeNs(
+      const MyTimestamp& timestamp) {
+    return {TrackEvent::GetTraceClockId(), timestamp.ts};
+  }
+};
 
 }  // namespace perfetto
 
 namespace {
 
+using perfetto::TracingInitArgs;
 using ::testing::_;
 using ::testing::ContainerEq;
 using ::testing::ElementsAre;
@@ -343,6 +345,19 @@ class MyDebugAnnotation : public perfetto::DebugAnnotation {
   }
 };
 
+class TestTracingPolicy : public perfetto::TracingPolicy {
+ public:
+  void ShouldAllowConsumerSession(
+      const ShouldAllowConsumerSessionArgs& args) override {
+    EXPECT_NE(args.backend_type, perfetto::BackendType::kUnspecifiedBackend);
+    args.result_callback(should_allow_consumer_connection);
+  }
+
+  bool should_allow_consumer_connection = true;
+};
+
+TestTracingPolicy* g_test_tracing_policy = new TestTracingPolicy();  // Leaked.
+
 // -------------------------
 // Declaration of test class
 // -------------------------
@@ -352,6 +367,7 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
 
   void SetUp() override {
     instance = this;
+    g_test_tracing_policy->should_allow_consumer_connection = true;
 
     // Start a fresh system service for this test, tearing down any previous
     // service that was running.
@@ -376,8 +392,9 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
     // Since the client API can only be initialized once per process, initialize
     // both the in-process and system backends for every test here. The actual
     // service to be used is chosen by the test parameter.
-    perfetto::TracingInitArgs args;
+    TracingInitArgs args;
     args.backends = supported_backends;
+    args.tracing_policy = g_test_tracing_policy;
     perfetto::Tracing::Initialize(args);
     RegisterDataSource<MockDataSource>("my_data_source");
     perfetto::TrackEvent::Register();
@@ -724,7 +741,10 @@ TEST_P(PerfettoApiTest, StartAndStopWithoutDataSources) {
   tracing_session->get()->StopBlocking();
 }
 
-TEST_P(PerfettoApiTest, TrackEventStartStopAndDestroy) {
+// Disabled by default because it leaks tracing sessions into subsequent tests,
+// which can result in the per-uid tracing session limit (5) to be hit in later
+// tests.
+TEST_P(PerfettoApiTest, DISABLED_TrackEventStartStopAndDestroy) {
   // This test used to cause a use after free as the tracing session got
   // destroyed. It needed to be run approximately 2000 times to catch it so test
   // with --gtest_repeat=3000 (less if running under GDB).
@@ -2863,6 +2883,31 @@ TEST_P(PerfettoApiTest, UnsupportedBackend) {
   tracing_session->get()->SetOnErrorCallback(nullptr);
   // Synchronize the consumer channel to ensure the callback has propagated.
   tracing_session->get()->StopBlocking();
+}
+
+TEST_P(PerfettoApiTest, ForbiddenConsumer) {
+  g_test_tracing_policy->should_allow_consumer_connection = false;
+
+  // Create a new trace session while consumer connections are forbidden.
+  perfetto::TraceConfig cfg;
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* tracing_session = NewTrace(cfg);
+
+  // Creating the consumer should cause an asynchronous disconnect error.
+  WaitableTestEvent got_error;
+  tracing_session->get()->SetOnErrorCallback([&](perfetto::TracingError error) {
+    EXPECT_EQ(perfetto::TracingError::kDisconnected, error.code);
+    EXPECT_FALSE(error.message.empty());
+    got_error.Notify();
+  });
+  got_error.Wait();
+
+  // Clear the callback for test tear down.
+  tracing_session->get()->SetOnErrorCallback(nullptr);
+  // Synchronize the consumer channel to ensure the callback has propagated.
+  tracing_session->get()->StopBlocking();
+
+  g_test_tracing_policy->should_allow_consumer_connection = true;
 }
 
 TEST_P(PerfettoApiTest, GetTraceStats) {
