@@ -17,6 +17,7 @@ import("../../../gn/test.gni")
 
 sql_files = [
   "trace_metadata.sql",
+  "trace_stats.sql",
   "android/android_batt.sql",
   "android/android_cpu.sql",
   "android/android_surfaceflinger.sql",
@@ -82,7 +83,9 @@ sql_files = [
   "chrome/scroll_flow_event.sql",
   "chrome/scroll_flow_event_queuing_delay.sql",
   "chrome/test_chrome_metric.sql",
+  "experimental/blink_gc_metric.sql",
   "experimental/frame_times.sql",
+  "experimental/media_metric.sql",
   "experimental/reported_by_page.sql",
   "webview/webview_power_usage.sql",
 ]

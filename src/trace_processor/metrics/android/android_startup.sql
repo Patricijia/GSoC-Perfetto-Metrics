@@ -107,27 +107,34 @@ SELECT launch_id, state, SUM(dur) AS dur
 FROM main_thread_state
 GROUP BY 1, 2;
 
--- Tracks all slices for the main process threads
-DROP TABLE IF EXISTS main_process_slice;
-CREATE TABLE main_process_slice AS
+-- Tracks all main thread process threads.
+DROP VIEW IF EXISTS launch_threads;
+CREATE VIEW launch_threads AS
 SELECT
   launches.id AS launch_id,
-  CASE
-    WHEN slice.name LIKE 'OpenDexFilesFromOat%' THEN 'OpenDexFilesFromOat'
-    WHEN slice.name LIKE 'VerifyClass%' THEN 'VerifyClass'
-    ELSE slice.name
-  END AS name,
-  AndroidStartupMetric_Slice(
-    'dur_ns', SUM(slice.dur),
-    'dur_ms', SUM(slice.dur) / 1e6
-  ) AS slice_proto
+  launches.ts AS ts,
+  launches.dur AS dur,
+  thread.utid AS utid,
+  thread.name AS thread_name
 FROM launches
 JOIN launch_processes ON (launches.id = launch_processes.launch_id)
-JOIN thread ON (launch_processes.upid = thread.upid)
+JOIN thread ON (launch_processes.upid = thread.upid);
+
+-- Tracks all slices for the main process threads
+DROP VIEW IF EXISTS main_process_slice_unaggregated;
+CREATE VIEW main_process_slice_unaggregated AS
+SELECT
+  launch_threads.launch_id AS launch_id,
+  launch_threads.utid AS utid,
+  launch_threads.thread_name AS thread_name,
+  slice.name AS slice_name,
+  slice.ts AS slice_ts,
+  slice.dur AS slice_dur
+FROM launch_threads
 JOIN thread_track USING (utid)
 JOIN slice ON (
   slice.track_id = thread_track.id
-  AND slice.ts BETWEEN launches.ts AND launches.ts + launches.dur)
+  AND slice.ts BETWEEN launch_threads.ts AND launch_threads.ts + launch_threads.dur)
 WHERE slice.name IN (
   'PostFork',
   'ActivityThreadMain',
@@ -143,6 +150,23 @@ WHERE slice.name IN (
   OR slice.name LIKE 'OpenDexFilesFromOat%'
   OR slice.name LIKE 'VerifyClass%'
   OR slice.name LIKE 'Choreographer#doFrame%'
+  OR slice.name LIKE 'JIT compiling%';
+
+DROP TABLE IF EXISTS main_process_slice;
+CREATE TABLE main_process_slice AS
+SELECT
+  launch_id,
+  CASE
+    WHEN slice_name LIKE 'OpenDexFilesFromOat%' THEN 'OpenDexFilesFromOat'
+    WHEN slice_name LIKE 'VerifyClass%' THEN 'VerifyClass'
+    WHEN slice_name LIKE 'JIT compiling%' THEN 'JIT compiling'
+    ELSE slice_name
+  END AS name,
+  AndroidStartupMetric_Slice(
+    'dur_ns', SUM(slice_dur),
+    'dur_ms', SUM(slice_dur) / 1e6
+  ) AS slice_proto
+FROM main_process_slice_unaggregated
 GROUP BY 1, 2;
 
 DROP TABLE IF EXISTS report_fully_drawn_per_launch;
@@ -365,6 +389,25 @@ SELECT
         SELECT slice_proto
         FROM main_process_slice s
         WHERE s.launch_id = launches.id AND name = 'VerifyClass'
+      ),
+      'jit_compiled_methods', (
+        SELECT SUM(1)
+        FROM main_process_slice_unaggregated
+        WHERE slice_name LIKE 'JIT compiling%'
+          AND thread_name = 'Jit thread pool'
+      ),
+      'time_jit_thread_pool_on_cpu', (
+        SELECT
+        NULL_IF_EMPTY(AndroidStartupMetric_Slice(
+          'dur_ns', SUM(states.dur),
+          'dur_ms', SUM(states.dur) / 1e6))
+        FROM launch_threads
+        JOIN thread_state_extended states USING(utid)
+        WHERE
+          launch_threads.launch_id = launches.id
+          AND launch_threads.thread_name = 'Jit thread pool'
+          AND states.state = 'Running'
+          AND states.ts BETWEEN launch_threads.ts AND launch_threads.ts + launch_threads.dur
       )
     ),
     'hsc', (
