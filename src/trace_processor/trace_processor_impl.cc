@@ -27,6 +27,7 @@
 #include "src/trace_processor/dynamic/connected_flow_generator.h"
 #include "src/trace_processor/dynamic/descendant_slice_generator.h"
 #include "src/trace_processor/dynamic/describe_slice_generator.h"
+#include "src/trace_processor/dynamic/experimental_annotated_stack_generator.h"
 #include "src/trace_processor/dynamic/experimental_counter_dur_generator.h"
 #include "src/trace_processor/dynamic/experimental_flamegraph_generator.h"
 #include "src/trace_processor/dynamic/experimental_sched_upid_generator.h"
@@ -541,6 +542,12 @@ void ExtractArg(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
     sqlite3_result_error(ctx, "EXTRACT_ARG: 2 args required", -1);
     return;
   }
+
+  // If the arg set id is null, just return null as the result.
+  if (sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    sqlite3_result_null(ctx);
+    return;
+  }
   if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER) {
     sqlite3_result_error(ctx, "EXTRACT_ARG: 1st argument should be arg set id",
                          -1);
@@ -760,6 +767,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
                                          storage->thread_table())));
   RegisterDynamicTable(std::unique_ptr<ThreadStateGenerator>(
       new ThreadStateGenerator(&context_)));
+  RegisterDynamicTable(std::unique_ptr<ExperimentalAnnotatedStackGenerator>(
+      new ExperimentalAnnotatedStackGenerator(&context_)));
 
   // New style db-backed tables.
   RegisterDbTable(storage->arg_table());
@@ -768,6 +777,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   RegisterDbTable(storage->slice_table());
   RegisterDbTable(storage->flow_table());
+  RegisterDbTable(storage->thread_slice_table());
   RegisterDbTable(storage->sched_slice_table());
   RegisterDbTable(storage->instant_table());
   RegisterDbTable(storage->gpu_slice_table());

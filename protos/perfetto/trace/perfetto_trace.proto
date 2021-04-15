@@ -497,6 +497,10 @@ message AndroidPowerConfig {
 
   // Where available enables per-power-rail measurements.
   optional bool collect_power_rails = 3;
+
+  // Provides a breakdown of energy estimation for various subsystem (e.g. GPU).
+  // Available from Android S.
+  optional bool collect_energy_estimation_breakdown = 4;
 }
 
 // End of protos/perfetto/config/power/android_power_config.proto
@@ -843,7 +847,7 @@ message PerfEvents {
 //     }
 //   }
 //
-// Next id: 17
+// Next id: 18
 message PerfEventConfig {
   // What event to sample on, and how often.
   // Defined in common/perf_events.proto.
@@ -870,6 +874,12 @@ message PerfEventConfig {
   //
   // Daemon's resource usage limits:
   //
+
+  // Drop samples if the heap memory held by the samples in the unwinder queue
+  // is above the given limit. This counts the memory across all concurrent data
+  // sources (not just this one's), and there is no fairness guarantee - the
+  // whole quota might be used up by a concurrent source.
+  optional uint64 max_enqueued_footprint_kb = 17;
 
   // Stop the data source if traced_perf's combined {RssAnon + Swap} memory
   // footprint exceeds this value.
@@ -2098,6 +2108,7 @@ message FrameTimelineEvent {
     // frame.
     optional int32 jank_type = 9;
     optional PredictionType prediction_type = 10;
+    optional bool is_buffer = 11;
   };
 
   // Indicates the start of expected timeline slice for DisplayFrames.
@@ -2330,10 +2341,15 @@ message BackgroundTracingMetadata {
         NAVIGATION = 2;
         STARTUP = 3;
         REACHED_CODE = 4;
+        CONTENT_TRIGGER = 5;
 
         TEST_RULE = 1000;
       }
       optional EventType event_type = 1;
+
+      // If |event_type| is CONTENT_TRIGGER, then this stores the hash of the
+      // content-trigger that actually fired.
+      optional fixed64 content_trigger_name_hash = 2;
     }
     optional NamedRule named_rule = 3;
   }
@@ -5958,30 +5974,48 @@ message ChromeHistogramSample {
 
 // Begin of protos/perfetto/trace/track_event/debug_annotation.proto
 
-// Key/value annotations provided in untyped TRACE_EVENT macros. These
-// annotations are intended for debug use and are not considered a stable API
-// surface. As such, they should not be relied upon to implement (new) metrics.
+// Proto representation of untyped key/value annotations provided in TRACE_EVENT
+// macros. Users of the Perfetto SDK should prefer to use the
+// perfetto::TracedValue API to fill these protos, rather than filling them
+// manually.
 //
-// Next ID: 10.
+// Debug annotations are intended for debug use and are not considered a stable
+// API of the trace contents. Trace-based metrics that use debug annotation
+// values are prone to breakage, so please rely on typed TrackEvent fields for
+// these instead.
+//
+// DebugAnnotations support nested arrays and dictionaries. Each entry is
+// encoded as a single DebugAnnotation message. Only dictionary entries
+// set the "name" field. The TrackEvent message forms an implicit root
+// dictionary.
+//
+// Example TrackEvent with nested annotations:
+//   track_event {
+//     debug_annotations {
+//       name: "foo"
+//       dict_entries {
+//         name: "a"
+//         bool_value: true
+//       }
+//       dict_entries {
+//         name: "b"
+//         int_value: 123
+//       }
+//     }
+//     debug_annotations {
+//       name: "bar"
+//       array_values {
+//         string_value: "hello"
+//       }
+//       array_values {
+//         string_value: "world"
+//       }
+//     }
+//   }
+//
+// Next ID: 13.
 message DebugAnnotation {
-  message NestedValue {
-    enum NestedType {
-      // leaf value.
-      UNSPECIFIED = 0;
-      DICT = 1;
-      ARRAY = 2;
-    }
-    optional NestedType nested_type = 1;
-
-    repeated string dict_keys = 2;
-    repeated NestedValue dict_values = 3;
-    repeated NestedValue array_values = 4;
-    optional int64 int_value = 5;
-    optional double double_value = 6;
-    optional bool bool_value = 7;
-    optional string string_value = 8;
-  }
-
+  // Name fields are set only for dictionary entries.
   oneof name_field {
     // interned DebugAnnotationName.
     uint64 name_iid = 1;
@@ -5998,11 +6032,37 @@ message DebugAnnotation {
     // Pointers are stored in a separate type as the JSON output treats them
     // differently from other uint64 values.
     uint64 pointer_value = 7;
+
+    // Deprecated. Use dict_entries / array_values instead.
     NestedValue nested_value = 8;
 
     // Legacy instrumentation may not support conversion of nested data to
     // NestedValue yet.
     string legacy_json_value = 9;
+  }
+
+  repeated DebugAnnotation dict_entries = 11;
+  repeated DebugAnnotation array_values = 12;
+
+  // Deprecated legacy way to use nested values. Only kept for
+  // backwards-compatibility in TraceProcessor. May be removed in the future -
+  // code filling protos should use |dict_entries| and |array_values| instead.
+  message NestedValue {
+    enum NestedType {
+      // leaf value.
+      UNSPECIFIED = 0;
+      DICT = 1;
+      ARRAY = 2;
+    }
+    optional NestedType nested_type = 1;
+
+    repeated string dict_keys = 2;
+    repeated NestedValue dict_values = 3;
+    repeated NestedValue array_values = 4;
+    optional int64 int_value = 5;
+    optional double double_value = 6;
+    optional bool bool_value = 7;
+    optional string string_value = 8;
   }
 }
 
@@ -6403,6 +6463,10 @@ message ChromeFrameReporter {
   optional bool has_compositor_animation = 8;
   // If any touch-driven UX (not scroll) is active during this frame.
   optional bool has_smooth_input_main = 9;
+
+  // Whether the frame contained any missing content (i.e. whether there was
+  // checkerboarding in the frame).
+  optional bool has_missing_content = 10;
 }
 
 // End of protos/perfetto/trace/track_event/chrome_frame_reporter.proto
@@ -7512,7 +7576,10 @@ message HeapGraphType {
 }
 
 message HeapGraphObject {
-  optional uint64 id = 1;
+  oneof identifier {
+    uint64 id = 1;
+    uint64 id_delta = 7;
+  }
 
   // Index for InternedData.types for the name of the type of this object.
   optional uint64 type_id = 2;
@@ -8295,6 +8362,37 @@ message ChromeProcessDescriptor {
     PROCESS_GPU = 6;
     PROCESS_PPAPI_PLUGIN = 7;
     PROCESS_PPAPI_BROKER = 8;
+    PROCESS_SERVICE_NETWORK = 9;
+    PROCESS_SERVICE_TRACING = 10;
+    PROCESS_SERVICE_STORAGE = 11;
+    PROCESS_SERVICE_AUDIO = 12;
+    PROCESS_SERVICE_DATA_DECODER = 13;
+    PROCESS_SERVICE_UTIL_WIN = 14;
+    PROCESS_SERVICE_PROXY_RESOLVER = 15;
+    PROCESS_SERVICE_CDM = 16;
+    PROCESS_SERVICE_VIDEO_CAPTURE = 17;
+    PROCESS_SERVICE_UNZIPPER = 18;
+    PROCESS_SERVICE_MIRRORING = 19;
+    PROCESS_SERVICE_FILEPATCHER = 20;
+    PROCESS_SERVICE_TTS = 21;
+    PROCESS_SERVICE_PRINTING = 22;
+    PROCESS_SERVICE_QUARANTINE = 23;
+    PROCESS_SERVICE_CROS_LOCALSEARCH = 24;
+    PROCESS_SERVICE_CROS_ASSISTANT_AUDIO_DECODER = 25;
+    PROCESS_SERVICE_FILEUTIL = 26;
+    PROCESS_SERVICE_PRINTCOMPOSITOR = 27;
+    PROCESS_SERVICE_PAINTPREVIEW = 28;
+    PROCESS_SERVICE_SPEECHRECOGNITION = 29;
+    PROCESS_SERVICE_XRDEVICE = 30;
+    PROCESS_SERVICE_READICON = 31;
+    PROCESS_SERVICE_LANGUAGEDETECTION = 32;
+    PROCESS_SERVICE_SHARING = 33;
+    PROCESS_SERVICE_MEDIAPARSER = 34;
+    PROCESS_SERVICE_QRCODEGENERATOR = 35;
+    PROCESS_SERVICE_PROFILEIMPORT = 36;
+    PROCESS_SERVICE_IME = 37;
+    PROCESS_SERVICE_RECORDING = 38;
+    PROCESS_SERVICE_SHAPEDETECTION = 39;
   }
   optional ProcessType process_type = 1;
   optional int32 process_priority = 2;
@@ -8336,28 +8434,54 @@ message ChromeThreadDescriptor {
     THREAD_MAIN = 1;
     THREAD_IO = 2;
 
-    // Browser:
-    THREAD_NETWORK_SERVICE = 12;
-
-    // Scheduler:
     THREAD_POOL_BG_WORKER = 3;
     THREAD_POOL_FG_WORKER = 4;
-    THREAD_POOL_BG_BLOCKING = 6;
     THREAD_POOL_FG_BLOCKING = 5;
+    THREAD_POOL_BG_BLOCKING = 6;
     THREAD_POOL_SERVICE = 7;
 
-    // Compositor:
     THREAD_COMPOSITOR = 8;
     THREAD_VIZ_COMPOSITOR = 9;
     THREAD_COMPOSITOR_WORKER = 10;
 
-    // Renderer:
     THREAD_SERVICE_WORKER = 11;
+    THREAD_NETWORK_SERVICE = 12;
 
-    // Tracing related threads:
+    THREAD_CHILD_IO = 13;
+    THREAD_BROWSER_IO = 14;
+
+    THREAD_BROWSER_MAIN = 15;
+    THREAD_RENDERER_MAIN = 16;
+    THREAD_UTILITY_MAIN = 17;
+    THREAD_GPU_MAIN = 18;
+
+    THREAD_CACHE_BLOCKFILE = 19;
+    THREAD_MEDIA = 20;
+    THREAD_AUDIO_OUTPUTDEVICE = 21;
+    THREAD_AUDIO_INPUTDEVICE = 22;
+    THREAD_GPU_MEMORY = 23;
+    THREAD_GPU_VSYNC = 24;
+    THREAD_DXA_VIDEODECODER = 25;
+    THREAD_BROWSER_WATCHDOG = 26;
+    THREAD_WEBRTC_NETWORK = 27;
+    THREAD_WINDOW_OWNER = 28;
+    THREAD_WEBRTC_SIGNALING = 29;
+    THREAD_WEBRTC_WORKER = 30;
+    THREAD_PPAPI_MAIN = 31;
+    THREAD_GPU_WATCHDOG = 32;
+    THREAD_SWAPPER = 33;
+    THREAD_GAMEPAD_POLLING = 34;
+    THREAD_WEBCRYPTO = 35;
+    THREAD_DATABASE = 36;
+    THREAD_PROXYRESOLVER = 37;
+    THREAD_DEVTOOLSADB = 38;
+    THREAD_NETWORKCONFIGWATCHER = 39;
+    THREAD_WASAPI_RENDER = 40;
+
     THREAD_MEMORY_INFRA = 50;
     THREAD_SAMPLING_PROFILER = 51;
   };
+
   optional ThreadType thread_type = 1;
 
   // To support old UI. New UI should determine default sorting by thread_type.
@@ -8529,6 +8653,35 @@ message Trigger {
 
 // End of protos/perfetto/trace/trigger.proto
 
+// Begin of protos/perfetto/trace/ui_state.proto
+
+// Common state for UIs visualizing Perfetto traces.
+// This message can be appended as a TracePacket by UIs to save the
+// visible state (e.g. scroll position/zoom state) for future opening
+// of the trace.
+// Design doc: go/trace-ui-state.
+message UiState {
+  // The start and end bounds of the viewport of the UI in nanoseconds.
+  //
+  // This is the absolute time associated to slices and other events in
+  // trace processor tables (i.e. the |ts| column of most tables)
+  optional int64 timeline_start_ts = 1;
+  optional int64 timeline_end_ts = 2;
+
+  // Indicates that the given process should be highlighted by the UI.
+  message HighlightProcess {
+    // The pid of the process to highlight. This is useful for UIs to focus
+    // on tracks of a particular process in the trace.
+    //
+    // If more than one process in a trace has the same pid, it is UI
+    // implementation specific how the process to be focused will be
+    // chosen.
+    optional uint32 pid = 1;
+  }
+  optional HighlightProcess highlight_process = 3;
+}
+// End of protos/perfetto/trace/ui_state.proto
+
 // Begin of protos/perfetto/trace/trace_packet.proto
 
 // TracePacket is the root object of a Perfeto trace.
@@ -8551,7 +8704,7 @@ message Trigger {
 // See the [Buffers and Dataflow](/docs/concepts/buffers.md) doc for details.
 //
 // Next reserved id: 14 (up to 15).
-// Next id: 78.
+// Next id: 79.
 message TracePacket {
   // The timestamp of the TracePacket.
   // By default this timestamps refers to the trace clock (CLOCK_BOOTTIME on
@@ -8612,6 +8765,7 @@ message TracePacket {
     MemoryTrackerSnapshot memory_tracker_snapshot = 73;
     FrameTimelineEvent frame_timeline_event = 76;
     AndroidEnergyEstimationBreakdown android_energy_estimation_breakdown = 77;
+    UiState ui_state = 78;
 
     // Only used in profile packets.
     ProfiledFrameSymbols profiled_frame_symbols = 55;

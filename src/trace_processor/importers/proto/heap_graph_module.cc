@@ -154,7 +154,12 @@ void HeapGraphModule::ParseHeapGraph(uint32_t seq_id,
   for (auto it = heap_graph.objects(); it; ++it) {
     protos::pbzero::HeapGraphObject::Decoder object(*it);
     HeapGraphTracker::SourceObject obj;
-    obj.object_id = object.id();
+    if (object.id_delta()) {
+      obj.object_id =
+          heap_graph_tracker->GetLastObjectId(seq_id) + object.id_delta();
+    } else {
+      obj.object_id = object.id();
+    }
     obj.self_size = object.self_size();
     obj.type_id = object.type_id();
 
@@ -219,10 +224,13 @@ void HeapGraphModule::ParseHeapGraph(uint32_t seq_id,
 
     StringPool::Id kind = context_->storage->InternString(
         HeapGraphTypeKindToString(entry.kind()));
+    base::Optional<uint64_t> location_id;
+    if (entry.has_location_id())
+      location_id = entry.location_id();
 
     heap_graph_tracker->AddInternedType(
         seq_id, entry.id(), context_->storage->InternString(str_view),
-        entry.location_id(), entry.object_size(), std::move(field_name_ids),
+        location_id, entry.object_size(), std::move(field_name_ids),
         entry.superclass_id(), entry.classloader_id(), no_fields, kind);
   }
   for (auto it = heap_graph.field_names(); it; ++it) {

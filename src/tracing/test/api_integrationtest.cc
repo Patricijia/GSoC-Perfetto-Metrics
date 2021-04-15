@@ -111,9 +111,8 @@ using SourceLocation = std::tuple<const char* /* file_name */,
                                   const char* /* function_name */,
                                   uint32_t /* line_number */>;
 
-namespace std {
 template <>
-struct hash<SourceLocation> {
+struct std::hash<SourceLocation> {
   size_t operator()(const SourceLocation& value) const {
     auto hasher = hash<size_t>();
     return hasher(reinterpret_cast<size_t>(get<0>(value))) ^
@@ -121,7 +120,6 @@ struct hash<SourceLocation> {
            hasher(get<2>(value));
   }
 };
-}  // namespace std
 
 // Represents an opaque (from Perfetto's point of view) thread identifier (e.g.,
 // base::PlatformThreadId in Chromium).
@@ -166,14 +164,18 @@ bool ConvertThreadId(const MyThreadId& thread,
 }  // namespace legacy
 
 template <>
-TraceTimestamp ConvertTimestampToTraceTimeNs(const MyTimestamp& timestamp) {
-  return {TrackEvent::GetTraceClockId(), timestamp.ts};
-}
+struct TraceTimestampTraits<MyTimestamp> {
+  static TraceTimestamp ConvertTimestampToTraceTimeNs(
+      const MyTimestamp& timestamp) {
+    return {TrackEvent::GetTraceClockId(), timestamp.ts};
+  }
+};
 
 }  // namespace perfetto
 
 namespace {
 
+using perfetto::TracingInitArgs;
 using ::testing::_;
 using ::testing::ContainerEq;
 using ::testing::ElementsAre;
@@ -343,6 +345,19 @@ class MyDebugAnnotation : public perfetto::DebugAnnotation {
   }
 };
 
+class TestTracingPolicy : public perfetto::TracingPolicy {
+ public:
+  void ShouldAllowConsumerSession(
+      const ShouldAllowConsumerSessionArgs& args) override {
+    EXPECT_NE(args.backend_type, perfetto::BackendType::kUnspecifiedBackend);
+    args.result_callback(should_allow_consumer_connection);
+  }
+
+  bool should_allow_consumer_connection = true;
+};
+
+TestTracingPolicy* g_test_tracing_policy = new TestTracingPolicy();  // Leaked.
+
 // -------------------------
 // Declaration of test class
 // -------------------------
@@ -352,6 +367,7 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
 
   void SetUp() override {
     instance = this;
+    g_test_tracing_policy->should_allow_consumer_connection = true;
 
     // Start a fresh system service for this test, tearing down any previous
     // service that was running.
@@ -376,8 +392,9 @@ class PerfettoApiTest : public ::testing::TestWithParam<perfetto::BackendType> {
     // Since the client API can only be initialized once per process, initialize
     // both the in-process and system backends for every test here. The actual
     // service to be used is chosen by the test parameter.
-    perfetto::TracingInitArgs args;
+    TracingInitArgs args;
     args.backends = supported_backends;
+    args.tracing_policy = g_test_tracing_policy;
     perfetto::Tracing::Initialize(args);
     RegisterDataSource<MockDataSource>("my_data_source");
     perfetto::TrackEvent::Register();
@@ -724,7 +741,10 @@ TEST_P(PerfettoApiTest, StartAndStopWithoutDataSources) {
   tracing_session->get()->StopBlocking();
 }
 
-TEST_P(PerfettoApiTest, TrackEventStartStopAndDestroy) {
+// Disabled by default because it leaks tracing sessions into subsequent tests,
+// which can result in the per-uid tracing session limit (5) to be hit in later
+// tests.
+TEST_P(PerfettoApiTest, DISABLED_TrackEventStartStopAndDestroy) {
   // This test used to cause a use after free as the tracing session got
   // destroyed. It needed to be run approximately 2000 times to catch it so test
   // with --gtest_repeat=3000 (less if running under GDB).
@@ -2087,6 +2107,63 @@ TEST_P(PerfettoApiTest, TrackEventCustomRawDebugAnnotations) {
                   "B:test.E(plain_arg=(int)42,raw_arg=(nested)nested_value)"));
 }
 
+TEST_P(PerfettoApiTest, ManyDebugAnnotations) {
+  // Create a new trace session.
+  auto* tracing_session = NewTraceWithCategories({"test"});
+  tracing_session->get()->StartBlocking();
+
+  TRACE_EVENT_BEGIN("test", "E", "arg1", 1, "arg2", 2, "arg3", 3);
+  perfetto::TrackEvent::Flush();
+
+  tracing_session->get()->StopBlocking();
+  auto slices = ReadSlicesFromTrace(tracing_session->get());
+  EXPECT_THAT(slices,
+              ElementsAre("B:test.E(arg1=(int)1,arg2=(int)2,arg3=(int)3)"));
+}
+
+TEST_P(PerfettoApiTest, DebugAnnotationAndLambda) {
+  // Create a new trace session.
+  auto* tracing_session = NewTraceWithCategories({"test"});
+  tracing_session->get()->StartBlocking();
+
+  enum MyEnum : uint32_t { ENUM_FOO, ENUM_BAR };
+  enum MySignedEnum : int32_t { SIGNED_ENUM_FOO = -1, SIGNED_ENUM_BAR };
+  enum class MyClassEnum { VALUE };
+
+  TRACE_EVENT_BEGIN(
+      "test", "E", "key", "value", [](perfetto::EventContext ctx) {
+        ctx.event()->set_log_message()->set_source_location_iid(42);
+      });
+  perfetto::TrackEvent::Flush();
+
+  tracing_session->get()->StopBlocking();
+  std::vector<char> raw_trace = tracing_session->get()->ReadTraceBlocking();
+  std::string trace(raw_trace.data(), raw_trace.size());
+
+  perfetto::protos::gen::Trace parsed_trace;
+  ASSERT_TRUE(parsed_trace.ParseFromArray(raw_trace.data(), raw_trace.size()));
+
+  bool found_args = false;
+  for (const auto& packet : parsed_trace.packet()) {
+    if (!packet.has_track_event())
+      continue;
+    const auto& track_event = packet.track_event();
+    if (track_event.type() !=
+        perfetto::protos::gen::TrackEvent::TYPE_SLICE_BEGIN)
+      continue;
+
+    EXPECT_TRUE(track_event.has_log_message());
+    const auto& log = track_event.log_message();
+    EXPECT_EQ(42u, log.source_location_iid());
+
+    const auto& dbg = track_event.debug_annotations()[0];
+    EXPECT_EQ("value", dbg.string_value());
+
+    found_args = true;
+  }
+  EXPECT_TRUE(found_args);
+}
+
 TEST_P(PerfettoApiTest, TrackEventComputedName) {
   // Setup the trace config.
   perfetto::TraceConfig cfg;
@@ -2865,6 +2942,31 @@ TEST_P(PerfettoApiTest, UnsupportedBackend) {
   tracing_session->get()->StopBlocking();
 }
 
+TEST_P(PerfettoApiTest, ForbiddenConsumer) {
+  g_test_tracing_policy->should_allow_consumer_connection = false;
+
+  // Create a new trace session while consumer connections are forbidden.
+  perfetto::TraceConfig cfg;
+  cfg.add_buffers()->set_size_kb(1024);
+  auto* tracing_session = NewTrace(cfg);
+
+  // Creating the consumer should cause an asynchronous disconnect error.
+  WaitableTestEvent got_error;
+  tracing_session->get()->SetOnErrorCallback([&](perfetto::TracingError error) {
+    EXPECT_EQ(perfetto::TracingError::kDisconnected, error.code);
+    EXPECT_FALSE(error.message.empty());
+    got_error.Notify();
+  });
+  got_error.Wait();
+
+  // Clear the callback for test tear down.
+  tracing_session->get()->SetOnErrorCallback(nullptr);
+  // Synchronize the consumer channel to ensure the callback has propagated.
+  tracing_session->get()->StopBlocking();
+
+  g_test_tracing_policy->should_allow_consumer_connection = true;
+}
+
 TEST_P(PerfettoApiTest, GetTraceStats) {
   perfetto::TraceConfig cfg;
   cfg.set_duration_ms(500);
@@ -3343,28 +3445,16 @@ void EmitConsoleEvents() {
   thread.join();
 
   TRACE_EVENT_INSTANT(
-      "foo", "More annotations", [](perfetto::EventContext ctx) {
-        {
-          auto* dbg = ctx.event()->add_debug_annotations();
-          dbg->set_name("dict");
-          auto* nested = dbg->set_nested_value();
-          nested->set_nested_type(
-              perfetto::protos::pbzero::DebugAnnotation::NestedValue::DICT);
-          nested->add_dict_keys("key");
-          auto* value = nested->add_dict_values();
-          value->set_int_value(123);
-        }
-        {
-          auto* dbg = ctx.event()->add_debug_annotations();
-          dbg->set_name("array");
-          auto* nested = dbg->set_nested_value();
-          nested->set_nested_type(
-              perfetto::protos::pbzero::DebugAnnotation::NestedValue::ARRAY);
-          auto* value = nested->add_array_values();
-          value->set_string_value("first");
-          value = nested->add_array_values();
-          value->set_string_value("second");
-        }
+      "foo", "More annotations", "dict",
+      [](perfetto::TracedValue context) {
+        auto dict = std::move(context).WriteDictionary();
+        dict.Add("key", 123);
+      },
+      "array",
+      [](perfetto::TracedValue context) {
+        auto array = std::move(context).WriteArray();
+        array.Append("first");
+        array.Append("second");
       });
 }
 

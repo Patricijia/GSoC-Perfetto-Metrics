@@ -777,6 +777,7 @@ class HeapprofdEndToEnd
 void KillAssertRunning(base::Subprocess* child) {
   ASSERT_EQ(child->Poll(), base::Subprocess::kRunning)
       << "Target process not running. CHECK CRASH LOGS.";
+  PERFETTO_LOG("Shutting down profile target.");
   child->KillAndWaitForTermination();
 }
 
@@ -1751,7 +1752,7 @@ TEST_P(HeapprofdEndToEnd, NativeProfilingActiveAtProcessExit) {
 #error "Need to start daemons for Linux test."
 #endif
 
-INSTANTIATE_TEST_CASE_P(Run,
+INSTANTIATE_TEST_CASE_P(DISABLED_Run,
                         HeapprofdEndToEnd,
                         Values(std::make_tuple(TestMode::kStatic,
                                                AllocatorMode::kCustom)),
