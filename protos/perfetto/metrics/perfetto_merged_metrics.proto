@@ -338,6 +338,31 @@ message AndroidHwcomposerMetrics {
   // Counts the number of composition surfaceflinger cached layers in the trace.
   // (non-weighted average)
   optional double composition_sf_cached_layers = 5;
+
+  // Counts how many times validateDisplay is skipped.
+  optional int32 skipped_validation_count = 6;
+
+  // Counts how many times validateDisplay cannot be skipped.
+  optional int32 unskipped_validation_count = 7;
+
+  // Counts how many times validateDisplay is already separated from presentDisplay
+  // since the beginning.
+  optional int32 separated_validation_count = 8;
+
+  // Counts how many unhandled validation cases which might be caused by errors.
+  optional int32 unknown_validation_count = 9;
+
+  // the average of overall hwcomposer execution time.
+  optional double avg_all_execution_time_ms = 10;
+
+  // the average of hwcomposer execution time for skipped validation cases.
+  optional double avg_skipped_execution_time_ms = 11;
+
+  // the average of hwcomposer execution time for unskipped validation cases.
+  optional double avg_unskipped_execution_time_ms = 12;
+
+  // the average of hwcomposer execution time for separated validation cases.
+  optional double avg_separated_execution_time_ms = 13;
 }
 
 // End of protos/perfetto/metrics/android/hwcomposer.proto
@@ -720,10 +745,14 @@ message AndroidStartupMetric {
 
   // Timing information spanning the intent received by the
   // activity manager to the first frame drawn.
-  // Next id: 27.
+  // Next id: 31.
   message ToFirstFrame {
+    // The duration between the intent received and first frame.
     optional int64 dur_ns = 1;
     optional double dur_ms = 17;
+
+    // Breakdown of time to first frame by task state for the main thread of
+    // the process starting up.
     optional TaskStateBreakdown main_thread_by_task_state = 2;
 
     // The mcycles taken by this startup across all CPUs (broken down by core
@@ -765,6 +794,16 @@ message AndroidStartupMetric {
     optional Slice time_dex_open = 24;
     // Total time spent verifying classes during app startup.
     optional Slice time_verify_class = 25;
+
+    // Number of methods that were compiled by JIT during app startup.
+    optional uint32 jit_compiled_methods = 27;
+
+    // Time spent running CPU on jit thread pool.
+    optional Slice time_jit_thread_pool_on_cpu = 28;
+
+    // Time spent on garbage collection.
+    optional Slice time_gc_total = 29;
+    optional Slice time_gc_on_cpu = 30;
     // Deprecated was other_process_to_activity_cpu_ratio
     reserved 12;
 
@@ -783,7 +822,10 @@ message AndroidStartupMetric {
   message Activity {
     optional string name = 1;
     optional string method = 2;
-    optional Slice slice = 3;
+    optional int64 ts_method_start = 4;
+
+    // Field 3 contained Slice with a sum of durations for matching slices.
+    reserved 3;
   }
 
   // Metrics with information about the status of odex files and the outcome
@@ -798,7 +840,14 @@ message AndroidStartupMetric {
     optional string location = 4;
   }
 
-  // Next id: 13
+  // Contains timestamps of important events which occurred during the
+  // startup.
+  message EventTimestamps {
+    optional int64 intent_received = 1;
+    optional int64 first_frame = 2;
+  }
+
+  // Next id: 14
   message Startup {
     // Random id uniquely identifying an app startup in this trace.
     optional uint32 startup_id = 1;
@@ -821,11 +870,19 @@ message AndroidStartupMetric {
     // it.
     optional uint32 activity_hosting_process_count = 6;
 
+    // Contains timestamps of important events which happened during
+    // the startup.
+    optional EventTimestamps event_timestamps = 13;
+
+    // Timing information spanning the intent received by the
+    // activity manager to the first frame drawn.
     optional ToFirstFrame to_first_frame = 5;
 
     // Details about the process (uid, version, etc)
     optional AndroidProcessMetadata process = 7;
 
+    // Metrics about startup which were developed by looking at experiments
+    // using high-speed cameras (HSC).
     optional HscMetrics hsc = 8;
 
     // The time taken in the startup from intent recieved to the start time
@@ -833,6 +890,7 @@ message AndroidStartupMetric {
     // first frame as the application decides this after it starts rendering.
     optional Slice report_fully_drawn = 9;
 
+    // Conntains information about the status of odex files.
     repeated OptimizationStatus optimization_status = 12;
 
     reserved 10;
@@ -854,6 +912,18 @@ message AndroidSurfaceflingerMetric {
 
   // Counts the number of missed GPU frames in the trace.
   optional uint32 missed_gpu_frames = 3;
+
+  // Calculate the number of missed frames divided by
+  // total frames
+  optional double missed_frame_rate = 4;
+
+  // Calculate the number of missed HWC frames divided by
+  // total HWC frames
+  optional double missed_hwc_frame_rate = 5;
+
+  // Calculate the number of missed GPU frames divided by
+  // total GPU frames
+  optional double missed_gpu_frame_rate = 6;
 }
 
 // End of protos/perfetto/metrics/android/surfaceflinger.proto
@@ -971,9 +1041,37 @@ message TraceMetadata {
   optional int64 sched_duration_ns = 10;
 }
 
+// Stats counters for the trace.
+// Defined in src/trace_processor/storage/stats.h
+message TraceAnalysisStats {
+  enum Severity {
+    SEVERITY_UNKNOWN = 0;
+    SEVERITY_INFO = 1;
+    SEVERITY_DATA_LOSS = 2;
+    SEVERITY_ERROR = 3;
+  }
+
+  enum Source {
+    SOURCE_UNKNOWN = 0;
+    SOURCE_TRACE = 1;
+    SOURCE_ANALYSIS = 2;
+  }
+
+  message Stat {
+    optional string name = 1;
+    optional uint32 idx = 2;
+    optional Severity severity = 3;
+    optional Source source = 4;
+
+    optional int64 count = 5;
+  }
+
+  repeated Stat stat = 1;
+}
+
 // Root message for all Perfetto-based metrics.
 //
-// Next id: 33
+// Next id: 34
 message TraceMetrics {
   reserved 4, 10, 13, 14, 19;
 
@@ -1015,6 +1113,9 @@ message TraceMetrics {
 
   // Trace metadata (applicable to all traces).
   optional TraceMetadata trace_metadata = 3;
+
+  // Trace stats (applicable to all traces).
+  optional TraceAnalysisStats trace_stats = 33;
 
   // Returns stack frames missing symbols.
   optional UnsymbolizedFrames unsymbolized_frames = 15;

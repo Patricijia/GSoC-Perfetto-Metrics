@@ -327,15 +327,9 @@ The following optional arguments can be passed to `TRACE_EVENT` to add extra
 information to events:
 
 ```C++
-TRACE_EVENT("cat", "name"[, track][, timestamp][, lambda]);
-```
-
-or
-
-```C++
 TRACE_EVENT("cat", "name"[, track][, timestamp]
-                         [, "debug_name1", debug_value1]
-                         [, "debug_name2", debug_value2]);
+    (, "debug_name", debug_value |, TrackEvent::kFieldName, value)*
+    [, lambda]);
 ```
 
 Some examples of valid combinations:
@@ -357,19 +351,48 @@ Some examples of valid combinations:
      });
    ```
 
-   |time_in_nanoseconds| should be an uint64_t by default. See
-   |ConvertTimestampToTraceTimeNs| on how to use custom timestamp types.
+   |time_in_nanoseconds| should be an uint64_t by default. To support custom
+   timestamp types,
+   |perfetto::TraceTimestampTraits<MyTimestamp>::ConvertTimestampToTraceTimeNs|
+   should be defined. See |ConvertTimestampToTraceTimeNs| for more details.
 
-3. Up to two debug annotations:
+3. Arbitrary number of debug annotations:
 
    ```C++
      TRACE_EVENT("category", "Name", "arg", value);
      TRACE_EVENT("category", "Name", "arg", value, "arg2", value2);
+     TRACE_EVENT("category", "Name", "arg", value, "arg2", value2,
+                 "arg3", value3);
    ```
 
    See |TracedValue| for recording custom types as debug annotations.
 
-4. An overridden track:
+4. Arbitrary number of TrackEvent fields (including extensions):
+
+  ```C++
+    TRACE_EVENT("category", "Name",
+                perfetto::protos::pbzero::TrackEvent::kFieldName, value);
+  ```
+
+5. Arbitrary combination of debug annotations and TrackEvent fields:
+
+  ```C++
+    TRACE_EVENT("category", "Name",
+                perfetto::protos::pbzero::TrackEvent::kFieldName, value1,
+                "arg", value2);
+  ```
+
+6. Arbitrary combination of debug annotations / TrackEvent fields and a lambda:
+
+   ```C++
+     TRACE_EVENT("category", "Name", "arg", value1,
+                 pbzero::TrackEvent::kFieldName, value2,
+                 [&](perfetto::EventContext ctx) {
+                     ctx.event()->set_custom_value(...);
+                 });
+   ```
+
+7. An overridden track:
 
    ```C++
      TRACE_EVENT("category", "Name", perfetto::Track(1234));
@@ -377,38 +400,41 @@ Some examples of valid combinations:
 
    See |Track| for other types of tracks which may be used.
 
-5. A track and a lambda:
+8. A track and a lambda:
 
    ```C++
      TRACE_EVENT("category", "Name", perfetto::Track(1234),
-         [&](perfetto::EventContext ctx) {
-       ctx.event()->set_custom_value(...);
-     });
+                 [&](perfetto::EventContext ctx) {
+                     ctx.event()->set_custom_value(...);
+                 });
    ```
 
-6. A track and a timestamp:
+9. A track and a timestamp:
 
    ```C++
      TRACE_EVENT("category", "Name", perfetto::Track(1234),
-         time_in_nanoseconds);
+                 time_in_nanoseconds);
    ```
 
-7. A track, a timestamp and a lambda:
+10. A track, a timestamp and a lambda:
 
    ```C++
      TRACE_EVENT("category", "Name", perfetto::Track(1234),
-         time_in_nanoseconds, [&](perfetto::EventContext ctx) {
-       ctx.event()->set_custom_value(...);
-     });
+                 time_in_nanoseconds, [&](perfetto::EventContext ctx) {
+                     ctx.event()->set_custom_value(...);
+                 });
    ```
 
-8. A track and up to two debug annotions:
+11. A track and any combination of debug annotions and TrackEvent fields:
 
    ```C++
      TRACE_EVENT("category", "Name", perfetto::Track(1234),
                  "arg", value);
      TRACE_EVENT("category", "Name", perfetto::Track(1234),
                  "arg", value, "arg2", value2);
+     TRACE_EVENT("category", "Name", perfetto::Track(1234),
+                 "arg", value, "arg2", value2,
+                 pbzero::TrackEvent::kFieldName, value3);
    ```
 
 ### Tracks
@@ -591,12 +617,12 @@ class Observer : public perfetto::TrackEventSessionObserver {
     // so track events emitted here won't be recorded.
   }
 
-  void OnStart(const DataSourceBase::SetupArgs&) override {
+  void OnStart(const perfetto::DataSourceBase::StartArgs&) override {
     // Called when a tracing session is started. It is possible to emit track
     // events from this callback.
   }
 
-  void OnStop(const DataSourceBase::StartArgs&) override {
+  void OnStop(const perfetto::DataSourceBase::StopArgs&) override {
     // Called when a tracing session is stopped. It is still possible to emit
     // track events from this callback.
   }

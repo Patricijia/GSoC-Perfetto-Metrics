@@ -121,6 +121,15 @@ void ProtoTraceParser::ParseTracePacketImpl(
                               packet.deobfuscation_mapping());
   }
 
+  // Chrome doesn't honor the one-of in TracePacket for this field and sets it
+  // together with chrome_metadata, which is handled by a module. Thus, we have
+  // to parse this field before the modules get to parse other fields.
+  // TODO(crbug/1194914): Move this back after the modules (or into a separate
+  // module) once the Chrome-side fix has propagated into all release channels.
+  if (packet.has_chrome_events()) {
+    ParseChromeEvents(ts, packet.chrome_events());
+  }
+
   // TODO(eseckler): Propagate statuses from modules.
   auto& modules = context_->modules_by_field;
   for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
@@ -137,10 +146,6 @@ void ProtoTraceParser::ParseTracePacketImpl(
   if (packet.has_profile_packet()) {
     ParseProfilePacket(ts, sequence_state, packet.trusted_packet_sequence_id(),
                        packet.profile_packet());
-  }
-
-  if (packet.has_chrome_events()) {
-    ParseChromeEvents(ts, packet.chrome_events());
   }
 
   if (packet.has_perfetto_metatrace()) {
@@ -330,6 +335,14 @@ void ProtoTraceParser::ParseProfilePacket(
     context_->storage->IncrementIndexedStats(
         stats::heapprofd_unwind_samples, static_cast<int>(entry.pid()),
         static_cast<int64_t>(stats.heap_samples()));
+    context_->storage->IncrementIndexedStats(
+        stats::heapprofd_client_spinlock_blocked, static_cast<int>(entry.pid()),
+        static_cast<int64_t>(stats.client_spinlock_blocked_us()));
+
+    // orig_sampling_interval_bytes was introduced slightly after a bug with
+    // self_max_count was fixed in the producer. We use this as a proxy
+    // whether or not we are getting this data from a fixed producer or not.
+    bool trustworthy_max_count = entry.orig_sampling_interval_bytes() > 0;
 
     for (auto sample_it = entry.samples(); sample_it; ++sample_it) {
       protos::pbzero::ProfilePacket::HeapSample::Decoder sample(*sample_it);
@@ -346,7 +359,8 @@ void ProtoTraceParser::ParseProfilePacket(
       src_allocation.callstack_id = sample.callstack_id();
       if (sample.has_self_max()) {
         src_allocation.self_allocated = sample.self_max();
-        src_allocation.alloc_count = sample.self_max_count();
+        if (trustworthy_max_count)
+          src_allocation.alloc_count = sample.self_max_count();
       } else {
         src_allocation.self_allocated = sample.self_allocated();
         src_allocation.self_freed = sample.self_freed();

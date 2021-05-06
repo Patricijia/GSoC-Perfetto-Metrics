@@ -18,6 +18,7 @@ import {
   base64Encode,
 } from '../base/string_utils';
 import {Actions} from '../common/actions';
+import {TRACE_SUFFIX} from '../common/constants';
 import {
   AndroidLogConfig,
   AndroidLogId,
@@ -42,7 +43,6 @@ import {
   isAndroidP,
   isChromeTarget,
   isCrOSTarget,
-  MAX_TIME,
   RecordConfig,
   RecordingTarget
 } from '../common/state';
@@ -75,12 +75,6 @@ export function genConfig(
     uiCfg: RecordConfig, target: RecordingTarget): TraceConfig {
   const protoCfg = new TraceConfig();
   protoCfg.durationMs = uiCfg.durationMs;
-
-  let time = protoCfg.durationMs / 1000;
-
-  if (time > MAX_TIME) {
-    time = MAX_TIME;
-  }
 
   // Auxiliary buffer for slow-rate events.
   // Set to 1/8th of the main buffer size, with reasonable limits.
@@ -336,6 +330,15 @@ export function genConfig(
     }
   }
 
+  if (uiCfg.androidFrameTimeline) {
+    const ds = new TraceConfig.DataSource();
+    ds.config = new DataSourceConfig();
+    ds.config.name = 'android.surfaceflinger.frametimeline';
+    if (!isChromeTarget(target) || isCrOSTarget(target)) {
+      protoCfg.dataSources.push(ds);
+    }
+  }
+
   if (uiCfg.chromeLogs) {
     chromeCategories.add('log');
   }
@@ -403,7 +406,12 @@ export function genConfig(
     };
     if (chromeCategories.has('disabled-by-default-memory-infra')) {
       configStruct.memory_dump_config = {
-        triggers: [{mode: 'detailed', periodic_interval_ms: 10000}]
+        allowed_dump_modes: ['background', 'light', 'detailed'],
+        triggers: [{
+          min_time_between_dumps_ms: 10000,
+          mode: 'detailed',
+          type: 'periodic_interval',
+        }],
       };
     }
     const traceConfigJson = JSON.stringify(configStruct);
@@ -582,6 +590,7 @@ export class RecordController extends Controller<'main'> implements Consumer {
   private traceBuffer: Uint8Array[] = [];
   private bufferUpdateInterval: ReturnType<typeof setTimeout>|undefined;
   private adb = new AdbOverWebUsb();
+  private recordedTraceSuffix = TRACE_SUFFIX;
 
   // We have a different controller for each targetOS. The correct one will be
   // created when needed, and stored here. When the key is a string, it is the
@@ -701,8 +710,11 @@ export class RecordController extends Controller<'main'> implements Consumer {
       return;
     }
     const trace = this.generateTrace();
-    globals.dispatch(Actions.openTraceFromBuffer(
-        {title: 'Recorded trace', buffer: trace.buffer}));
+    globals.dispatch(Actions.openTraceFromBuffer({
+      title: 'Recorded trace',
+      buffer: trace.buffer,
+      fileName: `recorded_trace${this.recordedTraceSuffix}`,
+    }));
     this.traceBuffer = [];
   }
 
@@ -803,8 +815,12 @@ export class RecordController extends Controller<'main'> implements Consumer {
       _callback: RPCImplCallback) {
     try {
       const state = this.app.state;
-      (await this.getTargetController(state.recordingTarget))
-          .handleCommand(method.name, requestData);
+      // TODO(hjd): This is a bit weird. We implicity send each RPC message to
+      // whichever target is currently selected (creating that target if needed)
+      // it would be nicer if the setup/teardown was more explicit.
+      const target = await this.getTargetController(state.recordingTarget);
+      this.recordedTraceSuffix = target.getRecordedTraceSuffix();
+      target.handleCommand(method.name, requestData);
     } catch (e) {
       console.error(`error invoking ${method}: ${e.message}`);
     }

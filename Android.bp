@@ -3658,7 +3658,9 @@ genrule {
     "protos/perfetto/metrics/android/thread_time_in_state_metric.proto",
     "protos/perfetto/metrics/android/unsymbolized_frames.proto",
     "protos/perfetto/metrics/chrome/all_chrome_metrics.proto",
+    "protos/perfetto/metrics/chrome/blink_gc_metric.proto",
     "protos/perfetto/metrics/chrome/frame_times.proto",
+    "protos/perfetto/metrics/chrome/media_metric.proto",
     "protos/perfetto/metrics/chrome/reported_by_page.proto",
     "protos/perfetto/metrics/chrome/scroll_jank.proto",
     "protos/perfetto/metrics/chrome/test_chrome_metric.proto",
@@ -5137,6 +5139,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5151,6 +5154,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.gen.cc",
     "external/perfetto/protos/perfetto/trace/memory_graph.gen.cc",
     "external/perfetto/protos/perfetto/trace/test_event.gen.cc",
+    "external/perfetto/protos/perfetto/trace/test_extensions.gen.cc",
     "external/perfetto/protos/perfetto/trace/trace.gen.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.gen.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.gen.cc",
@@ -5165,6 +5169,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5179,6 +5184,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.gen.h",
     "external/perfetto/protos/perfetto/trace/memory_graph.gen.h",
     "external/perfetto/protos/perfetto/trace/test_event.gen.h",
+    "external/perfetto/protos/perfetto/trace/test_extensions.gen.h",
     "external/perfetto/protos/perfetto/trace/trace.gen.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.gen.h",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.gen.h",
@@ -5197,6 +5203,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5210,6 +5217,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pb.cc",
     "external/perfetto/protos/perfetto/trace/memory_graph.pb.cc",
     "external/perfetto/protos/perfetto/trace/test_event.pb.cc",
+    "external/perfetto/protos/perfetto/trace/test_extensions.pb.cc",
     "external/perfetto/protos/perfetto/trace/trace.pb.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.pb.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.pb.cc",
@@ -5224,6 +5232,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5237,6 +5246,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pb.h",
     "external/perfetto/protos/perfetto/trace/memory_graph.pb.h",
     "external/perfetto/protos/perfetto/trace/test_event.pb.h",
+    "external/perfetto/protos/perfetto/trace/test_extensions.pb.h",
     "external/perfetto/protos/perfetto/trace/trace.pb.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.pb.h",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.pb.h",
@@ -5255,6 +5265,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5269,6 +5280,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/memory_graph.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/test_event.pbzero.cc",
+    "external/perfetto/protos/perfetto/trace/test_extensions.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/trace.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet.pbzero.cc",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.pbzero.cc",
@@ -5283,6 +5295,7 @@ genrule {
     "protos/perfetto/trace/extension_descriptor.proto",
     "protos/perfetto/trace/memory_graph.proto",
     "protos/perfetto/trace/test_event.proto",
+    "protos/perfetto/trace/test_extensions.proto",
     "protos/perfetto/trace/trace.proto",
     "protos/perfetto/trace/trace_packet.proto",
     "protos/perfetto/trace/trace_packet_defaults.proto",
@@ -5297,6 +5310,7 @@ genrule {
     "external/perfetto/protos/perfetto/trace/extension_descriptor.pbzero.h",
     "external/perfetto/protos/perfetto/trace/memory_graph.pbzero.h",
     "external/perfetto/protos/perfetto/trace/test_event.pbzero.h",
+    "external/perfetto/protos/perfetto/trace/test_extensions.pbzero.h",
     "external/perfetto/protos/perfetto/trace/trace.pbzero.h",
     "external/perfetto/protos/perfetto/trace/trace_packet.pbzero.h",
     "external/perfetto/protos/perfetto/trace/trace_packet_defaults.pbzero.h",
@@ -7658,6 +7672,7 @@ filegroup {
     "src/trace_processor/dynamic/connected_flow_generator.cc",
     "src/trace_processor/dynamic/descendant_slice_generator.cc",
     "src/trace_processor/dynamic/describe_slice_generator.cc",
+    "src/trace_processor/dynamic/experimental_annotated_stack_generator.cc",
     "src/trace_processor/dynamic/experimental_counter_dur_generator.cc",
     "src/trace_processor/dynamic/experimental_flamegraph_generator.cc",
     "src/trace_processor/dynamic/experimental_sched_upid_generator.cc",
@@ -7737,6 +7752,7 @@ genrule {
     "src/trace_processor/metrics/android/android_sysui_cuj.sql",
     "src/trace_processor/metrics/android/android_task_names.sql",
     "src/trace_processor/metrics/android/android_thread_time_in_state.sql",
+    "src/trace_processor/metrics/android/composer_execution.sql",
     "src/trace_processor/metrics/android/composition_layers.sql",
     "src/trace_processor/metrics/android/cpu_info.sql",
     "src/trace_processor/metrics/android/display_metrics.sql",
@@ -7777,9 +7793,12 @@ genrule {
     "src/trace_processor/metrics/chrome/scroll_jank_cause_get_bitmap.sql",
     "src/trace_processor/metrics/chrome/scroll_jank_cause_queuing_delay.sql",
     "src/trace_processor/metrics/chrome/test_chrome_metric.sql",
+    "src/trace_processor/metrics/experimental/blink_gc_metric.sql",
     "src/trace_processor/metrics/experimental/frame_times.sql",
+    "src/trace_processor/metrics/experimental/media_metric.sql",
     "src/trace_processor/metrics/experimental/reported_by_page.sql",
     "src/trace_processor/metrics/trace_metadata.sql",
+    "src/trace_processor/metrics/trace_stats.sql",
     "src/trace_processor/metrics/webview/webview_power_usage.sql",
   ],
   cmd: "$(location tools/gen_merged_sql_metrics.py) --cpp_out=$(out) $(in)",
@@ -7905,6 +7924,7 @@ filegroup {
     "src/trace_processor/importers/ninja/ninja_log_parser.cc",
     "src/trace_processor/importers/proto/args_table_utils.cc",
     "src/trace_processor/importers/proto/async_track_set_tracker.cc",
+    "src/trace_processor/importers/proto/chrome_string_lookup.cc",
     "src/trace_processor/importers/proto/chrome_system_probes_module.cc",
     "src/trace_processor/importers/proto/chrome_system_probes_parser.cc",
     "src/trace_processor/importers/proto/heap_profile_tracker.cc",
@@ -8638,6 +8658,7 @@ filegroup {
 filegroup {
   name: "perfetto_src_tracing_unittests",
   srcs: [
+    "src/tracing/traced_proto_unittest.cc",
     "src/tracing/traced_value_unittest.cc",
   ],
 }
@@ -9687,6 +9708,7 @@ cc_binary {
   ],
   required: [
     "libperfetto_android_internal",
+    "mm_events",
     "traced_perf",
     "trigger_perfetto",
   ],
@@ -9907,8 +9929,47 @@ genrule {
     ],
 }
 
+sh_binary {
+    name: "mm_events",
+    src: "tools/mm_events",
+}
+
 package {
     default_applicable_licenses: ["external_perfetto_license"],
+}
+
+python_library {
+    name: "perfetto-trace-processor-python",
+    srcs: [
+        ":perfetto-trace-processor-python-srcs",
+    ],
+    data: [
+        ":perfetto-trace-processor-python-data",
+    ],
+    version: {
+        py2: {
+            enabled: false,
+        },
+        py3: {
+            enabled: true,
+        },
+    },
+    libs: [
+        "libprotobuf-python",
+    ],
+    host_supported: true,
+}
+
+filegroup {
+    name: "perfetto-trace-processor-python-srcs",
+    srcs: ["src/trace_processor/python/perfetto/**/*.py"],
+    path: "src/trace_processor/python",
+}
+
+filegroup {
+    name: "perfetto-trace-processor-python-data",
+    srcs: ["src/trace_processor/python/perfetto/**/*.descriptor*"],
+    path: "src/trace_processor/python",
 }
 
 // Added automatically by a large-scale-change that took the approach of

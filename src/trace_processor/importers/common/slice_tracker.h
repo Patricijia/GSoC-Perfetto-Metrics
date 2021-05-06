@@ -126,10 +126,11 @@ class SliceTracker {
   };
   using StackMap = std::unordered_map<TrackId, TrackInfo>;
 
-  base::Optional<SliceId> StartSlice(int64_t timestamp,
-                                     TrackId track_id,
-                                     SetArgsCallback args_callback,
-                                     std::function<SliceId()> inserter);
+  // virtual for testing.
+  virtual base::Optional<SliceId> StartSlice(int64_t timestamp,
+                                             TrackId track_id,
+                                             SetArgsCallback args_callback,
+                                             std::function<SliceId()> inserter);
 
   base::Optional<SliceId> CompleteSlice(
       int64_t timestamp,
@@ -154,7 +155,7 @@ class SliceTracker {
 
   // Timestamp of the previous event. Used to discard events arriving out
   // of order.
-  int64_t prev_timestamp_ = 0;
+  int64_t prev_timestamp_ = std::numeric_limits<int64_t>::min();
 
   const StringId legacy_unnestable_begin_count_string_id_;
   const StringId legacy_unnestable_last_begin_ts_string_id_;

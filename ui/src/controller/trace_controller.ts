@@ -19,6 +19,7 @@ import {
   Actions,
   DeferredAction,
 } from '../common/actions';
+import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine, QueryError} from '../common/engine';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
 import {slowlyCountRows} from '../common/query_iterator';
@@ -83,8 +84,6 @@ import {TrackControllerArgs, trackControllerRegistry} from './track_controller';
 import {decideTracks} from './track_decider';
 
 type States = 'init'|'loading_trace'|'ready';
-
-const TRACE_MARGIN_TIME_S = 1 / 1e7;
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -518,13 +517,16 @@ export class TraceController extends Controller<States> {
 
       this.updateStatus(`Inserting data for ${metric} metric`);
       try {
-        const result = await engine.query(`
-        SELECT * FROM ${metric}_event LIMIT 1`);
-
-        const hasSliceName =
-            result.columnDescriptors.some(x => x.name === 'slice_name');
-        const hasDur = result.columnDescriptors.some(x => x.name === 'dur');
-        const hasUpid = result.columnDescriptors.some(x => x.name === 'upid');
+        const result = await engine.query(`pragma table_info(${metric}_event)`);
+        let hasSliceName = false;
+        let hasDur = false;
+        let hasUpid = false;
+        for (let i = 0; i < slowlyCountRows(result); i++) {
+          const name = result.columns[1].stringValues![i];
+          hasSliceName = hasSliceName || name === 'slice_name';
+          hasDur = hasDur || name === 'dur';
+          hasUpid = hasUpid || name === 'upid';
+        }
 
         const upidColumnSelect = hasUpid ? 'upid' : '0 AS upid';
         const upidColumnWhere = hasUpid ? 'upid' : '0';

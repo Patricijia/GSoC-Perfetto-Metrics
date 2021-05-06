@@ -318,13 +318,13 @@ def gen_proto_labels(target):
   plugin_label.comment = target.name
   plugin_label.deps += [':' + sources_label_name]
 
-  # When using the cppgen plugin we need to pass down also the transitive deps.
+  # When using the plugins we need to pass down also the transitive deps.
   # For instance consider foo.proto including common.proto. The generated
   # foo.cc will #include "common.gen.h". Hence the generated cc_protocpp_library
   # rule need to pass down the dependency on the target that generates
-  # common.gen.{cc,h}. This is not needed for protozero because protozero
-  # headers are fully hermetic deps-wise and use only on forward declarations.
-  if target.proto_deps and target.proto_plugin in ('cppgen', 'ipc'):
+  # common.gen.{cc,h}.
+  if target.proto_deps and target.proto_plugin in (
+      'cppgen', 'ipc', 'protozero'):
     plugin_label.deps += [
         ':' + get_bazel_label_name(x) for x in target.proto_deps
     ]
@@ -412,6 +412,8 @@ def gen_target_str(gn_target):
 
 def generate_build(gn_desc, targets, extras):
   gn = gn_utils.GnParser(gn_desc)
+  project_root = os.path.abspath(os.path.dirname(os.path.dirname(__file__)))
+  tool_name = os.path.relpath(os.path.abspath(__file__), project_root)
   res = '''
 # Copyright (C) 2019 The Android Open Source Project
 #
@@ -454,7 +456,7 @@ licenses(["notice"])
 
 exports_files(["NOTICE"])
 
-'''.format(__file__).lstrip()
+'''.format(tool_name).lstrip()
 
   # Public targets need to be computed at the beginning (to figure out the
   # intermediate deps) but printed at the end (because declaration order matters
