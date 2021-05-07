@@ -46,7 +46,7 @@ class ActualFramesSliceTrackController extends TrackController<Config, Data> {
 
     if (this.maxDurNs === 0) {
       const maxDurResult = await this.query(`
-        select max(dur)
+        select max(iif(dur = -1, (SELECT end_ts FROM trace_bounds) - ts, dur))
         from experimental_slice_layout
         where filter_track_ids = '${this.config.trackIds.join(',')}'
       `);
@@ -59,7 +59,8 @@ class ActualFramesSliceTrackController extends TrackController<Config, Data> {
       SELECT
         (s.ts + ${bucketNs / 2}) / ${bucketNs} * ${bucketNs} as tsq,
         s.ts,
-        max(s.dur) as dur,
+        max(iif(s.dur = -1, (SELECT end_ts FROM trace_bounds) - s.ts, s.dur))
+            as dur,
         s.layout_depth,
         s.name,
         s.id,
@@ -70,6 +71,7 @@ class ActualFramesSliceTrackController extends TrackController<Config, Data> {
           WHEN 'Other Jank' THEN '${YELLOW_COLOR}'
           WHEN 'Dropped Frame' THEN '${BLUE_COLOR}'
           WHEN 'Buffer Stuffing' THEN '${LIGHT_GREEN_COLOR}'
+          WHEN 'SurfaceFlinger Stuffing' THEN '${LIGHT_GREEN_COLOR}'
           WHEN 'No Jank' THEN '${GREEN_COLOR}'
           ELSE '${PINK_COLOR}'
         END as color

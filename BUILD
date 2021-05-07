@@ -306,6 +306,7 @@ filegroup(
         "include/perfetto/ext/base/no_destructor.h",
         "include/perfetto/ext/base/optional.h",
         "include/perfetto/ext/base/paged_memory.h",
+        "include/perfetto/ext/base/periodic_task.h",
         "include/perfetto/ext/base/pipe.h",
         "include/perfetto/ext/base/scoped_file.h",
         "include/perfetto/ext/base/small_set.h",
@@ -528,6 +529,7 @@ filegroup(
         "include/perfetto/tracing/internal/tracing_tls.h",
         "include/perfetto/tracing/internal/track_event_data_source.h",
         "include/perfetto/tracing/internal/track_event_internal.h",
+        "include/perfetto/tracing/internal/track_event_interned_fields.h",
         "include/perfetto/tracing/internal/track_event_macros.h",
         "include/perfetto/tracing/internal/write_track_event_args.h",
         "include/perfetto/tracing/locked_handle.h",
@@ -599,6 +601,7 @@ perfetto_cc_library(
         "src/base/logging.cc",
         "src/base/metatrace.cc",
         "src/base/paged_memory.cc",
+        "src/base/periodic_task.cc",
         "src/base/pipe.cc",
         "src/base/status.cc",
         "src/base/string_splitter.cc",
@@ -783,7 +786,6 @@ filegroup(
 perfetto_cc_library(
     name = "src_trace_processor_containers_containers",
     srcs = [
-        ":src_trace_processor_containers_containers_headers",
         "src/trace_processor/containers/bit_vector.cc",
         "src/trace_processor/containers/bit_vector_iterators.cc",
         "src/trace_processor/containers/nullable_vector.cc",
@@ -793,17 +795,6 @@ perfetto_cc_library(
     hdrs = [
         ":include_perfetto_base_base",
         ":include_perfetto_protozero_protozero",
-    ],
-    deps = [
-        ":src_base_base",
-    ],
-    linkstatic = True,
-)
-
-# GN target: //src/trace_processor/containers:containers_headers
-filegroup(
-    name = "src_trace_processor_containers_containers_headers",
-    srcs = [
         "src/trace_processor/containers/bit_vector.h",
         "src/trace_processor/containers/bit_vector_iterators.h",
         "src/trace_processor/containers/null_term_string_view.h",
@@ -811,6 +802,10 @@ filegroup(
         "src/trace_processor/containers/row_map.h",
         "src/trace_processor/containers/string_pool.h",
     ],
+    deps = [
+        ":src_base_base",
+    ],
+    linkstatic = True,
 )
 
 # GN target: //src/trace_processor/db:db
@@ -1653,6 +1648,7 @@ filegroup(
         "src/tracing/internal/tracing_muxer_impl.cc",
         "src/tracing/internal/tracing_muxer_impl.h",
         "src/tracing/internal/track_event_internal.cc",
+        "src/tracing/internal/track_event_interned_fields.cc",
         "src/tracing/platform.cc",
         "src/tracing/traced_value.cc",
         "src/tracing/tracing.cc",
@@ -3435,7 +3431,6 @@ perfetto_cc_library(
     name = "trace_processor",
     srcs = [
         ":src_trace_processor_analysis_analysis",
-        ":src_trace_processor_containers_containers_headers",
         ":src_trace_processor_db_db",
         ":src_trace_processor_export_json",
         ":src_trace_processor_ftrace_descriptors",
@@ -3531,7 +3526,6 @@ perfetto_cc_binary(
         ":src_profiling_symbolizer_symbolize_database",
         ":src_profiling_symbolizer_symbolizer",
         ":src_trace_processor_analysis_analysis",
-        ":src_trace_processor_containers_containers_headers",
         ":src_trace_processor_db_db",
         ":src_trace_processor_export_json",
         ":src_trace_processor_ftrace_descriptors",
@@ -3644,7 +3638,6 @@ perfetto_cc_library(
         ":src_profiling_deobfuscator",
         ":src_profiling_symbolizer_symbolize_database",
         ":src_profiling_symbolizer_symbolizer",
-        ":src_trace_processor_containers_containers_headers",
         ":tools_trace_to_text_pprofbuilder",
         ":tools_trace_to_text_utils",
     ],
@@ -3713,7 +3706,6 @@ perfetto_cc_binary(
         ":src_profiling_symbolizer_symbolize_database",
         ":src_profiling_symbolizer_symbolizer",
         ":src_trace_processor_analysis_analysis",
-        ":src_trace_processor_containers_containers_headers",
         ":src_trace_processor_db_db",
         ":src_trace_processor_export_json",
         ":src_trace_processor_ftrace_descriptors",
