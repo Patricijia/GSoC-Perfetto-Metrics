@@ -95,6 +95,9 @@ bool NameMatchesPatternList(const std::vector<std::string>& patterns,
 const Track TrackEventInternal::kDefaultTrack{};
 
 // static
+std::atomic<int> TrackEventInternal::session_count_{};
+
+// static
 bool TrackEventInternal::Initialize(
     const TrackEventCategoryRegistry& registry,
     bool (*register_data_source)(const DataSourceDescriptor&)) {
@@ -172,6 +175,7 @@ void TrackEventInternal::EnableTracing(
 
 // static
 void TrackEventInternal::OnStart(const DataSourceBase::StartArgs& args) {
+  session_count_.fetch_add(1);
   ForEachObserver([&](TrackEventSessionObserver*& o) {
     if (o)
       o->OnStart(args);
@@ -218,6 +222,14 @@ bool TrackEventInternal::IsCategoryEnabled(
           return false;
         }
         break;
+      }
+      // No match? Must be a dynamic category.
+      DynamicCategory dyn_category(std::string(member_name, name_size));
+      Category ref_category{Category::FromDynamicCategory(dyn_category)};
+      if (IsCategoryEnabled(registry, config, ref_category)) {
+        result = true;
+        // Break ForEachGroupMember() loop.
+        return false;
       }
       // No match found => keep iterating.
       return true;
@@ -288,6 +300,11 @@ uint64_t TrackEventInternal::GetTimeNs() {
     return static_cast<uint64_t>(perfetto::base::GetBootTimeNs().count());
   PERFETTO_DCHECK(GetClockId() == protos::pbzero::BUILTIN_CLOCK_MONOTONIC);
   return static_cast<uint64_t>(perfetto::base::GetWallTimeNs().count());
+}
+
+// static
+int TrackEventInternal::GetSessionCount() {
+  return session_count_.load();
 }
 
 // static
