@@ -34,6 +34,7 @@ android_sysui_cuj {
    dur: 38000000
    jank_cause: "GPU completion - long completion time"
    jank_cause: "Long running time"
+   jank_cause: "JIT compiling"
    vsync: 40
  }
  frames {
@@ -62,7 +63,6 @@ android_sysui_cuj {
     number: 8
     ts: 400000000
     dur: 10000000
-    jank_cause: "Buffer Stuffing"
     vsync: 120
   }
 }

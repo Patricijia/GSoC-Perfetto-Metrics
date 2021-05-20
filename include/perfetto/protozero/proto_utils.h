@@ -201,12 +201,20 @@ inline uint8_t* WriteVarInt(T value, uint8_t* target) {
 // used to backfill fixed-size reservations for the length field using a
 // non-canonical varint encoding (e.g. \x81\x80\x80\x00 instead of \x01).
 // See https://github.com/google/protobuf/issues/1530.
-// In particular, this is used for nested messages. The size of a nested message
-// is not known until all its field have been written. |kMessageLengthFieldSize|
-// bytes are reserved to encode the size field and backfilled at the end.
-inline void WriteRedundantVarInt(uint32_t value, uint8_t* buf) {
-  for (size_t i = 0; i < kMessageLengthFieldSize; ++i) {
-    const uint8_t msb = (i < kMessageLengthFieldSize - 1) ? 0x80 : 0;
+// This is used mainly in two cases:
+// 1) At trace writing time, when starting a nested messages. The size of a
+//    nested message is not known until all its field have been written.
+//    |kMessageLengthFieldSize| bytes are reserved to encode the size field and
+//    backfilled at the end.
+// 2) When rewriting a message at trace filtering time, in protozero/filtering.
+//    At that point we know only the upper bound of the length (a filtered
+//    message is <= the original one) and we backfill after the message has been
+//    filtered.
+inline void WriteRedundantVarInt(uint32_t value,
+                                 uint8_t* buf,
+                                 size_t size = kMessageLengthFieldSize) {
+  for (size_t i = 0; i < size; ++i) {
+    const uint8_t msb = (i < size - 1) ? 0x80 : 0;
     buf[i] = static_cast<uint8_t>(value) | msb;
     value >>= 7;
   }
@@ -265,24 +273,32 @@ struct FieldMetadata : public FieldMetadataBase {
   constexpr FieldMetadata() = default;
 
   static constexpr int kFieldId = field_id;
+  // Whether this field is repeated, packed (repeated [packed-true]) or not
+  // (optional).
   static constexpr RepetitionType kRepetitionType = repetition_type;
+  // Proto type of this field (e.g. int64, fixed32 or nested message).
   static constexpr ProtoSchemaType kProtoFieldType = proto_schema_type;
-  using cpp_proto_schema_type = CppFieldType;
+  // C++ type of this field (for nested messages - C++ protozero class).
+  using cpp_field_type = CppFieldType;
+  // Protozero message which this field belongs to.
   using message_type = MessageType;
 };
+
+namespace internal {
 
 // Ideally we would create variables of FieldMetadata<...> type directly,
 // but before C++17's support for constexpr inline variables arrive, we have to
 // actually use pointers to inline functions instead to avoid having to define
 // symbols in *.pbzero.cc files.
 //
-// Note: protozero bindings will generate Message::kFieldName variable and then
-// they can be passed to TRACE_EVENT macro for inline writing of typed messages.
+// Note: protozero bindings will generate Message::kFieldName variable and which
+// can then be passed to TRACE_EVENT macro for inline writing of typed messages.
 // The fact that the former can be passed to the latter is a part of the stable
 // API, while the particular type is not and users should not rely on it.
 template <typename T>
-using FieldMetadataVariable = T (*)(void);
+using FieldMetadataHelper = T (*)(void);
 
+}  // namespace internal
 }  // namespace proto_utils
 }  // namespace protozero
 

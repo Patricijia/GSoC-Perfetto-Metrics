@@ -19,6 +19,7 @@ import {
   Actions,
   DeferredAction,
 } from '../common/actions';
+import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine, QueryError} from '../common/engine';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
 import {slowlyCountRows} from '../common/query_iterator';
@@ -83,8 +84,6 @@ import {TrackControllerArgs, trackControllerRegistry} from './track_controller';
 import {decideTracks} from './track_decider';
 
 type States = 'init'|'loading_trace'|'ready';
-
-const TRACE_MARGIN_TIME_S = 1 / 1e7;
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -299,11 +298,26 @@ export class TraceController extends Controller<States> {
       Actions.navigate({route: '/viewer'}),
     ];
 
+    let visibleStartSec = startSec;
+    let visibleEndSec = endSec;
+    const mdTime = await this.engine.getTracingMetadataTimeBounds();
+    // make sure the bounds hold
+    if (Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S) <
+        Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S)) {
+      visibleStartSec =
+          Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S);
+      visibleEndSec = Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S);
+    }
+
     // We don't know the resolution at this point. However this will be
     // replaced in 50ms so a guess is fine.
-    const resolution = (traceTime.end - traceTime.start) / 1000;
-    actions.push(Actions.setVisibleTraceTime(
-        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution}));
+    const resolution = (visibleStartSec - visibleEndSec) / 1000;
+    actions.push(Actions.setVisibleTraceTime({
+      startSec: visibleStartSec,
+      endSec: visibleEndSec,
+      lastUpdate: Date.now() / 1000,
+      resolution
+    }));
 
     globals.dispatchMultiple(actions);
 
@@ -320,6 +334,14 @@ export class TraceController extends Controller<States> {
 
     await this.listThreads();
     await this.loadTimelineOverview(traceTime);
+
+    {
+      const query = 'select to_ftrace(id) from raw limit 1';
+      const result = await assertExists(this.engine).query(query);
+      const hasFtrace = !!slowlyCountRows(result);
+      globals.publish('HasFtrace', hasFtrace);
+    }
+
     globals.dispatch(Actions.sortThreadTracks({}));
     await this.selectFirstHeapProfile();
 

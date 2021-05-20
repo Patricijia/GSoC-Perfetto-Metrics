@@ -17,6 +17,7 @@ import {hsluvToHex} from 'hsluv';
 import {Actions} from '../../common/actions';
 import {cropText, drawIncompleteSlice} from '../../common/canvas_utils';
 import {hslForSlice} from '../../common/colorizer';
+import {TRACE_MARGIN_TIME_S} from '../../common/constants';
 import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
@@ -27,7 +28,6 @@ import {Config, Data, SLICE_TRACK_KIND} from './common';
 
 const SLICE_HEIGHT = 18;
 const TRACK_PADDING = 4;
-const INCOMPLETE_SLICE_TIME_S = 0.00003;
 const CHEVRON_WIDTH_PX = 10;
 const HALF_CHEVRON_WIDTH_PX = CHEVRON_WIDTH_PX / 2;
 const INNER_CHEVRON_OFFSET = -3;
@@ -86,7 +86,7 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const title = data.strings[titleId];
       const colorOverride = data.colors && data.strings[data.colors[i]];
       if (isIncomplete) {  // incomplete slice
-        tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
+        tEnd = visibleWindowTime.end;
       }
 
       const rect = this.getSliceRect(tStart, tEnd, depth);
@@ -209,7 +209,7 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       } else {
         let tEnd = data.ends[i];
         if (data.isIncomplete[i]) {
-          tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
+          tEnd = globals.frontendLocalState.visibleWindowTime.end;
         }
         if (tStart <= t && t <= tEnd) {
           return i;
@@ -259,7 +259,7 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       |undefined {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const pxEnd = timeScale.timeToPx(visibleWindowTime.end);
-    const left = Math.max(timeScale.timeToPx(tStart), 0);
+    const left = Math.max(timeScale.timeToPx(tStart), -TRACE_MARGIN_TIME_S);
     const right = Math.min(timeScale.timeToPx(tEnd), pxEnd);
     return {
       left,
