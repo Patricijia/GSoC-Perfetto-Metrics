@@ -134,10 +134,15 @@ TEST(StringUtilsTest, StringToDouble) {
   EXPECT_DOUBLE_EQ(StringToDouble("1").value(), 1l);
   EXPECT_DOUBLE_EQ(StringToDouble("-42").value(), -42l);
   EXPECT_DOUBLE_EQ(StringToDouble("-42.5").value(), -42.5l);
+  EXPECT_DOUBLE_EQ(StringToDouble("0.5").value(), .5l);
+  EXPECT_DOUBLE_EQ(StringToDouble(".5").value(), .5l);
   EXPECT_EQ(StringToDouble(""), nullopt);
   EXPECT_EQ(StringToDouble("!?"), nullopt);
   EXPECT_EQ(StringToDouble("abc"), nullopt);
   EXPECT_EQ(StringToDouble("123 abc"), nullopt);
+  EXPECT_EQ(StringToDouble("124,456"), nullopt);
+  EXPECT_EQ(StringToDouble("4 2"), nullopt);
+  EXPECT_EQ(StringToDouble(" - 42"), nullopt);
 }
 
 TEST(StringUtilsTest, StartsWith) {
@@ -167,11 +172,26 @@ TEST(StringUtilsTest, ToHex) {
   EXPECT_EQ(ToHex("abc123"), "616263313233");
 }
 
-TEST(StringUtilsTest, intToHex) {
+TEST(StringUtilsTest, IntToHex) {
   EXPECT_EQ(IntToHexString(0), "0x00");
   EXPECT_EQ(IntToHexString(1), "0x01");
   EXPECT_EQ(IntToHexString(16), "0x10");
   EXPECT_EQ(IntToHexString(4294967295), "0xffffffff");
+}
+
+TEST(StringUtilsTest, Uint64ToHex) {
+  EXPECT_EQ(Uint64ToHexString(0), "0x0");
+  EXPECT_EQ(Uint64ToHexString(1), "0x1");
+  EXPECT_EQ(Uint64ToHexString(16), "0x10");
+  EXPECT_EQ(Uint64ToHexString(18446744073709551615UL), "0xffffffffffffffff");
+}
+
+TEST(StringUtilsTest, Uint64ToHexNoPrefix) {
+  EXPECT_EQ(Uint64ToHexStringNoPrefix(0), "0");
+  EXPECT_EQ(Uint64ToHexStringNoPrefix(1), "1");
+  EXPECT_EQ(Uint64ToHexStringNoPrefix(16), "10");
+  EXPECT_EQ(Uint64ToHexStringNoPrefix(18446744073709551615UL),
+            "ffffffffffffffff");
 }
 
 TEST(StringUtilsTest, CaseInsensitiveEqual) {

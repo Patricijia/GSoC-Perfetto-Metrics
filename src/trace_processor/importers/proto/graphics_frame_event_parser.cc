@@ -120,6 +120,8 @@ bool GraphicsFrameEventParser::CreateBufferEvent(
   track.scope = graphics_event_scope_id_;
   TrackId track_id = context_->track_tracker->InternGpuTrack(track);
 
+  auto* graphics_frame_slice_table =
+      context_->storage->mutable_graphics_frame_slice_table();
   {
     tables::GraphicsFrameSliceTable::Row row;
     row.ts = timestamp;
@@ -142,15 +144,16 @@ bool GraphicsFrameEventParser::CreateBufferEvent(
       row.acquire_to_latch_time = latch_ts - acquire_ts;
       row.latch_to_present_time = timestamp - latch_ts;
     }
-    auto slice_id = context_->slice_tracker->ScopedFrameEvent(row);
+    base::Optional<SliceId> opt_slice_id =
+        context_->slice_tracker->ScopedTyped(graphics_frame_slice_table, row);
     if (event.type() == GraphicsFrameEvent::DEQUEUE) {
-      dequeue_slice_ids_[buffer_id] = slice_id;
+      if (opt_slice_id) {
+        dequeue_slice_ids_[buffer_id] = *opt_slice_id;
+      }
     } else if (event.type() == GraphicsFrameEvent::QUEUE) {
       auto it = dequeue_slice_ids_.find(buffer_id);
       if (it != dequeue_slice_ids_.end()) {
         auto dequeue_slice_id = it->second;
-        auto* graphics_frame_slice_table =
-            context_->storage->mutable_graphics_frame_slice_table();
         uint32_t row_idx =
             *graphics_frame_slice_table->id().IndexOf(dequeue_slice_id);
         graphics_frame_slice_table->mutable_frame_number()->Set(row_idx,
@@ -159,6 +162,30 @@ bool GraphicsFrameEventParser::CreateBufferEvent(
     }
   }
   return true;
+}
+
+void GraphicsFrameEventParser::InvalidatePhaseEvent(int64_t timestamp,
+                                                    TrackId track_id,
+                                                    bool reset_name) {
+  const auto opt_slice_id = context_->slice_tracker->End(timestamp, track_id);
+
+  if (opt_slice_id) {
+    auto* graphics_frame_slice_table =
+        context_->storage->mutable_graphics_frame_slice_table();
+    uint32_t row_idx = *graphics_frame_slice_table->id().IndexOf(*opt_slice_id);
+    if (reset_name) {
+      // Set the name (frame_number) to be 0 since there is no frame number
+      // associated, example : dequeue event.
+      StringId frame_name_id = context_->storage->InternString("0");
+      graphics_frame_slice_table->mutable_name()->Set(row_idx, frame_name_id);
+      graphics_frame_slice_table->mutable_frame_number()->Set(row_idx, 0);
+    }
+
+    // Set the duration to -1 so that this slice will be ignored by the
+    // UI. Setting any other duration results in wrong data which we want
+    // to avoid at all costs.
+    graphics_frame_slice_table->mutable_dur()->Set(row_idx, -1);
+  }
 }
 
 // Here we convert the buffer events into Phases(slices)
@@ -200,16 +227,29 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
       tables::GpuTrackTable::Row app_track(track_name_id);
       app_track.scope = graphics_event_scope_id_;
       track_id = context_->track_tracker->InternGpuTrack(app_track);
+
+      // Error handling
+      auto dequeue_time = dequeue_map_.find(buffer_id);
+      if (dequeue_time != dequeue_map_.end()) {
+        InvalidatePhaseEvent(timestamp, dequeue_time->second, true);
+        dequeue_map_.erase(dequeue_time);
+      }
+      auto queue_time = queue_map_.find(buffer_id);
+      if (queue_time != queue_map_.end()) {
+        InvalidatePhaseEvent(timestamp, queue_time->second);
+        queue_map_.erase(queue_time);
+      }
+
       dequeue_map_[buffer_id] = track_id;
       last_dequeued_[buffer_id] = timestamp;
       break;
     }
 
     case GraphicsFrameEvent::QUEUE: {
-      auto dequeueTime = dequeue_map_.find(buffer_id);
-      if (dequeueTime != dequeue_map_.end()) {
-        const auto opt_slice_id = context_->slice_tracker->EndFrameEvent(
-            timestamp, dequeueTime->second);
+      auto dequeue_time = dequeue_map_.find(buffer_id);
+      if (dequeue_time != dequeue_map_.end()) {
+        const auto opt_slice_id =
+            context_->slice_tracker->End(timestamp, dequeue_time->second);
         slice_name.reset();
         slice_name.AppendUnsignedInt(frame_number);
         if (opt_slice_id) {
@@ -225,7 +265,7 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
                                                           frame_name_id);
           graphics_frame_slice_table->mutable_frame_number()->Set(row_idx,
                                                                   frame_number);
-          dequeue_map_.erase(dequeueTime);
+          dequeue_map_.erase(dequeue_time);
         }
       }
       // The AcquireFence might be signaled before receiving a QUEUE event
@@ -247,10 +287,10 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
       break;
     }
     case GraphicsFrameEvent::ACQUIRE_FENCE: {
-      auto queueTime = queue_map_.find(buffer_id);
-      if (queueTime != queue_map_.end()) {
-        context_->slice_tracker->EndFrameEvent(timestamp, queueTime->second);
-        queue_map_.erase(queueTime);
+      auto queue_time = queue_map_.find(buffer_id);
+      if (queue_time != queue_map_.end()) {
+        context_->slice_tracker->End(timestamp, queue_time->second);
+        queue_map_.erase(queue_time);
       }
       last_acquired_[buffer_id] = timestamp;
       start_slice = false;
@@ -259,31 +299,10 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
     case GraphicsFrameEvent::LATCH: {
       // b/157578286 - Sometimes Queue event goes missing. To prevent having a
       // wrong slice info, we try to close any existing APP slice.
-      auto dequeueTime = dequeue_map_.find(buffer_id);
-      if (dequeueTime != dequeue_map_.end()) {
-        auto args_callback = [this](ArgsTracker::BoundInserter* inserter) {
-          inserter->AddArg(context_->storage->InternString("Details"),
-                           Variadic::String(queue_lost_message_id_));
-        };
-        const auto opt_slice_id = context_->slice_tracker->EndFrameEvent(
-            timestamp, dequeueTime->second, args_callback);
-        slice_name.reset();
-        slice_name.AppendUnsignedInt(frame_number);
-        if (opt_slice_id) {
-          auto* graphics_frame_slice_table =
-              context_->storage->mutable_graphics_frame_slice_table();
-          // Set the name of the slice to be the frame number since dequeue did
-          // not have a frame number at that time.
-          uint32_t row_idx =
-              *graphics_frame_slice_table->id().IndexOf(*opt_slice_id);
-          StringId frame_name_id =
-              context_->storage->InternString(slice_name.GetStringView());
-          graphics_frame_slice_table->mutable_name()->Set(row_idx,
-                                                          frame_name_id);
-          graphics_frame_slice_table->mutable_frame_number()->Set(row_idx,
-                                                                  frame_number);
-          dequeue_map_.erase(dequeueTime);
-        }
+      auto dequeue_time = dequeue_map_.find(buffer_id);
+      if (dequeue_time != dequeue_map_.end()) {
+        InvalidatePhaseEvent(timestamp, dequeue_time->second, true);
+        dequeue_map_.erase(dequeue_time);
       }
       track_name.reset();
       track_name.AppendLiteral("SF_");
@@ -298,15 +317,15 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
     }
 
     case GraphicsFrameEvent::PRESENT_FENCE: {
-      auto latchTime = latch_map_.find(buffer_id);
-      if (latchTime != latch_map_.end()) {
-        context_->slice_tracker->EndFrameEvent(timestamp, latchTime->second);
-        latch_map_.erase(latchTime);
+      auto latch_time = latch_map_.find(buffer_id);
+      if (latch_time != latch_map_.end()) {
+        context_->slice_tracker->End(timestamp, latch_time->second);
+        latch_map_.erase(latch_time);
       }
-      auto displayTime = display_map_.find(layer_name_id);
-      if (displayTime != display_map_.end()) {
-        context_->slice_tracker->EndFrameEvent(timestamp, displayTime->second);
-        display_map_.erase(displayTime);
+      auto display_time = display_map_.find(layer_name_id);
+      if (display_time != display_map_.end()) {
+        context_->slice_tracker->End(timestamp, display_time->second);
+        display_map_.erase(display_time);
       }
       base::StringView layerName(event.layer_name());
       track_name.reset();
@@ -344,7 +363,8 @@ void GraphicsFrameEventParser::CreatePhaseEvent(
     }
     slice.name = context_->storage->InternString(slice_name.GetStringView());
     slice.frame_number = frame_number;
-    context_->slice_tracker->BeginFrameEvent(slice);
+    context_->slice_tracker->BeginTyped(
+        context_->storage->mutable_graphics_frame_slice_table(), slice);
   }
 }
 

@@ -71,7 +71,8 @@ void FlowTracker::Step(TrackId track_id, FlowId flow_id) {
 
 void FlowTracker::End(TrackId track_id,
                       FlowId flow_id,
-                      bool bind_enclosing_slice) {
+                      bool bind_enclosing_slice,
+                      bool close_flow) {
   if (!bind_enclosing_slice) {
     pending_flow_ids_map_[track_id].push_back(flow_id);
     return;
@@ -87,7 +88,14 @@ void FlowTracker::End(TrackId track_id,
     return;
   }
   SliceId slice_out_id = flow_to_slice_map_[flow_id];
+  if (close_flow) {
+    flow_to_slice_map_.erase(flow_to_slice_map_.find(flow_id));
+  }
   InsertFlow(flow_id, slice_out_id, open_slice_id.value());
+}
+
+bool FlowTracker::IsActive(FlowId flow_id) const {
+  return flow_to_slice_map_.find(flow_id) != flow_to_slice_map_.end();
 }
 
 FlowId FlowTracker::GetFlowIdForV1Event(uint64_t source_id,
@@ -133,6 +141,11 @@ void FlowTracker::InsertFlow(FlowId flow_id,
     inserter.AddArg(cat_key_id_, Variadic::String(it->second.cat));
     context_->args_tracker->Flush();
   }
+}
+
+void FlowTracker::InsertFlow(SliceId slice_out_id, SliceId slice_in_id) {
+  tables::FlowTable::Row row(slice_out_id, slice_in_id, kInvalidArgSetId);
+  context_->storage->mutable_flow_table()->Insert(row);
 }
 
 }  // namespace trace_processor

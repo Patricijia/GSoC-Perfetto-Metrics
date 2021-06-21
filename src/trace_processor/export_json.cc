@@ -89,12 +89,6 @@ const char* GetNonNullString(const TraceStorage* storage, StringId id) {
   return id == kNullStringId ? "" : storage->GetString(id).c_str();
 }
 
-std::string PrintUint64(uint64_t x) {
-  char hex_str[19];
-  sprintf(hex_str, "0x%" PRIx64, x);
-  return hex_str;
-}
-
 class JsonExporter {
  public:
   JsonExporter(const TraceStorage* storage,
@@ -119,6 +113,10 @@ class JsonExporter {
     if (!status.ok())
       return status;
 
+    status = ExportProcessUptimes();
+    if (!status.ok())
+      return status;
+
     status = ExportSlices();
     if (!status.ok())
       return status;
@@ -140,6 +138,10 @@ class JsonExporter {
       return status;
 
     status = ExportStats();
+    if (!status.ok())
+      return status;
+
+    status = ExportMemorySnapshots();
     if (!status.ok())
       return status;
 
@@ -313,7 +315,8 @@ class JsonExporter {
     }
 
     void WriteMetadataEvent(const char* metadata_type,
-                            const char* metadata_value,
+                            const char* metadata_arg_name,
+                            const char* metadata_arg_value,
                             uint32_t pid,
                             uint32_t tid) {
       if (label_filter_ && !label_filter_("traceEvents"))
@@ -332,7 +335,7 @@ class JsonExporter {
       value["tid"] = Json::Int(tid);
 
       Json::Value args;
-      args["name"] = metadata_value;
+      args[metadata_arg_name] = metadata_arg_value;
       value["args"] = args;
 
       writer_->write(value, &ss);
@@ -555,7 +558,7 @@ class JsonExporter {
             return variadic.real_value;
           }
         case Variadic::kPointer:
-          return PrintUint64(variadic.pointer_value);
+          return base::Uint64ToHexString(variadic.pointer_value);
         case Variadic::kBool:
           return variadic.bool_value;
         case Variadic::kJson:
@@ -640,6 +643,14 @@ class JsonExporter {
           if (args["task"].empty())
             args.removeMember("task");
         }
+        if (args.isMember("source")) {
+          Json::Value source = args["source"];
+          if (source.isObject() && source.isMember("function_name")) {
+            args["function_name"] = source["function_name"];
+            args["file_name"] = source["file_name"];
+            args.removeMember("source");
+          }
+        }
       }
     }
 
@@ -696,7 +707,7 @@ class JsonExporter {
       if (!opt_name.is_null()) {
         const char* thread_name = GetNonNullString(storage_, opt_name);
         auto pid_and_tid = UtidToPidAndTid(utid);
-        writer_.WriteMetadataEvent("thread_name", thread_name,
+        writer_.WriteMetadataEvent("thread_name", "name", thread_name,
                                    pid_and_tid.first, pid_and_tid.second);
       }
     }
@@ -709,11 +720,54 @@ class JsonExporter {
       auto opt_name = process_table.name()[upid];
       if (!opt_name.is_null()) {
         const char* process_name = GetNonNullString(storage_, opt_name);
-        writer_.WriteMetadataEvent("process_name", process_name,
+        writer_.WriteMetadataEvent("process_name", "name", process_name,
                                    UpidToPid(upid), /*tid=*/0);
       }
     }
     return util::OkStatus();
+  }
+
+  // For each process it writes an approximate uptime, based on the process'
+  // start time and the last slice in the entire trace. This same last slice is
+  // used with all processes, so the process could have ended earlier.
+  util::Status ExportProcessUptimes() {
+    int64_t last_timestamp_ns = FindLastSliceTimestamp();
+    if (last_timestamp_ns <= 0)
+      return util::OkStatus();
+
+    const auto& process_table = storage_->process_table();
+    for (UniquePid upid = 0; upid < process_table.row_count(); ++upid) {
+      base::Optional<int64_t> start_timestamp_ns =
+          process_table.start_ts()[upid];
+      if (!start_timestamp_ns.has_value())
+        continue;
+
+      int64_t process_uptime_seconds =
+          (last_timestamp_ns - start_timestamp_ns.value()) /
+          (1000 * 1000 * 1000);
+
+      writer_.WriteMetadataEvent("process_uptime_seconds", "uptime",
+                                 std::to_string(process_uptime_seconds).c_str(),
+                                 UpidToPid(upid), /*tid=*/0);
+    }
+
+    return util::OkStatus();
+  }
+
+  // Returns the last slice's end timestamp for the entire trace. If no slices
+  // are found 0 is returned.
+  int64_t FindLastSliceTimestamp() {
+    int64_t last_ts = 0;
+    const auto& slices = storage_->slice_table();
+    for (uint32_t i = 0; i < slices.row_count(); ++i) {
+      int64_t duration_ns = slices.dur()[i];
+      int64_t timestamp_ns = slices.ts()[i];
+
+      if (duration_ns + timestamp_ns > last_ts) {
+        last_ts = duration_ns + timestamp_ns;
+      }
+    }
+    return last_ts;
   }
 
   util::Status ExportSlices() {
@@ -735,16 +789,18 @@ class JsonExporter {
       event["tid"] = 0;
 
       base::Optional<UniqueTid> legacy_utid;
+      std::string legacy_phase;
 
       event["args"] =
           args_builder_.GetArgs(slices.arg_set_id()[i]);  // Makes a copy.
       if (event["args"].isMember(kLegacyEventArgsKey)) {
+        const auto& legacy_args = event["args"][kLegacyEventArgsKey];
 
-        if (event["args"][kLegacyEventArgsKey].isMember(
-                kLegacyEventPassthroughUtidKey)) {
-          legacy_utid =
-              event["args"][kLegacyEventArgsKey][kLegacyEventPassthroughUtidKey]
-                  .asUInt();
+        if (legacy_args.isMember(kLegacyEventPassthroughUtidKey)) {
+          legacy_utid = legacy_args[kLegacyEventPassthroughUtidKey].asUInt();
+        }
+        if (legacy_args.isMember(kLegacyEventPhaseKey)) {
+          legacy_phase = legacy_args[kLegacyEventPhaseKey].asString();
         }
 
         event["args"].removeMember(kLegacyEventArgsKey);
@@ -766,7 +822,8 @@ class JsonExporter {
       if (track_args_id) {
         track_args = &args_builder_.GetArgs(*track_args_id);
         legacy_chrome_track = (*track_args)["source"].asString() == "chrome";
-        is_child_track = track_args->isMember("parent_track_id");
+        is_child_track = track_args->isMember("is_root_in_scope") &&
+                         !(*track_args)["is_root_in_scope"].asBool();
       }
 
       const auto& thread_track = storage_->thread_track_table();
@@ -780,8 +837,9 @@ class JsonExporter {
       int64_t thread_instruction_count = 0;
       int64_t thread_instruction_delta = 0;
 
+      SliceId id = slices.id()[i];
       base::Optional<uint32_t> thread_slice_row =
-          thread_slices.FindRowForSliceId(i);
+          thread_slices.FindRowForSliceId(id);
       if (thread_slice_row) {
         thread_ts_ns = thread_slices.thread_timestamp_ns()[*thread_slice_row];
         thread_duration_ns =
@@ -792,7 +850,7 @@ class JsonExporter {
             thread_slices.thread_instruction_deltas()[*thread_slice_row];
       } else {
         base::Optional<uint32_t> vtrack_slice_row =
-            virtual_track_slices.FindRowForSliceId(i);
+            virtual_track_slices.FindRowForSliceId(id);
         if (vtrack_slice_row) {
           thread_ts_ns =
               virtual_track_slices.thread_timestamp_ns()[*vtrack_slice_row];
@@ -878,13 +936,13 @@ class JsonExporter {
           bool source_id_is_process_scoped =
               (*track_args)["source_id_is_process_scoped"].asBool();
           if (source_id_is_process_scoped) {
-            event["id2"]["local"] = PrintUint64(source_id);
+            event["id2"]["local"] = base::Uint64ToHexString(source_id);
           } else {
             // Some legacy importers don't understand "id2" fields, so we use
             // the "usually" global "id" field instead. This works as long as
             // the event phase is not in {'N', 'D', 'O', '(', ')'}, see
             // "LOCAL_ID_PHASES" in catapult.
-            event["id"] = PrintUint64(source_id);
+            event["id"] = base::Uint64ToHexString(source_id);
           }
         } else {
           if (opt_thread_track_row) {
@@ -892,7 +950,7 @@ class JsonExporter {
             auto pid_and_tid = UtidToPidAndTid(utid);
             event["pid"] = Json::Int(pid_and_tid.first);
             event["tid"] = Json::Int(pid_and_tid.second);
-            event["id2"]["local"] = PrintUint64(track_id.value);
+            event["id2"]["local"] = base::Uint64ToHexString(track_id.value);
           } else if (opt_process_row) {
             uint32_t upid = process_track.upid()[*opt_process_row];
             uint32_t exported_pid = UpidToPid(upid);
@@ -900,7 +958,7 @@ class JsonExporter {
             event["tid"] =
                 Json::Int(legacy_utid ? UtidToPidAndTid(*legacy_utid).second
                                       : exported_pid);
-            event["id2"]["local"] = PrintUint64(track_id.value);
+            event["id2"]["local"] = base::Uint64ToHexString(track_id.value);
           } else {
             if (legacy_utid) {
               auto pid_and_tid = UtidToPidAndTid(*legacy_utid);
@@ -912,7 +970,7 @@ class JsonExporter {
             // the "usually" global "id" field instead. This works as long as
             // the event phase is not in {'N', 'D', 'O', '(', ')'}, see
             // "LOCAL_ID_PHASES" in catapult.
-            event["id"] = PrintUint64(track_id.value);
+            event["id"] = base::Uint64ToHexString(track_id.value);
           }
         }
 
@@ -925,16 +983,23 @@ class JsonExporter {
           event["use_async_tts"] = Json::Int(1);
         }
 
-        if (duration_ns == 0) {  // Instant async event.
-          event["ph"] = "n";
-          writer_.AddAsyncInstantEvent(event);
+        if (duration_ns == 0) {
+          if (legacy_phase.empty()) {
+            // Instant async event.
+            event["ph"] = "n";
+            writer_.AddAsyncInstantEvent(event);
+          } else {
+            // Async step events.
+            event["ph"] = legacy_phase;
+            writer_.AddAsyncBeginEvent(event);
+          }
         } else {  // Async start and end.
-          event["ph"] = "b";
+          event["ph"] = legacy_phase.empty() ? "b" : legacy_phase;
           writer_.AddAsyncBeginEvent(event);
           // If the slice didn't finish, the duration may be negative. Don't
           // write the end event in this case.
           if (duration_ns > 0) {
-            event["ph"] = "e";
+            event["ph"] = legacy_phase.empty() ? "e" : "F";
             event["ts"] = Json::Int64((slices.ts()[i] + duration_ns) / 1000);
             if (thread_ts_ns > 0) {
               event["tts"] =
@@ -1112,18 +1177,18 @@ class JsonExporter {
       event["use_async_tts"] = legacy_args[kLegacyEventUseAsyncTtsKey];
 
     if (legacy_args.isMember(kLegacyEventUnscopedIdKey)) {
-      event["id"] =
-          PrintUint64(legacy_args[kLegacyEventUnscopedIdKey].asUInt64());
+      event["id"] = base::Uint64ToHexString(
+          legacy_args[kLegacyEventUnscopedIdKey].asUInt64());
     }
 
     if (legacy_args.isMember(kLegacyEventGlobalIdKey)) {
-      event["id2"]["global"] =
-          PrintUint64(legacy_args[kLegacyEventGlobalIdKey].asUInt64());
+      event["id2"]["global"] = base::Uint64ToHexString(
+          legacy_args[kLegacyEventGlobalIdKey].asUInt64());
     }
 
     if (legacy_args.isMember(kLegacyEventLocalIdKey)) {
-      event["id2"]["local"] =
-          PrintUint64(legacy_args[kLegacyEventLocalIdKey].asUInt64());
+      event["id2"]["local"] = base::Uint64ToHexString(
+          legacy_args[kLegacyEventLocalIdKey].asUInt64());
     }
 
     if (legacy_args.isMember(kLegacyEventIdScopeKey))
@@ -1196,7 +1261,7 @@ class JsonExporter {
       // want the samples to show up on their own track in the trace-viewer but
       // not nested together.
       static size_t g_id_counter = 0;
-      event["id"] = PrintUint64(++g_id_counter);
+      event["id"] = base::Uint64ToHexString(++g_id_counter);
 
       const auto& callsites = storage_->stack_profile_callsite_table();
       const auto& frames = storage_->stack_profile_frame_table();
@@ -1225,7 +1290,7 @@ class JsonExporter {
         char frame_entry[1024];
         snprintf(frame_entry, sizeof(frame_entry), "%s - %s [%s]\n",
                  (symbol_name.empty()
-                      ? PrintUint64(
+                      ? base::Uint64ToHexString(
                             static_cast<uint64_t>(frames.rel_pc()[frame_row]))
                             .c_str()
                       : symbol_name.c_str()),
@@ -1341,6 +1406,227 @@ class JsonExporter {
     return util::OkStatus();
   }
 
+  util::Status ExportMemorySnapshots() {
+    const auto& memory_snapshots = storage_->memory_snapshot_table();
+    base::Optional<StringId> private_footprint_id =
+        storage_->string_pool().GetId("chrome.private_footprint_kb");
+    base::Optional<StringId> peak_resident_set_id =
+        storage_->string_pool().GetId("chrome.peak_resident_set_kb");
+
+    for (uint32_t memory_index = 0; memory_index < memory_snapshots.row_count();
+         ++memory_index) {
+      Json::Value event_base;
+
+      event_base["ph"] = "v";
+      event_base["cat"] = "disabled-by-default-memory-infra";
+      auto snapshot_id = memory_snapshots.id()[memory_index].value;
+      event_base["id"] = base::Uint64ToHexString(snapshot_id);
+      int64_t snapshot_ts = memory_snapshots.timestamp()[memory_index];
+      event_base["ts"] = Json::Int64(snapshot_ts / 1000);
+      // TODO(crbug:1116359): Add dump type to the snapshot proto
+      // to properly fill event_base["name"]
+      event_base["name"] = "periodic_interval";
+      event_base["args"]["dumps"]["level_of_detail"] = GetNonNullString(
+          storage_, memory_snapshots.detail_level()[memory_index]);
+
+      // Export OS dump events for processes with relevant data.
+      const auto& process_table = storage_->process_table();
+      for (UniquePid upid = 0; upid < process_table.row_count(); ++upid) {
+        Json::Value event =
+            FillInProcessEventDetails(event_base, process_table.pid()[upid]);
+        Json::Value& totals = event["args"]["dumps"]["process_totals"];
+
+        const auto& process_counters = storage_->process_counter_track_table();
+
+        for (uint32_t counter_index = 0;
+             counter_index < process_counters.row_count(); ++counter_index) {
+          if (process_counters.upid()[counter_index] != upid)
+            continue;
+          TrackId track_id = process_counters.id()[counter_index];
+          if (private_footprint_id && (process_counters.name()[counter_index] ==
+                                       private_footprint_id)) {
+            totals["private_footprint_bytes"] = base::Uint64ToHexStringNoPrefix(
+                GetCounterValue(track_id, snapshot_ts));
+          } else if (peak_resident_set_id &&
+                     (process_counters.name()[counter_index] ==
+                      peak_resident_set_id)) {
+            totals["peak_resident_set_size"] = base::Uint64ToHexStringNoPrefix(
+                GetCounterValue(track_id, snapshot_ts));
+          }
+        }
+
+        auto process_args_id = process_table.arg_set_id()[upid];
+        if (process_args_id) {
+          const Json::Value* process_args =
+              &args_builder_.GetArgs(process_args_id);
+          if (process_args->isMember("is_peak_rss_resettable")) {
+            totals["is_peak_rss_resettable"] =
+                (*process_args)["is_peak_rss_resettable"];
+          }
+        }
+
+        const auto& smaps_table = storage_->profiler_smaps_table();
+        // Do not create vm_regions without memory maps, since catapult expects
+        // to have rows.
+        Json::Value* smaps =
+            smaps_table.row_count() > 0
+                ? &event["args"]["dumps"]["process_mmaps"]["vm_regions"]
+                : nullptr;
+        for (uint32_t smaps_index = 0; smaps_index < smaps_table.row_count();
+             ++smaps_index) {
+          if (smaps_table.upid()[smaps_index] != upid)
+            continue;
+          if (smaps_table.ts()[smaps_index] != snapshot_ts)
+            continue;
+          Json::Value region;
+          region["mf"] =
+              GetNonNullString(storage_, smaps_table.file_name()[smaps_index]);
+          region["pf"] =
+              Json::Int64(smaps_table.protection_flags()[smaps_index]);
+          region["sa"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(smaps_table.start_address()[smaps_index]));
+          region["sz"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(smaps_table.size_kb()[smaps_index]) * 1024);
+          region["ts"] =
+              Json::Int64(smaps_table.module_timestamp()[smaps_index]);
+          region["id"] = GetNonNullString(
+              storage_, smaps_table.module_debugid()[smaps_index]);
+          region["df"] = GetNonNullString(
+              storage_, smaps_table.module_debug_path()[smaps_index]);
+          region["bs"]["pc"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(
+                  smaps_table.private_clean_resident_kb()[smaps_index]) *
+              1024);
+          region["bs"]["pd"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(
+                  smaps_table.private_dirty_kb()[smaps_index]) *
+              1024);
+          region["bs"]["pss"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(
+                  smaps_table.proportional_resident_kb()[smaps_index]) *
+              1024);
+          region["bs"]["sc"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(
+                  smaps_table.shared_clean_resident_kb()[smaps_index]) *
+              1024);
+          region["bs"]["sd"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(
+                  smaps_table.shared_dirty_resident_kb()[smaps_index]) *
+              1024);
+          region["bs"]["sw"] = base::Uint64ToHexStringNoPrefix(
+              static_cast<uint64_t>(smaps_table.swap_kb()[smaps_index]) * 1024);
+          smaps->append(region);
+        }
+
+        if (!totals.empty() || (smaps && !smaps->empty()))
+          writer_.WriteCommonEvent(event);
+      }
+
+      // Export chrome dump events for process snapshots in current memory
+      // snapshot.
+      const auto& process_snapshots = storage_->process_memory_snapshot_table();
+
+      for (uint32_t process_index = 0;
+           process_index < process_snapshots.row_count(); ++process_index) {
+        if (process_snapshots.snapshot_id()[process_index].value != snapshot_id)
+          continue;
+
+        auto process_snapshot_id = process_snapshots.id()[process_index].value;
+        uint32_t pid = UpidToPid(process_snapshots.upid()[process_index]);
+
+        // Shared memory nodes are imported into a fake process with pid 0.
+        // Catapult expects them to be associated with one of the real processes
+        // of the snapshot, so we choose the first one we can find and replace
+        // the pid.
+        if (pid == 0) {
+          for (uint32_t i = 0; i < process_snapshots.row_count(); ++i) {
+            if (process_snapshots.snapshot_id()[i].value != snapshot_id)
+              continue;
+            uint32_t new_pid = UpidToPid(process_snapshots.upid()[i]);
+            if (new_pid != 0) {
+              pid = new_pid;
+              break;
+            }
+          }
+        }
+
+        Json::Value event = FillInProcessEventDetails(event_base, pid);
+
+        const auto& snapshot_nodes = storage_->memory_snapshot_node_table();
+
+        for (uint32_t node_index = 0; node_index < snapshot_nodes.row_count();
+             ++node_index) {
+          if (snapshot_nodes.process_snapshot_id()[node_index].value !=
+              process_snapshot_id) {
+            continue;
+          }
+          const char* path =
+              GetNonNullString(storage_, snapshot_nodes.path()[node_index]);
+          event["args"]["dumps"]["allocators"][path]["guid"] =
+              base::Uint64ToHexStringNoPrefix(
+                  static_cast<uint64_t>(snapshot_nodes.id()[node_index].value));
+          if (snapshot_nodes.size()[node_index]) {
+            AddAttributeToMemoryNode(&event, path, "size",
+                                     snapshot_nodes.size()[node_index],
+                                     "bytes");
+          }
+          if (snapshot_nodes.effective_size()[node_index]) {
+            AddAttributeToMemoryNode(
+                &event, path, "effective_size",
+                snapshot_nodes.effective_size()[node_index], "bytes");
+          }
+
+          auto node_args_id = snapshot_nodes.arg_set_id()[node_index];
+          if (!node_args_id)
+            continue;
+          const Json::Value* node_args =
+              &args_builder_.GetArgs(node_args_id.value());
+          for (const auto& arg_name : node_args->getMemberNames()) {
+            const Json::Value& arg_value = (*node_args)[arg_name]["value"];
+            if (arg_value.empty())
+              continue;
+            if (arg_value.isString()) {
+              AddAttributeToMemoryNode(&event, path, arg_name,
+                                       arg_value.asString());
+            } else if (arg_value.isInt64()) {
+              Json::Value unit = (*node_args)[arg_name]["unit"];
+              if (unit.empty())
+                unit = "unknown";
+              AddAttributeToMemoryNode(&event, path, arg_name,
+                                       arg_value.asInt64(), unit.asString());
+            }
+          }
+        }
+
+        const auto& snapshot_edges = storage_->memory_snapshot_edge_table();
+
+        for (uint32_t edge_index = 0; edge_index < snapshot_edges.row_count();
+             ++edge_index) {
+          SnapshotNodeId source_node_id =
+              snapshot_edges.source_node_id()[edge_index];
+          uint32_t source_node_row =
+              *snapshot_nodes.id().IndexOf(source_node_id);
+
+          if (snapshot_nodes.process_snapshot_id()[source_node_row].value !=
+              process_snapshot_id) {
+            continue;
+          }
+          Json::Value edge;
+          edge["source"] = base::Uint64ToHexStringNoPrefix(
+              snapshot_edges.source_node_id()[edge_index].value);
+          edge["target"] = base::Uint64ToHexStringNoPrefix(
+              snapshot_edges.target_node_id()[edge_index].value);
+          edge["importance"] =
+              Json::Int(snapshot_edges.importance()[edge_index]);
+          edge["type"] = "ownership";
+          event["args"]["dumps"]["allocators_graph"].append(edge);
+        }
+        writer_.WriteCommonEvent(event);
+      }
+    }
+    return util::OkStatus();
+  }
+
   uint32_t UpidToPid(UniquePid upid) {
     auto pid_it = upids_to_exported_pids_.find(upid);
     PERFETTO_DCHECK(pid_it != upids_to_exported_pids_.end());
@@ -1375,6 +1661,62 @@ class JsonExporter {
     }
 
     return false;
+  }
+
+  Json::Value FillInProcessEventDetails(const Json::Value& event,
+                                        uint32_t pid) {
+    Json::Value output = event;
+    output["pid"] = Json::Int(pid);
+    output["tid"] = Json::Int(-1);
+    return output;
+  }
+
+  void AddAttributeToMemoryNode(Json::Value* event,
+                                const std::string& path,
+                                const std::string& key,
+                                int64_t value,
+                                const std::string& units) {
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["value"] =
+        base::Uint64ToHexStringNoPrefix(static_cast<uint64_t>(value));
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["type"] =
+        "scalar";
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["units"] =
+        units;
+  }
+
+  void AddAttributeToMemoryNode(Json::Value* event,
+                                const std::string& path,
+                                const std::string& key,
+                                const std::string& value,
+                                const std::string& units = "") {
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["value"] =
+        value;
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["type"] =
+        "string";
+    (*event)["args"]["dumps"]["allocators"][path]["attrs"][key]["units"] =
+        units;
+  }
+
+  uint64_t GetCounterValue(TrackId track_id, int64_t ts) {
+    const auto& counter_table = storage_->counter_table();
+    auto begin = counter_table.ts().begin();
+    auto end = counter_table.ts().end();
+    PERFETTO_DCHECK(counter_table.ts().IsSorted() &&
+                    counter_table.ts().IsColumnType<int64_t>());
+    // The timestamp column is sorted, so we can binary search for a matching
+    // timestamp. Note that we don't use RowMap operations like FilterInto()
+    // here because they bloat trace processor's binary size in Chrome too much.
+    auto it = std::lower_bound(begin, end, ts,
+                               [](const SqlValue& value, int64_t expected_ts) {
+                                 return value.AsLong() < expected_ts;
+                               });
+    for (; it < end; ++it) {
+      if ((*it).AsLong() != ts)
+        break;
+      if (counter_table.track_id()[it.row()].value == track_id.value)
+        return static_cast<uint64_t>(counter_table.value()[it.row()]);
+    }
+    return 0;
   }
 
   const TraceStorage* storage_;

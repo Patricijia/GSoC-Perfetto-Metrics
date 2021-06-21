@@ -16,7 +16,6 @@ import {Actions} from '../../common/actions';
 import {cropText, drawIncompleteSlice} from '../../common/canvas_utils';
 import {hueForSlice} from '../../common/colorizer';
 import {TrackState} from '../../common/state';
-import {toNs} from '../../common/time';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
 import {SliceRect, Track} from '../../frontend/track';
@@ -29,6 +28,9 @@ const TRACK_PADDING = 4;
 const INCOMPLETE_SLICE_TIME_S = 0.00003;
 const CHEVRON_WIDTH_PX = 10;
 const HALF_CHEVRON_WIDTH_PX = CHEVRON_WIDTH_PX / 2;
+const INNER_CHEVRON_OFFSET = -3;
+const INNER_CHEVRON_SCALE =
+    (SLICE_HEIGHT - 2 * INNER_CHEVRON_OFFSET) / SLICE_HEIGHT;
 
 export class ChromeSliceTrack extends Track<Config, Data> {
   static readonly kind: string = SLICE_TRACK_KIND;
@@ -78,10 +80,10 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const titleId = data.titles[i];
       const sliceId = data.sliceIds[i];
       const isInstant = data.isInstant[i];
+      const isIncomplete = data.isIncomplete[i];
       const title = data.strings[titleId];
-      let incompleteSlice = false;
-      if (toNs(tEnd) - toNs(tStart) === -1) {  // incomplete slice
-        incompleteSlice = true;
+      const colorOverride = data.colors && data.strings[data.colors[i]];
+      if (isIncomplete) {  // incomplete slice
         tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
       }
 
@@ -100,8 +102,13 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const saturation = isSelected ? 80 : 50;
       const highlighted = titleId === this.hoveredTitleId ||
           globals.frontendLocalState.highlightedSliceId === sliceId;
-      const color = `hsl(${hue}, ${saturation}%, ${highlighted ? 30 : 65}%)`;
 
+      let color: string;
+      if (colorOverride === undefined) {
+        color = `hsl(${hue}, ${saturation}%, ${highlighted ? 30 : 65}%)`;
+      } else {
+        color = colorOverride;
+      }
       ctx.fillStyle = color;
 
       // We draw instant events as upward facing chevrons starting at A:
@@ -112,15 +119,34 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       // D       B
       // Then B, C, D and back to A:
       if (isInstant) {
-        ctx.moveTo(rect.left, rect.top);
-        ctx.lineTo(rect.left + HALF_CHEVRON_WIDTH_PX, rect.top + SLICE_HEIGHT);
-        ctx.lineTo(rect.left, rect.top + SLICE_HEIGHT - HALF_CHEVRON_WIDTH_PX);
-        ctx.lineTo(rect.left - HALF_CHEVRON_WIDTH_PX, rect.top + SLICE_HEIGHT);
-        ctx.lineTo(rect.left, rect.top);
-        ctx.fill();
+        if (isSelected) {
+          drawRectOnSelected = () => {
+            ctx.save();
+            ctx.translate(rect.left, rect.top);
+
+            // Draw outer chevron as dark border
+            ctx.save();
+            ctx.translate(0, INNER_CHEVRON_OFFSET);
+            ctx.scale(INNER_CHEVRON_SCALE, INNER_CHEVRON_SCALE);
+            ctx.fillStyle = `hsl(${hue}, ${saturation}%, 30%)`;
+            this.drawChevron(ctx);
+            ctx.restore();
+
+            // Draw inner chevron as interior
+            ctx.fillStyle = color;
+            this.drawChevron(ctx);
+
+            ctx.restore();
+          };
+        } else {
+          ctx.save();
+          ctx.translate(rect.left, rect.top);
+          this.drawChevron(ctx);
+          ctx.restore();
+        }
         continue;
       }
-      if (incompleteSlice && rect.width > SLICE_HEIGHT / 4) {
+      if (isIncomplete && rect.width > SLICE_HEIGHT / 4) {
         drawIncompleteSlice(
             ctx, rect.left, rect.top, rect.width, SLICE_HEIGHT, color);
       } else {
@@ -147,6 +173,18 @@ export class ChromeSliceTrack extends Track<Config, Data> {
     drawRectOnSelected();
   }
 
+  drawChevron(ctx: CanvasRenderingContext2D) {
+    // Draw a chevron at a fixed location and size. Should be used with
+    // ctx.translate and ctx.scale to alter location and size.
+    ctx.beginPath();
+    ctx.moveTo(0, 0);
+    ctx.lineTo(HALF_CHEVRON_WIDTH_PX, SLICE_HEIGHT);
+    ctx.lineTo(0, SLICE_HEIGHT - HALF_CHEVRON_WIDTH_PX);
+    ctx.lineTo(-HALF_CHEVRON_WIDTH_PX, SLICE_HEIGHT);
+    ctx.lineTo(0, 0);
+    ctx.fill();
+  }
+
   getSliceIndex({x, y}: {x: number, y: number}): number|void {
     const data = this.data();
     if (data === undefined) return;
@@ -166,7 +204,7 @@ export class ChromeSliceTrack extends Track<Config, Data> {
         }
       } else {
         let tEnd = data.ends[i];
-        if (toNs(tEnd) - toNs(tStart) === -1) {
+        if (data.isIncomplete[i]) {
           tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
         }
         if (tStart <= t && t <= tEnd) {

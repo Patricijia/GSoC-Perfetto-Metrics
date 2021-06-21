@@ -51,7 +51,7 @@ export interface Area {
 
 export const MAX_TIME = 180;
 
-export const STATE_VERSION = 1;
+export const STATE_VERSION = 2;
 
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
@@ -71,6 +71,7 @@ export interface CallsiteInfo {
   selfSize: number;
   mapping: string;
   merged: boolean;
+  highlighted: boolean;
 }
 
 export interface TraceFileSource {
@@ -102,6 +103,7 @@ export interface TrackState {
   engineId: string;
   kind: string;
   name: string;
+  isMainThread: boolean;
   trackGroup?: string;
   config: {};
 }
@@ -249,6 +251,12 @@ export interface AggregationState {
   sorting?: Sorting;
 }
 
+export interface MetricsState {
+  availableMetrics?: string[];  // Undefined until list is loaded.
+  selectedIndex?: number;
+  requestedMetric?: string;  // Unset after metric request is handled.
+}
+
 export interface State {
   // tslint:disable-next-line:no-any
   [key: string]: any;
@@ -280,12 +288,14 @@ export interface State {
   debugTrackId?: string;
   lastTrackReloadRequest?: number;
   queries: ObjectById<QueryConfig>;
+  metrics: MetricsState;
   permalink: PermalinkConfig;
   notes: ObjectById<Note|AreaNote>;
   status: Status;
   currentSelection: Selection|null;
   currentHeapProfileFlamegraph: HeapProfileFlamegraph|null;
   logsPagination: LogsPagination;
+  traceConversionInProgress: boolean;
 
   /**
    * This state is updated on the frontend at 60Hz and eventually syncronised to
@@ -327,7 +337,7 @@ export declare type RecordMode =
     'STOP_WHEN_FULL' | 'RING_BUFFER' | 'LONG_TRACE';
 
 // 'Q','P','O' for Android, 'L' for Linux, 'C' for Chrome.
-export declare type TargetOs = 'Q' | 'P' | 'O' | 'C' | 'L';
+export declare type TargetOs = 'Q' | 'P' | 'O' | 'C' | 'L' | 'CrOS';
 
 export function isAndroidP(target: RecordingTarget) {
   return target.os === 'P';
@@ -338,7 +348,11 @@ export function isAndroidTarget(target: RecordingTarget) {
 }
 
 export function isChromeTarget(target: RecordingTarget) {
-  return target.os === 'C';
+  return ['C', 'CrOS'].includes(target.os);
+}
+
+export function isCrOSTarget(target: RecordingTarget) {
+  return target.os === 'CrOS';
 }
 
 export function isLinuxTarget(target: RecordingTarget) {
@@ -403,6 +417,8 @@ export interface RecordConfig {
   hpContinuousDumpsPhase: number;
   hpContinuousDumpsInterval: number;
   hpSharedMemoryBuffer: number;
+  hpBlockClient: boolean;
+  hpAllHeaps: boolean;
 
   javaHeapDump: boolean;
   jpProcesses: string;
@@ -466,6 +482,8 @@ export function createEmptyRecordConfig(): RecordConfig {
     hpContinuousDumpsPhase: 0,
     hpContinuousDumpsInterval: 0,
     hpSharedMemoryBuffer: 8 * 1048576,
+    hpBlockClient: true,
+    hpAllHeaps: false,
 
     javaHeapDump: false,
     jpProcesses: '',
@@ -486,6 +504,7 @@ export function getDefaultRecordingTargets(): RecordingTarget[] {
     {os: 'P', name: 'Android P'},
     {os: 'O', name: 'Android O-'},
     {os: 'C', name: 'Chrome'},
+    {os: 'CrOS', name: 'Chrome OS (system trace)'},
     {os: 'L', name: 'Linux desktop'}
   ];
 }
@@ -525,7 +544,6 @@ export function getBuiltinChromeCategoryList(): string[] {
     'content_capture',
     'devtools',
     'devtools.timeline',
-    'devtools.timeline.async',
     'download',
     'download_service',
     'drm',
@@ -716,6 +734,7 @@ export function createEmptyState(): State {
     scrollingTracks: [],
     areas: {},
     queries: {},
+    metrics: {},
     permalink: {},
     notes: {},
 
@@ -744,6 +763,7 @@ export function createEmptyState(): State {
     status: {msg: '', timestamp: 0},
     currentSelection: null,
     currentHeapProfileFlamegraph: null,
+    traceConversionInProgress: false,
 
     video: null,
     videoEnabled: false,

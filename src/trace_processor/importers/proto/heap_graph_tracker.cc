@@ -54,6 +54,28 @@ void ForReferenceSet(const TraceStorage& storage,
 std::set<tables::HeapGraphObjectTable::Id> GetChildren(
     const TraceStorage& storage,
     tables::HeapGraphObjectTable::Id id) {
+  uint32_t obj_row = *storage.heap_graph_object_table().id().IndexOf(id);
+  uint32_t cls_row = *storage.heap_graph_class_table().id().IndexOf(
+      storage.heap_graph_object_table().type_id()[obj_row]);
+
+  StringPool::Id kind = storage.heap_graph_class_table().kind()[cls_row];
+  base::Optional<StringPool::Id> weakref_kind =
+      storage.string_pool().GetId("KIND_WEAK_REFERENCE");
+  base::Optional<StringPool::Id> softref_kind =
+      storage.string_pool().GetId("KIND_SOFT_REFERENCE");
+  base::Optional<StringPool::Id> finalizerref_kind =
+      storage.string_pool().GetId("KIND_FINALIZER_REFERENCE");
+  base::Optional<StringPool::Id> phantomref_kind =
+      storage.string_pool().GetId("KIND_PHANTOM_REFERENCE");
+
+  if ((weakref_kind && kind == *weakref_kind) ||
+      (softref_kind && kind == *softref_kind) ||
+      (finalizerref_kind && kind == *finalizerref_kind) ||
+      (phantomref_kind && kind == *phantomref_kind)) {
+    // Do not follow weak / soft / finalizer / phantom references.
+    return {};
+  }
+
   std::set<tables::HeapGraphObjectTable::Id> children;
   ForReferenceSet(
       storage, id, [&storage, &children, id](uint32_t reference_row) {
@@ -394,7 +416,9 @@ void HeapGraphTracker::AddInternedType(uint32_t seq_id,
                                        uint64_t object_size,
                                        std::vector<uint64_t> field_name_ids,
                                        uint64_t superclass_id,
-                                       bool no_fields) {
+                                       uint64_t classloader_id,
+                                       bool no_fields,
+                                       StringPool::Id kind) {
   SequenceState& sequence_state = GetOrCreateSequence(seq_id);
   sequence_state.interned_types[intern_id].name = strid;
   sequence_state.interned_types[intern_id].location_id = location_id;
@@ -402,7 +426,9 @@ void HeapGraphTracker::AddInternedType(uint32_t seq_id,
   sequence_state.interned_types[intern_id].field_name_ids =
       std::move(field_name_ids);
   sequence_state.interned_types[intern_id].superclass_id = superclass_id;
+  sequence_state.interned_types[intern_id].classloader_id = classloader_id;
   sequence_state.interned_types[intern_id].no_fields = no_fields;
+  sequence_state.interned_types[intern_id].kind = kind;
 }
 
 void HeapGraphTracker::AddInternedFieldName(uint32_t seq_id,
@@ -568,8 +594,14 @@ void HeapGraphTracker::FinalizeProfile(uint32_t seq_id) {
     auto* hgc = context_->storage->mutable_heap_graph_class_table();
     uint32_t row = *hgc->id().IndexOf(type_id);
     hgc->mutable_name()->Set(row, interned_type.name);
+    if (interned_type.classloader_id) {
+      auto classloader_object_id =
+          GetOrInsertObject(&sequence_state, interned_type.classloader_id);
+      hgc->mutable_classloader_id()->Set(row, classloader_object_id.value);
+    }
     if (location_name)
       hgc->mutable_location()->Set(row, *location_name);
+    hgc->mutable_kind()->Set(row, interned_type.kind);
 
     base::StringView normalized_type =
         NormalizeTypeName(context_->storage->GetString(interned_type.name));
@@ -715,13 +747,22 @@ void FindPathFromRoot(const TraceStorage& storage,
 
     tables::HeapGraphClassTable::Id type_id =
         storage.heap_graph_object_table().type_id()[row];
-    auto it = path->nodes[parent_id].children.find(type_id);
+
+    uint32_t type_row = *storage.heap_graph_class_table().id().IndexOf(type_id);
+    base::Optional<StringPool::Id> opt_class_name_id =
+        storage.heap_graph_class_table().deobfuscated_name()[type_row];
+    if (!opt_class_name_id) {
+      opt_class_name_id = storage.heap_graph_class_table().name()[type_row];
+    }
+    PERFETTO_CHECK(opt_class_name_id);
+    StringPool::Id class_name_id = *opt_class_name_id;
+    auto it = path->nodes[parent_id].children.find(class_name_id);
     if (it == path->nodes[parent_id].children.end()) {
       size_t path_id = path->nodes.size();
       path->nodes.emplace_back(PathFromRoot::Node{});
       std::tie(it, std::ignore) =
-          path->nodes[parent_id].children.emplace(type_id, path_id);
-      path->nodes.back().type_id = type_id;
+          path->nodes[parent_id].children.emplace(class_name_id, path_id);
+      path->nodes.back().class_name_id = class_name_id;
       path->nodes.back().depth = depth;
       path->nodes.back().parent_id = parent_id;
     }
@@ -832,22 +873,12 @@ HeapGraphTracker::BuildFlamegraph(const int64_t current_ts,
       parent_id = node_to_id[node.parent_id];
     const uint32_t depth = node.depth;
 
-    uint32_t type_row =
-        *context_->storage->heap_graph_class_table().id().IndexOf(node.type_id);
-    base::Optional<StringPool::Id> name =
-        context_->storage->heap_graph_class_table()
-            .deobfuscated_name()[type_row];
-    if (!name) {
-      name = context_->storage->heap_graph_class_table().name()[type_row];
-    }
-    PERFETTO_CHECK(name);
-
     tables::ExperimentalFlamegraphNodesTable::Row alloc_row{};
     alloc_row.ts = current_ts;
     alloc_row.upid = current_upid;
     alloc_row.profile_type = profile_type;
     alloc_row.depth = depth;
-    alloc_row.name = *name;
+    alloc_row.name = node.class_name_id;
     alloc_row.map_name = java_mapping;
     alloc_row.count = static_cast<int64_t>(node.count);
     alloc_row.cumulative_count =
