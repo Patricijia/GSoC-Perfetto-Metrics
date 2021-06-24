@@ -91,6 +91,13 @@ body>main {
     overscroll-behavior: none;
 }
 
+// This is to minimize Mac vs Linux Chrome Headless rendering differences
+// when running UI intergrationtests via puppeteer.
+body.testing {
+  -webkit-font-smoothing: antialiased !important;
+  font-kerning: none !important;
+}
+
 h1,
 h2,
 h3 {
@@ -367,7 +374,7 @@ button.close {
   overflow-x: hidden;
   overflow-y: auto;
   flex: 1 1 auto;
-  // TODO(taylori): This causes the sticky header to flicker when scrolling.
+  // TODO(hjd): This causes the sticky header to flicker when scrolling.
   // Is will-change necessary in the details panel?
   // will-change: transform;
   display: grid;

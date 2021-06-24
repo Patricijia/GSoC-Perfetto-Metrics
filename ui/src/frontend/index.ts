@@ -30,6 +30,10 @@ import {
 } from '../common/logs';
 import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
+import {
+  ControllerWorkerInitMessage,
+  EngineWorkerInitMessage
+} from '../common/worker_messages';
 
 import {AnalyzePage} from './analyze_page';
 import {loadAndroidBugToolInfo} from './android_bug_tool';
@@ -48,9 +52,9 @@ import {
   ThreadStateDetails
 } from './globals';
 import {HomePage} from './home_page';
-import {openBufferWithLegacyTraceViewer} from './legacy_trace_viewer';
 import {initLiveReloadIfLocalhost} from './live_reload';
 import {MetricsPage} from './metrics_page';
+import {PageAttrs} from './pages';
 import {postMessageHandler} from './post_message_handler';
 import {RecordPage, updateAvailableAdbDevices} from './record_page';
 import {Router} from './router';
@@ -60,6 +64,13 @@ import {TraceInfoPage} from './trace_info_page';
 import {ViewerPage} from './viewer_page';
 
 const EXTENSION_ID = 'lfmkphfpdbjijhpomgecfikhfohaoine';
+
+function isLocalhostTraceUrl(url: string): boolean {
+  return ['127.0.0.1', 'localhost'].includes((new URL(url)).hostname);
+}
+
+let idleWasmWorker: Worker;
+let activeWasmWorker: Worker;
 
 /**
  * The API the main thread exposes to the controller.
@@ -184,15 +195,9 @@ class FrontendApi {
     this.redraw();
   }
 
-  publishFileDownload(args: {file: File, name?: string}) {
-    const url = URL.createObjectURL(args.file);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = args.name !== undefined ? args.name : args.file.name;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+  publishHasFtrace(hasFtrace: boolean) {
+    globals.hasFtrace = hasFtrace;
+    this.redraw();
   }
 
   publishLoading(numQueuedQueries: number) {
@@ -200,14 +205,6 @@ class FrontendApi {
     // TODO(hjd): Clean up loadingAnimation given that this now causes a full
     // redraw anyways. Also this should probably just go via the global state.
     globals.rafScheduler.scheduleFullRedraw();
-  }
-
-  // For opening JSON/HTML traces with the legacy catapult viewer.
-  publishLegacyTrace(args: {data: ArrayBuffer, size: number}) {
-    const arr = new Uint8Array(args.data, 0, args.size);
-    const str = (new TextDecoder('utf-8')).decode(arr);
-    openBufferWithLegacyTraceViewer('trace.json', str, 0);
-    globals.dispatch(Actions.clearConversionInProgress({}));
   }
 
   publishBufferUsage(args: {percentage: number}) {
@@ -249,6 +246,24 @@ class FrontendApi {
   publishAggregateData(args: {data: AggregateData, kind: string}) {
     globals.setAggregateData(args.kind, args.data);
     this.redraw();
+  }
+
+  // This method is called by the controller via the Remote<> interface whenver
+  // a new trace is loaded. This creates a new worker and passes it the
+  // MessagePort received by the controller. This is because on Safari, all
+  // workers must be spawned from the main thread.
+  resetEngineWorker(port: MessagePort) {
+    // We keep always an idle worker around, the first one is created by the
+    // main() below, so we can hide the latency of the Wasm initialization.
+    if (activeWasmWorker !== undefined) {
+      activeWasmWorker.terminate();
+    }
+    // Swap the active worker with the idle one and create a new idle worker
+    // for the next trace.
+    activeWasmWorker = assertExists(idleWasmWorker);
+    const msg: EngineWorkerInitMessage = {enginePort: port};
+    activeWasmWorker.postMessage(msg, [port]);
+    idleWasmWorker = new Worker(globals.root + 'engine_bundle.js');
   }
 
   private redraw(): void {
@@ -298,7 +313,7 @@ function setupContentSecurityPolicy() {
       'https://www.google-analytics.com',
       'https://www.googletagmanager.com',
     ],
-    'navigate-to': ['https://*.perfetto.dev']
+    'navigate-to': ['https://*.perfetto.dev', 'self'],
   };
   const meta = document.createElement('meta');
   meta.httpEquiv = 'Content-Security-Policy';
@@ -342,6 +357,7 @@ function main() {
   window.addEventListener('unhandledrejection', e => reportError(e));
 
   const controller = new Worker(globals.root + 'controller_bundle.js');
+  idleWasmWorker = new Worker(globals.root + 'engine_bundle.js');
   const frontendChannel = new MessageChannel();
   const controllerChannel = new MessageChannel();
   const extensionLocalChannel = new MessageChannel();
@@ -350,37 +366,31 @@ function main() {
   errorReportingChannel.port2.onmessage = (e) =>
       maybeShowErrorDialog(`${e.data}`);
 
-  controller.postMessage(
-      {
-        frontendPort: frontendChannel.port1,
-        controllerPort: controllerChannel.port1,
-        extensionPort: extensionLocalChannel.port1,
-        errorReportingPort: errorReportingChannel.port1,
-      },
-      [
-        frontendChannel.port1,
-        controllerChannel.port1,
-        extensionLocalChannel.port1,
-        errorReportingChannel.port1,
-      ]);
-
+  const msg: ControllerWorkerInitMessage = {
+    frontendPort: frontendChannel.port1,
+    controllerPort: controllerChannel.port1,
+    extensionPort: extensionLocalChannel.port1,
+    errorReportingPort: errorReportingChannel.port1,
+  };
+  controller.postMessage(msg, [
+    msg.frontendPort,
+    msg.controllerPort,
+    msg.extensionPort,
+    msg.errorReportingPort,
+  ]);
   const dispatch =
       controllerChannel.port2.postMessage.bind(controllerChannel.port2);
   globals.initialize(dispatch, controller);
   globals.serviceWorkerController.install();
 
-  const router = new Router(
-      '/',
-      {
-        '/': HomePage,
-        '/viewer': ViewerPage,
-        '/record': RecordPage,
-        '/query': AnalyzePage,
-        '/metrics': MetricsPage,
-        '/info': TraceInfoPage,
-      },
-      dispatch,
-      globals.logging);
+  const routes = new Map<string, m.Component<PageAttrs>>();
+  routes.set('/', HomePage);
+  routes.set('/viewer', ViewerPage);
+  routes.set('/record', RecordPage);
+  routes.set('/query', AnalyzePage);
+  routes.set('/metrics', MetricsPage);
+  routes.set('/info', TraceInfoPage);
+  const router = new Router('/', routes, dispatch, globals.logging);
   forwardRemoteCalls(frontendChannel.port2, new FrontendApi(router));
 
   // We proxy messages between the extension and the controller because the
@@ -420,6 +430,10 @@ function main() {
   }, {passive: false});
 
   cssLoadPromise.then(() => onCssLoaded(router));
+
+  if (globals.testing) {
+    document.body.classList.add('testing');
+  }
 }
 
 function onCssLoaded(router: Router) {
@@ -428,8 +442,9 @@ function onCssLoaded(router: Router) {
   // And replace it with the root <main> element which will be used by mithril.
   document.body.innerHTML = '<main></main>';
   const main = assertExists(document.body.querySelector('main'));
-  globals.rafScheduler.domRedraw = () =>
-      m.render(main, m(router.resolve(globals.state.route)));
+  globals.rafScheduler.domRedraw = () => {
+    m.render(main, router.resolve(globals.state.route));
+  };
 
   router.navigateToCurrentHash();
 
@@ -442,9 +457,22 @@ function onCssLoaded(router: Router) {
       hash: stateHash,
     }));
   } else if (typeof urlHash === 'string' && urlHash) {
-    globals.dispatch(Actions.openTraceFromUrl({
-      url: urlHash,
-    }));
+    if (isLocalhostTraceUrl(urlHash)) {
+      const fileName = urlHash.split('/').pop() || 'local_trace.pftrace';
+      const request = fetch(urlHash)
+                          .then(response => response.blob())
+                          .then(blob => {
+                            globals.dispatch(Actions.openTraceFromFile({
+                              file: new File([blob], fileName),
+                            }));
+                          })
+                          .catch(e => alert(`Could not load local trace ${e}`));
+      taskTracker.trackPromise(request, 'Downloading local trace');
+    } else {
+      globals.dispatch(Actions.openTraceFromUrl({
+        url: urlHash,
+      }));
+    }
   } else if (androidBugTool) {
     // TODO(hjd): Unify updateStatus and TaskTracker
     globals.dispatch(Actions.updateStatus({

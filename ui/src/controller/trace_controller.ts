@@ -19,17 +19,14 @@ import {
   Actions,
   DeferredAction,
 } from '../common/actions';
+import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine, QueryError} from '../common/engine';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
 import {slowlyCountRows} from '../common/query_iterator';
 import {EngineMode} from '../common/state';
 import {toNs, toNsCeil, toNsFloor} from '../common/time';
 import {TimeSpan} from '../common/time';
-import {
-  createWasmEngine,
-  destroyWasmEngine,
-  WasmEngineProxy
-} from '../common/wasm_engine_proxy';
+import {WasmEngineProxy} from '../common/wasm_engine_proxy';
 import {QuantizedLoad, ThreadDesc} from '../frontend/globals';
 
 import {
@@ -84,8 +81,6 @@ import {decideTracks} from './track_decider';
 
 type States = 'init'|'loading_trace'|'ready';
 
-const TRACE_MARGIN_TIME_S = 1 / 1e7;
-
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
 // tracks data and SQL queries. There is one TraceController instance for each
@@ -97,12 +92,6 @@ export class TraceController extends Controller<States> {
   constructor(engineId: string) {
     super('init');
     this.engineId = engineId;
-  }
-
-  onDestroy() {
-    if (this.engine instanceof WasmEngineProxy) {
-      destroyWasmEngine(this.engine.id);
-    }
   }
 
   run() {
@@ -232,10 +221,9 @@ export class TraceController extends Controller<States> {
     } else {
       console.log('Opening trace using built-in WASM engine');
       engineMode = 'WASM';
+      const enginePort = globals.resetEngineWorker();
       this.engine = new WasmEngineProxy(
-          this.engineId,
-          createWasmEngine(this.engineId),
-          LoadingManager.getInstance);
+          this.engineId, enginePort, LoadingManager.getInstance);
     }
 
     globals.dispatch(Actions.setEngineReady({
@@ -299,11 +287,26 @@ export class TraceController extends Controller<States> {
       Actions.navigate({route: '/viewer'}),
     ];
 
+    let visibleStartSec = startSec;
+    let visibleEndSec = endSec;
+    const mdTime = await this.engine.getTracingMetadataTimeBounds();
+    // make sure the bounds hold
+    if (Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S) <
+        Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S)) {
+      visibleStartSec =
+          Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S);
+      visibleEndSec = Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S);
+    }
+
     // We don't know the resolution at this point. However this will be
     // replaced in 50ms so a guess is fine.
-    const resolution = (traceTime.end - traceTime.start) / 1000;
-    actions.push(Actions.setVisibleTraceTime(
-        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution}));
+    const resolution = (visibleStartSec - visibleEndSec) / 1000;
+    actions.push(Actions.setVisibleTraceTime({
+      startSec: visibleStartSec,
+      endSec: visibleEndSec,
+      lastUpdate: Date.now() / 1000,
+      resolution
+    }));
 
     globals.dispatchMultiple(actions);
 
@@ -320,6 +323,24 @@ export class TraceController extends Controller<States> {
 
     await this.listThreads();
     await this.loadTimelineOverview(traceTime);
+
+    {
+      // A quick heuristic to check if the trace has ftrace events. This is
+      // based on the assumption that most traces that have ftrace either:
+      // - Are proto traces captured via perfetto, in which case traced_probes
+      //   emits ftrace per-cpu stats that end up in the stats table.
+      // - Have a raw event with non-zero cpu or utid.
+      // Notes:
+      // - The "+1 > 1" is to avoid pushing down the constraints to the "raw"
+      //   table, which would compute a full column filter without being aware
+      //   of the limit 1, and instead delegate the filtering to the iterator.
+      const query = `select '_' as _ from raw
+          where cpu + 1 > 1 or utid + 1 > 1 limit 1`;
+      const result = await assertExists(this.engine).query(query);
+      const hasFtrace = !!slowlyCountRows(result);
+      globals.publish('HasFtrace', hasFtrace);
+    }
+
     globals.dispatch(Actions.sortThreadTracks({}));
     await this.selectFirstHeapProfile();
 
@@ -518,13 +539,18 @@ export class TraceController extends Controller<States> {
 
       this.updateStatus(`Inserting data for ${metric} metric`);
       try {
-        const result = await engine.query(`
-        SELECT * FROM ${metric}_event LIMIT 1`);
-
-        const hasSliceName =
-            result.columnDescriptors.some(x => x.name === 'slice_name');
-        const hasDur = result.columnDescriptors.some(x => x.name === 'dur');
-        const hasUpid = result.columnDescriptors.some(x => x.name === 'upid');
+        const result = await engine.query(`pragma table_info(${metric}_event)`);
+        let hasSliceName = false;
+        let hasDur = false;
+        let hasUpid = false;
+        let hasValue = false;
+        for (let i = 0; i < slowlyCountRows(result); i++) {
+          const name = result.columns[1].stringValues![i];
+          hasSliceName = hasSliceName || name === 'slice_name';
+          hasDur = hasDur || name === 'dur';
+          hasUpid = hasUpid || name === 'upid';
+          hasValue = hasValue || name === 'value';
+        }
 
         const upidColumnSelect = hasUpid ? 'upid' : '0 AS upid';
         const upidColumnWhere = hasUpid ? 'upid' : '0';
@@ -554,7 +580,6 @@ export class TraceController extends Controller<States> {
           `);
         }
 
-        const hasValue = result.columnDescriptors.some(x => x.name === 'value');
         if (hasValue) {
           const minMax = await engine.query(`
           SELECT MIN(value) as min_value, MAX(value) as max_value

@@ -107,23 +107,36 @@ SELECT launch_id, state, SUM(dur) AS dur
 FROM main_thread_state
 GROUP BY 1, 2;
 
+-- Tracks all main thread process threads.
+DROP VIEW IF EXISTS launch_threads;
+CREATE VIEW launch_threads AS
+SELECT
+  launches.id AS launch_id,
+  launches.ts AS ts,
+  launches.dur AS dur,
+  thread.utid AS utid,
+  thread.name AS thread_name
+FROM launches
+JOIN launch_processes ON (launches.id = launch_processes.launch_id)
+JOIN thread ON (launch_processes.upid = thread.upid);
+
 -- Tracks all slices for the main process threads
 DROP VIEW IF EXISTS main_process_slice_unaggregated;
 CREATE VIEW main_process_slice_unaggregated AS
 SELECT
-  launches.id AS launch_id,
-  thread.utid AS utid,
-  thread.name AS thread_name,
+  launch_threads.launch_id AS launch_id,
+  launch_threads.utid AS utid,
+  launch_threads.thread_name AS thread_name,
+  slice.id AS slice_id,
+  slice.arg_set_id AS arg_set_id,
   slice.name AS slice_name,
   slice.ts AS slice_ts,
   slice.dur AS slice_dur
-FROM launches
-JOIN launch_processes ON (launches.id = launch_processes.launch_id)
-JOIN thread ON (launch_processes.upid = thread.upid)
+FROM launch_threads
 JOIN thread_track USING (utid)
 JOIN slice ON (
   slice.track_id = thread_track.id
-  AND slice.ts BETWEEN launches.ts AND launches.ts + launches.dur)
+  AND slice.ts BETWEEN launch_threads.ts AND launch_threads.ts + launch_threads.dur)
 WHERE slice.name IN (
   'PostFork',
   'ActivityThreadMain',
@@ -132,14 +145,18 @@ WHERE slice.name IN (
   'activityRestart',
   'activityResume',
   'inflate',
-  'ResourcesManager#getResources')
+  'ResourcesManager#getResources',
+  'binder transaction')
   OR slice.name LIKE 'performResume:%'
   OR slice.name LIKE 'performCreate:%'
   OR slice.name LIKE 'location=% status=% filter=% reason=%'
   OR slice.name LIKE 'OpenDexFilesFromOat%'
   OR slice.name LIKE 'VerifyClass%'
   OR slice.name LIKE 'Choreographer#doFrame%'
-  OR slice.name LIKE 'JIT compiling%';
+  OR slice.name LIKE 'JIT compiling%'
+  OR slice.name LIKE '%mark sweep GC'
+  OR slice.name LIKE '%concurrent copying GC'
+  OR slice.name LIKE '%semispace GC';
 
 DROP TABLE IF EXISTS main_process_slice;
 CREATE TABLE main_process_slice AS
@@ -149,6 +166,9 @@ SELECT
     WHEN slice_name LIKE 'OpenDexFilesFromOat%' THEN 'OpenDexFilesFromOat'
     WHEN slice_name LIKE 'VerifyClass%' THEN 'VerifyClass'
     WHEN slice_name LIKE 'JIT compiling%' THEN 'JIT compiling'
+    WHEN slice_name LIKE '%mark sweep GC' THEN 'GC'
+    WHEN slice_name LIKE '%concurrent copying GC' THEN 'GC'
+    WHEN slice_name LIKE '%semispace GC' THEN 'GC'
     ELSE slice_name
   END AS name,
   AndroidStartupMetric_Slice(
@@ -195,6 +215,92 @@ JOIN slice ON (
   slice.track_id = thread_track.id
   AND slice.ts BETWEEN l.ts AND l.ts + l.dur);
 
+DROP VIEW IF EXISTS gc_slices;
+CREATE VIEW gc_slices AS
+  SELECT
+    slice_ts AS ts,
+    slice_dur AS dur,
+    utid,
+    launch_id
+  FROM main_process_slice_unaggregated
+  WHERE (
+    slice_name LIKE '%mark sweep GC'
+    OR slice_name LIKE '%concurrent copying GC'
+    OR slice_name LIKE '%semispace GC');
+
+DROP TABLE IF EXISTS gc_slices_by_state;
+CREATE VIRTUAL TABLE gc_slices_by_state
+USING SPAN_JOIN(gc_slices PARTITIONED utid, thread_state_extended PARTITIONED utid);
+
+DROP TABLE IF EXISTS gc_slices_by_state_materialized;
+CREATE TABLE gc_slices_by_state_materialized AS
+SELECT launch_id, SUM(dur) as sum_dur
+FROM gc_slices_by_state
+WHERE state = 'Running'
+GROUP BY launch_id;
+
+DROP TABLE IF EXISTS launch_threads_cpu;
+CREATE VIRTUAL TABLE launch_threads_cpu
+USING SPAN_JOIN(launch_threads PARTITIONED utid, thread_state_extended PARTITIONED utid);
+
+DROP TABLE IF EXISTS launch_threads_cpu_materialized;
+CREATE TABLE launch_threads_cpu_materialized AS
+SELECT launch_id, SUM(dur) as sum_dur
+FROM launch_threads_cpu
+WHERE thread_name = 'Jit thread pool' AND state = 'Running'
+GROUP BY launch_id;
+
+DROP TABLE IF EXISTS activity_names_materialized;
+CREATE TABLE activity_names_materialized AS
+SELECT launch_id, slice_name, slice_ts
+FROM main_process_slice_unaggregated
+WHERE (slice_name LIKE 'performResume:%' OR slice_name LIKE 'performCreate:%');
+
+DROP TABLE IF EXISTS jit_compiled_methods_materialized;
+CREATE TABLE jit_compiled_methods_materialized AS
+SELECT
+  launch_id,
+  COUNT(1) as count
+FROM main_process_slice_unaggregated
+WHERE
+  slice_name LIKE 'JIT compiling%'
+  AND thread_name = 'Jit thread pool'
+GROUP BY launch_id;
+
+DROP TABLE IF EXISTS long_binder_transactions;
+CREATE TABLE long_binder_transactions AS
+SELECT
+  slice_id, arg_set_id, launch_id, slice_dur, thread_name
+FROM
+  main_process_slice_unaggregated
+WHERE
+  slice_name = 'binder transaction'
+  AND slice_dur >= 5e7;
+
+DROP TABLE IF EXISTS binder_to_destination_process;
+CREATE TABLE binder_to_destination_process AS
+SELECT
+  s.slice_id, process.name AS destination_process
+FROM long_binder_transactions s
+JOIN args USING(arg_set_id)
+JOIN process ON(args.int_value = process.pid)
+WHERE args.key = 'destination process';
+
+-- Enriched binder transactions.
+DROP TABLE IF EXISTS long_binder_transactions_enriched;
+CREATE TABLE long_binder_transactions_enriched AS
+SELECT
+  s.launch_id,
+  s.slice_dur,
+  s.thread_name,
+  EXTRACT_ARG(s.arg_set_id, 'destination name') AS destination_thread,
+  bdp.destination_process,
+  EXTRACT_ARG(s.arg_set_id, 'flags') AS flags,
+  EXTRACT_ARG(s.arg_set_id, 'code') AS code,
+  EXTRACT_ARG(s.arg_set_id, 'data_size') AS data_size
+FROM long_binder_transactions s
+LEFT JOIN binder_to_destination_process bdp USING(slice_id);
+
 DROP VIEW IF EXISTS startup_view;
 CREATE VIEW startup_view AS
 SELECT
@@ -202,35 +308,52 @@ SELECT
     'startup_id', launches.id,
     'package_name', launches.package,
     'process_name', (
-      SELECT name FROM process
-      WHERE upid IN (
-        SELECT upid FROM launch_processes p
-        WHERE p.launch_id = launches.id
-        LIMIT 1
-      )
+      SELECT p.name
+      FROM launch_processes lp
+      JOIN process p USING (upid)
+      WHERE lp.launch_id = launches.id
+      LIMIT 1
     ),
     'process', (
-      SELECT metadata FROM process_metadata
-      WHERE upid IN (
-        SELECT upid FROM launch_processes p
-        WHERE p.launch_id = launches.id
-        LIMIT 1
-      )
+      SELECT m.metadata
+      FROM process_metadata m
+      JOIN launch_processes p USING (upid)
+      WHERE p.launch_id = launches.id
+      LIMIT 1
     ),
     'activities', (
       SELECT RepeatedField(AndroidStartupMetric_Activity(
-        'name', (SELECT STR_SPLIT(s.name, ':', 1)),
-        'method', (SELECT STR_SPLIT(s.name, ':', 0)),
-        'slice', s.slice_proto
+        'name', (SELECT STR_SPLIT(s.slice_name, ':', 1)),
+        'method', (SELECT STR_SPLIT(s.slice_name, ':', 0)),
+        'ts_method_start', s.slice_ts
       ))
-      FROM main_process_slice s
+      FROM activity_names_materialized s
       WHERE s.launch_id = launches.id
-      AND (name LIKE 'performResume:%' OR name LIKE 'performCreate:%')
+    ),
+    'long_binder_transactions', (
+      SELECT RepeatedField(AndroidStartupMetric_BinderTransaction(
+        'duration', AndroidStartupMetric_Slice(
+          'dur_ns', lbt.slice_dur,
+          'dur_ms', lbt.slice_dur / 1e6
+        ),
+        'thread', lbt.thread_name,
+        'destination_thread', lbt.destination_thread,
+        'destination_process', lbt.destination_process,
+        'flags', lbt.flags,
+        'code', lbt.code,
+        'data_size', lbt.data_size
+      ))
+      FROM long_binder_transactions_enriched lbt
+      WHERE lbt.launch_id = launches.id
     ),
     'zygote_new_process', EXISTS(SELECT TRUE FROM zygote_forks_by_id WHERE id = launches.id),
     'activity_hosting_process_count', (
       SELECT COUNT(1) FROM launch_processes p
       WHERE p.launch_id = launches.id
+    ),
+    'event_timestamps', AndroidStartupMetric_EventTimestamps(
+      'intent_received', launches.ts,
+      'first_frame', launches.ts_end
     ),
     'to_first_frame', AndroidStartupMetric_ToFirstFrame(
       'dur_ns', launches.dur,
@@ -380,10 +503,32 @@ SELECT
         WHERE s.launch_id = launches.id AND name = 'VerifyClass'
       ),
       'jit_compiled_methods', (
-        SELECT SUM(1)
-        FROM main_process_slice_unaggregated
-        WHERE slice_name LIKE 'JIT compiling%'
-          AND thread_name = 'Jit thread pool'
+        SELECT count
+        FROM jit_compiled_methods_materialized s
+        WHERE s.launch_id = launches.id
+      ),
+      'time_jit_thread_pool_on_cpu', (
+        SELECT
+          NULL_IF_EMPTY(AndroidStartupMetric_Slice(
+            'dur_ns', sum_dur,
+            'dur_ms', sum_dur / 1e6
+          ))
+        FROM launch_threads_cpu_materialized
+        WHERE launch_id = launches.id
+      ),
+      'time_gc_total', (
+        SELECT slice_proto
+        FROM main_process_slice s
+        WHERE s.launch_id = launches.id AND name = 'GC'
+      ),
+      'time_gc_on_cpu', (
+        SELECT
+          NULL_IF_EMPTY(AndroidStartupMetric_Slice(
+            'dur_ns', sum_dur,
+            'dur_ms', sum_dur / 1e6
+          ))
+        FROM gc_slices_by_state_materialized
+        WHERE launch_id = launches.id
       )
     ),
     'hsc', (

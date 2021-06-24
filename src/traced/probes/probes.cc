@@ -22,6 +22,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/getopt.h"
 #include "perfetto/ext/base/unix_task_runner.h"
+#include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/base/version.h"
 #include "perfetto/ext/traced/traced.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
@@ -36,10 +37,17 @@ int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
   enum LongOption {
     OPT_CLEANUP_AFTER_CRASH = 1000,
     OPT_VERSION,
+    OPT_BACKGROUND,
+    OPT_RESET_FTRACE,
   };
 
+  bool background = false;
+  bool reset_ftrace = false;
+
   static const option long_options[] = {
+      {"background", no_argument, nullptr, OPT_BACKGROUND},
       {"cleanup-after-crash", no_argument, nullptr, OPT_CLEANUP_AFTER_CRASH},
+      {"reset-ftrace", no_argument, nullptr, OPT_RESET_FTRACE},
       {"version", no_argument, nullptr, OPT_VERSION},
       {nullptr, 0, nullptr, 0}};
 
@@ -48,16 +56,39 @@ int PERFETTO_EXPORT_ENTRYPOINT ProbesMain(int argc, char** argv) {
     if (option == -1)
       break;
     switch (option) {
+      case OPT_BACKGROUND:
+        background = true;
+        break;
       case OPT_CLEANUP_AFTER_CRASH:
+        // Used by perfetto.rc in Android.
+        PERFETTO_LOG("Hard resetting ftrace state.");
         HardResetFtraceState();
         return 0;
+      case OPT_RESET_FTRACE:
+        // This is like --cleanup-after-crash but doesn't quit.
+        reset_ftrace = true;
+        break;
       case OPT_VERSION:
         printf("%s\n", base::GetVersionString());
         return 0;
       default:
-        PERFETTO_ELOG("Usage: %s [--cleanup-after-crash|--version]", argv[0]);
+        fprintf(
+            stderr,
+            "Usage: %s [--background] [--reset-ftrace] [--cleanup-after-crash] "
+            "[--version]\n",
+            argv[0]);
         return 1;
     }
+  }
+
+  if (reset_ftrace && !HardResetFtraceState()) {
+    PERFETTO_ELOG(
+        "Failed to reset ftrace. Either run this as root or run "
+        "`sudo chown -R $USER /sys/kernel/tracing`");
+  }
+
+  if (background) {
+    base::Daemonize();
   }
 
   base::Watchdog* watchdog = base::Watchdog::GetInstance();

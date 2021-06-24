@@ -20,6 +20,7 @@
 #include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
 #include "perfetto/tracing/core/data_source_config.h"
+#include "perfetto/tracing/internal/track_event_interned_fields.h"
 #include "perfetto/tracing/track_event.h"
 #include "perfetto/tracing/track_event_category_registry.h"
 #include "perfetto/tracing/track_event_interned_data_index.h"
@@ -61,53 +62,6 @@ void ForEachObserver(
   }
 }
 
-struct InternedEventCategory
-    : public TrackEventInternedDataIndex<
-          InternedEventCategory,
-          perfetto::protos::pbzero::InternedData::kEventCategoriesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value,
-                  size_t length) {
-    auto category = interned_data->add_event_categories();
-    category->set_iid(iid);
-    category->set_name(value, length);
-  }
-};
-
-struct InternedEventName
-    : public TrackEventInternedDataIndex<
-          InternedEventName,
-          perfetto::protos::pbzero::InternedData::kEventNamesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value) {
-    auto name = interned_data->add_event_names();
-    name->set_iid(iid);
-    name->set_name(value);
-  }
-};
-
-struct InternedDebugAnnotationName
-    : public TrackEventInternedDataIndex<
-          InternedDebugAnnotationName,
-          perfetto::protos::pbzero::InternedData::
-              kDebugAnnotationNamesFieldNumber,
-          const char*,
-          SmallInternedDataTraits> {
-  static void Add(protos::pbzero::InternedData* interned_data,
-                  size_t iid,
-                  const char* value) {
-    auto name = interned_data->add_debug_annotation_names();
-    name->set_iid(iid);
-    name->set_name(value);
-  }
-};
-
 enum class MatchType { kExact, kPattern };
 
 bool NameMatchesPattern(const std::string& pattern,
@@ -139,6 +93,9 @@ bool NameMatchesPatternList(const std::vector<std::string>& patterns,
 
 // static
 const Track TrackEventInternal::kDefaultTrack{};
+
+// static
+std::atomic<int> TrackEventInternal::session_count_{};
 
 // static
 bool TrackEventInternal::Initialize(
@@ -218,6 +175,7 @@ void TrackEventInternal::EnableTracing(
 
 // static
 void TrackEventInternal::OnStart(const DataSourceBase::StartArgs& args) {
+  session_count_.fetch_add(1);
   ForEachObserver([&](TrackEventSessionObserver*& o) {
     if (o)
       o->OnStart(args);
@@ -264,6 +222,14 @@ bool TrackEventInternal::IsCategoryEnabled(
           return false;
         }
         break;
+      }
+      // No match? Must be a dynamic category.
+      DynamicCategory dyn_category(std::string(member_name, name_size));
+      Category ref_category{Category::FromDynamicCategory(dyn_category)};
+      if (IsCategoryEnabled(registry, config, ref_category)) {
+        result = true;
+        // Break ForEachGroupMember() loop.
+        return false;
       }
       // No match found => keep iterating.
       return true;
@@ -337,8 +303,13 @@ uint64_t TrackEventInternal::GetTimeNs() {
 }
 
 // static
+int TrackEventInternal::GetSessionCount() {
+  return session_count_.load();
+}
+
+// static
 void TrackEventInternal::ResetIncrementalState(TraceWriterBase* trace_writer,
-                                               uint64_t timestamp) {
+                                               TraceTimestamp timestamp) {
   auto default_track = ThreadTrack::Current();
   {
     // Mark any incremental state before this point invalid. Also set up
@@ -366,14 +337,18 @@ void TrackEventInternal::ResetIncrementalState(TraceWriterBase* trace_writer,
 // static
 protozero::MessageHandle<protos::pbzero::TracePacket>
 TrackEventInternal::NewTracePacket(TraceWriterBase* trace_writer,
-                                   uint64_t timestamp,
+                                   TraceTimestamp timestamp,
                                    uint32_t seq_flags) {
   auto packet = trace_writer->NewTracePacket();
-  packet->set_timestamp(timestamp);
-  // TODO(skyostil): Stop emitting this for every event once the trace
-  // processor understands trace packet defaults.
-  if (GetClockId() != protos::pbzero::BUILTIN_CLOCK_BOOTTIME)
+  packet->set_timestamp(timestamp.nanoseconds);
+  if (timestamp.clock_id != GetClockId()) {
+    packet->set_timestamp_clock_id(static_cast<uint32_t>(timestamp.clock_id));
+  } else if (GetClockId() != protos::pbzero::BUILTIN_CLOCK_BOOTTIME) {
+    // TODO(skyostil): Stop emitting the clock id for the default trace clock
+    // for every event once the trace processor understands trace packet
+    // defaults.
     packet->set_timestamp_clock_id(GetClockId());
+  }
   packet->set_sequence_flags(seq_flags);
   return packet;
 }
@@ -385,7 +360,7 @@ EventContext TrackEventInternal::WriteEvent(
     const Category* category,
     const char* name,
     perfetto::protos::pbzero::TrackEvent::Type type,
-    uint64_t timestamp) {
+    TraceTimestamp timestamp) {
   PERFETTO_DCHECK(g_main_thread);
   PERFETTO_DCHECK(!incr_state->was_cleared);
 
@@ -409,7 +384,7 @@ EventContext TrackEventInternal::WriteEvent(
           return true;
         });
   }
-  if (name) {
+  if (name && type != protos::pbzero::TrackEvent::TYPE_SLICE_END) {
     size_t name_iid = InternedEventName::Get(&ctx, name);
     track_event->set_name_iid(name_iid);
   }

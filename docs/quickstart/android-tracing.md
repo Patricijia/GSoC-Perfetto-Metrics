@@ -17,6 +17,12 @@ tracing services are enabled before getting started:
 adb shell setprop persist.traced.enable 1
 ```
 
+If you are running a version of Android older than P, you can still capture a
+trace with Perfetto using the `record_android_trace` script. See instructions
+below in the
+[Recording a trace through the cmdline](#recording-a-trace-through-the-cmdline)
+section.
+
 ## Recording a trace
 
 Command line tools (usage examples below in this page):
@@ -65,6 +71,8 @@ We suggest using the `tools/record_android_trace` script to record traces from
 the command line. It is the equivalent of running `adb shell perfetto` but it
 helps with getting the paths right, auto-pulling the trace once done and opening
 it on the browser.
+Furthermore, on older versions of Android it takes care of sideloading the
+`tracebox` binary to make up for the lack of tracing system services.
 
 If you are already familiar with `systrace` or `atrace`, both cmdline tools
 support a systrace-equivalent syntax:
@@ -103,6 +111,9 @@ Caveats when using directly the `adb shell perfetto` workflow:
   `cat config | adb shell perfetto -c -` (-: stdin) because of over-restrictive
   SELinux rules. Since Android 12 `/data/misc/perfetto-configs` can be used for
   storing configs.
+* On devices before Android 10, adb cannot directly pull
+  `/data/misc/perfetto-traces`. Use
+  `adb shell cat /data/misc/perfetto-traces/trace > trace` to work around.
 * When capturing longer traces, e.g. in the context of benchmarks or CI, use
   `PID=$(perfetto --background)` and then `kill $PID` to stop.
 
@@ -189,6 +200,11 @@ can be used instead.
 
 Pull the file using `adb pull /data/misc/perfetto-traces/trace ~/trace.perfetto-trace`
 and open it in the [Perfetto UI](https://ui.perfetto.dev).
+
+NOTE: On devices before Android 10, adb cannot directly pull
+      `/data/misc/perfetto-traces`. Use
+       `adb shell cat /data/misc/perfetto-traces/trace > trace.perfetto-trace`
+       to work around.
 
 The full reference for the `perfetto` cmdline interface can be found
 [here](/docs/reference/perfetto-cli.md).

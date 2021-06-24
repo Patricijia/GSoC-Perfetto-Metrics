@@ -47,7 +47,9 @@
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 using uid_t = unsigned int;
+#if !PERFETTO_BUILDFLAG(PERFETTO_COMPILER_GCC)
 using pid_t = unsigned int;
+#endif
 #if defined(_WIN64)
 using ssize_t = int64_t;
 #else
@@ -116,6 +118,18 @@ void MaybeReleaseAllocatorMemToOS();
 
 // geteuid() on POSIX OSes, returns 0 on Windows (See comment in utils.cc).
 uid_t GetCurrentUserId();
+
+// Forks the process.
+// Parent: prints the PID of the child and exit(0).
+// Child: redirects stdio onto /dev/null and chdirs into .
+void Daemonize();
+
+// Returns the path of the current executable, e.g. /foo/bar/exe.
+std::string GetCurExecutablePath();
+
+// Returns the directory where the current executable lives in, e.g. /foo/bar.
+// This is independent of cwd().
+std::string GetCurExecutableDir();
 
 }  // namespace base
 }  // namespace perfetto

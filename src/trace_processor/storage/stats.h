@@ -99,11 +99,11 @@ namespace stats {
                                         kIndexed, kInfo,     kTrace,    ""),   \
   F(traced_buf_padding_bytes_cleared,   kIndexed, kInfo,     kTrace,    ""),   \
   F(traced_buf_padding_bytes_written,   kIndexed, kInfo,     kTrace,    ""),   \
-  F(traced_buf_patches_failed,          kIndexed, kInfo,     kTrace,    ""),   \
+  F(traced_buf_patches_failed,          kIndexed, kDataLoss, kTrace,    ""),   \
   F(traced_buf_patches_succeeded,       kIndexed, kInfo,     kTrace,    ""),   \
   F(traced_buf_readaheads_failed,       kIndexed, kInfo,     kTrace,    ""),   \
   F(traced_buf_readaheads_succeeded,    kIndexed, kInfo,     kTrace,    ""),   \
-  F(traced_buf_trace_writer_packet_loss,kIndexed, kInfo,     kTrace,    ""),   \
+  F(traced_buf_trace_writer_packet_loss,kIndexed, kDataLoss, kTrace,    ""),   \
   F(traced_buf_write_wrap_count,        kIndexed, kInfo,     kTrace,    ""),   \
   F(traced_chunks_discarded,            kSingle,  kInfo,     kTrace,    ""),   \
   F(traced_data_sources_registered,     kSingle,  kInfo,     kTrace,    ""),   \
@@ -124,6 +124,10 @@ namespace stats {
   F(process_tracker_errors,             kSingle,  kError,    kAnalysis, ""),   \
   F(json_tokenizer_failure,             kSingle,  kError,    kTrace,    ""),   \
   F(json_parser_failure,                kSingle,  kError,    kTrace,    ""),   \
+  F(json_display_time_unit_too_late,    kSingle,  kError,    kTrace,           \
+      "The displayTimeUnit key came too late in the JSON trace so was "        \
+      "ignored. Trace processor only supports displayTimeUnit appearing "      \
+      "at the start of JSON traces"),                                          \
   F(heap_graph_invalid_string_id,       kIndexed, kError,    kTrace,    ""),   \
   F(heap_graph_non_finalized_graph,     kSingle,  kError,    kTrace,    ""),   \
   F(heap_graph_malformed_packet,        kIndexed, kError,    kTrace,    ""),   \
@@ -155,6 +159,10 @@ namespace stats {
       "Time spent unwinding callstacks."),                                     \
   F(heapprofd_unwind_samples,           kIndexed, kInfo,     kTrace,           \
       "Number of samples unwound."),                                           \
+  F(heapprofd_client_spinlock_blocked,  kIndexed, kInfo,     kTrace,           \
+       "Time (us) the heapprofd client was blocked on the spinlock."),         \
+  F(heapprofd_last_profile_timestamp,   kIndexed, kInfo,     kTrace,           \
+       "The timestamp (in trace time) for the last dump for a process"),       \
   F(metatrace_overruns,                 kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_parse_errors,     kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_read_errors,      kSingle,  kError,    kTrace,    ""),   \
@@ -176,7 +184,8 @@ namespace stats {
       "An ftrace packet was seen before the tracing start timestamp from "     \
       "the tracing service. This happens if the ftrace buffers were not "      \
       "cleared properly. These packets are silently dropped by trace "         \
-      "processor.")
+      "processor."),                                                           \
+  F(perf_guardrail_stop_ts,             kIndexed, kDataLoss, kTrace,    "")
 // clang-format on
 
 enum Type {

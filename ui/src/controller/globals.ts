@@ -25,7 +25,8 @@ type PublishKinds = 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|
     'HeapProfileFlamegraph'|'FileDownload'|'Loading'|'Search'|'BufferUsage'|
     'RecordingLog'|'SearchResult'|'AggregateData'|'CpuProfileDetails'|
     'TraceErrors'|'UpdateChromeCategories'|'ConnectedFlows'|'SelectedFlows'|
-    'ThreadStateDetails'|'MetricError'|'MetricResult';
+    'ThreadStateDetails'|'MetricError'|'MetricResult'|'HasFtrace'|
+    'ConversionJobStatusUpdate';
 
 export interface App {
   state: State;
@@ -97,6 +98,19 @@ class Globals implements App {
   publish(what: PublishKinds, data: {}, transferList?: Transferable[]) {
     assertExists(this._frontend)
         .send<void>(`publish${what}`, [data], transferList);
+  }
+
+  // Returns the port of the MessageChannel that can be used to communicate with
+  // the Wasm Engine (issue SQL queries and retrieve results).
+  resetEngineWorker() {
+    const chan = new MessageChannel();
+    const port = chan.port1;
+    // Invokes resetEngineWorker() in frontend/index.ts. It will spawn a new
+    // worker and assign it the passed |port|.
+    assertExists(this._frontend).send<void>('resetEngineWorker', [port], [
+      port
+    ]);
+    return chan.port2;
   }
 
   get state(): State {

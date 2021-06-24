@@ -45,6 +45,7 @@ CpuTable::~CpuTable() = default;
 CpuFreqTable::~CpuFreqTable() = default;
 ThreadTable::~ThreadTable() = default;
 ProcessTable::~ProcessTable() = default;
+ClockSnapshotTable::~ClockSnapshotTable() = default;
 
 // profiler_tables.h
 StackProfileMappingTable::~StackProfileMappingTable() = default;
@@ -76,6 +77,7 @@ DescribeSliceTable::~DescribeSliceTable() = default;
 ThreadStateTable::~ThreadStateTable() = default;
 ExpectedFrameTimelineSliceTable::~ExpectedFrameTimelineSliceTable() = default;
 ActualFrameTimelineSliceTable::~ActualFrameTimelineSliceTable() = default;
+ExperimentalFlatSliceTable::~ExperimentalFlatSliceTable() = default;
 
 // track_tables.h
 TrackTable::~TrackTable() = default;
