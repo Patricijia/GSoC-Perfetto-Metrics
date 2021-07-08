@@ -22,6 +22,7 @@ import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions, DeferredAction, StateActions} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
+import {tryGetTrace} from '../common/cache_manager';
 import {ConversionJobStatusUpdate} from '../common/conversion_jobs';
 import {
   LogBoundsKey,
@@ -527,10 +528,21 @@ function onCssLoaded(router: Router) {
     m.render(main, router.resolve(globals.state.route));
   };
 
+  /**
+   * Start of hack for backwards compatibility:
+   * There are some old URLs in the form of 'record?p=power'. We want these
+   * to keep opening the desired page(see b/191255021#comment2).
+   */
+  if (window.location.hash.startsWith('#!/record?p=')) {
+    window.location.hash = window.location.hash.replace('?p=', '/');
+  }
+  // end of hack for backwards compatibility
+
   router.navigateToCurrentHash();
 
   // /?s=xxxx for permalinks.
   const stateHash = Router.param('s');
+  const traceUuid = Router.param('trace_id');
   const urlHash = Router.param('url');
   const androidBugTool = Router.param('openFromAndroidBugTool');
   if (typeof stateHash === 'string' && stateHash) {
@@ -571,6 +583,8 @@ function onCssLoaded(router: Router) {
         .catch(e => {
           console.error(e);
         });
+  } else if (traceUuid) {
+    maybeLoadCachedTrace(traceUuid);
   }
 
   // Add support for opening traces from postMessage().
@@ -592,6 +606,12 @@ function onCssLoaded(router: Router) {
     console.error('WebUSB API not supported');
   }
   installFileDropHandler();
+}
+
+async function maybeLoadCachedTrace(traceUuid: string) {
+  const trace = await tryGetTrace(traceUuid);
+  if (trace === undefined) return;
+  globals.dispatch(Actions.openTraceFromBuffer(trace));
 }
 
 main();

@@ -66,11 +66,6 @@ struct EventHeader {
   uint32_t time_delta : 27;
 };
 
-struct TimeStamp {
-  uint64_t tv_nsec;
-  uint64_t tv_sec;
-};
-
 bool ReadIntoString(const uint8_t* start,
                     const uint8_t* end,
                     uint32_t field_id,
@@ -273,11 +268,15 @@ size_t CpuReader::ReadAndProcessBatch(
     return pages_read;
 
   for (FtraceDataSource* data_source : started_data_sources) {
-    bool success = ProcessPagesForDataSource(
+    bool pages_parsed_ok = ProcessPagesForDataSource(
         data_source->trace_writer(), data_source->mutable_metadata(), cpu_,
         data_source->parsing_config(), parsing_buf, pages_read, table_,
         symbolizer_);
-    PERFETTO_CHECK(success);
+    // If this CHECK fires, it means that we did not know how to parse the
+    // kernel binary format. This is a bug in either perfetto or the kernel, and
+    // must be investigated. Hence we CHECK instead of recording a bit
+    // in the ftrace stats proto, which is easier to overlook.
+    PERFETTO_CHECK(pages_parsed_ok);
   }
 
   return pages_read;
@@ -313,7 +312,6 @@ bool CpuReader::ProcessPagesForDataSource(
     // Write the kernel symbol index (mangled address) -> name table.
     // |metadata| is shared across all cpus, is distinct per |data_source| (i.e.
     // tracing session) and is cleared after each FtraceController::ReadTick().
-    // const size_t kaddrs_size = metadata->kernel_addrs.size();
     if (ds_config->symbolize_ksyms) {
       // Symbol indexes are assigned mononically as |kernel_addrs.size()|,
       // starting from index 1 (no symbol has index 0). Here we remember the
@@ -382,6 +380,7 @@ bool CpuReader::ProcessPagesForDataSource(
       bundle->set_lost_events(true);
   };
 
+  bool pages_parsed_ok = true;
   start_new_packet(/*lost_events=*/false);
   for (size_t i = 0; i < pages_read; i++) {
     const uint8_t* curr_page = parsing_buf + (i * base::kPageSize);
@@ -416,13 +415,14 @@ bool CpuReader::ProcessPagesForDataSource(
         ParsePagePayload(parse_pos, &page_header.value(), table, ds_config,
                          &compact_sched, bundle, metadata);
 
-    // TODO(rsavitski): propagate error to trace processor in release builds.
-    // (FtraceMetadata -> FtraceStats in trace).
-    PERFETTO_DCHECK(evt_size == page_header->size);
+    if (evt_size != page_header->size) {
+      pages_parsed_ok = false;
+      PERFETTO_DFATAL("could not parse ftrace page");
+    }
   }
   finalize_cur_packet();
 
-  return true;
+  return pages_parsed_ok;
 }
 
 // A page header consists of:
@@ -532,11 +532,11 @@ size_t CpuReader::ParsePagePayload(const uint8_t* start_of_payload,
         // size in the process. We assume the newer layout. Parsed the same as
         // kTypeTimeExtend, except that the timestamp is interpreted as an
         // absolute, instead of a delta on top of the previous state.
-        timestamp = event_header.time_delta;
         uint32_t time_delta_ext = 0;
         if (!ReadAndAdvance<uint32_t>(&ptr, end, &time_delta_ext))
           return 0;
-        timestamp += (static_cast<uint64_t>(time_delta_ext)) << 27;
+        timestamp = event_header.time_delta +
+                    (static_cast<uint64_t>(time_delta_ext) << 27);
         break;
       }
       // Data record:

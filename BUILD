@@ -169,6 +169,23 @@ perfetto_cc_binary(
     ],
 )
 
+# GN target: //tools/proto_filter:proto_filter
+perfetto_cc_binary(
+    name = "proto_filter",
+    srcs = [
+        ":src_protozero_filtering_bytecode_common",
+        ":src_protozero_filtering_bytecode_generator",
+        ":src_protozero_filtering_bytecode_parser",
+        ":src_protozero_filtering_filter_util",
+        ":src_protozero_filtering_message_filter",
+        "tools/proto_filter/proto_filter.cc",
+    ],
+    deps = [
+        ":protozero",
+        ":src_base_base",
+    ] + PERFETTO_CONFIG.deps.protobuf_full,
+)
+
 # GN target: //:libperfetto
 perfetto_cc_library(
     name = "libperfetto",
@@ -751,6 +768,8 @@ filegroup(
 filegroup(
     name = "src_profiling_symbolizer_symbolizer",
     srcs = [
+        "src/profiling/symbolizer/breakpad_parser.cc",
+        "src/profiling/symbolizer/breakpad_parser.h",
         "src/profiling/symbolizer/filesystem.h",
         "src/profiling/symbolizer/filesystem_posix.cc",
         "src/profiling/symbolizer/filesystem_windows.cc",
@@ -784,12 +803,30 @@ filegroup(
     ],
 )
 
+# GN target: //src/protozero/filtering:bytecode_generator
+filegroup(
+    name = "src_protozero_filtering_bytecode_generator",
+    srcs = [
+        "src/protozero/filtering/filter_bytecode_generator.cc",
+        "src/protozero/filtering/filter_bytecode_generator.h",
+    ],
+)
+
 # GN target: //src/protozero/filtering:bytecode_parser
 filegroup(
     name = "src_protozero_filtering_bytecode_parser",
     srcs = [
         "src/protozero/filtering/filter_bytecode_parser.cc",
         "src/protozero/filtering/filter_bytecode_parser.h",
+    ],
+)
+
+# GN target: //src/protozero/filtering:filter_util
+filegroup(
+    name = "src_protozero_filtering_filter_util",
+    srcs = [
+        "src/protozero/filtering/filter_util.cc",
+        "src/protozero/filtering/filter_util.h",
     ],
 )
 
@@ -1000,6 +1037,7 @@ genrule(
         "src/trace_processor/metrics/android/process_metadata.sql",
         "src/trace_processor/metrics/android/process_oom_score.sql",
         "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
+        "src/trace_processor/metrics/android/profiler_smaps.sql",
         "src/trace_processor/metrics/android/span_view_stats.sql",
         "src/trace_processor/metrics/android/thread_counter_span_view.sql",
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
@@ -2496,6 +2534,7 @@ perfetto_proto_library(
         "protos/perfetto/metrics/android/package_list.proto",
         "protos/perfetto/metrics/android/powrails_metric.proto",
         "protos/perfetto/metrics/android/process_metadata.proto",
+        "protos/perfetto/metrics/android/profiler_smaps.proto",
         "protos/perfetto/metrics/android/startup_metric.proto",
         "protos/perfetto/metrics/android/surfaceflinger.proto",
         "protos/perfetto/metrics/android/sysui_cuj_metrics.proto",
