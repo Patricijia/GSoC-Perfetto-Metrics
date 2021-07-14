@@ -234,8 +234,8 @@ BUILD_DEPS_HOST = [
     # Example traces for regression tests.
     Dependency(
         'test/data.zip',
-        'https://storage.googleapis.com/perfetto/test-data-20210630-164307.zip',
-        'ce67ef2089edbae4909563fc8696d68c243658e431af5c7f6723548a824f0c3f',
+        'https://storage.googleapis.com/perfetto/test-data-20210713-220633.zip',
+        '8349c755a08e871afec91267b4e379b3d76892dc26c16f05d59315f087df332d',
         'all', 'all',
     ),
 
@@ -243,6 +243,11 @@ BUILD_DEPS_HOST = [
     Dependency('buildtools/linenoise',
                'https://fuchsia.googlesource.com/third_party/linenoise.git',
                'c894b9e59f02203dbe4e2be657572cf88c4230c3', 'all', 'all'),
+
+    # Bloaty, used to investigate binary size
+    Dependency('buildtools/bloaty.zip',
+               'https://storage.googleapis.com/perfetto/bloaty-1.1-b3b829de35babc2fe831b9488ad2e50bca939412-mac.zip',
+               '2d301bd72a20e3f42888c9274ceb4dca76c103608053572322412c2c65ab8cb8', 'darwin', 'x64'),
 ]
 
 # Dependencies required to build Android code.

@@ -14,8 +14,7 @@
 
 import * as protoNamespace from '../gen/protos';
 
-import {NUM, NUM_NULL, STR, STR_NULL} from './query_iterator';
-import {createQueryResult} from './query_result';
+import {createQueryResult, NUM, NUM_NULL, STR, STR_NULL} from './query_result';
 
 const T = protoNamespace.perfetto.protos.QueryResult.CellsBatch.CellType;
 const QueryResultProto = protoNamespace.perfetto.protos.QueryResult;
@@ -189,7 +188,7 @@ test('QueryResult.NullChecks', () => {
 
 test('QueryResult.EarlyError', () => {
   const resProto = QueryResultProto.create({
-    columnNames: ['n', 's'],
+    columnNames: [],
     batch: [{isLastBatch: true}],
     error: 'Oh dear, this SQL query is too complicated, I give up',
   });
@@ -197,6 +196,8 @@ test('QueryResult.EarlyError', () => {
   qr.appendResultBatch(QueryResultProto.encode(resProto).finish());
   expect(qr.error()).toContain('Oh dear');
   expect(qr.isComplete()).toBe(true);
+  const iter = qr.iter({});
+  expect(iter.valid()).toBe(false);
 });
 
 test('QueryResult.LateError', () => {

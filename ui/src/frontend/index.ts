@@ -22,6 +22,7 @@ import {assertExists, reportError, setErrorHandler} from '../base/logging';
 import {forwardRemoteCalls} from '../base/remote';
 import {Actions, DeferredAction, StateActions} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
+import {tryGetTrace} from '../common/cache_manager';
 import {ConversionJobStatusUpdate} from '../common/conversion_jobs';
 import {
   LogBoundsKey,
@@ -36,6 +37,7 @@ import {
   ControllerWorkerInitMessage,
   EngineWorkerInitMessage
 } from '../common/worker_messages';
+import {initController} from '../controller/index';
 
 import {AnalyzePage} from './analyze_page';
 import {loadAndroidBugToolInfo} from './android_bug_tool';
@@ -433,7 +435,6 @@ function main() {
   window.addEventListener('error', e => reportError(e));
   window.addEventListener('unhandledrejection', e => reportError(e));
 
-  const controller = new Worker(globals.root + 'controller_bundle.js');
   idleWasmWorker = new Worker(globals.root + 'engine_bundle.js');
   const frontendChannel = new MessageChannel();
   const controllerChannel = new MessageChannel();
@@ -449,18 +450,14 @@ function main() {
     extensionPort: extensionLocalChannel.port1,
     errorReportingPort: errorReportingChannel.port1,
   };
-  controller.postMessage(msg, [
-    msg.frontendPort,
-    msg.controllerPort,
-    msg.extensionPort,
-    msg.errorReportingPort,
-  ]);
+
+  initController(msg);
 
   const dispatch = (action: DeferredAction) => {
     frontendApi.dispatchMultiple([action]);
   };
 
-  globals.initialize(dispatch, controller);
+  globals.initialize(dispatch);
   globals.serviceWorkerController.install();
 
   const routes = new Map<string, m.Component<PageAttrs>>();
@@ -541,6 +538,7 @@ function onCssLoaded(router: Router) {
 
   // /?s=xxxx for permalinks.
   const stateHash = Router.param('s');
+  const traceUuid = Router.param('trace_id');
   const urlHash = Router.param('url');
   const androidBugTool = Router.param('openFromAndroidBugTool');
   if (typeof stateHash === 'string' && stateHash) {
@@ -581,6 +579,8 @@ function onCssLoaded(router: Router) {
         .catch(e => {
           console.error(e);
         });
+  } else if (traceUuid) {
+    maybeLoadCachedTrace(traceUuid);
   }
 
   // Add support for opening traces from postMessage().
@@ -602,6 +602,12 @@ function onCssLoaded(router: Router) {
     console.error('WebUSB API not supported');
   }
   installFileDropHandler();
+}
+
+async function maybeLoadCachedTrace(traceUuid: string) {
+  const trace = await tryGetTrace(traceUuid);
+  if (trace === undefined) return;
+  globals.dispatch(Actions.openTraceFromBuffer(trace));
 }
 
 main();
