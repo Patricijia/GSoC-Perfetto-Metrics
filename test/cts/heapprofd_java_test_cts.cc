@@ -22,7 +22,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "src/base/test/test_task_runner.h"
-#include "test/cts/utils.h"
+#include "test/android_test_utils.h"
 #include "test/gtest_and_gmock.h"
 #include "test/test_helper.h"
 
@@ -80,7 +80,7 @@ std::vector<protos::gen::TracePacket> ProfileRuntime(std::string app_name) {
 
   // start tracing
   helper.StartTracing(trace_config);
-  helper.WaitForTracingDisabled(10000 /*ms*/);
+  helper.WaitForTracingDisabled();
   helper.ReadData();
   helper.WaitForReadData();
   PERFETTO_CHECK(IsAppRunning(app_name));
@@ -107,7 +107,7 @@ void AssertNoProfileContents(std::vector<protos::gen::TracePacket> packets) {
   for (const auto& packet : packets) {
     ASSERT_EQ(packet.heap_graph().roots_size(), 0);
     ASSERT_EQ(packet.heap_graph().objects_size(), 0);
-    ASSERT_EQ(packet.heap_graph().type_names_size(), 0);
+    ASSERT_EQ(packet.heap_graph().types_size(), 0);
     ASSERT_EQ(packet.heap_graph().field_names_size(), 0);
   }
 }
@@ -128,7 +128,7 @@ TEST(HeapprofdJavaCtsTest, ReleaseAppRuntime) {
   std::string app_name = "android.perfetto.cts.app.release";
   const auto& packets = ProfileRuntime(app_name);
 
-  if (IsDebuggableBuild())
+  if (!IsUserBuild())
     AssertGraphPresent(packets);
   else
     AssertNoProfileContents(packets);
