@@ -39,7 +39,7 @@
       "fetch",
       "--tags",
       "https://android.googlesource.com/platform/external/perfetto",
-      "2d72510e447ab60a9728aeea2362d8be2cbd7789"
+      "refs/heads/master"
     ],
     "cwd": "[CACHE]\\builder\\perfetto",
     "infra_step": true,
@@ -170,7 +170,11 @@
       "python3",
       "tools/ninja",
       "-C",
-      "[CACHE]\\builder\\perfetto\\out\\windows-amd64"
+      "[CACHE]\\builder\\perfetto\\out\\windows-amd64",
+      "trace_processor_shell",
+      "trace_to_text",
+      "perfetto",
+      "traced"
     ],
     "cwd": "[CACHE]\\builder\\perfetto",
     "env": {

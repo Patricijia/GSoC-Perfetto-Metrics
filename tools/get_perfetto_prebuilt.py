@@ -1,5 +1,4 @@
-#!/usr/bin/env python3
-# Copyright (C) 2019 The Android Open Source Project
+# Copyright (C) 2021 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,103 +11,44 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
+"""
+This source defines a self-contained function to fetch a perfetto prebuilt.
 
-# This file should do the same thing when being invoked in any of these ways:
-# ./trace_processor
-# python trace_processor
-# bash trace_processor
-# cat ./trace_processor | bash
-# cat ./trace_processor | python -
+This function is copy/pasted by //tools/roll-prebuilts in different places:
+- Into the //tools/{trace_processor, traceconv} scripts, which are just plain
+  wrappers around executables.
+- Into the //tools/{heap_profiler, record_android_trace} scripts, which contain
+  some other hand-written python code.
+In both cases toll-prebuilts copies this source (together with a manifest) into
+a section annotated with "BEGIN_SECTION_GENERATED_BY(roll-prebuilts)" / END... .
+The automated-copy-paste is to keep those script hermetic, so people can just
+download and run them without checking out the repo.
 
-BASH_FALLBACK = """ "
-exec python3 - "$@" <<'#'EOF
-#"""
-
-TOOL_NAME = 'trace_processor_shell'
-
-# BEGIN_SECTION_GENERATED_BY(roll-prebuilts)
-# Revision: 387c10f55b96e95f96ec9248c3af28772bccfff0
+The manifest argument looks as follows in the generated files:
 PERFETTO_PREBUILT_MANIFEST = [{
-    'tool':
-        'trace_processor_shell',
-    'arch':
-        'mac-amd64',
-    'file_name':
-        'trace_processor_shell',
-    'file_size':
-        7038736,
-    'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/387c10f55b96e95f96ec9248c3af28772bccfff0/mac-amd64/trace_processor_shell',
-    'sha256':
-        '2d5d054d64af5c2b0f5649bbe653bb5d71a2b8465fc69d00d52abb818a093f83',
-    'platform':
-        'darwin',
-    'machine': ['x86_64']
-}, {
-    'tool':
-        'trace_processor_shell',
-    'arch':
-        'windows-amd64',
-    'file_name':
-        'trace_processor_shell.exe',
-    'file_size':
-        6671872,
-    'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/387c10f55b96e95f96ec9248c3af28772bccfff0/windows-amd64/trace_processor_shell.exe',
-    'sha256':
-        'f1438f5731b97770e4f80a6fbeb04841ed1ad6738dc15defeb69395e889581c6',
-    'platform':
-        'win32',
-    'machine': ['amd64']
-}, {
-    'tool':
-        'trace_processor_shell',
-    'arch':
-        'linux-amd64',
-    'file_name':
-        'trace_processor_shell',
-    'file_size':
-        7386768,
-    'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/387c10f55b96e95f96ec9248c3af28772bccfff0/linux-amd64/trace_processor_shell',
-    'sha256':
-        '643e9b4bbea808434b4630522241f9306d17f4669b8ccb3cf9a52d61b3871f5d',
-    'platform':
-        'linux',
-    'machine': ['x86_64']
-}, {
-    'tool':
-        'trace_processor_shell',
-    'arch':
-        'linux-arm',
-    'file_name':
-        'trace_processor_shell',
-    'file_size':
-        4640056,
-    'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/387c10f55b96e95f96ec9248c3af28772bccfff0/linux-arm/trace_processor_shell',
-    'sha256':
-        '6118b0b863a9c9f04ea368fbec6aa6f482ccabb5abd7e8b94b31483bdb0f9d56',
-    'platform':
-        'linux',
-    'machine': ['armv6l', 'armv7l', 'armv8l']
-}, {
-    'tool':
-        'trace_processor_shell',
-    'arch':
-        'linux-arm64',
-    'file_name':
-        'trace_processor_shell',
-    'file_size':
-        6171712,
-    'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/387c10f55b96e95f96ec9248c3af28772bccfff0/linux-arm64/trace_processor_shell',
-    'sha256':
-        'c1ed98c6104fb57b6452b1a01c3b8d8b9f25593eb85590f58de0efc8cf3c423d',
-    'platform':
-        'linux',
-    'machine': ['aarch64']
-}]
+    'tool': 'trace_to_text',
+    'arch': 'mac-amd64',
+    'file_name': 'trace_to_text',
+    'file_size': 7087080,
+    'url': https://commondatastorage.googleapis.com/.../trace_to_text',
+    'sha256': 7d957c005b0dc130f5bd855d6cec27e060d38841b320d04840afc569f9087490',
+    'platform': 'darwin',
+    'machine': 'x86_64'
+  },
+  ...
+]
+
+The intended usage is:
+
+bin_path = get_perfetto_prebuilt('trace_processor_shell')
+subprocess.call(bin_path, ...)
+"""
+
+from logging import exception
+
+PERFETTO_PREBUILT_MANIFEST = []
+
+# COPIED_SECTION_START_MARKER
 
 
 # DO NOT EDIT. If you wish to make edits to this code, you need to change only
@@ -180,13 +120,3 @@ def get_perfetto_prebuilt(tool_name, soft_fail=False, arch=None):
       file_name=manifest_entry['file_name'],
       url=manifest_entry['url'],
       sha256=manifest_entry['sha256'])
-
-
-# END_SECTION_GENERATED_BY(roll-prebuilts)
-
-if __name__ == '__main__':
-  import sys, os
-  bin_path = get_perfetto_prebuilt(TOOL_NAME)
-  os.execv(bin_path, [bin_path] + sys.argv[1:])
-
-#EOF
