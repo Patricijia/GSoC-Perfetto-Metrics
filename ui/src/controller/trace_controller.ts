@@ -68,6 +68,10 @@ import {
 import {LoadingManager} from './loading_manager';
 import {LogsController} from './logs_controller';
 import {MetricsController} from './metrics_controller';
+import {
+  PivotTableController,
+  PivotTableControllerArgs
+} from './pivot_table_controller';
 import {QueryController, QueryControllerArgs} from './query_controller';
 import {SearchController} from './search_controller';
 import {
@@ -91,6 +95,7 @@ type States = 'init'|'loading_trace'|'ready';
 const METRICS = [
   'android_startup',
   'android_ion',
+  'android_lmk',
   'android_dma_heap',
   'android_thread_time_in_state',
   'android_surfaceflinger',
@@ -221,6 +226,15 @@ export class TraceController extends Controller<States> {
         childControllers.push(
             Child('traceError', TraceErrorController, {engine}));
         childControllers.push(Child('metrics', MetricsController, {engine}));
+
+        // Create a PivotTableController for each pivot table.
+        for (const pivotTableId of Object.keys(globals.state.pivotTable)) {
+          const pivotTableArgs:
+              PivotTableControllerArgs = {pivotTableId, engine};
+          childControllers.push(
+              Child(pivotTableId, PivotTableController, pivotTableArgs));
+        }
+
         return childControllers;
 
       default:
@@ -691,5 +705,3 @@ export class TraceController extends Controller<States> {
     }));
   }
 }
-
-
