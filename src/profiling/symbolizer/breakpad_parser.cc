@@ -13,6 +13,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+#include <memory>
 
 #include "src/profiling/symbolizer/breakpad_parser.h"
 
@@ -89,7 +90,7 @@ bool BreakpadParser::ParseFromString(const std::string& file_contents) {
     return true;
   }
 
-  // TODO(uwemwilson): Extract a build id and store it in the Symbol object.
+  // TODO(crbug/1239750): Extract a build id and store it in the Symbol object.
   base::StringView first_line(lines.cur_token(), lines.cur_token_size());
   base::Status parse_record_status = ParseIfModuleRecord(first_line);
   if (!parse_record_status.ok()) {
@@ -191,8 +192,8 @@ base::Status BreakpadParser::ParseIfFuncRecord(base::StringView current_line) {
   // Get the function name. Function names can have spaces, so any token is now
   // considered a part of the function name and will be appended to the buffer
   // in |func_name_writer|.
-  char joined_string[1000];
-  base::StringWriter func_name_writer(joined_string, 1000);
+  std::unique_ptr<char[]> joined_string(new char[current_line.size()]);
+  base::StringWriter func_name_writer(joined_string.get(), current_line.size());
   bool first_token = true;
   while (words.Next()) {
     if (!first_token) {

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {assertTrue} from '../../base/logging';
 import {NUM, NUM_NULL, STR} from '../../common/query_result';
 import {fromNs, toNs} from '../../common/time';
 import {
@@ -52,7 +51,7 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
         ts,
         max(iif(dur = -1, (SELECT end_ts FROM trace_bounds) - ts, dur)) as dur,
         layout_depth as depth,
-        name,
+        ifnull(name, '[null]') as name,
         id,
         dur = 0 as isInstant,
         dur = -1 as isIncomplete
@@ -61,8 +60,8 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
         filter_track_ids = '${this.config.trackIds.join(',')}' and
         ts >= ${startNs - this.maxDurNs} and
         ts <= ${endNs}
-      group by tsq, depth
-      order by tsq, depth
+      group by tsq, layout_depth
+      order by tsq, layout_depth
     `);
 
     const numRows = queryRes.numRows();
@@ -109,8 +108,6 @@ class AsyncSliceTrackController extends TrackController<Config, Data> {
 
       let endNsQ = Math.floor((endNs + bucketNs / 2 - 1) / bucketNs) * bucketNs;
       endNsQ = Math.max(endNsQ, startNsQ + bucketNs);
-
-      assertTrue(startNsQ !== endNsQ);
 
       slices.starts[row] = fromNs(startNsQ);
       slices.ends[row] = fromNs(endNsQ);
