@@ -33,6 +33,7 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/metatrace.h"
+#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "src/kallsyms/kernel_symbol_map.h"
 #include "src/kallsyms/lazy_kernel_symbolizer.h"
@@ -84,15 +85,17 @@ uint32_t ClampDrainPeriodMs(uint32_t drain_period_ms) {
   return drain_period_ms;
 }
 
-void WriteToFile(const char* path, const char* str) {
+bool WriteToFile(const char* path, const char* str) {
   auto fd = base::OpenFile(path, O_WRONLY);
   if (!fd)
-    return;
-  base::ignore_result(base::WriteAll(*fd, str, strlen(str)));
+    return false;
+  const size_t str_len = strlen(str);
+  return base::WriteAll(*fd, str, str_len) == static_cast<ssize_t>(str_len);
 }
 
-void ClearFile(const char* path) {
+bool ClearFile(const char* path) {
   auto fd = base::OpenFile(path, O_WRONLY | O_TRUNC);
+  return !!fd;
 }
 
 }  // namespace
@@ -100,18 +103,21 @@ void ClearFile(const char* path) {
 // Method of last resort to reset ftrace state.
 // We don't know what state the rest of the system and process is so as far
 // as possible avoid allocations.
-void HardResetFtraceState() {
-  PERFETTO_LOG("Hard resetting ftrace state.");
-
-  WriteToFile("/sys/kernel/debug/tracing/tracing_on", "0");
-  WriteToFile("/sys/kernel/debug/tracing/buffer_size_kb", "4");
-  WriteToFile("/sys/kernel/debug/tracing/events/enable", "0");
-  ClearFile("/sys/kernel/debug/tracing/trace");
-
-  WriteToFile("/sys/kernel/tracing/tracing_on", "0");
-  WriteToFile("/sys/kernel/tracing/buffer_size_kb", "4");
-  WriteToFile("/sys/kernel/tracing/events/enable", "0");
-  ClearFile("/sys/kernel/tracing/trace");
+bool HardResetFtraceState() {
+  for (const char* const* item = FtraceProcfs::kTracingPaths; *item; ++item) {
+    std::string prefix(*item);
+    PERFETTO_CHECK(base::EndsWith(prefix, "/"));
+    bool res = true;
+    res &= WriteToFile((prefix + "tracing_on").c_str(), "0");
+    res &= WriteToFile((prefix + "buffer_size_kb").c_str(), "4");
+    // We deliberately don't check for this as on some older versions of Android
+    // events/enable was not writable by the shell user.
+    WriteToFile((prefix + "events/enable").c_str(), "0");
+    res &= ClearFile((prefix + "trace").c_str());
+    if (res)
+      return true;
+  }
+  return false;
 }
 
 // static
@@ -243,13 +249,16 @@ void FtraceController::ReadTick(int generation) {
   // Read all cpu buffers with remaining per-period quota.
   bool all_cpus_done = true;
   uint8_t* parsing_buf = reinterpret_cast<uint8_t*>(parsing_mem_.Get());
+  const auto ftrace_clock = ftrace_config_muxer_->ftrace_clock();
   for (size_t i = 0; i < per_cpu_.size(); i++) {
     size_t orig_quota = per_cpu_[i].period_page_quota;
     if (orig_quota == 0)
       continue;
 
     size_t max_pages = std::min(orig_quota, kMaxPagesPerCpuPerReadTick);
-    size_t pages_read = per_cpu_[i].reader->ReadCycle(
+    CpuReader& cpu_reader = *per_cpu_[i].reader;
+    cpu_reader.set_ftrace_clock(ftrace_clock);
+    size_t pages_read = cpu_reader.ReadCycle(
         parsing_buf, kParsingBufferSizePages, max_pages, started_data_sources_);
 
     size_t new_quota = (pages_read >= orig_quota) ? 0 : orig_quota - pages_read;

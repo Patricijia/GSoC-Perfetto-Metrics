@@ -26,34 +26,11 @@ namespace util {
 
 namespace {
 
-// ScopedStringAppender will add |append| to |dest| when constructed and
-// erases the appended suffix from |dest| when it goes out of scope. Thus
-// |dest| must be valid for the entire lifetime of ScopedStringAppender.
-//
-// This is useful as we descend into a proto since the column names just
-// appended with ".field_name" as we go lower.
-//
-// I.E. message1.message2.field_name1 is a column, but we'll then need to
-// append message1.message2.field_name2 afterwards so we only need to append
-// "field_name1" within some scope.
-class ScopedStringAppender {
- public:
-  ScopedStringAppender(const std::string& append, std::string* dest)
-      : old_size_(dest->size()), dest_(dest) {
-    if (dest->empty()) {
-      dest_->reserve(append.size());
-    } else {
-      dest_->reserve(old_size_ + 1 + append.size());
-      dest_->append(".");
-    }
-    dest_->append(append);
-  }
-  ~ScopedStringAppender() { dest_->erase(old_size_); }
-
- private:
-  size_t old_size_;
-  std::string* dest_;
-};
+void AppendProtoType(std::string& target, const std::string& value) {
+  if (!target.empty())
+    target += '.';
+  target += value;
+}
 
 }  // namespace
 
@@ -62,6 +39,33 @@ ProtoToArgsParser::Key::Key(const std::string& k) : flat_key(k), key(k) {}
 ProtoToArgsParser::Key::Key(const std::string& fk, const std::string& k)
     : flat_key(fk), key(k) {}
 ProtoToArgsParser::Key::~Key() = default;
+
+ProtoToArgsParser::ScopedNestedKeyContext::ScopedNestedKeyContext(Key& key)
+    : key_(key),
+      old_flat_key_length_(key.flat_key.length()),
+      old_key_length_(key.key.length()) {}
+
+ProtoToArgsParser::ScopedNestedKeyContext::ScopedNestedKeyContext(
+    ProtoToArgsParser::ScopedNestedKeyContext&& other)
+    : key_(other.key_),
+      old_flat_key_length_(other.old_flat_key_length_),
+      old_key_length_(other.old_key_length_) {
+  other.old_flat_key_length_ = base::nullopt;
+  other.old_key_length_ = base::nullopt;
+}
+
+ProtoToArgsParser::ScopedNestedKeyContext::~ScopedNestedKeyContext() {
+  RemoveFieldSuffix();
+}
+
+void ProtoToArgsParser::ScopedNestedKeyContext::RemoveFieldSuffix() {
+  if (old_flat_key_length_)
+    key_.flat_key.resize(old_flat_key_length_.value());
+  if (old_key_length_)
+    key_.key.resize(old_key_length_.value());
+  old_flat_key_length_ = base::nullopt;
+  old_key_length_ = base::nullopt;
+}
 
 ProtoToArgsParser::Delegate::~Delegate() = default;
 
@@ -76,6 +80,21 @@ base::Status ProtoToArgsParser::ParseMessage(
     const std::string& type,
     const std::vector<uint16_t>* allowed_fields,
     Delegate& delegate) {
+  ScopedNestedKeyContext key_context(key_prefix_);
+  return ParseMessageInternal(key_context, cb, type, allowed_fields, delegate);
+}
+
+base::Status ProtoToArgsParser::ParseMessageInternal(
+    ScopedNestedKeyContext& key_context,
+    const protozero::ConstBytes& cb,
+    const std::string& type,
+    const std::vector<uint16_t>* allowed_fields,
+    Delegate& delegate) {
+  if (auto override_result =
+          MaybeApplyOverrideForType(type, key_context, cb, delegate)) {
+    return override_result.value();
+  }
+
   auto idx = pool_.FindDescriptorIdx(type);
   if (!idx) {
     return base::Status("Failed to find proto descriptor");
@@ -132,14 +151,14 @@ base::Status ProtoToArgsParser::ParseField(
   // In the args table we build up message1.message2.field1 as the column
   // name. This will append the ".field1" suffix to |key_prefix| and then
   // remove it when it goes out of scope.
-  ScopedStringAppender scoped_prefix(prefix_part, &key_prefix_.key);
-  ScopedStringAppender scoped_flat_key_prefix(field_descriptor.name(),
-                                              &key_prefix_.flat_key);
+  ScopedNestedKeyContext key_context(key_prefix_);
+  AppendProtoType(key_prefix_.flat_key, field_descriptor.name());
+  AppendProtoType(key_prefix_.key, prefix_part);
 
   // If we have an override parser then use that instead and move onto the
   // next loop.
   if (base::Optional<base::Status> status =
-          MaybeApplyOverride(field, delegate)) {
+          MaybeApplyOverrideForField(field, delegate)) {
     return *status;
   }
 
@@ -148,25 +167,43 @@ base::Status ProtoToArgsParser::ParseField(
   // recurse into it.
   if (field_descriptor.type() ==
       protos::pbzero::FieldDescriptorProto::TYPE_MESSAGE) {
-    return ParseMessage(field.as_bytes(), field_descriptor.resolved_type_name(),
-                        nullptr, delegate);
+    return ParseMessageInternal(key_context, field.as_bytes(),
+                                field_descriptor.resolved_type_name(), nullptr,
+                                delegate);
   }
 
   return ParseSimpleField(field_descriptor, field, delegate);
 }
 
-void ProtoToArgsParser::AddParsingOverride(std::string field,
-                                           ParsingOverride func) {
-  overrides_[std::move(field)] = std::move(func);
+void ProtoToArgsParser::AddParsingOverrideForField(
+    const std::string& field,
+    ParsingOverrideForField func) {
+  field_overrides_[field] = std::move(func);
 }
 
-base::Optional<base::Status> ProtoToArgsParser::MaybeApplyOverride(
+void ProtoToArgsParser::AddParsingOverrideForType(const std::string& type,
+                                                  ParsingOverrideForType func) {
+  type_overrides_[type] = std::move(func);
+}
+
+base::Optional<base::Status> ProtoToArgsParser::MaybeApplyOverrideForField(
     const protozero::Field& field,
     Delegate& delegate) {
-  auto it = overrides_.find(key_prefix_.flat_key);
-  if (it == overrides_.end())
+  auto it = field_overrides_.find(key_prefix_.flat_key);
+  if (it == field_overrides_.end())
     return base::nullopt;
   return it->second(field, delegate);
+}
+
+base::Optional<base::Status> ProtoToArgsParser::MaybeApplyOverrideForType(
+    const std::string& message_type,
+    ScopedNestedKeyContext& key,
+    const protozero::ConstBytes& data,
+    Delegate& delegate) {
+  auto it = type_overrides_.find(message_type);
+  if (it == type_overrides_.end())
+    return base::nullopt;
+  return it->second(key, data, delegate);
 }
 
 base::Status ProtoToArgsParser::ParseSimpleField(
@@ -236,6 +273,21 @@ base::Status ProtoToArgsParser::ParseSimpleField(
           descriptor.name().c_str(), descriptor.resolved_type_name().c_str(),
           descriptor.type());
   }
+}
+
+ProtoToArgsParser::ScopedNestedKeyContext ProtoToArgsParser::EnterArray(
+    size_t index) {
+  auto context = ScopedNestedKeyContext(key_prefix_);
+  key_prefix_.key += "[" + std::to_string(index) + "]";
+  return context;
+}
+
+ProtoToArgsParser::ScopedNestedKeyContext ProtoToArgsParser::EnterDictionary(
+    const std::string& name) {
+  auto context = ScopedNestedKeyContext(key_prefix_);
+  AppendProtoType(key_prefix_.key, name);
+  AppendProtoType(key_prefix_.flat_key, name);
+  return context;
 }
 
 }  // namespace util

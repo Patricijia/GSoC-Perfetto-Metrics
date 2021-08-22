@@ -70,7 +70,7 @@ For the full arguments list see the
 
 #### Using the Recording page of Perfetto UI
 
-You can also use the [Perfetto UI](https://ui.perfetto.dev/#!/record?p=memory)
+You can also use the [Perfetto UI](https://ui.perfetto.dev/#!/record/memory)
 to record heapprofd profiles. Tick "Heap profiling" in the trace configuration,
 enter the processes you want to target, click "Add Device" to pair your phone,
 and record profiles straight from your browser. This is also possible on
@@ -116,6 +116,8 @@ probability of being selected as a sample, and the corresponding callstack
 gets attributed the complete n bytes. For more accuracy, allocations larger than
 the sampling interval bypass the sampling logic and are recorded with their true
 size.
+See the [heapprofd Sampling](/docs/design-docs/heapprofd-sampling) document for
+details.
 
 ## Startup profiling
 
@@ -236,8 +238,6 @@ always produced. You can create multiple of these dumps, and they will be
 enumerated in the output directory.
 
 ## Symbolization
-
-NOTE: Symbolization is currently only available on Linux and MacOS.
 
 ### Set up llvm-symbolizer
 
@@ -436,6 +436,8 @@ Then, Ctrl-C the Perfetto invocation and upload ~/heapprofd-trace to the
 * `Failed to send control socket byte.` is displayed in logcat at the end of
   every profile. This is benign.
 * The object count may be incorrect in `dump_at_max` profiles.
+* Choosing a low shared memory buffer size and `block_client` mode might
+  lock up the target process.
 
 ### {#known-issues-android10} Android 10
 * Function names in libraries with load bias might be incorrect. Use
@@ -462,6 +464,8 @@ _Cuttlefish_.
 * `Failed to send control socket byte.` is displayed in logcat at the end of
   every profile. This is benign.
 * The object count may be incorrect in `dump_at_max` profiles.
+* Choosing a low shared memory buffer size and `block_client` mode might
+  lock up the target process.
 
 ## Heapprofd vs malloc_info() vs RSS
 
@@ -500,7 +504,7 @@ the memory of the process get swapped out onto ZRAM.
 | fragmentation       |                   |              |  x  |
 
 If you observe high RSS or malloc\_info metrics but heapprofd does not match,
-you might be hitting some patological fragmentation problem in the allocator.
+you might be hitting some pathological fragmentation problem in the allocator.
 
 ## Convert to pprof
 

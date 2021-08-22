@@ -21,7 +21,10 @@ import {
   OBJECTS_ALLOCATED_NOT_FREED_KEY,
   SPACE_MEMORY_ALLOCATED_NOT_FREED_KEY,
 } from '../common/flamegraph_util';
-import {HeapProfileFlamegraphViewingOption} from '../common/state';
+import {
+  CallsiteInfo,
+  HeapProfileFlamegraphViewingOption
+} from '../common/state';
 import {timeToCode} from '../common/time';
 
 import {PerfettoMouseEvent} from './events';
@@ -29,6 +32,8 @@ import {Flamegraph, NodeRendering} from './flamegraph';
 import {globals} from './globals';
 import {Panel, PanelSize} from './panel';
 import {debounce} from './rate_limiters';
+import {getCurrentTrace} from './sidebar';
+import {convertTraceToPprofAndDownload} from './trace_converter';
 
 interface HeapProfileDetailsPanelAttrs {}
 
@@ -48,6 +53,13 @@ function toProfileType(s: string): ProfileType {
     throw new Error('Unknown type ${s}');
   }
   return s;
+}
+
+function toSelectedCallsite(c: CallsiteInfo|undefined): string {
+  if (c !== undefined && c.name !== undefined) {
+    return c.name;
+  }
+  return '(none)';
 }
 
 const RENDER_SELF_AND_TOTAL: NodeRendering = {
@@ -116,6 +128,9 @@ export class HeapProfileDetailsPanel extends
                 ]),
               m('div.details',
                 [
+                  m('div.selected',
+                    `Selected function: ${
+                        toSelectedCallsite(heapDumpInfo.expandedCallsite)}`),
                   m('div.time',
                     `Snapshot time: ${timeToCode(heapDumpInfo.ts)}`),
                   m('input[type=text][placeholder=Focus]', {
@@ -237,9 +252,13 @@ export class HeapProfileDetailsPanel extends
   downloadPprof() {
     const engine = Object.values(globals.state.engines)[0];
     if (!engine) return;
-    const src = engine.source;
-    globals.dispatch(
-        Actions.convertTraceToPprof({pid: this.pid, ts1: this.ts, src}));
+    getCurrentTrace()
+        .then(file => {
+          convertTraceToPprofAndDownload(file, this.pid, this.ts);
+        })
+        .catch(error => {
+          throw new Error(`Failed to get current trace ${error}`);
+        });
   }
 
   private changeFlamegraphData() {

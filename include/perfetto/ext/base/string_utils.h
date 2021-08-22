@@ -17,11 +17,11 @@
 #ifndef INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
 #define INCLUDE_PERFETTO_EXT_BASE_STRING_UTILS_H_
 
+#include <stdlib.h>
+
+#include <cinttypes>
 #include <string>
 #include <vector>
-
-#include <inttypes.h>
-#include <stdlib.h>
 
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_view.h"
@@ -97,6 +97,8 @@ inline Optional<double> StringToDouble(const std::string& s) {
 
 bool StartsWith(const std::string& str, const std::string& prefix);
 bool EndsWith(const std::string& str, const std::string& suffix);
+bool StartsWithAny(const std::string& str,
+                   const std::vector<std::string>& prefixes);
 bool Contains(const std::string& haystack, const std::string& needle);
 bool Contains(const std::string& haystack, char needle);
 size_t Find(const StringView& needle, const StringView& haystack);

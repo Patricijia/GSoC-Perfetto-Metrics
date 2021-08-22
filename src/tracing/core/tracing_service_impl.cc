@@ -20,9 +20,10 @@
 #include "perfetto/tracing/core/forward_decls.h"
 
 #include <errno.h>
-#include <inttypes.h>
 #include <limits.h>
 #include <string.h>
+
+#include <cinttypes>
 #include <regex>
 #include <unordered_set>
 
@@ -56,7 +57,9 @@
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/metatrace.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/base/utils.h"
+#include "perfetto/ext/base/version.h"
 #include "perfetto/ext/base/watchdog.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/consumer.h"
@@ -72,6 +75,7 @@
 #include "perfetto/tracing/core/tracing_service_capabilities.h"
 #include "perfetto/tracing/core/tracing_service_state.h"
 #include "src/android_stats/statsd_logging_helper.h"
+#include "src/protozero/filtering/message_filter.h"
 #include "src/tracing/core/packet_stream_validator.h"
 #include "src/tracing/core/shared_memory_arbiter_impl.h"
 #include "src/tracing/core/trace_buffer.h"
@@ -99,16 +103,11 @@ namespace perfetto {
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
     PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
-// This is the only SELinux approved dir for trace files that are created
+// These are the only SELinux approved dir for trace files that are created
 // directly by traced.
 const char* kTraceDirBasePath = "/data/misc/perfetto-traces/";
-#endif
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-const char* kBugreportTracePath =
+const char* kAndroidProductionBugreportTracePath =
     "/data/misc/perfetto-traces/bugreport/systrace.pftrace";
-#else
-const char* kBugreportTracePath = "/tmp/bugreport.pftrace";
 #endif
 
 namespace {
@@ -272,7 +271,7 @@ base::ScopedFile CreateTraceFile(const std::string& path, bool overwrite) {
 }
 
 std::string GetBugreportTmpPath() {
-  return std::string(kBugreportTracePath) + ".tmp";
+  return GetBugreportPath() + ".tmp";
 }
 
 bool ShouldLogEvent(const TraceConfig& cfg) {
@@ -297,6 +296,16 @@ constexpr size_t TracingServiceImpl::kDefaultShmPageSize;
 constexpr size_t TracingServiceImpl::kMaxShmSize;
 constexpr uint32_t TracingServiceImpl::kDataSourceStopTimeoutMs;
 constexpr uint8_t TracingServiceImpl::kSyncMarker[];
+
+std::string GetBugreportPath() {
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
+    PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+  return kAndroidProductionBugreportTracePath;
+#else
+  // Only for tests, SaveTraceForBugreport is not used on other OSes.
+  return base::GetSysTempDir() + "/bugreport.pftrace";
+#endif
+}
 
 // static
 std::unique_ptr<TracingService> TracingService::CreateInstance(
@@ -331,7 +340,8 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
                                     bool in_process,
                                     ProducerSMBScrapingMode smb_scraping_mode,
                                     size_t shared_memory_page_size_hint_bytes,
-                                    std::unique_ptr<SharedMemory> shm) {
+                                    std::unique_ptr<SharedMemory> shm,
+                                    const std::string& sdk_version) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
 
   if (lockdown_mode_ && uid != base::GetCurrentUserId()) {
@@ -345,8 +355,8 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
     return nullptr;
   }
   const ProducerID id = GetNextProducerID();
-  PERFETTO_DLOG("Producer %" PRIu16 " connected", id);
-
+  PERFETTO_DLOG("Producer %" PRIu16 " connected, uid=%d", id,
+                static_cast<int>(uid));
   bool smb_scraping_enabled = smb_scraping_enabled_;
   switch (smb_scraping_mode) {
     case ProducerSMBScrapingMode::kDefault:
@@ -360,8 +370,8 @@ TracingServiceImpl::ConnectProducer(Producer* producer,
   }
 
   std::unique_ptr<ProducerEndpointImpl> endpoint(new ProducerEndpointImpl(
-      id, uid, this, task_runner_, producer, producer_name, in_process,
-      smb_scraping_enabled));
+      id, uid, this, task_runner_, producer, producer_name, sdk_version,
+      in_process, smb_scraping_enabled));
   auto it_and_inserted = producers_.emplace(id, endpoint.get());
   PERFETTO_DCHECK(it_and_inserted.second);
   endpoint->shmem_size_hint_bytes_ = shared_memory_size_hint_bytes;
@@ -644,6 +654,21 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
     return PERFETTO_SVC_ERR("Too many buffers configured (%d)",
                             cfg.buffers_size());
   }
+  // Check that the config specifies all buffers for its data sources. This
+  // is also checked in SetupDataSource, but it is simpler to return a proper
+  // error to the consumer from here (and there will be less state to undo).
+  for (const TraceConfig::DataSource& cfg_data_source : cfg.data_sources()) {
+    size_t num_buffers = static_cast<size_t>(cfg.buffers_size());
+    size_t target_buffer = cfg_data_source.config().target_buffer();
+    if (target_buffer >= num_buffers) {
+      MaybeLogUploadEvent(
+          cfg, PerfettoStatsdAtom::kTracedEnableTracingOobTargetBuffer);
+      return PERFETTO_SVC_ERR(
+          "Data source \"%s\" specified an out of bounds target_buffer (%zu >= "
+          "%zu)",
+          cfg_data_source.config().name().c_str(), target_buffer, num_buffers);
+    }
+  }
 
   if (!cfg.unique_session_name().empty()) {
     const std::string& name = cfg.unique_session_name();
@@ -718,12 +743,44 @@ base::Status TracingServiceImpl::EnableTracing(ConsumerEndpointImpl* consumer,
                             tracing_sessions_.size());
   }
 
+  // If the trace config provides a filter bytecode, setup the filter now.
+  // If the filter loading fails, abort the tracing session rather than running
+  // unfiltered.
+  std::unique_ptr<protozero::MessageFilter> trace_filter;
+  if (cfg.has_trace_filter()) {
+    const auto& filt = cfg.trace_filter();
+    const std::string& bytecode = filt.bytecode();
+    trace_filter.reset(new protozero::MessageFilter());
+    if (!trace_filter->LoadFilterBytecode(bytecode.data(), bytecode.size())) {
+      MaybeLogUploadEvent(
+          cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
+      return PERFETTO_SVC_ERR("Trace filter bytecode invalid, aborting");
+    }
+    // The filter is created using perfetto.protos.Trace as root message
+    // (because that makes it possible to play around with the `proto_filter`
+    // tool on actual traces). Here in the service, however, we deal with
+    // perfetto.protos.TracePacket(s), which are one level down (Trace.packet).
+    // The IPC client (or the write_into_filte logic in here) are responsible
+    // for pre-pending the packet preamble (See GetProtoPreamble() calls), but
+    // the preamble is not there at ReadBuffer time. Hence we change the root of
+    // the filtering to start at the Trace.packet level.
+    uint32_t packet_field_id = TracePacket::kPacketFieldNumber;
+    if (!trace_filter->SetFilterRoot(&packet_field_id, 1)) {
+      MaybeLogUploadEvent(
+          cfg, PerfettoStatsdAtom::kTracedEnableTracingInvalidFilter);
+      return PERFETTO_SVC_ERR("Failed to set filter root.");
+    }
+  }
+
   const TracingSessionID tsid = ++last_tracing_session_id_;
   TracingSession* tracing_session =
       &tracing_sessions_
            .emplace(std::piecewise_construct, std::forward_as_tuple(tsid),
                     std::forward_as_tuple(tsid, consumer, cfg, task_runner_))
            .first->second;
+
+  if (trace_filter)
+    tracing_session->trace_filter = std::move(trace_filter);
 
   if (cfg.write_into_file()) {
     if (!fd ^ !cfg.output_path().empty()) {
@@ -1775,8 +1832,9 @@ void TracingServiceImpl::FlushAndDisableTracing(TracingSessionID tsid) {
   PERFETTO_DLOG("Triggering final flush for %" PRIu64, tsid);
   auto weak_this = weak_ptr_factory_.GetWeakPtr();
   Flush(tsid, 0, [weak_this, tsid](bool success) {
-    PERFETTO_DLOG("Flush done (success: %d), disabling trace session %" PRIu64,
-                  success, tsid);
+    // This was a DLOG up to Jun 2021 (v16, Android S).
+    PERFETTO_LOG("FlushAndDisableTracing(%" PRIu64 ") done, success=%d", tsid,
+                 success);
     if (!weak_this)
       return;
     TracingSession* session = weak_this->GetTracingSession(tsid);
@@ -1892,7 +1950,8 @@ bool TracingServiceImpl::ReadBuffers(TracingSessionID tsid,
   // packets like TraceConfig and Clock snapshots. So we bail out early and let
   // the consumer know there is no data.
   if (!tracing_session->config.trigger_config().triggers().empty() &&
-      tracing_session->received_triggers.empty()) {
+      tracing_session->received_triggers.empty() &&
+      !tracing_session->seized_for_bugreport) {
     PERFETTO_DLOG(
         "ReadBuffers(): tracing session has not received a trigger yet.");
     return false;
@@ -2072,6 +2131,48 @@ bool TracingServiceImpl::ReadBuffers(TracingSessionID tsid,
     packets_bytes += packets[i].size();
     total_slices += packets[i].slices().size();
   }
+
+  // +-------------------------------------------------------------------------+
+  // | NO MORE CHANGES TO |packets| AFTER THIS POINT.                          |
+  // +-------------------------------------------------------------------------+
+
+  // If the tracing session specified a filter, run all packets through the
+  // filter and replace them with the filter results.
+  // The process below mantains the cardinality of input packets. Even if an
+  // entire packet is filtered out, we emit a zero-sized TracePacket proto. That
+  // makes debugging and reasoning about the trace stats easier.
+  // This place swaps the contents of each |packets| entry in place.
+  if (tracing_session->trace_filter) {
+    auto& trace_filter = *tracing_session->trace_filter;
+    // The filter root shoud be reset from protos.Trace to protos.TracePacket
+    // by the earlier call to SetFilterRoot() in EnableTracing().
+    PERFETTO_DCHECK(trace_filter.root_msg_index() != 0);
+    std::vector<protozero::MessageFilter::InputSlice> filter_input;
+    for (auto it = packets.begin(); it != packets.end(); ++it) {
+      const auto& packet_slices = it->slices();
+      filter_input.clear();
+      filter_input.resize(packet_slices.size());
+      ++tracing_session->filter_input_packets;
+      tracing_session->filter_input_bytes += it->size();
+      for (size_t i = 0; i < packet_slices.size(); ++i)
+        filter_input[i] = {packet_slices[i].start, packet_slices[i].size};
+      auto filtered_packet = trace_filter.FilterMessageFragments(
+          &filter_input[0], filter_input.size());
+
+      // Replace the packet in-place with the filtered one (unless failed).
+      *it = TracePacket();
+      if (filtered_packet.error) {
+        ++tracing_session->filter_errors;
+        PERFETTO_DLOG("Trace packet filtering failed @ packet %" PRIu64,
+                      tracing_session->filter_input_packets);
+        continue;
+      }
+      tracing_session->filter_output_bytes += filtered_packet.size;
+      it->AddSlice(Slice::TakeOwnership(std::move(filtered_packet.data),
+                                        filtered_packet.size));
+
+    }  // for (packet)
+  }    // if (trace_filter)
 
   // If the caller asked us to write into a file by setting
   // |write_into_file| == true in the trace config, drain the packets read
@@ -2924,6 +3025,14 @@ TraceStats TracingServiceImpl::GetTraceStats(TracingSession* tracing_session) {
   trace_stats.set_patches_discarded(patches_discarded_);
   trace_stats.set_invalid_packets(tracing_session->invalid_packets);
 
+  if (tracing_session->trace_filter) {
+    auto* filt_stats = trace_stats.mutable_filter_stats();
+    filt_stats->set_input_packets(tracing_session->filter_input_packets);
+    filt_stats->set_input_bytes(tracing_session->filter_input_bytes);
+    filt_stats->set_output_bytes(tracing_session->filter_output_bytes);
+    filt_stats->set_errors(tracing_session->filter_errors);
+  }
+
   for (BufferID buf_id : tracing_session->buffers_index) {
     TraceBuffer* buf = GetBufferByID(buf_id);
     if (!buf) {
@@ -2956,7 +3065,7 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
   tracing_session->did_emit_system_info = true;
   protozero::HeapBuffered<protos::pbzero::TracePacket> packet;
   auto* info = packet->set_system_info();
-  base::ignore_result(info);  // For PERFETTO_OS_WIN.
+  info->set_tracing_service_version(base::GetVersionString());
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN) && \
     !PERFETTO_BUILDFLAG(PERFETTO_OS_NACL)
   struct utsname uname_info;
@@ -3089,6 +3198,12 @@ bool TracingServiceImpl::MaybeSaveTraceForBugreport(
   // No eligible trace found.
   if (!max_session)
     return false;
+
+  PERFETTO_LOG("Seizing trace for bugreport. tsid:%" PRIu64
+               " state:%d wf:%d score:%d name:\"%s\"",
+               max_tsid, max_session->state, !!max_session->write_into_file,
+               max_session->config.bugreport_score(),
+               max_session->config.unique_session_name().c_str());
 
   auto br_fd = CreateTraceFile(GetBugreportTmpPath(), /*overwrite=*/true);
   if (!br_fd)
@@ -3396,6 +3511,7 @@ void TracingServiceImpl::ConsumerEndpointImpl::QueryServiceState(
   TracingServiceState svc_state;
 
   const auto& sessions = service_->tracing_sessions_;
+  svc_state.set_tracing_service_version(base::GetVersionString());
   svc_state.set_num_sessions(static_cast<int>(sessions.size()));
 
   int num_started = 0;
@@ -3407,7 +3523,8 @@ void TracingServiceImpl::ConsumerEndpointImpl::QueryServiceState(
     auto* producer = svc_state.add_producers();
     producer->set_id(static_cast<int>(kv.first));
     producer->set_name(kv.second->name_);
-    producer->set_uid(static_cast<int32_t>(producer->uid()));
+    producer->set_sdk_version(kv.second->sdk_version_);
+    producer->set_uid(static_cast<int32_t>(kv.second->uid()));
   }
 
   for (const auto& kv : service_->data_sources_) {
@@ -3438,12 +3555,12 @@ void TracingServiceImpl::ConsumerEndpointImpl::SaveTraceForBugreport(
     SaveTraceForBugreportCallback consumer_callback) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   auto on_complete_callback = [consumer_callback] {
-    if (rename(GetBugreportTmpPath().c_str(), kBugreportTracePath)) {
+    if (rename(GetBugreportTmpPath().c_str(), GetBugreportPath().c_str())) {
       consumer_callback(false, "rename(" + GetBugreportTmpPath() + ", " +
-                                   kBugreportTracePath + ") failed (" +
+                                   GetBugreportPath() + ") failed (" +
                                    strerror(errno) + ")");
     } else {
-      consumer_callback(true, kBugreportTracePath);
+      consumer_callback(true, GetBugreportPath());
     }
   };
   if (!service_->MaybeSaveTraceForBugreport(std::move(on_complete_callback))) {
@@ -3464,6 +3581,7 @@ TracingServiceImpl::ProducerEndpointImpl::ProducerEndpointImpl(
     base::TaskRunner* task_runner,
     Producer* producer,
     const std::string& producer_name,
+    const std::string& sdk_version,
     bool in_process,
     bool smb_scraping_enabled)
     : id_(id),
@@ -3472,6 +3590,7 @@ TracingServiceImpl::ProducerEndpointImpl::ProducerEndpointImpl(
       task_runner_(task_runner),
       producer_(producer),
       name_(producer_name),
+      sdk_version_(sdk_version),
       in_process_(in_process),
       smb_scraping_enabled_(smb_scraping_enabled),
       weak_ptr_factory_(this) {}

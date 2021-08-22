@@ -47,6 +47,10 @@
 #include "src/android_stats/perfetto_atoms.h"
 #include "src/tracing/core/id_allocator.h"
 
+namespace protozero {
+class MessageFilter;
+}
+
 namespace perfetto {
 
 namespace base {
@@ -83,6 +87,7 @@ class TracingServiceImpl : public TracingService {
                          base::TaskRunner*,
                          Producer*,
                          const std::string& producer_name,
+                         const std::string& sdk_version,
                          bool in_process,
                          bool smb_scraping_enabled);
     ~ProducerEndpointImpl() override;
@@ -150,6 +155,7 @@ class TracingServiceImpl : public TracingService {
     size_t shmem_page_size_hint_bytes_ = 0;
     bool is_shmem_provided_by_producer_ = false;
     const std::string name_;
+    std::string sdk_version_;
     bool in_process_;
     bool smb_scraping_enabled_;
 
@@ -287,7 +293,8 @@ class TracingServiceImpl : public TracingService {
       ProducerSMBScrapingMode smb_scraping_mode =
           ProducerSMBScrapingMode::kDefault,
       size_t shared_memory_page_size_hint_bytes = 0,
-      std::unique_ptr<SharedMemory> shm = nullptr) override;
+      std::unique_ptr<SharedMemory> shm = nullptr,
+      const std::string& sdk_version = {}) override;
 
   std::unique_ptr<TracingService::ConsumerEndpoint> ConnectConsumer(
       Consumer*,
@@ -574,6 +581,13 @@ class TracingServiceImpl : public TracingService {
     // Periodic task for snapshotting service events (e.g. clocks, sync markers
     // etc)
     base::PeriodicTask snapshot_periodic_task;
+
+    // When non-NULL the packets should be post-processed using the filter.
+    std::unique_ptr<protozero::MessageFilter> trace_filter;
+    uint64_t filter_input_packets = 0;
+    uint64_t filter_input_bytes = 0;
+    uint64_t filter_output_bytes = 0;
+    uint64_t filter_errors = 0;
   };
 
   TracingServiceImpl(const TracingServiceImpl&) = delete;
