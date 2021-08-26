@@ -16,8 +16,9 @@
 
 #include "src/perfetto_cmd/perfetto_cmd.h"
 
-#include <inttypes.h>
 #include <sys/sendfile.h>
+
+#include <cinttypes>
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/logging.h"
@@ -47,6 +48,12 @@ void PerfettoCmd::SaveTraceIntoDropboxAndIncidentOrCrash() {
 
   // Save the trace as an incident.
   SaveOutputToIncidentTraceOrCrash();
+
+  if (!uuid_.empty()) {
+    base::Uuid uuid(uuid_);
+    PERFETTO_LOG("go/trace-uuid/%s  (%" PRIu64 " bytes)",
+                 uuid.ToPrettyString().c_str(), bytes_written_);
+  }
 
   // Ask incidentd to create a report, which will read the file we just
   // wrote.
@@ -122,7 +129,7 @@ void PerfettoCmd::SaveOutputToIncidentTraceOrCrash() {
 }
 
 // static
-base::ScopedFile PerfettoCmd::CreateUnlikedTmpFile() {
+base::ScopedFile PerfettoCmd::CreateUnlinkedTmpFile() {
   // If we are tracing to DropBox, there's no need to make a
   // filesystem-visible temporary file.
   auto fd = base::OpenFile(kStateDir, O_TMPFILE | O_RDWR, 0600);

@@ -49,7 +49,7 @@ The trace processor is embedded in a wide variety of trace analysis tools, inclu
 * [trace_processor](/docs/analysis/trace-processor.md), a standalone binary
    providing a shell interface (and the reference embedder).
 * [Perfetto UI](https://ui.perfetto.dev), in the form of a WebAssembly module.
-* [Android Graphics Inspector](https://gpuinspector.dev/).
+* [Android GPU Inspector](https://gpuinspector.dev/).
 * [Android Studio](https://developer.android.com/studio/).
 
 ## Concepts
@@ -244,6 +244,41 @@ WHERE slice.name = 'measure'
 GROUP BY thread_name
 ```
 
+## Helper functions
+Helper functions are functions built into C++ which reduce the amount of
+boilerplate which needs to be written in SQL.
+
+### Extract args
+`EXTRACT_ARG` is a helper function which retreives a property of an
+event (e.g. slice or counter) from the `args` table.
+
+It takes an `arg_set_id` and `key` as input and returns the value looked
+up in the `args` table.
+
+For example, to retrieve the `prev_comm` field for `sched_switch` events in
+the `raw` table.
+```sql
+SELECT EXTRACT_ARG(arg_set_id, 'prev_comm')
+FROM raw
+WHERE name = 'sched_switch'
+```
+
+Behind the scenes, the above query would desugar to the following:
+```sql
+SELECT
+  (
+    SELECT string_value
+    FROM args
+    WHERE key = 'prev_comm' AND args.arg_set_id = raw.arg_set_id
+  )
+FROM raw
+WHERE name = 'sched_switch'
+```
+
+NOTE: while convinient, `EXTRACT_ARG` can inefficient compared to a `JOIN`
+when working with very large tables; a function call is required for every
+row which will be slower than the batch filters/sorts used by `JOIN`.
+
 ## Operator tables
 SQL queries are usually sufficient to retrieve data from trace processor.
 Sometimes though, certain constructs can be difficult to express pure SQL.
@@ -264,26 +299,27 @@ partitions before computing the intersection.
 -- Get all the scheduling slices
 CREATE VIEW sp_sched AS
 SELECT ts, dur, cpu, utid
-FROM sched
+FROM sched;
 
 -- Get all the cpu frequency slices
 CREATE VIEW sp_frequency AS
 SELECT
   ts,
-  lead(ts) OVER (PARTITION BY cpu ORDER BY ts) - ts as dur,
+  lead(ts) OVER (PARTITION BY track_id ORDER BY ts) - ts as dur,
   cpu,
   value as freq
 FROM counter
+JOIN cpu_counter_track ON counter.track_id = cpu_counter_track.id;
 
 -- Create the span joined table which combines cpu frequency with
 -- scheduling slices.
 CREATE VIRTUAL TABLE sched_with_frequency
-USING SPAN_JOIN(sp_sched PARTITIONED cpu, sp_frequency PARTITIONED cpu)
+USING SPAN_JOIN(sp_sched PARTITIONED cpu, sp_frequency PARTITIONED cpu);
 
 -- This span joined table can be queried as normal and has the columns from both
 -- tables.
 SELECT ts, dur, cpu, utid, freq
-FROM sched_with_frequency
+FROM sched_with_frequency;
 ```
 
 NOTE: A partition can be specified on neither, either or both tables. If

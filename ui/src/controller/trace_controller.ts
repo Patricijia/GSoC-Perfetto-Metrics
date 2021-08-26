@@ -12,26 +12,29 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import '../tracks/all_controller';
+import '../tracks/all_imports';
 
 import {assertExists, assertTrue} from '../base/logging';
 import {
   Actions,
   DeferredAction,
 } from '../common/actions';
+import {cacheTrace} from '../common/cache_manager';
 import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine, QueryError} from '../common/engine';
+import {featureFlags, Flag} from '../common/feature_flags';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
-import {slowlyCountRows} from '../common/query_iterator';
+import {NUM, NUM_NULL, STR, STR_NULL} from '../common/query_result';
 import {EngineMode} from '../common/state';
-import {toNs, toNsCeil, toNsFloor} from '../common/time';
-import {TimeSpan} from '../common/time';
-import {
-  createWasmEngine,
-  destroyWasmEngine,
-  WasmEngineProxy
-} from '../common/wasm_engine_proxy';
+import {TimeSpan, toNs, toNsCeil, toNsFloor} from '../common/time';
+import {resetEngineWorker, WasmEngineProxy} from '../common/wasm_engine_proxy';
 import {QuantizedLoad, ThreadDesc} from '../frontend/globals';
+import {
+  publishHasFtrace,
+  publishMetricError,
+  publishOverviewData,
+  publishThreads
+} from '../frontend/publish';
 
 import {
   CounterAggregationController
@@ -65,6 +68,10 @@ import {
 import {LoadingManager} from './loading_manager';
 import {LogsController} from './logs_controller';
 import {MetricsController} from './metrics_controller';
+import {
+  PivotTableController,
+  PivotTableControllerArgs
+} from './pivot_table_controller';
 import {QueryController, QueryControllerArgs} from './query_controller';
 import {SearchController} from './search_controller';
 import {
@@ -85,6 +92,32 @@ import {decideTracks} from './track_decider';
 
 type States = 'init'|'loading_trace'|'ready';
 
+const METRICS = [
+  'android_startup',
+  'android_ion',
+  'android_lmk',
+  'android_dma_heap',
+  'android_thread_time_in_state',
+  'android_surfaceflinger',
+  'android_batt',
+  'android_sysui_cuj',
+  'android_jank',
+  'trace_metadata',
+];
+const FLAGGED_METRICS: Array<[Flag, string]> = METRICS.map(m => {
+  const id = `forceMetric${m}`;
+  let name = m.split('_').join(' ') + ' metric';
+  name = name[0].toUpperCase() + name.slice(1);
+  const flag = featureFlags.register({
+    id,
+    name,
+    description: `Overrides running the '${m}' metric at import time.`,
+    defaultValue: true,
+  });
+  return [flag, m];
+});
+
+
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
 // tracks data and SQL queries. There is one TraceController instance for each
@@ -96,12 +129,6 @@ export class TraceController extends Controller<States> {
   constructor(engineId: string) {
     super('init');
     this.engineId = engineId;
-  }
-
-  onDestroy() {
-    if (this.engine instanceof WasmEngineProxy) {
-      destroyWasmEngine(this.engine.id);
-    }
   }
 
   run() {
@@ -134,7 +161,6 @@ export class TraceController extends Controller<States> {
       case 'ready':
         // At this point we are ready to serve queries and handle tracks.
         const engine = assertExists(this.engine);
-        assertTrue(engineCfg.ready);
         const childControllers: Children = [];
 
         // Create a TrackController for each track.
@@ -200,6 +226,15 @@ export class TraceController extends Controller<States> {
         childControllers.push(
             Child('traceError', TraceErrorController, {engine}));
         childControllers.push(Child('metrics', MetricsController, {engine}));
+
+        // Create a PivotTableController for each pivot table.
+        for (const pivotTableId of Object.keys(globals.state.pivotTable)) {
+          const pivotTableArgs:
+              PivotTableControllerArgs = {pivotTableId, engine};
+          childControllers.push(
+              Child(pivotTableId, PivotTableController, pivotTableArgs));
+        }
+
         return childControllers;
 
       default:
@@ -231,10 +266,9 @@ export class TraceController extends Controller<States> {
     } else {
       console.log('Opening trace using built-in WASM engine');
       engineMode = 'WASM';
+      const enginePort = resetEngineWorker();
       this.engine = new WasmEngineProxy(
-          this.engineId,
-          createWasmEngine(this.engineId),
-          LoadingManager.getInstance);
+          this.engineId, enginePort, LoadingManager.getInstance);
     }
 
     globals.dispatch(Actions.setEngineReady({
@@ -298,11 +332,26 @@ export class TraceController extends Controller<States> {
       Actions.navigate({route: '/viewer'}),
     ];
 
+    let visibleStartSec = startSec;
+    let visibleEndSec = endSec;
+    const mdTime = await this.engine.getTracingMetadataTimeBounds();
+    // make sure the bounds hold
+    if (Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S) <
+        Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S)) {
+      visibleStartSec =
+          Math.max(visibleStartSec, mdTime.start - TRACE_MARGIN_TIME_S);
+      visibleEndSec = Math.min(visibleEndSec, mdTime.end + TRACE_MARGIN_TIME_S);
+    }
+
     // We don't know the resolution at this point. However this will be
     // replaced in 50ms so a guess is fine.
-    const resolution = (traceTime.end - traceTime.start) / 1000;
-    actions.push(Actions.setVisibleTraceTime(
-        {...traceTimeState, lastUpdate: Date.now() / 1000, resolution}));
+    const resolution = (visibleStartSec - visibleEndSec) / 1000;
+    actions.push(Actions.setVisibleTraceTime({
+      startSec: visibleStartSec,
+      endSec: visibleEndSec,
+      lastUpdate: Date.now() / 1000,
+      resolution
+    }));
 
     globals.dispatchMultiple(actions);
 
@@ -319,6 +368,25 @@ export class TraceController extends Controller<States> {
 
     await this.listThreads();
     await this.loadTimelineOverview(traceTime);
+
+    {
+      // A quick heuristic to check if the trace has ftrace events. This is
+      // based on the assumption that most traces that have ftrace either:
+      // - Are proto traces captured via perfetto, in which case traced_probes
+      //   emits ftrace per-cpu stats that end up in the stats table.
+      // - Have a raw event with non-zero cpu or utid.
+      // Notes:
+      // - The "+1 > 1" is to avoid pushing down the constraints to the "raw"
+      //   table, which would compute a full column filter without being aware
+      //   of the limit 1, and instead delegate the filtering to the iterator.
+      const query = `select '_' as _ from raw
+          where cpu + 1 > 1 or utid + 1 > 1 limit 1`;
+      const result = await assertExists(this.engine).query(query);
+      const hasFtrace = result.numRows() > 0;
+      publishHasFtrace(hasFtrace);
+    }
+
+    await this.cacheCurrentTrace();
     globals.dispatch(Actions.sortThreadTracks({}));
     await this.selectFirstHeapProfile();
 
@@ -333,10 +401,11 @@ export class TraceController extends Controller<States> {
         select distinct(graph_sample_ts) as ts, 'graph' as type, upid from
         heap_graph_object) order by ts limit 1`;
     const profile = await assertExists(this.engine).query(query);
-    if (profile.numRecords !== 1) return;
-    const ts = profile.columns[0].longValues![0];
-    const type = profile.columns[1].stringValues![0];
-    const upid = profile.columns[2].longValues![0];
+    if (profile.numRows() !== 1) return;
+    const row = profile.firstRow({ts: NUM, type: STR, upid: NUM});
+    const ts = row.ts;
+    const type = row.type;
+    const upid = row.upid;
     globals.dispatch(Actions.selectHeapProfile({id: 0, upid, ts, type}));
   }
 
@@ -349,26 +418,38 @@ export class TraceController extends Controller<States> {
 
   private async listThreads() {
     this.updateStatus('Reading thread list');
-    const sqlQuery = `select utid, tid, pid, thread.name,
+    const query = `select
+        utid,
+        tid,
+        pid,
+        ifnull(thread.name, '') as threadName,
         ifnull(
           case when length(process.name) > 0 then process.name else null end,
-          thread.name),
-        process.cmdline
+          thread.name) as procName,
+        process.cmdline as cmdline
         from (select * from thread order by upid) as thread
         left join (select * from process order by upid) as process
         using(upid)`;
-    const threadRows = await assertExists(this.engine).query(sqlQuery);
+    const result = await assertExists(this.engine).query(query);
     const threads: ThreadDesc[] = [];
-    for (let i = 0; i < slowlyCountRows(threadRows); i++) {
-      const utid = threadRows.columns[0].longValues![i];
-      const tid = threadRows.columns[1].longValues![i];
-      const pid = threadRows.columns[2].longValues![i];
-      const threadName = threadRows.columns[3].stringValues![i];
-      const procName = threadRows.columns[4].stringValues![i];
-      const cmdline = threadRows.columns[5].stringValues![i];
+    const it = result.iter({
+      utid: NUM,
+      tid: NUM,
+      pid: NUM_NULL,
+      threadName: STR,
+      procName: STR_NULL,
+      cmdline: STR_NULL,
+    });
+    for (; it.valid(); it.next()) {
+      const utid = it.utid;
+      const tid = it.tid;
+      const pid = it.pid === null ? undefined : it.pid;
+      const threadName = it.threadName;
+      const procName = it.procName === null ? undefined : it.procName;
+      const cmdline = it.cmdline === null ? undefined : it.cmdline;
       threads.push({utid, tid, threadName, pid, procName, cmdline});
-    }  // for (record ...)
-    globals.publish('Threads', threads);
+    }
+    publishThreads(threads);
   }
 
   private async loadTimelineOverview(traceTime: TimeSpan) {
@@ -386,19 +467,20 @@ export class TraceController extends Controller<States> {
       const endNs = toNsCeil(endSec);
 
       // Sched overview.
-      const schedRows = await engine.query(
-          `select sum(dur)/${stepSec}/1e9, cpu from sched ` +
+      const schedResult = await engine.query(
+          `select sum(dur)/${stepSec}/1e9 as load, cpu from sched ` +
           `where ts >= ${startNs} and ts < ${endNs} and utid != 0 ` +
           'group by cpu order by cpu');
       const schedData: {[key: string]: QuantizedLoad} = {};
-      for (let i = 0; i < slowlyCountRows(schedRows); i++) {
-        const load = schedRows.columns[0].doubleValues![i];
-        const cpu = schedRows.columns[1].longValues![i];
+      const it = schedResult.iter({load: NUM, cpu: NUM});
+      for (; it.valid(); it.next()) {
+        const load = it.load;
+        const cpu = it.cpu;
         schedData[cpu] = {startSec, endSec, load};
         hasSchedOverview = true;
-      }  // for (record ...)
-      globals.publish('OverviewData', schedData);
-    }  // for (step ...)
+      }
+      publishOverviewData(schedData);
+    }
 
     if (hasSchedOverview) {
       return;
@@ -407,14 +489,15 @@ export class TraceController extends Controller<States> {
     // Slices overview.
     const traceStartNs = toNs(traceTime.start);
     const stepSecNs = toNs(stepSec);
-    const sliceSummaryQuery = await engine.query(`select
+    const sliceResult = await engine.query(`select
            bucket,
            upid,
-           sum(utid_sum) / cast(${stepSecNs} as float) as upid_sum
+           sum(utid_sum) / cast(${stepSecNs} as float) as load
          from thread
          inner join (
            select
-             cast((ts - ${traceStartNs})/${stepSecNs} as int) as bucket,
+             ifnull(cast((ts - ${traceStartNs})/${
+        stepSecNs} as int), 0) as bucket,
              sum(dur) as utid_sum,
              utid
            from slice
@@ -424,10 +507,11 @@ export class TraceController extends Controller<States> {
          group by bucket, upid`);
 
     const slicesData: {[key: string]: QuantizedLoad[]} = {};
-    for (let i = 0; i < slowlyCountRows(sliceSummaryQuery); i++) {
-      const bucket = sliceSummaryQuery.columns[0].longValues![i];
-      const upid = sliceSummaryQuery.columns[1].longValues![i];
-      const load = sliceSummaryQuery.columns[2].doubleValues![i];
+    const it = sliceResult.iter({bucket: NUM, upid: NUM, load: NUM});
+    for (; it.valid(); it.next()) {
+      const bucket = it.bucket;
+      const upid = it.upid;
+      const load = it.load;
 
       const startSec = traceTime.start + stepSec * bucket;
       const endSec = startSec + stepSec;
@@ -439,7 +523,20 @@ export class TraceController extends Controller<States> {
       }
       loadArray.push({startSec, endSec, load});
     }
-    globals.publish('OverviewData', slicesData);
+    publishOverviewData(slicesData);
+  }
+
+  private async cacheCurrentTrace() {
+    const engine = assertExists(this.engine);
+    const result = await engine.query(`select str_value as uuid from metadata
+                  where name = 'trace_uuid'`);
+    if (result.numRows() === 0) {
+      throw new Error('metadata.trace_uuid could not be found.');
+    }
+    const traceUuid = result.firstRow({uuid: STR}).uuid;
+    const engineConfig = assertExists(Object.values(globals.state.engines)[0]);
+    cacheTrace(engineConfig.source, traceUuid);
+    globals.dispatch(Actions.setTraceUuid({traceUuid}));
   }
 
   async initialiseHelperViews() {
@@ -492,15 +589,13 @@ export class TraceController extends Controller<States> {
       );
     `);
 
-    for (const metric
-             of ['android_startup',
-                 'android_ion',
-                 'android_dma_heap',
-                 'android_thread_time_in_state',
-                 'android_surfaceflinger',
-                 'android_batt',
-                 'android_sysui_cuj',
-                 'android_jank']) {
+
+    for (const [flag, metric] of FLAGGED_METRICS) {
+      if (!flag.get()) {
+        continue;
+      }
+
+
       this.updateStatus(`Computing ${metric} metric`);
       try {
         // We don't care about the actual result of metric here as we are just
@@ -508,7 +603,7 @@ export class TraceController extends Controller<States> {
         await engine.computeMetric([metric]);
       } catch (e) {
         if (e instanceof QueryError) {
-          globals.publish('MetricError', 'MetricError: ' + e.message);
+          publishMetricError('MetricError: ' + e.message);
           continue;
         } else {
           throw e;
@@ -521,11 +616,14 @@ export class TraceController extends Controller<States> {
         let hasSliceName = false;
         let hasDur = false;
         let hasUpid = false;
-        for (let i = 0; i < slowlyCountRows(result); i++) {
-          const name = result.columns[1].stringValues![i];
+        let hasValue = false;
+        const it = result.iter({name: STR});
+        for (; it.valid(); it.next()) {
+          const name = it.name;
           hasSliceName = hasSliceName || name === 'slice_name';
           hasDur = hasDur || name === 'dur';
           hasUpid = hasUpid || name === 'upid';
+          hasValue = hasValue || name === 'value';
         }
 
         const upidColumnSelect = hasUpid ? 'upid' : '0 AS upid';
@@ -556,42 +654,42 @@ export class TraceController extends Controller<States> {
           `);
         }
 
-        const hasValue = result.columnDescriptors.some(x => x.name === 'value');
         if (hasValue) {
           const minMax = await engine.query(`
-          SELECT MIN(value) as min_value, MAX(value) as max_value
-          FROM ${metric}_event
-          WHERE ${upidColumnWhere} != 0`);
-          const min = minMax.columns[0].longValues![0];
-          const max = minMax.columns[1].longValues![0];
+            SELECT
+              IFNULL(MIN(value), 0) as minValue,
+              IFNULL(MAX(value), 0) as maxValue
+            FROM ${metric}_event
+            WHERE ${upidColumnWhere} != 0`);
+          const row = minMax.firstRow({minValue: NUM, maxValue: NUM});
           await engine.query(`
-          INSERT INTO annotation_counter_track(
-            name, __metric_name, min_value, max_value, upid)
-          SELECT DISTINCT
-            track_name,
-            '${metric}' as metric_name,
-            CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${min} END,
-            CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${max} END,
-            ${upidColumnSelect}
-          FROM ${metric}_event
-          WHERE track_type = 'counter'
-        `);
+            INSERT INTO annotation_counter_track(
+              name, __metric_name, min_value, max_value, upid)
+            SELECT DISTINCT
+              track_name,
+              '${metric}' as metric_name,
+              CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${row.minValue} END,
+              CASE ${upidColumnWhere} WHEN 0 THEN NULL ELSE ${row.maxValue} END,
+              ${upidColumnSelect}
+            FROM ${metric}_event
+            WHERE track_type = 'counter'
+          `);
           await engine.query(`
-          INSERT INTO annotation_counter(id, track_id, ts, value)
-          SELECT
-            -1 as id,
-            t.id AS track_id,
-            ts,
-            value
-          FROM ${metric}_event a
-          JOIN annotation_counter_track t
-          ON a.track_name = t.name AND t.__metric_name = '${metric}'
-          ORDER BY t.id, ts
-        `);
+            INSERT INTO annotation_counter(id, track_id, ts, value)
+            SELECT
+              -1 as id,
+              t.id AS track_id,
+              ts,
+              value
+            FROM ${metric}_event a
+            JOIN annotation_counter_track t
+            ON a.track_name = t.name AND t.__metric_name = '${metric}'
+            ORDER BY t.id, ts
+          `);
         }
       } catch (e) {
         if (e instanceof QueryError) {
-          globals.publish('MetricError', 'MetricError: ' + e.message);
+          publishMetricError('MetricError: ' + e.message);
         } else {
           throw e;
         }
@@ -606,5 +704,3 @@ export class TraceController extends Controller<States> {
     }));
   }
 }
-
-

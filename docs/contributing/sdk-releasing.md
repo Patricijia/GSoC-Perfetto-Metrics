@@ -15,19 +15,19 @@ cd perfetto
 Next, decide the version number for the new release (vX.Y).
 The major version number (X) is incremented on every release (monthly).
 The minor version number is incremented only for minor changes / fixes on top of the monthly
-release (cherry-picks on the releases/vN.x branch). 
+release (cherry-picks on the releases/vN.x branch).
 
 Continue with the appropriate section below.
 
 ## a) Creating a new major version
 
-Create a release branch for the new major version ("v15.x" here):
+Create a release branch for the new major version ("v16.x" here):
 
 ```bash
 git fetch origin
-git push origin origin/master:refs/heads/releases/v15.x
+git push origin origin/master:refs/heads/releases/v16.x
 git fetch origin
-git checkout -b releases/v15.x -t origin/releases/v15.x
+git checkout -b releases/v16.x -t origin/releases/v16.x
 ```
 
 Continue with [building the release](#building-and-tagging-the-release).
@@ -38,7 +38,7 @@ Check out the existing release branch ("5.x" here) and merge in the desired
 revision for the new release, resolving any conflicts you may encounter.
 
 ```bash
-git checkout -b releases/v15.x -t origin/releases/v15.x
+git checkout -b releases/v16.x -t origin/releases/v16.x
 ```
 
 If you only want to introduce one or two patches in the new release, consider
@@ -52,6 +52,24 @@ Otherwise, you can do a full merge:
 
 ```bash
 git merge <sha1>
+```
+
+Update the CHANGELOG with a dedicated entry for the new minor version.
+This is important because the
+[write_version_header.py](/tools/write_version_header.py) script, which is
+invoked by the build system, looks at the CHANGELOG to work out the latest
+v${maj}.${min} version.
+
+For an example see [r.android.com/1730332](https://r.android.com/1730332)
+
+```txt
+v16.1 - 2021-06-08:
+  Tracing service and probes:
+    * Cherry-pick of r.android.com/1716718 which missed the v16 branch ... .
+
+
+v16.0 - 2021-06-01:
+  ...
 ```
 
 ## Building and tagging the release
@@ -96,7 +114,7 @@ git commit --amend
 git pull
 
 git status
-# Should print: Your branch is up to date with 'origin/releases/v15.x'.
+# Should print: Your branch is up to date with 'origin/releases/v16.x'.
 # Do NOT proceed if your branch has diverged from origin/releases/vX.X
 
 git tag -a -m "Perfetto vX.Y" vX.Y
@@ -107,5 +125,7 @@ git push origin vX.Y
 
    - [docs/instrumentation/tracing-sdk.md](/docs/instrumentation/tracing-sdk.md)
    - [examples/sdk/README.md](/examples/sdk/README.md)
+
+6. Send an email with the CHANGELOG to perfetto-dev@ (internal) and perfetto-dev@googlegroups.com.
 
 Phew, you're done!

@@ -16,19 +16,17 @@ import {hsluvToHex} from 'hsluv';
 
 import {Actions} from '../../common/actions';
 import {cropText, drawIncompleteSlice} from '../../common/canvas_utils';
-import {hslForSlice} from '../../common/colorizer';
+import {hslForSlice, hslForThreadIdleSlice} from '../../common/colorizer';
 import {TRACE_MARGIN_TIME_S} from '../../common/constants';
-import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
-import {SliceRect, Track} from '../../frontend/track';
+import {NewTrackArgs, SliceRect, Track} from '../../frontend/track';
 import {trackRegistry} from '../../frontend/track_registry';
 
 import {Config, Data, SLICE_TRACK_KIND} from './common';
 
 const SLICE_HEIGHT = 18;
 const TRACK_PADDING = 4;
-const INCOMPLETE_SLICE_TIME_S = 0.00003;
 const CHEVRON_WIDTH_PX = 10;
 const HALF_CHEVRON_WIDTH_PX = CHEVRON_WIDTH_PX / 2;
 const INNER_CHEVRON_OFFSET = -3;
@@ -37,14 +35,14 @@ const INNER_CHEVRON_SCALE =
 
 export class ChromeSliceTrack extends Track<Config, Data> {
   static readonly kind: string = SLICE_TRACK_KIND;
-  static create(trackState: TrackState): Track {
-    return new ChromeSliceTrack(trackState);
+  static create(args: NewTrackArgs): Track {
+    return new ChromeSliceTrack(args);
   }
 
   private hoveredTitleId = -1;
 
-  constructor(trackState: TrackState) {
-    super(trackState);
+  constructor(args: NewTrackArgs) {
+    super(args.trackId);
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D): void {
@@ -86,8 +84,9 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const isIncomplete = data.isIncomplete[i];
       const title = data.strings[titleId];
       const colorOverride = data.colors && data.strings[data.colors[i]];
+      const isThreadSlice = this.config.isThreadSlice;
       if (isIncomplete) {  // incomplete slice
-        tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
+        tEnd = visibleWindowTime.end;
       }
 
       const rect = this.getSliceRect(tStart, tEnd, depth);
@@ -102,10 +101,11 @@ export class ChromeSliceTrack extends Track<Config, Data> {
 
       const name = title.replace(/( )?\d+/g, '');
       const highlighted = titleId === this.hoveredTitleId ||
-          globals.frontendLocalState.highlightedSliceId === sliceId;
+          globals.state.highlightedSliceId === sliceId;
 
-      const [hue, saturation, lightness] =
-          hslForSlice(name, highlighted || isSelected);
+      const hasFocus = highlighted || isSelected;
+
+      const [hue, saturation, lightness] = hslForSlice(name, hasFocus);
 
       let color: string;
       if (colorOverride === undefined) {
@@ -114,6 +114,16 @@ export class ChromeSliceTrack extends Track<Config, Data> {
         color = colorOverride;
       }
       ctx.fillStyle = color;
+
+      if (isThreadSlice) {
+        const cpuTimeRatio = data.cpuTimeRatio![i];
+        const [GradientHue, GradientSaturation, GradientLightness] =
+            hslForThreadIdleSlice(hue, saturation, lightness, hasFocus);
+        const gradientColor =
+            hsluvToHex([GradientHue, GradientSaturation, GradientLightness]);
+        ctx.fillStyle = this.createGradientForThreadSlice(
+            tStart, tEnd, cpuTimeRatio, color, gradientColor, ctx);
+      }
 
       // We draw instant events as upward facing chevrons starting at A:
       //     A
@@ -210,7 +220,7 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       } else {
         let tEnd = data.ends[i];
         if (data.isIncomplete[i]) {
-          tEnd = tStart + INCOMPLETE_SLICE_TIME_S;
+          tEnd = globals.frontendLocalState.visibleWindowTime.end;
         }
         if (tStart <= t && t <= tEnd) {
           return i;
@@ -221,18 +231,19 @@ export class ChromeSliceTrack extends Track<Config, Data> {
 
   onMouseMove({x, y}: {x: number, y: number}) {
     this.hoveredTitleId = -1;
-    globals.frontendLocalState.setHighlightedSliceId(-1);
+    globals.dispatch(Actions.setHighlightedSliceId({sliceId: -1}));
     const sliceIndex = this.getSliceIndex({x, y});
     if (sliceIndex === undefined) return;
     const data = this.data();
     if (data === undefined) return;
     this.hoveredTitleId = data.titles[sliceIndex];
-    globals.frontendLocalState.setHighlightedSliceId(data.sliceIds[sliceIndex]);
+    const sliceId = data.sliceIds[sliceIndex];
+    globals.dispatch(Actions.setHighlightedSliceId({sliceId}));
   }
 
   onMouseOut() {
     this.hoveredTitleId = -1;
-    globals.frontendLocalState.setHighlightedSliceId(-1);
+    globals.dispatch(Actions.setHighlightedSliceId({sliceId: -1}));
   }
 
   onMouseClick({x, y}: {x: number, y: number}): boolean {
@@ -270,6 +281,23 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       visible:
           !(tEnd <= visibleWindowTime.start || tStart >= visibleWindowTime.end)
     };
+  }
+
+  createGradientForThreadSlice(
+      tStart: number, tEnd: number, cpuTimeRatio: number, color: string,
+      gradientColor: string, ctx: CanvasRenderingContext2D): CanvasGradient {
+    const timeScale = globals.frontendLocalState.timeScale;
+    const {start: windowStart, end: windowEnd} =
+        globals.frontendLocalState.visibleWindowTime;
+    const start = isFinite(timeScale.timeToPx(tStart)) ?
+        timeScale.timeToPx(tStart) :
+        windowStart;
+    const end = isFinite(timeScale.timeToPx(tEnd)) ? timeScale.timeToPx(tEnd) :
+                                                     windowEnd;
+    const gradient = ctx.createLinearGradient(start, 0, end, 0);
+    gradient.addColorStop(cpuTimeRatio, color);
+    gradient.addColorStop(cpuTimeRatio, gradientColor);
+    return gradient;
   }
 }
 

@@ -27,7 +27,6 @@ perfetto_proto_library("@TYPE@") {
     "fastrpc_metric.proto",
     "g2d_metric.proto",
     "gpu_metric.proto",
-    "heap_profile_callsites.proto",
     "hwcomposer.proto",
     "hwui_metric.proto",
     "ion_metric.proto",
@@ -41,11 +40,13 @@ perfetto_proto_library("@TYPE@") {
     "package_list.proto",
     "powrails_metric.proto",
     "process_metadata.proto",
+    "profiler_smaps.proto",
     "startup_metric.proto",
     "surfaceflinger.proto",
     "sysui_cuj_metrics.proto",
     "task_names.proto",
     "thread_time_in_state_metric.proto",
+    "trace_quality.proto",
     "unsymbolized_frames.proto",
   ]
 }

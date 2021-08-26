@@ -20,6 +20,7 @@
 #include <time.h>
 
 #include <unwindstack/Regs.h>
+#include <vector>
 
 #include "perfetto/base/flat_set.h"
 #include "perfetto/ext/base/optional.h"
@@ -155,23 +156,26 @@ base::Optional<uint32_t> ChooseActualRingBufferPages(uint32_t config_value) {
 }
 
 base::Optional<PerfCounter> ToPerfCounter(
+    std::string name,
     protos::gen::PerfEvents::Counter pb_enum) {
   using protos::gen::PerfEvents;
   switch (static_cast<int>(pb_enum)) {  // cast to pacify -Wswitch-enum
     case PerfEvents::SW_CPU_CLOCK:
-      return PerfCounter::Counter(PerfEvents::SW_CPU_CLOCK, PERF_TYPE_SOFTWARE,
-                                  PERF_COUNT_SW_CPU_CLOCK);
+      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_CPU_CLOCK,
+                                         PERF_TYPE_SOFTWARE,
+                                         PERF_COUNT_SW_CPU_CLOCK);
     case PerfEvents::SW_PAGE_FAULTS:
-      return PerfCounter::Counter(PerfEvents::SW_PAGE_FAULTS,
-                                  PERF_TYPE_SOFTWARE,
-                                  PERF_COUNT_SW_PAGE_FAULTS);
+      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_PAGE_FAULTS,
+                                         PERF_TYPE_SOFTWARE,
+                                         PERF_COUNT_SW_PAGE_FAULTS);
     case PerfEvents::HW_CPU_CYCLES:
-      return PerfCounter::Counter(PerfEvents::HW_CPU_CYCLES, PERF_TYPE_HARDWARE,
-                                  PERF_COUNT_HW_CPU_CYCLES);
+      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_CPU_CYCLES,
+                                         PERF_TYPE_HARDWARE,
+                                         PERF_COUNT_HW_CPU_CYCLES);
     case PerfEvents::HW_INSTRUCTIONS:
-      return PerfCounter::Counter(PerfEvents::HW_INSTRUCTIONS,
-                                  PERF_TYPE_HARDWARE,
-                                  PERF_COUNT_HW_INSTRUCTIONS);
+      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_INSTRUCTIONS,
+                                         PERF_TYPE_HARDWARE,
+                                         PERF_COUNT_HW_INSTRUCTIONS);
     default:
       PERFETTO_ELOG("Unrecognised PerfEvents::Counter enum value: %zu",
                     static_cast<size_t>(pb_enum));
@@ -182,24 +186,52 @@ base::Optional<PerfCounter> ToPerfCounter(
 }  // namespace
 
 // static
-PerfCounter PerfCounter::Counter(protos::gen::PerfEvents::Counter counter,
-                                 uint32_t type,
-                                 uint32_t config) {
+PerfCounter PerfCounter::BuiltinCounter(
+    std::string name,
+    protos::gen::PerfEvents::Counter counter,
+    uint32_t type,
+    uint64_t config) {
   PerfCounter ret;
+  ret.type = PerfCounter::Type::kBuiltinCounter;
   ret.counter = counter;
-  ret.type = type;
-  ret.config = config;
+  ret.name = std::move(name);
+
+  ret.attr_type = type;
+  ret.attr_config = config;
+  // none of the builtin counters require config1 and config2 at the moment
   return ret;
 }
 
 // static
-PerfCounter PerfCounter::Tracepoint(
-    protos::gen::PerfEvents::Tracepoint tracepoint,
-    uint32_t id) {
+PerfCounter PerfCounter::Tracepoint(std::string name,
+                                    std::string tracepoint_name,
+                                    std::string tracepoint_filter,
+                                    uint64_t id) {
   PerfCounter ret;
-  ret.tracepoint = std::move(tracepoint);
-  ret.type = PERF_TYPE_TRACEPOINT;
-  ret.config = id;
+  ret.type = PerfCounter::Type::kTracepoint;
+  ret.tracepoint_name = std::move(tracepoint_name);
+  ret.tracepoint_filter = std::move(tracepoint_filter);
+  ret.name = std::move(name);
+
+  ret.attr_type = PERF_TYPE_TRACEPOINT;
+  ret.attr_config = id;
+  return ret;
+}
+
+// static
+PerfCounter PerfCounter::RawEvent(std::string name,
+                                  uint32_t type,
+                                  uint64_t config,
+                                  uint64_t config1,
+                                  uint64_t config2) {
+  PerfCounter ret;
+  ret.type = PerfCounter::Type::kRawEvent;
+  ret.name = std::move(name);
+
+  ret.attr_type = type;
+  ret.attr_config = config;
+  ret.attr_config1 = config1;
+  ret.attr_config2 = config2;
   return ret;
 }
 
@@ -236,8 +268,10 @@ base::Optional<EventConfig> EventConfig::Create(
 
   // Timebase event. Default: CPU timer.
   PerfCounter timebase_event;
+  std::string timebase_name = pb_config.timebase().name();
   if (pb_config.timebase().has_counter()) {
-    auto maybe_counter = ToPerfCounter(pb_config.timebase().counter());
+    auto maybe_counter =
+        ToPerfCounter(timebase_name, pb_config.timebase().counter());
     if (!maybe_counter)
       return base::nullopt;
     timebase_event = *maybe_counter;
@@ -248,12 +282,18 @@ base::Optional<EventConfig> EventConfig::Create(
         ParseTracepointAndResolveId(tracepoint_pb, tracepoint_id_lookup);
     if (!maybe_id)
       return base::nullopt;
-    timebase_event = PerfCounter::Tracepoint(tracepoint_pb, *maybe_id);
+    timebase_event = PerfCounter::Tracepoint(
+        timebase_name, tracepoint_pb.name(), tracepoint_pb.filter(), *maybe_id);
+
+  } else if (pb_config.timebase().has_raw_event()) {
+    const auto& raw = pb_config.timebase().raw_event();
+    timebase_event = PerfCounter::RawEvent(
+        timebase_name, raw.type(), raw.config(), raw.config1(), raw.config2());
 
   } else {
-    timebase_event =
-        PerfCounter::Counter(protos::gen::PerfEvents::PerfEvents::SW_CPU_CLOCK,
-                             PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK);
+    timebase_event = PerfCounter::BuiltinCounter(
+        timebase_name, protos::gen::PerfEvents::PerfEvents::SW_CPU_CLOCK,
+        PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK);
   }
 
   // Callstack sampling.
@@ -297,7 +337,7 @@ base::Optional<EventConfig> EventConfig::Create(
     // expected = rate * period, with a conversion of period from ms to s:
     uint64_t expected_samples_per_tick =
         1 + (sampling_frequency * read_tick_period_ms) / 1000;
-    // Double the the limit to account of actual sample rate uncertainties, as
+    // Double the limit to account of actual sample rate uncertainties, as
     // well as any other factors:
     samples_per_tick_limit = 2 * expected_samples_per_tick;
   } else {  // sampling_period
@@ -331,8 +371,10 @@ base::Optional<EventConfig> EventConfig::Create(
   pe.disabled = 1;  // will be activated via ioctl
 
   // Sampling timebase.
-  pe.type = timebase_event.type;
-  pe.config = timebase_event.config;
+  pe.type = timebase_event.attr_type;
+  pe.config = timebase_event.attr_config;
+  pe.config1 = timebase_event.attr_config1;
+  pe.config2 = timebase_event.attr_config2;
   if (sampling_frequency) {
     pe.freq = true;
     pe.sample_freq = sampling_frequency;
@@ -371,7 +413,8 @@ base::Optional<EventConfig> EventConfig::Create(
       raw_ds_config, pe, timebase_event, sample_callstacks,
       std::move(target_filter), kernel_frames, ring_buffer_pages.value(),
       read_tick_period_ms, samples_per_tick_limit, remote_descriptor_timeout_ms,
-      pb_config.unwind_state_clear_period_ms(), max_enqueued_footprint_bytes);
+      pb_config.unwind_state_clear_period_ms(), max_enqueued_footprint_bytes,
+      pb_config.target_installed_by());
 }
 
 EventConfig::EventConfig(const DataSourceConfig& raw_ds_config,
@@ -385,7 +428,8 @@ EventConfig::EventConfig(const DataSourceConfig& raw_ds_config,
                          uint64_t samples_per_tick_limit,
                          uint32_t remote_descriptor_timeout_ms,
                          uint32_t unwind_state_clear_period_ms,
-                         uint64_t max_enqueued_footprint_bytes)
+                         uint64_t max_enqueued_footprint_bytes,
+                         std::vector<std::string> target_installed_by)
     : perf_event_attr_(pe),
       timebase_event_(timebase_event),
       sample_callstacks_(sample_callstacks),
@@ -397,6 +441,7 @@ EventConfig::EventConfig(const DataSourceConfig& raw_ds_config,
       remote_descriptor_timeout_ms_(remote_descriptor_timeout_ms),
       unwind_state_clear_period_ms_(unwind_state_clear_period_ms),
       max_enqueued_footprint_bytes_(max_enqueued_footprint_bytes),
+      target_installed_by_(std::move(target_installed_by)),
       raw_ds_config_(raw_ds_config) /* full copy */ {}
 
 }  // namespace profiling

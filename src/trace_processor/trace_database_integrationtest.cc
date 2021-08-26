@@ -35,18 +35,58 @@ namespace {
 
 constexpr size_t kMaxChunkSize = 4 * 1024 * 1024;
 
+TEST(TraceProcessorCustomConfigTest, SkipInternalMetricsMatchingMountPath) {
+  auto config = Config();
+  config.skip_builtin_metric_paths = {"android/"};
+  auto processor = TraceProcessor::CreateInstance(config);
+  processor->NotifyEndOfFile();
+
+  // Check that andorid metrics have not been loaded.
+  auto it = processor->ExecuteQuery(
+      "select count(*) from trace_metrics "
+      "where name = 'android_cpu';");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).type, SqlValue::kLong);
+  ASSERT_EQ(it.Get(0).long_value, 0);
+
+  // Check that other metrics have been loaded.
+  it = processor->ExecuteQuery(
+      "select count(*) from trace_metrics "
+      "where name = 'trace_metadata';");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).type, SqlValue::kLong);
+  ASSERT_EQ(it.Get(0).long_value, 1);
+}
+
+TEST(TraceProcessorCustomConfigTest, HandlesMalformedMountPath) {
+  auto config = Config();
+  config.skip_builtin_metric_paths = {"", "androi"};
+  auto processor = TraceProcessor::CreateInstance(config);
+  processor->NotifyEndOfFile();
+
+  // Check that andorid metrics have been loaded.
+  auto it = processor->ExecuteQuery(
+      "select count(*) from trace_metrics "
+      "where name = 'android_cpu';");
+  ASSERT_TRUE(it.Next());
+  ASSERT_EQ(it.Get(0).type, SqlValue::kLong);
+  ASSERT_EQ(it.Get(0).long_value, 1);
+}
+
 class TraceProcessorIntegrationTest : public ::testing::Test {
  public:
   TraceProcessorIntegrationTest()
       : processor_(TraceProcessor::CreateInstance(Config())) {}
 
  protected:
-  util::Status LoadTrace(const char* name, size_t min_chunk_size = 512) {
-    EXPECT_LE(min_chunk_size, kMaxChunkSize);
+  util::Status LoadTrace(const char* name,
+                         size_t min_chunk_size = 512,
+                         size_t max_chunk_size = kMaxChunkSize) {
+    EXPECT_LE(min_chunk_size, max_chunk_size);
     base::ScopedFstream f(fopen(
         base::GetTestDataPath(std::string("test/data/") + name).c_str(), "rb"));
     std::minstd_rand0 rnd_engine(0);
-    std::uniform_int_distribution<size_t> dist(min_chunk_size, kMaxChunkSize);
+    std::uniform_int_distribution<size_t> dist(min_chunk_size, max_chunk_size);
     while (!feof(*f)) {
       size_t chunk_size = dist(rnd_engine);
       std::unique_ptr<uint8_t[]> buf(new uint8_t[chunk_size]);
@@ -361,6 +401,39 @@ TEST_F(TraceProcessorIntegrationTest, NinjaLog) {
   it = Query("select sum(dur) / 1000000 from slices_1st_build");
   ASSERT_TRUE(it.Next());
   ASSERT_EQ(it.Get(0).long_value, 276174);
+}
+
+/*
+ * This trace does not have a uuid. The uuid will be generated from the first
+ * 4096 bytes, which will be read in one chunk.
+ */
+TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInOneChunk) {
+  ASSERT_TRUE(LoadTrace("example_android_trace_30s.pb", kMaxChunkSize).ok());
+  auto it = Query("select str_value from metadata where name = 'trace_uuid'");
+  ASSERT_TRUE(it.Next());
+  EXPECT_STREQ(it.Get(0).string_value, "00000000-0000-0000-8906-ebb53e1d0738");
+}
+
+/*
+ * This trace does not have a uuid. The uuid will be generated from the first
+ * 4096 bytes, which will be read in multiple chunks.
+ */
+TEST_F(TraceProcessorIntegrationTest, TraceWithoutUuidReadInMultipleChuncks) {
+  ASSERT_TRUE(LoadTrace("example_android_trace_30s.pb", 512, 2048).ok());
+  auto it = Query("select str_value from metadata where name = 'trace_uuid'");
+  ASSERT_TRUE(it.Next());
+  EXPECT_STREQ(it.Get(0).string_value, "00000000-0000-0000-8906-ebb53e1d0738");
+}
+
+/*
+ * This trace has a uuid. It will not be overriden by the hash of the first 4096
+ * bytes.
+ */
+TEST_F(TraceProcessorIntegrationTest, TraceWithUuidReadInParts) {
+  ASSERT_TRUE(LoadTrace("trace_with_uuid.pftrace", 512, 2048).ok());
+  auto it = Query("select str_value from metadata where name = 'trace_uuid'");
+  ASSERT_TRUE(it.Next());
+  EXPECT_STREQ(it.Get(0).string_value, "123e4567-e89b-12d3-a456-426655443322");
 }
 
 }  // namespace

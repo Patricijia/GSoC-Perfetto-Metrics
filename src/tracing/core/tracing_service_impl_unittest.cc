@@ -2331,7 +2331,8 @@ TEST_F(TracingServiceImplTest, ResynchronizeTraceStreamUsingSyncMarker) {
   const int kNumMarkers = 5;
   auto writer = producer->CreateTraceWriter("data_source");
   for (int i = 1; i <= 100; i++) {
-    std::string payload(static_cast<size_t>(i), 'A' + (i % 25));
+    std::string payload(static_cast<size_t>(i),
+                        'A' + static_cast<char>(i % 25));
     writer->NewTracePacket()->set_for_testing()->set_str(payload.c_str());
     if (i % (100 / kNumMarkers) == 0) {
       writer->Flush();
@@ -3534,10 +3535,10 @@ TEST_F(TracingServiceImplTest, QueryServiceState) {
   consumer->Connect(svc.get());
 
   std::unique_ptr<MockProducer> producer1 = CreateMockProducer();
-  producer1->Connect(svc.get(), "producer1");
+  producer1->Connect(svc.get(), "producer1", /*uid=*/0);
 
   std::unique_ptr<MockProducer> producer2 = CreateMockProducer();
-  producer2->Connect(svc.get(), "producer2");
+  producer2->Connect(svc.get(), "producer2", /*uid=*/1002);
 
   producer1->RegisterDataSource("common_ds");
   producer2->RegisterDataSource("common_ds");
@@ -3550,8 +3551,10 @@ TEST_F(TracingServiceImplTest, QueryServiceState) {
   EXPECT_EQ(svc_state.producers_size(), 2);
   EXPECT_EQ(svc_state.producers().at(0).id(), 1);
   EXPECT_EQ(svc_state.producers().at(0).name(), "producer1");
+  EXPECT_EQ(svc_state.producers().at(0).uid(), 0);
   EXPECT_EQ(svc_state.producers().at(1).id(), 2);
   EXPECT_EQ(svc_state.producers().at(1).name(), "producer2");
+  EXPECT_EQ(svc_state.producers().at(1).uid(), 1002);
 
   EXPECT_EQ(svc_state.data_sources_size(), 4);
 

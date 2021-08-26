@@ -128,7 +128,7 @@ CREATE VIEW joined_scroll_begin_and_end AS
         time_to_next_vsync IS NOT NULL AND
         in_query.ts > begin.ts AND
         in_query.ts < end.ts
-    ), 1.6e+7) AS avg_vsync_interval
+    ), 1e+9 / 60) AS avg_vsync_interval
   FROM scroll_begin_and_end begin JOIN scroll_begin_and_end end ON
     begin.trace_id < end.trace_id AND
     begin.name = 'InputLatency::GestureScrollBegin' AND
@@ -197,6 +197,12 @@ CREATE TABLE gesture_scroll_update AS
       NOT COALESCE(
               EXTRACT_ARG(arg_set_id, "chrome_latency_info.is_coalesced"),
               TRUE)
+      AND slice.arg_set_id IN (
+        SELECT arg_set_id FROM args
+        WHERE args.arg_set_id = slice.arg_set_id
+        AND flat_key = 'chrome_latency_info.component_info.component_type'
+        AND string_value = 'COMPONENT_INPUT_EVENT_GPU_SWAP_BUFFER'
+      )
   ) scroll_update ON
   scroll_update.ts <= begin_and_end.end_ts AND
   scroll_update.ts >= begin_and_end.begin_ts AND

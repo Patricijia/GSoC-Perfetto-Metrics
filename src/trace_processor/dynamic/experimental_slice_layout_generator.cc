@@ -197,7 +197,7 @@ Table ExperimentalSliceLayoutGenerator::ComputeLayoutTable(
     uint32_t depth = depth_col[i];
     int64_t start = ts_col[i];
     int64_t dur = dur_col[i];
-    int64_t end = start + dur;
+    int64_t end = dur == -1 ? std::numeric_limits<int64_t>::max() : start + dur;
     InsertSlice(id_map, id, parent_id);
     std::map<tables::SliceTable::Id, GroupInfo>::iterator it;
     bool inserted;
@@ -235,7 +235,7 @@ Table ExperimentalSliceLayoutGenerator::ComputeLayoutTable(
     {
       auto it = still_open.begin();
       while (it != still_open.end()) {
-        if ((*it)->end < start) {
+        if ((*it)->end <= start) {
           it = still_open.erase(it);
         } else {
           ++it;

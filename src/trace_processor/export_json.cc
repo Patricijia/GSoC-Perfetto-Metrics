@@ -17,11 +17,11 @@
 #include "perfetto/ext/trace_processor/export_json.h"
 #include "src/trace_processor/export_json.h"
 
-#include <inttypes.h>
 #include <stdio.h>
 #include <sstream>
 
 #include <algorithm>
+#include <cinttypes>
 #include <cmath>
 #include <cstring>
 #include <deque>
@@ -85,8 +85,11 @@ const char kLegacyEventLocalIdKey[] = "local_id";
 const char kLegacyEventIdScopeKey[] = "id_scope";
 const char kStrippedArgument[] = "__stripped__";
 
-const char* GetNonNullString(const TraceStorage* storage, StringId id) {
-  return id == kNullStringId ? "" : storage->GetString(id).c_str();
+const char* GetNonNullString(const TraceStorage* storage,
+                             base::Optional<StringId> id) {
+  return id == base::nullopt || *id == kNullStringId
+             ? ""
+             : storage->GetString(*id).c_str();
 }
 
 class JsonExporter {
@@ -874,9 +877,13 @@ class JsonExporter {
         event["tid"] = Json::Int(pid_and_tid.second);
 
         if (duration_ns == 0) {
-          // Use "I" instead of "i" phase for backwards-compat with old
-          // consumers.
-          event["ph"] = "I";
+          if (legacy_phase.empty()) {
+            // Use "I" instead of "i" phase for backwards-compat with old
+            // consumers.
+            event["ph"] = "I";
+          } else {
+            event["ph"] = legacy_phase;
+          }
           if (thread_ts_ns && thread_ts_ns > 0) {
             event["tts"] = Json::Int64(*thread_ts_ns / 1000);
           }
@@ -1022,9 +1029,13 @@ class JsonExporter {
           PERFETTO_DLOG(
               "skipping non-instant slice on global or process track");
         } else {
-          // Use "I" instead of "i" phase for backwards-compat with old
-          // consumers.
-          event["ph"] = "I";
+          if (legacy_phase.empty()) {
+            // Use "I" instead of "i" phase for backwards-compat with old
+            // consumers.
+            event["ph"] = "I";
+          } else {
+            event["ph"] = legacy_phase;
+          }
 
           auto opt_process_row = process_track.id().IndexOf(TrackId{track_id});
           if (opt_process_row.has_value()) {
@@ -1103,8 +1114,10 @@ class JsonExporter {
       } else {
         auto opt_slice_out_idx = slice_table.id().IndexOf(slice_out);
         PERFETTO_DCHECK(opt_slice_out_idx.has_value());
-        StringId cat_id = slice_table.category()[opt_slice_out_idx.value()];
-        StringId name_id = slice_table.name()[opt_slice_out_idx.value()];
+        base::Optional<StringId> cat_id =
+            slice_table.category()[opt_slice_out_idx.value()];
+        base::Optional<StringId> name_id =
+            slice_table.name()[opt_slice_out_idx.value()];
         cat = GetNonNullString(storage_, cat_id);
         name = GetNonNullString(storage_, name_id);
       }
@@ -1921,4 +1934,3 @@ util::Status ExportJson(const TraceStorage* storage, FILE* output) {
 }  // namespace json
 }  // namespace trace_processor
 }  // namespace perfetto
-

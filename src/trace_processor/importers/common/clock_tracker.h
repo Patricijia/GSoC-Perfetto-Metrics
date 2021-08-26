@@ -17,10 +17,10 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_COMMON_CLOCK_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_COMMON_CLOCK_TRACKER_H_
 
-#include <inttypes.h>
 #include <stdint.h>
 
 #include <array>
+#include <cinttypes>
 #include <map>
 #include <random>
 #include <set>
@@ -154,7 +154,8 @@ class ClockTracker {
 
   // Appends a new snapshot for the given clock domains.
   // This is typically called by the code that reads the ClockSnapshot packet.
-  void AddSnapshot(const std::vector<ClockValue>&);
+  // Returns the internal snapshot id of this set of clocks.
+  uint32_t AddSnapshot(const std::vector<ClockValue>&);
 
   // Converts a timestamp between two clock domains. Tries to use the cache
   // first (only for single-path resolutions), then falls back on path finding
