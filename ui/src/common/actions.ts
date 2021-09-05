@@ -80,12 +80,12 @@ export interface PostedTrace {
   fileName?: string;
   url?: string;
   uuid?: string;
+  localOnly?: boolean;
 }
 
 function clearTraceState(state: StateDraft) {
   const nextId = state.nextId;
   const recordConfig = state.recordConfig;
-  const route = state.route;
   const recordingTarget = state.recordingTarget;
   const updateChromeCategories = state.updateChromeCategories;
   const extensionInstalled = state.extensionInstalled;
@@ -96,7 +96,6 @@ function clearTraceState(state: StateDraft) {
   Object.assign(state, createEmptyState());
   state.nextId = nextId;
   state.recordConfig = recordConfig;
-  state.route = route;
   state.recordingTarget = recordingTarget;
   state.updateChromeCategories = updateChromeCategories;
   state.extensionInstalled = extensionInstalled;
