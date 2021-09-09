@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {AggregationAttrs, PivotAttrs} from './pivot_table_query_generator';
+import {AggregationAttrs, PivotAttrs, TableAttrs} from './pivot_table_data';
 
 /**
  * A plain js object, holding objects of type |Class| keyed by string id.
@@ -106,8 +106,7 @@ export interface TraceArrayBufferSource {
   // temporarily == T1 until T2 has been loaded (consistently to what happens
   // with all other state fields).
   uuid?: string;
-  // if |localOnly| is true then the trace should not be shared or stored in the
-  // browser cache.
+  // if |localOnly| is true then the trace should not be shared or downloaded.
   localOnly?: boolean;
 }
 
@@ -283,11 +282,7 @@ export interface MetricsState {
 }
 
 export interface PivotTableConfig {
-  availableColumns?: Array<{
-    tableName: string,
-    columns: string[]
-  }>;                                // Undefined until list is loaded.
-  totalColumnsCount?: number;        // Total columns in all tables.
+  availableColumns?: TableAttrs[];   // Undefined until list is loaded.
   availableAggregations?: string[];  // Undefined until list is loaded.
 }
 
@@ -296,11 +291,9 @@ export interface PivotTableState {
   name: string;
   selectedPivots: PivotAttrs[];
   selectedAggregations: AggregationAttrs[];
-  selectedColumnIndex?: number;
-  selectedAggregationIndex?: number;
-  isPivot: boolean;
   requestedAction?:
       string;  // Unset after pivot table column request is handled.
+  isLoadingQuery: boolean;
 }
 
 export interface State {
