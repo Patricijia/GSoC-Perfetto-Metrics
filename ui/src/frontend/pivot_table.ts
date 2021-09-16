@@ -18,8 +18,8 @@ import {Actions} from '../common/actions';
 import {
   ColumnAttrs,
   PivotTableQueryResponse,
-} from '../common/pivot_table_data';
-import {Row} from '../common/query_result';
+  RowAttrs,
+} from '../common/pivot_table_common';
 
 import {globals} from './globals';
 import {Panel} from './panel';
@@ -27,9 +27,28 @@ import {
   PivotTableHelper,
 } from './pivot_table_helper';
 
+interface ExpandableCellAttrs {
+  pivotTableId: string;
+  row: RowAttrs;
+  column: ColumnAttrs;
+  rowIndices: number[];
+  expandedRowColumns: string[];
+}
+
 interface PivotTableRowAttrs {
-  row: Row;
+  pivotTableId: string;
+  row: RowAttrs;
   columns: ColumnAttrs[];
+  rowIndices: number[];
+  expandedRowColumns: string[];
+}
+
+interface PivotTableBodyAttrs {
+  pivotTableId: string;
+  rows: RowAttrs[];
+  columns: ColumnAttrs[];
+  rowIndices: number[];
+  expandedRowColumns: string[];
 }
 
 interface PivotTableHeaderAttrs {
@@ -95,15 +114,147 @@ class PivotTableHeader implements m.ClassComponent<PivotTableHeaderAttrs> {
   }
 }
 
+class ExpandableCell implements m.ClassComponent<ExpandableCellAttrs> {
+  view(vnode: m.Vnode<ExpandableCellAttrs>) {
+    const {pivotTableId, row, column, rowIndices, expandedRowColumns} =
+        vnode.attrs;
+    const pivotTable = globals.state.pivotTable[pivotTableId];
+    let expandIcon = 'expand_more';
+    if (row.expandedRows.has(column.name)) {
+      expandIcon = row.expandedRows.get(column.name)!.isExpanded ?
+          'expand_less' :
+          'expand_more';
+    }
+    let spinnerVsibility = 'hidden';
+    let animationState = 'paused';
+    if (row.loadingColumn === column.name) {
+      spinnerVsibility = 'visible';
+      animationState = 'running';
+    }
+    const padValue = new Array(row.depth * 2).join(' ');
+
+    return m(
+        'td.allow-white-space',
+        padValue,
+        m('i.material-icons',
+          {
+            class: pivotTable.isLoadingQuery ? 'disabled' : '',
+            onclick: () => {
+              if (pivotTable.isLoadingQuery) {
+                return;
+              }
+              const value = row.row[column.name]?.toString();
+              if (value === undefined) {
+                throw Error('Expanded row has undefined value.');
+              }
+              if (row.expandedRows.has(column.name) &&
+                  row.expandedRows.get(column.name)!.isExpanded) {
+                globals.dispatch(Actions.setPivotTableRequest({
+                  pivotTableId,
+                  action: 'UNEXPAND',
+                  attrs: {
+                    rowIndices,
+                    columnIdx: column.index,
+                    value,
+                    expandedRowColumns
+                  }
+                }));
+              } else {
+                globals.dispatch(Actions.setPivotTableRequest({
+                  pivotTableId,
+                  action: column.isStackColumn ? 'DESCENDANTS' : 'EXPAND',
+                  attrs: {
+                    rowIndices,
+                    columnIdx: column.index,
+                    value,
+                    expandedRowColumns
+                  }
+                }));
+              }
+            },
+          },
+          expandIcon),
+        ' ',
+        row.row[column.name],
+        ' ',
+        // Adds a loading spinner while querying the expanded column.
+        m('.pivot-table-spinner', {
+          style:
+              {visibility: spinnerVsibility, animationPlayState: animationState}
+        }));
+  }
+}
+
 class PivotTableRow implements m.ClassComponent<PivotTableRowAttrs> {
   view(vnode: m.Vnode<PivotTableRowAttrs>) {
     const cells = [];
-    const {row, columns} = vnode.attrs;
-    for (const col of columns) {
-      cells.push(m('td', row[col.name]));
-    }
+    const {pivotTableId, row, columns, rowIndices, expandedRowColumns} =
+        vnode.attrs;
 
+    for (const column of columns) {
+      if (row.row[column.name] === undefined &&
+          row.expandableColumns.has(column.name)) {
+        throw Error(
+            `Row data at expandable column "${column.name}" is undefined.`);
+      }
+      if (row.row[column.name] === undefined || row.row[column.name] === null) {
+        cells.push(m('td', ''));
+        continue;
+      }
+      if (row.expandableColumns.has(column.name)) {
+        cells.push(
+            m(ExpandableCell,
+              {pivotTableId, row, column, rowIndices, expandedRowColumns}));
+        continue;
+      }
+      let indentationLevel = 0;
+      let expandIconSpace = 0;
+      if (column.aggregation !== undefined) {
+        indentationLevel = rowIndices.length - 1;
+      } else {
+        indentationLevel = row.depth;
+        if (row.depth > 0 && column.isStackColumn) {
+          expandIconSpace = 3;
+        }
+      }
+      // For each indentation level add 2 spaces, if we have an expansion button
+      // add 3 spaces to cover the icon size.
+      let value = row.row[column.name]!.toString();
+      value = value.padStart(
+          (indentationLevel * 2) + expandIconSpace + value.length, ' ');
+      cells.push(m('td.allow-white-space', value));
+    }
     return m('tr', cells);
+  }
+}
+
+class PivotTableBody implements m.ClassComponent<PivotTableBodyAttrs> {
+  view(vnode: m.Vnode<PivotTableBodyAttrs>): m.Children {
+    const pivotTableRows = [];
+    const {pivotTableId, rows, columns, rowIndices, expandedRowColumns} =
+        vnode.attrs;
+    for (let i = 0; i < rows.length; ++i) {
+      pivotTableRows.push(m(PivotTableRow, {
+        pivotTableId,
+        row: rows[i],
+        columns,
+        rowIndices: rowIndices.concat(i),
+        expandedRowColumns
+      }));
+      for (const column of columns.slice().reverse()) {
+        const expandedRows = rows[i].expandedRows.get(column.name);
+        if (expandedRows !== undefined && expandedRows.isExpanded) {
+          pivotTableRows.push(m(PivotTableBody, {
+            pivotTableId,
+            rows: expandedRows.rows,
+            columns,
+            rowIndices: rowIndices.concat(i),
+            expandedRowColumns: expandedRowColumns.concat(column.name)
+          }));
+        }
+      }
+    }
+    return pivotTableRows;
   }
 }
 
@@ -114,20 +265,17 @@ export class PivotTable extends Panel<PivotTableAttrs> {
     const resp =
         globals.queryResults.get(pivotTableId) as PivotTableQueryResponse;
 
-    // Query resulting from query generator should always be valid.
-    if (resp !== undefined && resp.error) {
-      throw Error(`Pivot table query resulted in SQL error: ${resp.error}`);
-    }
-
-    const rows = [];
+    let body;
     let header;
-
     if (helper !== undefined && resp !== undefined) {
       header = m(PivotTableHeader, {helper});
-
-      for (const row of resp.rows) {
-        rows.push(m(PivotTableRow, {row, columns: resp.columns}));
-      }
+      body = m(PivotTableBody, {
+        pivotTableId,
+        rows: resp.rows,
+        columns: resp.columns,
+        rowIndices: [],
+        expandedRowColumns: []
+      });
     }
 
     return m(
@@ -147,7 +295,7 @@ export class PivotTable extends Panel<PivotTableAttrs> {
                 },
                 'Edit'),
               ' ',
-              (pivotTable.isLoadingQuery ? m('div.pivot-table-spinner') : null),
+              (pivotTable.isLoadingQuery ? m('.pivot-table-spinner') : null),
               (resp !== undefined && !pivotTable.isLoadingQuery ?
                    m('span.code',
                      `Query took ${Math.round(resp.durationMs)} ms`) :
@@ -165,9 +313,9 @@ export class PivotTable extends Panel<PivotTableAttrs> {
               'Close'),
             ),
         m('.query-table-container',
-          m('table.query-table',
-            m('thead.pivot-table-header', header),
-            m('tbody', rows))));
+          m('table.query-table.pivot-table',
+            m('thead', header),
+            m('tbody', body))));
   }
 
   renderCanvas() {}

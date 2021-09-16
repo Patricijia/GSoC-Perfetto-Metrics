@@ -12,7 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {AggregationAttrs, PivotAttrs, TableAttrs} from './pivot_table_data';
+import {
+  AggregationAttrs,
+  PivotAttrs,
+  SubQueryAttrs,
+  TableAttrs
+} from './pivot_table_common';
 
 /**
  * A plain js object, holding objects of type |Class| keyed by string id.
@@ -54,9 +59,10 @@ export interface Area {
 export const MAX_TIME = 180;
 
 // 3: TrackKindPriority and related sorting changes.
-// 5: Move a large number of items off frontendLocalState and onto state
+// 5: Move a large number of items off frontendLocalState and onto state.
 // 6: Common PivotTableConfig and pivot table specific PivotTableState.
-export const STATE_VERSION = 6;
+// 7: Split Chrome categories in two and add 'symbolize ksyms' flag.
+export const STATE_VERSION = 7;
 
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
@@ -291,8 +297,8 @@ export interface PivotTableState {
   name: string;
   selectedPivots: PivotAttrs[];
   selectedAggregations: AggregationAttrs[];
-  requestedAction?:
-      string;  // Unset after pivot table column request is handled.
+  requestedAction?:  // Unset after pivot table column request is handled.
+      {action: string, attrs?: SubQueryAttrs};
   isLoadingQuery: boolean;
 }
 
@@ -413,8 +419,7 @@ export function isLinuxTarget(target: RecordingTarget) {
 
 export function isAdbTarget(target: RecordingTarget):
     target is AdbRecordingTarget {
-  if ((target as AdbRecordingTarget).serial) return true;
-  return false;
+  return !!(target as AdbRecordingTarget).serial;
 }
 
 export function hasActiveProbes(config: RecordConfig) {
@@ -491,6 +496,7 @@ export interface RecordConfig {
   procStatsPeriodMs: number;
 
   chromeCategoriesSelected: string[];
+  chromeHighOverheadCategoriesSelected: string[];
 
   chromeLogs: boolean;
   taskScheduling: boolean;
@@ -500,6 +506,8 @@ export interface RecordConfig {
   uiRendering: boolean;
   inputEvents: boolean;
   navigationAndLoading: boolean;
+
+  symbolizeKsyms: boolean;
 }
 
 export function createEmptyRecordConfig(): RecordConfig {
@@ -566,6 +574,7 @@ export function createEmptyRecordConfig(): RecordConfig {
     procStatsPeriodMs: 1000,
 
     chromeCategoriesSelected: [],
+    chromeHighOverheadCategoriesSelected: [],
 
     chromeLogs: false,
     taskScheduling: false,
@@ -575,6 +584,8 @@ export function createEmptyRecordConfig(): RecordConfig {
     uiRendering: false,
     inputEvents: false,
     navigationAndLoading: false,
+
+    symbolizeKsyms: false,
   };
 }
 
@@ -590,7 +601,7 @@ export function getDefaultRecordingTargets(): RecordingTarget[] {
 }
 
 export function getBuiltinChromeCategoryList(): string[] {
-  // List of static Chrome categories, last updated at Chromium 81.0.4021.0 from
+  // List of static Chrome categories, last updated at 2021-09-09 from HEAD of
   // Chromium's //base/trace_event/builtin_categories.h.
   return [
     'accessibility',
@@ -604,11 +615,12 @@ export function getBuiltinChromeCategoryList(): string[] {
     'blink.animations',
     'blink.bindings',
     'blink.console',
-    'blink_gc',
     'blink.net',
-    'blink_style',
+    'blink.resource',
     'blink.user_timing',
     'blink.worker',
+    'blink_gc',
+    'blink_style',
     'Blob',
     'browser',
     'browsing_data',
@@ -640,10 +652,10 @@ export function getBuiltinChromeCategoryList(): string[] {
     'drmcursor',
     'dwrite',
     'DXVA_Decoding',
-    'EarlyJava',
     'evdev',
     'event',
     'exo',
+    'extensions',
     'explore_sites',
     'FileSystem',
     'file_system_provider',
@@ -701,6 +713,7 @@ export function getBuiltinChromeCategoryList(): string[] {
     'RLZ',
     'safe_browsing',
     'screenlock_monitor',
+    'segmentation_platform',
     'sequence_manager',
     'service_manager',
     'ServiceWorker',
@@ -715,7 +728,7 @@ export function getBuiltinChromeCategoryList(): string[] {
     'stadia_rtc',
     'startup',
     'sync',
-    'sync_lock_contention',
+    'system_apps',
     'test_gpu',
     'thread_pool',
     'toplevel',
@@ -738,6 +751,7 @@ export function getBuiltinChromeCategoryList(): string[] {
     'disabled-by-default-animation-worklet',
     'disabled-by-default-audio',
     'disabled-by-default-audio-worklet',
+    'disabled-by-default-base',
     'disabled-by-default-blink.debug',
     'disabled-by-default-blink.debug.display_lock',
     'disabled-by-default-blink.debug.layout',
@@ -774,7 +788,6 @@ export function getBuiltinChromeCategoryList(): string[] {
     'disabled-by-default-gpu.service',
     'disabled-by-default-gpu.vulkan.vma',
     'disabled-by-default-histogram_samples',
-    'disabled-by-default-ipc.flow',
     'disabled-by-default-java-heap-profiler',
     'disabled-by-default-layer-element',
     'disabled-by-default-layout_shift.debug',
@@ -801,12 +814,10 @@ export function getBuiltinChromeCategoryList(): string[] {
     'disabled-by-default-SyncFileSystem',
     'disabled-by-default-system_stats',
     'disabled-by-default-thread_pool_diagnostics',
-    'disabled-by-default-toplevel.flow',
     'disabled-by-default-toplevel.ipc',
     'disabled-by-default-user_action_samples',
     'disabled-by-default-v8.compile',
     'disabled-by-default-v8.cpu_profiler',
-    'disabled-by-default-v8.cpu_profiler.hires',
     'disabled-by-default-v8.gc',
     'disabled-by-default-v8.gc_stats',
     'disabled-by-default-v8.ic_stats',
@@ -815,12 +826,11 @@ export function getBuiltinChromeCategoryList(): string[] {
     'disabled-by-default-v8.runtime_stats_sampling',
     'disabled-by-default-v8.stack_trace',
     'disabled-by-default-v8.turbofan',
-    'disabled-by-default-v8.wasm',
     'disabled-by-default-v8.wasm.detailed',
     'disabled-by-default-v8.wasm.turbofan',
     'disabled-by-default-video_and_image_capture',
-    'disabled-by-default-viz.debug.overlay_planes',
     'disabled-by-default-viz.gpu_composite_time',
+    'disabled-by-default-viz.debug.overlay_planes',
     'disabled-by-default-viz.hit_testing_flow',
     'disabled-by-default-viz.overdraw',
     'disabled-by-default-viz.quads',
