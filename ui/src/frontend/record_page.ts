@@ -29,9 +29,10 @@ import {
   isAndroidTarget,
   isChromeTarget,
   isCrOSTarget,
-  RecordingTarget
+  MAX_TIME,
+  RecordingTarget,
+  RecordMode
 } from '../common/state';
-import {MAX_TIME, RecordMode} from '../common/state';
 import {AdbOverWebUsb} from '../controller/adb';
 
 import {globals} from './globals';
@@ -43,6 +44,7 @@ import {
   DropdownAttrs,
   Probe,
   ProbeAttrs,
+  SelectAllNoneDropdown,
   Slider,
   SliderAttrs,
   Textarea,
@@ -721,35 +723,31 @@ function ChromeCategoriesSelection() {
     categories = getBuiltinChromeCategoryList();
   }
 
-  // Show "disabled-by-default" categories last.
-  const categoriesMap = new Map<string, string>();
+  const defaultCategories = new Map<string, string>();
+  const disabledByDefaultCategories = new Map<string, string>();
   const disabledPrefix = 'disabled-by-default-';
-  const overheadSuffix = '(high overhead)';
   categories.forEach(cat => {
     if (cat.startsWith(disabledPrefix)) {
-      categoriesMap.set(
-          cat, `${cat.replace(disabledPrefix, '')} ${overheadSuffix}`);
+      disabledByDefaultCategories.set(cat, cat.replace(disabledPrefix, ''));
     } else {
-      categoriesMap.set(cat, cat);
+      defaultCategories.set(cat, cat);
     }
   });
 
-  return m(Dropdown, {
-    title: 'Additional Chrome categories',
-    cssClass: '.multicolumn.two-columns',
-    options: categoriesMap,
-    set: (cfg, val) => cfg.chromeCategoriesSelected = val,
-    get: (cfg) => cfg.chromeCategoriesSelected,
-    sort: (a, b) => {
-      const aIsDisabled = a.includes(overheadSuffix);
-      const bIsDisabled = b.includes(overheadSuffix);
-      if (aIsDisabled === bIsDisabled) {
-        return a.localeCompare(b);
-      } else {
-        return Number(aIsDisabled) - Number(bIsDisabled);
-      }
-    },
-  } as DropdownAttrs);
+  return m(
+      '.chrome-categories',
+      SelectAllNoneDropdown({
+        categories: defaultCategories,
+        title: 'Additional Chrome categories',
+        get: (cfg) => cfg.chromeCategoriesSelected,
+        set: (cfg, val) => cfg.chromeCategoriesSelected = val,
+      }),
+      SelectAllNoneDropdown({
+        categories: disabledByDefaultCategories,
+        title: 'Additional high overhead Chrome categories',
+        get: (cfg) => cfg.chromeHighOverheadCategoriesSelected,
+        set: (cfg, val) => cfg.chromeHighOverheadCategoriesSelected = val,
+      }));
 }
 
 function AdvancedSettings(cssClass: string) {

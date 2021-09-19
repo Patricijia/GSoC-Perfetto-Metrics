@@ -17,7 +17,7 @@ import {
   PivotAttrs,
   SubQueryAttrs,
   TableAttrs
-} from './pivot_table_data';
+} from './pivot_table_common';
 
 /**
  * A plain js object, holding objects of type |Class| keyed by string id.
@@ -59,9 +59,10 @@ export interface Area {
 export const MAX_TIME = 180;
 
 // 3: TrackKindPriority and related sorting changes.
-// 5: Move a large number of items off frontendLocalState and onto state
+// 5: Move a large number of items off frontendLocalState and onto state.
 // 6: Common PivotTableConfig and pivot table specific PivotTableState.
-export const STATE_VERSION = 6;
+// 7: Split Chrome categories in two and add 'symbolize ksyms' flag.
+export const STATE_VERSION = 7;
 
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
@@ -77,7 +78,7 @@ export enum TrackKindPriority {
 }
 
 export type HeapProfileFlamegraphViewingOption =
-    'SPACE'|'ALLOC_SPACE'|'OBJECTS'|'ALLOC_OBJECTS';
+    'SPACE'|'ALLOC_SPACE'|'OBJECTS'|'ALLOC_OBJECTS'|'PERF_SAMPLES';
 
 export interface CallsiteInfo {
   id: number;
@@ -222,6 +223,14 @@ export interface HeapProfileSelection {
   type: string;
 }
 
+export interface PerfSamplesSelection {
+  kind: 'PERF_SAMPLES';
+  id: number;
+  upid: number;
+  ts: number;
+  type: string;
+}
+
 export interface HeapProfileFlamegraph {
   kind: 'HEAP_PROFILE_FLAMEGRAPH';
   id: number;
@@ -254,7 +263,7 @@ export interface ThreadStateSelection {
 type Selection =
     (NoteSelection|SliceSelection|CounterSelection|HeapProfileSelection|
      CpuProfileSampleSelection|ChromeSliceSelection|ThreadStateSelection|
-     AreaSelection)&{trackId?: string};
+     AreaSelection|PerfSamplesSelection)&{trackId?: string};
 
 export interface LogsPagination {
   offset: number;
@@ -299,6 +308,8 @@ export interface PivotTableState {
   requestedAction?:  // Unset after pivot table column request is handled.
       {action: string, attrs?: SubQueryAttrs};
   isLoadingQuery: boolean;
+  traceTime?: TraceTime;
+  selectedTrackIds?: number[];
 }
 
 export interface State {
@@ -418,8 +429,7 @@ export function isLinuxTarget(target: RecordingTarget) {
 
 export function isAdbTarget(target: RecordingTarget):
     target is AdbRecordingTarget {
-  if ((target as AdbRecordingTarget).serial) return true;
-  return false;
+  return !!(target as AdbRecordingTarget).serial;
 }
 
 export function hasActiveProbes(config: RecordConfig) {
@@ -496,6 +506,7 @@ export interface RecordConfig {
   procStatsPeriodMs: number;
 
   chromeCategoriesSelected: string[];
+  chromeHighOverheadCategoriesSelected: string[];
 
   chromeLogs: boolean;
   taskScheduling: boolean;
@@ -573,6 +584,7 @@ export function createEmptyRecordConfig(): RecordConfig {
     procStatsPeriodMs: 1000,
 
     chromeCategoriesSelected: [],
+    chromeHighOverheadCategoriesSelected: [],
 
     chromeLogs: false,
     taskScheduling: false,

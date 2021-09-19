@@ -19,10 +19,10 @@ import {
 } from '../common/actions';
 import {cacheTrace} from '../common/cache_manager';
 import {TRACE_MARGIN_TIME_S} from '../common/constants';
-import {Engine, QueryError} from '../common/engine';
-import {featureFlags, Flag} from '../common/feature_flags';
+import {Engine} from '../common/engine';
+import {featureFlags, Flag, PERF_SAMPLE_FLAG} from '../common/feature_flags';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
-import {NUM, NUM_NULL, STR, STR_NULL} from '../common/query_result';
+import {NUM, NUM_NULL, QueryError, STR, STR_NULL} from '../common/query_result';
 import {EngineMode} from '../common/state';
 import {TimeSpan, toNs, toNsCeil, toNsFloor} from '../common/time';
 import {resetEngineWorker, WasmEngineProxy} from '../common/wasm_engine_proxy';
@@ -115,7 +115,6 @@ const FLAGGED_METRICS: Array<[Flag, string]> = METRICS.map(m => {
   });
   return [flag, m];
 });
-
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -391,9 +390,27 @@ export class TraceController extends Controller<States> {
 
     globals.dispatch(Actions.removeDebugTrack({}));
     globals.dispatch(Actions.sortThreadTracks({}));
+
     await this.selectFirstHeapProfile();
+    if (PERF_SAMPLE_FLAG.get()) {
+      await this.selectPerfSample();
+    }
 
     return engineMode;
+  }
+
+  private async selectPerfSample() {
+    const query = `select ts, upid
+        from perf_sample
+        join thread using (utid)
+        order by ts desc limit 1`;
+    const profile = await assertExists(this.engine).query(query);
+    if (profile.numRows() !== 1) return;
+    const row = profile.firstRow({ts: NUM, upid: NUM});
+    const ts = row.ts;
+    const upid = row.upid;
+    globals.dispatch(
+        Actions.selectPerfSamples({id: 0, upid, ts, type: 'perf'}));
   }
 
   private async selectFirstHeapProfile() {
@@ -507,6 +524,7 @@ export class TraceController extends Controller<States> {
            inner join thread_track on slice.track_id = thread_track.id
            group by bucket, utid
          ) using(utid)
+         where upid is not null
          group by bucket, upid`);
 
     const slicesData: {[key: string]: QuantizedLoad[]} = {};
