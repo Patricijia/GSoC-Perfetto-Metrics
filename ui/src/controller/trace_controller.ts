@@ -19,20 +19,25 @@ import {
 } from '../common/actions';
 import {cacheTrace} from '../common/cache_manager';
 import {TRACE_MARGIN_TIME_S} from '../common/constants';
-import {Engine, QueryError} from '../common/engine';
-import {featureFlags, Flag} from '../common/feature_flags';
+import {Engine} from '../common/engine';
+import {featureFlags, Flag, PERF_SAMPLE_FLAG} from '../common/feature_flags';
 import {HttpRpcEngine} from '../common/http_rpc_engine';
-import {NUM, NUM_NULL, STR, STR_NULL} from '../common/query_result';
+import {NUM, NUM_NULL, QueryError, STR, STR_NULL} from '../common/query_result';
 import {EngineMode} from '../common/state';
 import {TimeSpan, toNs, toNsCeil, toNsFloor} from '../common/time';
 import {resetEngineWorker, WasmEngineProxy} from '../common/wasm_engine_proxy';
-import {QuantizedLoad, ThreadDesc} from '../frontend/globals';
+import {
+  globals as frontendGlobals,
+  QuantizedLoad,
+  ThreadDesc
+} from '../frontend/globals';
 import {
   publishHasFtrace,
   publishMetricError,
   publishOverviewData,
   publishThreads
 } from '../frontend/publish';
+import {Router} from '../frontend/router';
 
 import {
   CounterAggregationController
@@ -55,14 +60,14 @@ import {
   CpuProfileControllerArgs
 } from './cpu_profile_controller';
 import {
+  FlamegraphController,
+  FlamegraphControllerArgs
+} from './flamegraph_controller';
+import {
   FlowEventsController,
   FlowEventsControllerArgs
 } from './flow_events_controller';
 import {globals} from './globals';
-import {
-  HeapProfileController,
-  HeapProfileControllerArgs
-} from './heap_profile_controller';
 import {LoadingManager} from './loading_manager';
 import {LogsController} from './logs_controller';
 import {MetricsController} from './metrics_controller';
@@ -114,7 +119,6 @@ const FLAGGED_METRICS: Array<[Flag, string]> = METRICS.map(m => {
   });
   return [flag, m];
 });
-
 
 // TraceController handles handshakes with the frontend for everything that
 // concerns a single trace. It owns the WASM trace processor engine, handles
@@ -189,9 +193,9 @@ export class TraceController extends Controller<States> {
         childControllers.push(
             Child('cpuProfile', CpuProfileController, cpuProfileArgs));
 
-        const heapProfileArgs: HeapProfileControllerArgs = {engine};
+        const flamegraphArgs: FlamegraphControllerArgs = {engine};
         childControllers.push(
-            Child('heapProfile', HeapProfileController, heapProfileArgs));
+            Child('flamegraph', FlamegraphController, flamegraphArgs));
         childControllers.push(Child(
             'cpu_aggregation',
             CpuAggregationController,
@@ -316,6 +320,9 @@ export class TraceController extends Controller<States> {
       await this.engine.restoreInitialTables();
     }
 
+    // traceUuid will be '' if the trace is not cacheable (URL or RPC).
+    const traceUuid = await this.cacheCurrentTrace();
+
     const traceTime = await this.engine.getTraceTimeBounds();
     let startSec = traceTime.start;
     let endSec = traceTime.end;
@@ -325,9 +332,18 @@ export class TraceController extends Controller<States> {
       startSec,
       endSec,
     };
+
+    const emptyOmniboxState = {
+      omnibox: '',
+      mode: frontendGlobals.state.frontendLocalState.omniboxState.mode ||
+          'SEARCH',
+      lastUpdate: Date.now() / 1000
+    };
+
     const actions: DeferredAction[] = [
-      Actions.setTraceTime(traceTimeState),
-      Actions.navigate({route: '/viewer'}),
+      Actions.setOmnibox(emptyOmniboxState),
+      Actions.setTraceUuid({traceUuid}),
+      Actions.setTraceTime(traceTimeState)
     ];
 
     let visibleStartSec = startSec;
@@ -352,6 +368,7 @@ export class TraceController extends Controller<States> {
     }));
 
     globals.dispatchMultiple(actions);
+    Router.navigate(`#!/viewer?trace_id=${traceUuid}`);
 
     // Make sure the helper views are available before we start adding tracks.
     await this.initialiseHelperViews();
@@ -384,11 +401,29 @@ export class TraceController extends Controller<States> {
       publishHasFtrace(hasFtrace);
     }
 
-    await this.cacheCurrentTrace();
+    globals.dispatch(Actions.removeDebugTrack({}));
     globals.dispatch(Actions.sortThreadTracks({}));
+
     await this.selectFirstHeapProfile();
+    if (PERF_SAMPLE_FLAG.get()) {
+      await this.selectPerfSample();
+    }
 
     return engineMode;
+  }
+
+  private async selectPerfSample() {
+    const query = `select ts, upid
+        from perf_sample
+        join thread using (utid)
+        order by ts desc limit 1`;
+    const profile = await assertExists(this.engine).query(query);
+    if (profile.numRows() !== 1) return;
+    const row = profile.firstRow({ts: NUM, upid: NUM});
+    const ts = row.ts;
+    const upid = row.upid;
+    globals.dispatch(
+        Actions.selectPerfSamples({id: 0, upid, ts, type: 'perf'}));
   }
 
   private async selectFirstHeapProfile() {
@@ -502,6 +537,7 @@ export class TraceController extends Controller<States> {
            inner join thread_track on slice.track_id = thread_track.id
            group by bucket, utid
          ) using(utid)
+         where upid is not null
          group by bucket, upid`);
 
     const slicesData: {[key: string]: QuantizedLoad[]} = {};
@@ -524,7 +560,7 @@ export class TraceController extends Controller<States> {
     publishOverviewData(slicesData);
   }
 
-  private async cacheCurrentTrace() {
+  private async cacheCurrentTrace(): Promise<string> {
     const engine = assertExists(this.engine);
     const result = await engine.query(`select str_value as uuid from metadata
                   where name = 'trace_uuid'`);
@@ -532,9 +568,15 @@ export class TraceController extends Controller<States> {
       throw new Error('metadata.trace_uuid could not be found.');
     }
     const traceUuid = result.firstRow({uuid: STR}).uuid;
-    const engineConfig = assertExists(Object.values(globals.state.engines)[0]);
-    cacheTrace(engineConfig.source, traceUuid);
-    globals.dispatch(Actions.setTraceUuid({traceUuid}));
+    const engineConfig = assertExists(globals.state.engines[engine.id]);
+    if (!cacheTrace(engineConfig.source, traceUuid)) {
+      // If the trace is not cacheable (has been opened from URL or RPC) don't
+      // append a ?trace_id to the URL. Doing so would cause an error if the
+      // tab is discarded or the user hits the reload button because the trace
+      // is not in the cache.
+      return '';
+    }
+    return traceUuid;
   }
 
   async initialiseHelperViews() {

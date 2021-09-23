@@ -13,14 +13,15 @@
 // limitations under the License.
 
 import * as uuidv4 from 'uuid/v4';
-import {assertExists} from '../base/logging';
 
+import {assertExists} from '../base/logging';
 import {
   Actions,
   AddTrackArgs,
   DeferredAction,
 } from '../common/actions';
 import {Engine} from '../common/engine';
+import {PERF_SAMPLE_FLAG} from '../common/feature_flags';
 import {
   NUM,
   NUM_NULL,
@@ -40,6 +41,9 @@ import {
   EXPECTED_FRAMES_SLICE_TRACK_KIND
 } from '../tracks/expected_frames/common';
 import {HEAP_PROFILE_TRACK_KIND} from '../tracks/heap_profile/common';
+import {
+  PERF_SAMPLES_PROFILE_TRACK_KIND
+} from '../tracks/perf_samples_profile/common';
 import {
   PROCESS_SCHEDULING_TRACK_KIND
 } from '../tracks/process_scheduling/common';
@@ -817,7 +821,7 @@ class TrackDecider {
           tid,
           thread.name as threadName,
           max(slice.depth) as maxDepth,
-          count(thread_slice.id) > 0 as hasThreadSlice,
+          (count(thread_slice.id) = count(slice.id)) as onlyThreadSlice,
           process.upid as upid,
           process.pid as pid
         from slice
@@ -837,7 +841,7 @@ class TrackDecider {
       maxDepth: NUM,
       upid: NUM_NULL,
       pid: NUM_NULL,
-      hasThreadSlice: NUM,
+      onlyThreadSlice: NUM,
     });
     for (; it.valid(); it.next()) {
       const utid = it.utid;
@@ -848,7 +852,7 @@ class TrackDecider {
       const upid = it.upid;
       const pid = it.pid;
       const maxDepth = it.maxDepth;
-      const hasThreadSlice = it.hasThreadSlice;
+      const onlyThreadSlice = it.onlyThreadSlice;
       const trackKindPriority =
           TrackDecider.inferTrackKindPriority(threadName, tid, pid);
 
@@ -863,7 +867,7 @@ class TrackDecider {
         name,
         trackGroup: uuid,
         trackKindPriority,
-        config: {trackId, maxDepth, tid, isThreadSlice: hasThreadSlice === 1}
+        config: {trackId, maxDepth, tid, isThreadSlice: onlyThreadSlice === 1}
       });
     }
   }
@@ -932,6 +936,26 @@ class TrackDecider {
         kind: HEAP_PROFILE_TRACK_KIND,
         trackKindPriority: TrackKindPriority.ORDINARY,
         name: `Heap Profile`,
+        trackGroup: uuid,
+        config: {upid}
+      });
+    }
+  }
+
+  async addProcessPerfSamplesTracks(): Promise<void> {
+    const result = await this.engine.query(`
+      select distinct(process.upid) from process
+      join thread on process.upid = thread.upid
+      join perf_sample on thread.utid = perf_sample.utid
+  `);
+    for (const it = result.iter({upid: NUM}); it.valid(); it.next()) {
+      const upid = it.upid;
+      const uuid = this.getUuid(0, upid);
+      this.tracksToAdd.push({
+        engineId: this.engineId,
+        kind: PERF_SAMPLES_PROFILE_TRACK_KIND,
+        trackKindPriority: TrackKindPriority.ORDINARY,
+        name: `Perf Samples`,
         trackGroup: uuid,
         config: {upid}
       });
@@ -1101,6 +1125,9 @@ class TrackDecider {
     await this.addProcessTrackGroups();
 
     await this.addProcessHeapProfileTracks();
+    if (PERF_SAMPLE_FLAG.get()) {
+      await this.addProcessPerfSamplesTracks();
+    }
     await this.addProcessCounterTracks();
     await this.addProcessAsyncSliceTracks();
     await this.addActualFramesTracks();
