@@ -1015,6 +1015,10 @@ class TrackDecider {
       union
       select upid, utid from sched join thread using(utid) group by utid
       union
+      select distinct(process.upid), 0 as utid from process
+        join thread on process.upid = thread.upid
+        join perf_sample on thread.utid = perf_sample.utid
+      union
       select upid, utid from (
         select distinct(utid) from cpu_profile_stack_sample
       ) join thread using(utid)
@@ -1100,6 +1104,9 @@ class TrackDecider {
           summaryTrackId,
           name,
           id: pUuid,
+          // Perf profiling tracks remain collapsed, otherwise we would have too
+          // many expanded process tracks for some perf traces, leading to
+          // jankyness.
           collapsed: !hasHeapProfiles,
         });
 
