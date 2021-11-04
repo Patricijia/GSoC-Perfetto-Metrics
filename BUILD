@@ -334,6 +334,7 @@ perfetto_filegroup(
 perfetto_filegroup(
     name = "include_perfetto_ext_base_base",
     srcs = [
+        "include/perfetto/ext/base/android_utils.h",
         "include/perfetto/ext/base/circular_queue.h",
         "include/perfetto/ext/base/container_annotations.h",
         "include/perfetto/ext/base/crash_keys.h",
@@ -638,6 +639,7 @@ perfetto_filegroup(
 perfetto_cc_library(
     name = "src_base_base",
     srcs = [
+        "src/base/android_utils.cc",
         "src/base/crash_keys.cc",
         "src/base/ctrl_c_handler.cc",
         "src/base/event_fd.cc",
@@ -1040,7 +1042,6 @@ perfetto_genrule(
         "src/trace_processor/metrics/android/android_proxy_power.sql",
         "src/trace_processor/metrics/android/android_simpleperf.sql",
         "src/trace_processor/metrics/android/android_startup.sql",
-        "src/trace_processor/metrics/android/android_startup_launches.sql",
         "src/trace_processor/metrics/android/android_surfaceflinger.sql",
         "src/trace_processor/metrics/android/android_sysui_cuj.sql",
         "src/trace_processor/metrics/android/android_sysui_cuj_jank_query.sql",
@@ -1056,7 +1057,6 @@ perfetto_genrule(
         "src/trace_processor/metrics/android/g2d_duration.sql",
         "src/trace_processor/metrics/android/global_counter_span_view.sql",
         "src/trace_processor/metrics/android/gpu_counter_span_view.sql",
-        "src/trace_processor/metrics/android/hsc_startups.sql",
         "src/trace_processor/metrics/android/java_heap_histogram.sql",
         "src/trace_processor/metrics/android/java_heap_stats.sql",
         "src/trace_processor/metrics/android/mem_stats_priority_breakdown.sql",
@@ -1069,6 +1069,8 @@ perfetto_genrule(
         "src/trace_processor/metrics/android/process_unagg_mem_view.sql",
         "src/trace_processor/metrics/android/profiler_smaps.sql",
         "src/trace_processor/metrics/android/span_view_stats.sql",
+        "src/trace_processor/metrics/android/startup/hsc.sql",
+        "src/trace_processor/metrics/android/startup/launches.sql",
         "src/trace_processor/metrics/android/thread_counter_span_view.sql",
         "src/trace_processor/metrics/android/unsymbolized_frames.sql",
         "src/trace_processor/metrics/chrome/actual_power_by_category.sql",
