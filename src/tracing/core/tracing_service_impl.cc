@@ -34,13 +34,11 @@
 #include <unistd.h>
 #endif
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-#include <sys/system_properties.h>
-#if PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
+    PERFETTO_BUILDFLAG(PERFETTO_ANDROID_BUILD)
 #include "src/android_internal/lazy_library_loader.h"    // nogncheck
 #include "src/android_internal/tracing_service_proxy.h"  // nogncheck
-#endif  // PERFETTO_ANDROID_BUILD
-#endif  // PERFETTO_OS_ANDROID
+#endif
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
     PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
@@ -54,6 +52,7 @@
 #include "perfetto/base/build_config.h"
 #include "perfetto/base/status.h"
 #include "perfetto/base/task_runner.h"
+#include "perfetto/ext/base/android_utils.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/metatrace.h"
 #include "perfetto/ext/base/string_utils.h"
@@ -2349,17 +2348,10 @@ void TracingServiceImpl::FreeBuffers(TracingSessionID tsid) {
 void TracingServiceImpl::RegisterDataSource(ProducerID producer_id,
                                             const DataSourceDescriptor& desc) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  PERFETTO_DLOG("Producer %" PRIu16 " registered data source \"%s\"",
-                producer_id, desc.name().c_str());
-
-  PERFETTO_DCHECK(!desc.name().empty());
-  auto reg_ds = data_sources_.emplace(desc.name(),
-                                      RegisteredDataSource{producer_id, desc});
-
-  // If there are existing tracing sessions, we need to check if the new
-  // data source is enabled by any of them.
-  if (tracing_sessions_.empty())
+  if (desc.name().empty()) {
+    PERFETTO_DLOG("Received RegisterDataSource() with empty name");
     return;
+  }
 
   ProducerEndpointImpl* producer = GetProducer(producer_id);
   if (!producer) {
@@ -2367,6 +2359,29 @@ void TracingServiceImpl::RegisterDataSource(ProducerID producer_id,
     return;
   }
 
+  // Check that the producer doesn't register two data sources with the same ID.
+  // Note that we tolerate |id| == 0 because until Android T / v22 the |id|
+  // field didn't exist.
+  for (const auto& kv : data_sources_) {
+    if (desc.id() && kv.second.producer_id == producer_id &&
+        kv.second.descriptor.id() == desc.id()) {
+      PERFETTO_ELOG(
+          "Failed to register data source \"%s\". A data source with the same "
+          "id %" PRIu64 " (name=\"%s\") is already registered for producer %d",
+          desc.name().c_str(), desc.id(), kv.second.descriptor.name().c_str(),
+          producer_id);
+      return;
+    }
+  }
+
+  PERFETTO_DLOG("Producer %" PRIu16 " registered data source \"%s\"",
+                producer_id, desc.name().c_str());
+
+  auto reg_ds = data_sources_.emplace(desc.name(),
+                                      RegisteredDataSource{producer_id, desc});
+
+  // If there are existing tracing sessions, we need to check if the new
+  // data source is enabled by any of them.
   for (auto& iter : tracing_sessions_) {
     TracingSession& tracing_session = iter.second;
     if (tracing_session.state != TracingSession::STARTED &&
@@ -2390,7 +2405,38 @@ void TracingServiceImpl::RegisterDataSource(ProducerID producer_id,
       if (ds_inst && tracing_session.state == TracingSession::STARTED)
         StartDataSourceInstance(producer, &tracing_session, ds_inst);
     }
+  }  // for(iter : tracing_sessions_)
+}
+
+void TracingServiceImpl::UpdateDataSource(
+    ProducerID producer_id,
+    const DataSourceDescriptor& new_desc) {
+  if (new_desc.id() == 0) {
+    PERFETTO_ELOG("UpdateDataSource() must have a non-zero id");
+    return;
   }
+
+  // If this producer has already registered a matching descriptor name and id,
+  // just update the descriptor.
+  RegisteredDataSource* data_source = nullptr;
+  auto range = data_sources_.equal_range(new_desc.name());
+  for (auto it = range.first; it != range.second; ++it) {
+    if (it->second.producer_id == producer_id &&
+        it->second.descriptor.id() == new_desc.id()) {
+      data_source = &it->second;
+      break;
+    }
+  }
+
+  if (!data_source) {
+    PERFETTO_ELOG(
+        "UpdateDataSource() failed, could not find an existing data source "
+        "with name=\"%s\" id=%" PRIu64,
+        new_desc.name().c_str(), new_desc.id());
+    return;
+  }
+
+  data_source->descriptor = new_desc;
 }
 
 void TracingServiceImpl::StopDataSourceInstance(ProducerEndpointImpl* producer,
@@ -3102,9 +3148,9 @@ void TracingServiceImpl::MaybeEmitSystemInfo(
   }
 #endif  // !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  char value[PROP_VALUE_MAX];
-  if (__system_property_get("ro.build.fingerprint", value)) {
-    info->set_android_build_fingerprint(value);
+  std::string fingerprint_value = base::GetAndroidProp("ro.build.fingerprint");
+  if (!fingerprint_value.empty()) {
+    info->set_android_build_fingerprint(fingerprint_value);
   } else {
     PERFETTO_ELOG("Unable to read ro.build.fingerprint");
   }
@@ -3627,12 +3673,13 @@ TracingServiceImpl::ProducerEndpointImpl::~ProducerEndpointImpl() {
 void TracingServiceImpl::ProducerEndpointImpl::RegisterDataSource(
     const DataSourceDescriptor& desc) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
-  if (desc.name().empty()) {
-    PERFETTO_DLOG("Received RegisterDataSource() with empty name");
-    return;
-  }
-
   service_->RegisterDataSource(id_, desc);
+}
+
+void TracingServiceImpl::ProducerEndpointImpl::UpdateDataSource(
+    const DataSourceDescriptor& desc) {
+  PERFETTO_DCHECK_THREAD(thread_checker_);
+  service_->UpdateDataSource(id_, desc);
 }
 
 void TracingServiceImpl::ProducerEndpointImpl::UnregisterDataSource(
