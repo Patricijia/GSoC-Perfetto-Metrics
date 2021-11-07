@@ -31,6 +31,7 @@ perfetto_component("base") {
     "../../include/perfetto/ext/base",
   ]
   sources = [
+    "android_utils.cc",
     "crash_keys.cc",
     "ctrl_c_handler.cc",
     "event_fd.cc",
@@ -192,6 +193,9 @@ perfetto_unittest_source_set("unittests") {
       "thread_task_runner_unittest.cc",
       "watchdog_posix_unittest.cc",
     ]
+  }
+  if (is_fuchsia) {
+    deps += [ "//third_party/fuchsia-sdk/sdk/pkg/fdio" ]
   }
   if (perfetto_build_standalone || perfetto_build_with_android) {
     # This causes some problems on the chromium waterfall.
