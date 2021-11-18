@@ -355,6 +355,7 @@ perfetto_filegroup(
         "include/perfetto/ext/base/pipe.h",
         "include/perfetto/ext/base/scoped_file.h",
         "include/perfetto/ext/base/small_set.h",
+        "include/perfetto/ext/base/small_vector.h",
         "include/perfetto/ext/base/string_splitter.h",
         "include/perfetto/ext/base/string_utils.h",
         "include/perfetto/ext/base/string_view.h",
@@ -1009,6 +1010,7 @@ perfetto_genrule(
         "src/trace_processor/metrics/sql/android/android_cpu_agg.sql",
         "src/trace_processor/metrics/sql/android/android_cpu_raw_metrics_per_core.sql",
         "src/trace_processor/metrics/sql/android/android_dma_heap.sql",
+        "src/trace_processor/metrics/sql/android/android_dvfs.sql",
         "src/trace_processor/metrics/sql/android/android_fastrpc.sql",
         "src/trace_processor/metrics/sql/android/android_gpu.sql",
         "src/trace_processor/metrics/sql/android/android_hwcomposer.sql",
@@ -1632,6 +1634,8 @@ perfetto_filegroup(
     srcs = [
         "src/traced/probes/power/android_power_data_source.cc",
         "src/traced/probes/power/android_power_data_source.h",
+        "src/traced/probes/power/linux_power_sysfs_data_source.cc",
+        "src/traced/probes/power/linux_power_sysfs_data_source.h",
     ],
 )
 
@@ -2562,6 +2566,7 @@ perfetto_proto_library(
         "protos/perfetto/metrics/android/cpu_metric.proto",
         "protos/perfetto/metrics/android/display_metrics.proto",
         "protos/perfetto/metrics/android/dma_heap_metric.proto",
+        "protos/perfetto/metrics/android/dvfs_metric.proto",
         "protos/perfetto/metrics/android/fastrpc_metric.proto",
         "protos/perfetto/metrics/android/g2d_metric.proto",
         "protos/perfetto/metrics/android/gpu_metric.proto",
@@ -2824,6 +2829,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/sde.proto",
         "protos/perfetto/trace/ftrace/signal.proto",
         "protos/perfetto/trace/ftrace/sync.proto",
+        "protos/perfetto/trace/ftrace/synthetic.proto",
         "protos/perfetto/trace/ftrace/systrace.proto",
         "protos/perfetto/trace/ftrace/task.proto",
         "protos/perfetto/trace/ftrace/test_bundle_wrapper.proto",
