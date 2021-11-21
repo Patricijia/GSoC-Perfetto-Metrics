@@ -343,6 +343,7 @@ perfetto_filegroup(
         "include/perfetto/ext/base/endian.h",
         "include/perfetto/ext/base/event_fd.h",
         "include/perfetto/ext/base/file_utils.h",
+        "include/perfetto/ext/base/flat_hash_map.h",
         "include/perfetto/ext/base/getopt.h",
         "include/perfetto/ext/base/getopt_compat.h",
         "include/perfetto/ext/base/hash.h",
@@ -355,6 +356,7 @@ perfetto_filegroup(
         "include/perfetto/ext/base/pipe.h",
         "include/perfetto/ext/base/scoped_file.h",
         "include/perfetto/ext/base/small_set.h",
+        "include/perfetto/ext/base/small_vector.h",
         "include/perfetto/ext/base/string_splitter.h",
         "include/perfetto/ext/base/string_utils.h",
         "include/perfetto/ext/base/string_view.h",
@@ -1633,6 +1635,8 @@ perfetto_filegroup(
     srcs = [
         "src/traced/probes/power/android_power_data_source.cc",
         "src/traced/probes/power/android_power_data_source.h",
+        "src/traced/probes/power/linux_power_sysfs_data_source.cc",
+        "src/traced/probes/power/linux_power_sysfs_data_source.h",
     ],
 )
 
@@ -2826,6 +2830,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/sde.proto",
         "protos/perfetto/trace/ftrace/signal.proto",
         "protos/perfetto/trace/ftrace/sync.proto",
+        "protos/perfetto/trace/ftrace/synthetic.proto",
         "protos/perfetto/trace/ftrace/systrace.proto",
         "protos/perfetto/trace/ftrace/task.proto",
         "protos/perfetto/trace/ftrace/test_bundle_wrapper.proto",
