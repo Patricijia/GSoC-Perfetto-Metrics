@@ -401,6 +401,22 @@ message FtraceConfig {
   // initialized synchronously on the data source start and hence avoiding
   // timing races in tests.
   optional bool initialize_ksyms_synchronously_for_testing = 14;
+
+  // When this boolean is true AND the ftrace_events contains "kmem/rss_stat",
+  // this option causes traced_probes to enable the "kmem/rss_stat_throttled"
+  // event instad if present, and fall back to "kmem/rss_stat" if not present.
+  // The historical context for this is the following:
+  // - Up to Android S (12), the rss_stat was internally throttled in its
+  //   kernel implementation.
+  // - A change introduced in the kernels after S has introduced a new
+  //   "rss_stat_throttled" making the original "rss_stat" event unthrottled
+  //   (hence very spammy).
+  // - Not all Android T/13 devices will receive a new kernel though, hence we
+  //   need to deal with both cases.
+  // For more context: go/rss-stat-throttled.
+  // TODO(kaleshsingh): implement the logic behind this. Right now this flag
+  // does nothing.
+  optional bool throttle_rss_stat = 15;
 }
 
 // End of protos/perfetto/config/ftrace/ftrace_config.proto
@@ -5113,6 +5129,17 @@ message SyncWaitFtraceEvent {
 
 // End of protos/perfetto/trace/ftrace/sync.proto
 
+// Begin of protos/perfetto/trace/ftrace/synthetic.proto
+
+message RssStatThrottledFtraceEvent {
+  optional uint32 curr = 1;
+  optional int32 member = 2;
+  optional uint32 mm_id = 3;
+  optional int64 size = 4;
+}
+
+// End of protos/perfetto/trace/ftrace/synthetic.proto
+
 // Begin of protos/perfetto/trace/ftrace/systrace.proto
 
 message ZeroFtraceEvent {
@@ -5584,6 +5611,7 @@ message FtraceEvent {
     SdeSdePerfCrtcUpdateFtraceEvent sde_sde_perf_crtc_update = 356;
     SdeSdePerfSetQosLutsFtraceEvent sde_sde_perf_set_qos_luts = 357;
     SdeSdePerfUpdateBusFtraceEvent sde_sde_perf_update_bus = 358;
+    RssStatThrottledFtraceEvent rss_stat_throttled = 359;
   }
 }
 
@@ -6903,6 +6931,9 @@ enum ChromeRAILMode {
 // Next id: 2
 message ChromeRendererSchedulerState {
   optional ChromeRAILMode rail_mode = 1;
+
+  optional bool is_backgrounded = 2;
+  optional bool is_hidden = 3;
 }
 
 // End of protos/perfetto/trace/track_event/chrome_renderer_scheduler_state.proto
@@ -7542,7 +7573,7 @@ message PerfettoMetatrace {
   }
 
   // Only when using |event_id|.
-  optional uint32 event_duration_ns = 3;
+  optional uint64 event_duration_ns = 3;
 
   // Only when using |counter_id|.
   optional int32 counter_value = 4;
@@ -8494,6 +8525,10 @@ message SystemInfo {
   // the build system and the repo (standalone vs AOSP).
   // This is intended for human debugging only.
   optional string tracing_service_version = 4;
+
+  // The Android SDK vesion (e.g. 21 for L, 31 for S etc).
+  // Introduced in Android T.
+  optional uint64 android_sdk_version = 5;
 }
 
 // End of protos/perfetto/trace/system_info.proto
@@ -8815,6 +8850,7 @@ message ChromeThreadDescriptor {
     THREAD_DEVTOOLSADB = 38;
     THREAD_NETWORKCONFIGWATCHER = 39;
     THREAD_WASAPI_RENDER = 40;
+    THREAD_LOADER_LOCK_SAMPLER = 41;
 
     THREAD_MEMORY_INFRA = 50;
     THREAD_SAMPLING_PROFILER = 51;

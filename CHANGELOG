@@ -1,8 +1,13 @@
 Unreleased:
   Tracing service and probes:
-    *
+    * Added Android SDK version to the SystemInfo trace packet.
+    * Changed compiler flags. Assume recent x64 CPUs (-msse4.2 -mavx -mpopcnt).
+      This behavior affects only standalone builds and can be changed by setting
+      enable_perfetto_x64_cpu_opt=false in the GN args.
   Trace Processor:
-    *
+    * Changed LIKE comparisions to be case-senstive. This may break existing
+      queries but was a necessary from a performance perspective.
+    * Changed compiler flags, assume recent x64 CPUs (see above).
   UI:
     *
   SDK:

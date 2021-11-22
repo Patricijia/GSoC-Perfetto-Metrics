@@ -47,6 +47,7 @@
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/iterator_impl.h"
+#include "src/trace_processor/sqlite/create_function.h"
 #include "src/trace_processor/sqlite/register_function.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
 #include "src/trace_processor/sqlite/sql_stats_table.h"
@@ -65,10 +66,10 @@
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
-#include "src/trace_processor/metrics/chrome/all_chrome_metrics.descriptor.h"
+#include "src/trace_processor/metrics/all_chrome_metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
-#include "src/trace_processor/metrics/sql_metrics.h"
+#include "src/trace_processor/metrics/sql/amalgamated_sql_metrics.h"
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <cxxabi.h>
@@ -109,6 +110,11 @@ void InitializeSqlite(sqlite3* db) {
   if (error) {
     PERFETTO_FATAL("Error setting pragma temp_store: %s", error);
   }
+  sqlite3_exec(db, "PRAGMA case_sensitive_like = 1", 0, 0, &error);
+  if (error) {
+    PERFETTO_FATAL("Error setting pragma case_sensitive_like: %s", error);
+  }
+
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -648,6 +654,23 @@ struct SourceGeq : public SqlFunction {
   }
 };
 
+struct Glob : public SqlFunction {
+  static base::Status Run(void*,
+                          size_t,
+                          sqlite3_value** argv,
+                          SqlValue& out,
+                          Destructors&) {
+    const char* pattern =
+        reinterpret_cast<const char*>(sqlite3_value_text(argv[0]));
+    const char* text =
+        reinterpret_cast<const char*>(sqlite3_value_text(argv[1]));
+    if (pattern && text) {
+      out = SqlValue::Long(sqlite3_strglob(pattern, text) == 0);
+    }
+    return base::OkStatus();
+  }
+};
+
 void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
                   std::vector<metrics::SqlMetricFile>* sql_metrics,
@@ -664,10 +687,17 @@ void SetupMetrics(TraceProcessor* tp,
   tp->ExtendMetricsProto(kAllChromeMetricsDescriptor.data(),
                          kAllChromeMetricsDescriptor.size(), skip_prefixes);
 
-  for (const auto& file_to_sql : metrics::sql_metrics::kFileToSql) {
-    if (base::StartsWithAny(file_to_sql.path, sanitized_extension_paths))
-      continue;
-    tp->RegisterMetric(file_to_sql.path, file_to_sql.sql);
+  // TODO(lalitm): remove this special casing and change
+  // SanitizeMetricMountPaths if/when we move all protos for builtin metrics to
+  // match extension protos.
+  bool skip_all_sql = std::find(extension_paths.begin(), extension_paths.end(),
+                                "") != extension_paths.end();
+  if (!skip_all_sql) {
+    for (const auto& file_to_sql : metrics::sql_metrics::kFileToSql) {
+      if (base::StartsWithAny(file_to_sql.path, sanitized_extension_paths))
+        continue;
+      tp->RegisterMetric(file_to_sql.path, file_to_sql.sql);
+    }
   }
 
   RegisterFunction<metrics::NullIfEmpty>(db, "NULL_IF_EMPTY", 1);
@@ -736,12 +766,17 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   db_.reset(std::move(db));
 
   // New style function registration.
+  RegisterFunction<Glob>(db, "glob", 2);
   RegisterFunction<Hash>(db, "HASH", -1);
   RegisterFunction<Demangle>(db, "DEMANGLE", 1);
   RegisterFunction<SourceGeq>(db, "SOURCE_GEQ", -1);
   RegisterFunction<ExportJson>(db, "EXPORT_JSON", 1, context_.storage.get(),
                                false);
   RegisterFunction<ExtractArg>(db, "EXTRACT_ARG", 2, context_.storage.get());
+  RegisterFunction<CreateFunction>(
+      db, "CREATE_FUNCTION", 3,
+      std::unique_ptr<CreateFunction::Context>(
+          new CreateFunction::Context{db_.get(), &create_function_state_}));
 
   // Old style function registration.
   // TODO(lalitm): migrate this over to using RegisterFunction once aggregate
@@ -873,10 +908,9 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
 TraceProcessorImpl::~TraceProcessorImpl() = default;
 
-util::Status TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data,
-                                       size_t size) {
-  bytes_parsed_ += size;
-  return TraceProcessorStorageImpl::Parse(std::move(data), size);
+util::Status TraceProcessorImpl::Parse(TraceBlobView blob) {
+  bytes_parsed_ += blob.size();
+  return TraceProcessorStorageImpl::Parse(std::move(blob));
 }
 
 std::string TraceProcessorImpl::GetCurrentTraceName() {
@@ -1027,6 +1061,23 @@ util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
   if (IsRootMetricField(no_ext_name)) {
     metric.proto_field_name = no_ext_name;
     metric.output_table_name = no_ext_name + "_output";
+
+    auto field_it_and_inserted =
+        proto_field_to_sql_metric_path_.emplace(*metric.proto_field_name, path);
+    if (!field_it_and_inserted.second) {
+      // We already had a metric with this field name in the map. However, if
+      // this was the case, we should have found the metric in
+      // |path_to_sql_metric_file_| above if we are simply overriding the
+      // metric. Return an error since this means we have two different SQL
+      // files which are trying to output the same metric.
+      const auto& prev_path = field_it_and_inserted.first->second;
+      PERFETTO_DCHECK(prev_path != path);
+      return base::ErrStatus(
+          "RegisterMetric Error: Metric paths %s (which is already registered) "
+          "and %s are both trying to output the proto field %s",
+          prev_path.c_str(), path.c_str(), metric.proto_field_name->c_str());
+    }
+
     InsertIntoTraceMetricsTable(*db_, no_ext_name);
   }
 
