@@ -1407,8 +1407,6 @@ perfetto_filegroup(
         "src/trace_processor/importers/json/json_trace_parser.h",
         "src/trace_processor/importers/json/json_trace_tokenizer.cc",
         "src/trace_processor/importers/json/json_trace_tokenizer.h",
-        "src/trace_processor/importers/json/json_tracker.cc",
-        "src/trace_processor/importers/json/json_tracker.h",
         "src/trace_processor/importers/proto/android_probes_module.cc",
         "src/trace_processor/importers/proto/android_probes_module.h",
         "src/trace_processor/importers/proto/android_probes_parser.cc",
@@ -4229,12 +4227,26 @@ perfetto_py_binary(
     legacy_create_init = 0,
 )
 
+perfetto_py_library(
+    name = "batch_trace_processor",
+    srcs = glob([
+      "tools/batch_trace_processor/perfetto/batch_trace_processor/*.py"
+    ]),
+    deps = [
+        ":trace_processor_py",
+    ] + PERFETTO_CONFIG.deps.pandas_py,
+    imports = [
+        "tools/batch_trace_processor",
+    ],
+)
+
 perfetto_py_binary(
     name = "batch_trace_processor_shell",
     srcs = ["tools/batch_trace_processor/main.py"],
     main = "tools/batch_trace_processor/main.py",
     deps = [
         ":trace_processor_py",
+        ":batch_trace_processor",
     ] + PERFETTO_CONFIG.deps.pandas_py,
     python_version = "PY3",
     legacy_create_init = 0,

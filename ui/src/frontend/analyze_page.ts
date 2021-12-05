@@ -36,10 +36,14 @@ class QueryInput implements m.ClassComponent {
   static onKeyDown(e: Event) {
     const event = e as KeyboardEvent;
     const target = e.target as HTMLTextAreaElement;
+    const {selectionStart, selectionEnd} = target;
 
     if (event.code === 'Enter' && (event.metaKey || event.ctrlKey)) {
       event.preventDefault();
-      const query = target.value;
+      let query = target.value;
+      if (selectionEnd > selectionStart) {
+        query = query.substring(selectionStart, selectionEnd);
+      }
       if (!query) return;
       globals.dispatch(
           Actions.executeQuery({engineId: '0', queryId: QUERY_ID, query}));
@@ -48,15 +52,15 @@ class QueryInput implements m.ClassComponent {
     if (event.code === 'Tab') {
       // Handle tabs to insert spaces.
       event.preventDefault();
-      const {selectionStart, selectionEnd} = target;
       const lastLineBreak = target.value.lastIndexOf('\n', selectionEnd);
 
-      if (lastLineBreak < selectionStart) {
+      if (selectionStart === selectionEnd || lastLineBreak < selectionStart) {
         // Selection does not contain line breaks, therefore is on a single
-        // line. In this case, replace the selection with spaces.
-        target.value = target.value.substring(0, selectionStart) +
-            TAB_SPACES_STRING + target.value.substring(selectionEnd);
-        target.selectionEnd = selectionStart + TAB_SPACES;
+        // line. In this case, replace the selection with spaces. Replacement is
+        // done via document.execCommand as opposed to direct manipulation of
+        // element's value attribute because modifying latter programmatically
+        // drops the edit history which breaks undo/redo functionality.
+        document.execCommand('insertText', false, TAB_SPACES_STRING);
       } else {
         this.handleMultilineTab(target, event);
       }
@@ -69,7 +73,7 @@ class QueryInput implements m.ClassComponent {
   private static handleMultilineTab(
       target: HTMLTextAreaElement, event: KeyboardEvent) {
     const {selectionStart, selectionEnd} = target;
-    const firstLineBreak = target.value.lastIndexOf('\n', selectionStart);
+    const firstLineBreak = target.value.lastIndexOf('\n', selectionStart - 1);
 
     // If no line break is found (selection begins at the first line),
     // replacementStart would have the correct value of 0.
@@ -86,14 +90,13 @@ class QueryInput implements m.ClassComponent {
                               }
                             })
                             .join('\n');
-    target.value = target.value.substring(0, replacementStart) + replacement +
-        target.value.substring(selectionEnd);
-
-    // Restore the selection start.
-    target.selectionStart = selectionStart;
-
-    // Restore the selection end, adjusted for changed string length.
-    target.selectionEnd = replacement.length + replacementStart;
+    // Select the range to be replaced.
+    target.setSelectionRange(replacementStart, selectionEnd);
+    document.execCommand('insertText', false, replacement);
+    // Restore the selection to match the previous selection, allowing to chain
+    // indent operations by just pressing Tab several times.
+    target.setSelectionRange(
+        replacementStart, replacementStart + replacement.length);
   }
 
   // Chop off up to TAB_SPACES leading spaces from a string.
