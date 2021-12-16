@@ -622,6 +622,10 @@ message HeapprofdConfig {
   //
   // BUGS
   // Before Android 12, setting this to 0 would crash the target process.
+  //
+  // N.B. This must be explicitly set to a non-zero value for all heaps (with
+  // this field or with heap_sampling_intervals), otherwise the producer will
+  // not start.
   optional uint64 sampling_interval_bytes = 1;
 
   // If less than the given numbers of bytes are left free in the shared
@@ -676,6 +680,8 @@ message HeapprofdConfig {
   // crash the target process before Android 12.
   //
   // Introduced in Android 12.
+  //
+  // All values must be non-zero or the producer will not start.
   repeated uint64 heap_sampling_intervals = 22;
 
   // Sample all heaps registered by target process. Introduced in Android 12.
@@ -4882,6 +4888,12 @@ message NetifReceiveSkbFtraceEvent {
   optional string name = 2;
   optional uint64 skbaddr = 3;
 }
+message NetDevXmitFtraceEvent {
+  optional uint32 len = 1;
+  optional string name = 2;
+  optional int32 rc = 3;
+  optional uint64 skbaddr = 4;
+}
 
 // End of protos/perfetto/trace/ftrace/net.proto
 
@@ -5649,6 +5661,7 @@ message FtraceEvent {
     SdeSdePerfUpdateBusFtraceEvent sde_sde_perf_update_bus = 358;
     RssStatThrottledFtraceEvent rss_stat_throttled = 359;
     NetifReceiveSkbFtraceEvent netif_receive_skb = 360;
+    NetDevXmitFtraceEvent net_dev_xmit = 361;
   }
 }
 
