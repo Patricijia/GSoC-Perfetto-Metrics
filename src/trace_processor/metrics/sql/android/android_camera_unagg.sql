@@ -1,5 +1,5 @@
 --
--- Copyright 2020 The Android Open Source Project
+-- Copyright 2019 The Android Open Source Project
 --
 -- Licensed under the Apache License, Version 2.0 (the "License");
 -- you may not use this file except in compliance with the License.
@@ -14,14 +14,20 @@
 -- limitations under the License.
 --
 
-SELECT RUN_METRIC('chrome/chrome_thread_slice_with_cpu_time.sql')
-    AS suppress_query_output;
+-- This gives us access to the raw spans.
+SELECT RUN_METRIC('android/android_camera.sql');
 
+DROP VIEW IF EXISTS android_camera_unagg_output;
+CREATE VIEW android_camera_unagg_output AS
 SELECT
-  name,
-  ts,
-  dur,
-  start_cpu_time,
-  end_cpu_time,
-  slice_cpu_time
-FROM chrome_thread_slice_with_cpu_time
+  AndroidCameraUnaggregatedMetric(
+    'gc_rss_and_dma', (
+      SELECT RepeatedField(
+          AndroidCameraUnaggregatedMetric_Value(
+          'ts', ts,
+          'value', CAST(rss_and_dma_val AS real)
+        )
+      )
+      FROM rss_and_dma_all_camera_span
+    )
+  );

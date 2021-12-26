@@ -1036,6 +1036,7 @@ perfetto_genrule(
     srcs = [
         "src/trace_processor/metrics/sql/android/android_batt.sql",
         "src/trace_processor/metrics/sql/android/android_camera.sql",
+        "src/trace_processor/metrics/sql/android/android_camera_unagg.sql",
         "src/trace_processor/metrics/sql/android/android_cpu.sql",
         "src/trace_processor/metrics/sql/android/android_cpu_agg.sql",
         "src/trace_processor/metrics/sql/android/android_cpu_raw_metrics_per_core.sql",
@@ -1097,7 +1098,7 @@ perfetto_genrule(
         "src/trace_processor/metrics/sql/chrome/actual_power_by_rail_mode.sql",
         "src/trace_processor/metrics/sql/chrome/chrome_event_metadata.sql",
         "src/trace_processor/metrics/sql/chrome/chrome_processes.sql",
-        "src/trace_processor/metrics/sql/chrome/chrome_thread_slice_with_cpu_time.sql",
+        "src/trace_processor/metrics/sql/chrome/chrome_thread_slice.sql",
         "src/trace_processor/metrics/sql/chrome/cpu_time_by_category.sql",
         "src/trace_processor/metrics/sql/chrome/cpu_time_by_rail_mode.sql",
         "src/trace_processor/metrics/sql/chrome/estimated_power_by_category.sql",
@@ -2602,6 +2603,7 @@ perfetto_proto_library(
     srcs = [
         "protos/perfetto/metrics/android/batt_metric.proto",
         "protos/perfetto/metrics/android/camera_metric.proto",
+        "protos/perfetto/metrics/android/camera_unagg_metric.proto",
         "protos/perfetto/metrics/android/cpu_metric.proto",
         "protos/perfetto/metrics/android/display_metrics.proto",
         "protos/perfetto/metrics/android/dma_heap_metric.proto",
