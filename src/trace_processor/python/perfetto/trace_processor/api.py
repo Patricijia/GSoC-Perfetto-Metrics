@@ -66,10 +66,23 @@ class TraceProcessor:
       # contents into lists based on the type of the batch
       batch_index = 0
       while True:
+        # It's possible on some occasions that there are non UTF-8 characters
+        # in the string_cells field. If this is the case, string_cells is
+        # a bytestring which needs to be decoded (but passing ignore so that
+        # we don't fail in decoding).
+        strings_batch_str = batches[batch_index].string_cells
+        try:
+          strings_batch_str = strings_batch_str.decode('utf-8', 'ignore')
+        except AttributeError:
+          # AttributeError can occur when |strings_batch_str| is an str which
+          # happens when everything in it is UTF-8 (protobuf automatically
+          # does the conversion if it can).
+          pass
+
         # Null-terminated strings in a batch are concatenated
         # into a single large byte array, so we split on the
         # null-terminator to get the individual strings
-        strings_batch = batches[batch_index].string_cells.split('\0')[:-1]
+        strings_batch = strings_batch_str.split('\0')[:-1]
         self.__data_lists[TraceProcessor.QUERY_CELL_STRING_FIELD_ID].extend(
             strings_batch)
         self.__data_lists[TraceProcessor.QUERY_CELL_VARINT_FIELD_ID].extend(
@@ -135,7 +148,7 @@ class TraceProcessor:
 
       except ModuleNotFoundError:
         raise TraceProcessorException(
-            'The sufficient libraries are not installed')
+            'Python dependencies missing. Please pip3 install pandas numpy')
 
     def __len__(self):
       return self.__count
@@ -238,8 +251,13 @@ class TraceProcessor:
 
     return response.metatrace
 
-  # TODO(@aninditaghosh): Investigate context managers for
-  # cleaner usage
+  def __enter__(self):
+    return self
+
+  def __exit__(self, _, __, ___):
+    self.close()
+    return False
+
   def close(self):
     if hasattr(self, 'subprocess'):
       self.subprocess.kill()
