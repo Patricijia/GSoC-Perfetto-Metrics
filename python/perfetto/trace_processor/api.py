@@ -12,16 +12,25 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import dataclasses as dc
 from urllib.parse import urlparse
-from typing import BinaryIO, Generator, List, Optional, Union
+from typing import List, Optional
 
-from .http import TraceProcessorHttp
-from .loader import get_loader
-from .protos import ProtoFactory
-from .shell import load_shell
+from perfetto.trace_processor import resolver_registry
+from perfetto.trace_processor.http import TraceProcessorHttp
+from perfetto.trace_processor.platform import PlatformDelegate
+from perfetto.trace_processor.protos import ProtoFactory
+from perfetto.trace_processor.resolver_registry import ResolverRegistry
+from perfetto.trace_processor.shell import load_shell
 
-# Union of types supported for a trace which can be loaded by shell.
-LoadableTrace = Union[None, str, BinaryIO, Generator[bytes, None, None]]
+# Defining this field as a module variable means this can be changed by
+# implementations at startup and used for all TraceProcessor objects
+# without having to specify on each one.
+# In Google3, this field is rewritten using Copybara to a implementation
+# which can integrates with internal infra.
+PLATFORM_DELEGATE = PlatformDelegate
+
+TraceReference = resolver_registry.TraceReference
 
 # Custom exception raised if any trace_processor functions return a
 # response with an error defined
@@ -29,6 +38,24 @@ class TraceProcessorException(Exception):
 
   def __init__(self, message):
     super().__init__(message)
+
+
+@dc.dataclass
+class TraceProcessorConfig:
+  bin_path: Optional[str]
+  unique_port: bool
+  verbose: bool
+  resolver_registry: Optional[ResolverRegistry]
+
+  def __init__(self,
+               bin_path: Optional[str] = None,
+               unique_port: bool = True,
+               verbose: bool = False,
+               resolver_registry: Optional[ResolverRegistry] = None):
+    self.bin_path = bin_path
+    self.unique_port = unique_port
+    self.verbose = verbose
+    self.resolver_registry = resolver_registry
 
 
 class TraceProcessor:
@@ -179,65 +206,55 @@ class TraceProcessor:
       return result
 
   def __init__(self,
-               trace: LoadableTrace = None,
+               trace: Optional[TraceReference] = None,
                addr: Optional[str] = None,
-               bin_path: Optional[str] = None,
-               unique_port: bool = True,
-               verbose: bool = False,
+               config: TraceProcessorConfig = TraceProcessorConfig(),
                file_path: Optional[str] = None):
     """Create a trace processor instance.
 
     Args:
-      trace: Trace to be loaded into the trace processor instance. One of
-        three types of argument is supported:
+      trace: reference to a trace to be loaded into the trace
+        processor instance.
+
+        One of several types is supported:
         1) path to a trace file to open and read
         2) a file like object (file, io.BytesIO or similar) to read
         3) a generator yielding bytes
-      addr: address of a running trace processor instance. For advanced
-        use only.
-      bin_path: path to a trace processor shell binary. For advanced use
-        only.
-      unique_port: whether the trace processor shell instance should be
-        be started on a unique port. Only used when |addr| is not set.
-        For advanced use only.
-      verbose: whether trace processor shell should emit verbose logs;
-        can be very spammy. For advanced use only.
-      file_path (deprecated): path to a trace file to load. Please use
+        4) a trace URI which resolves to one of the above types
+        5) a trace URI resolver; this is a subclass of
+        resolver.TraceUriResolver which generates a reference to a
+        trace when the |resolve| method is called on it.
+
+        An URI is similar to a connection string (e.g. for a web
+        address or SQL database) which specifies where to lookup traces
+        and which traces to pick from this data source. The format of a
+        string should be as follows:
+        resolver_name:key_1=list,of,values;key_2=value
+
+        Custom resolvers can be provided to handle URIs via
+        |config.resolver_registry|.
+      addr: address of a running trace processor instance. Useful to query an
+        already loaded trace.
+      config: configuration options which customize functionality of trace
+        processor and the Python binding.
+      file_path (deprecated): path to a trace file to load. Use
         |trace| instead of this field: specifying both will cause
         an exception to be thrown.
     """
-
-    def create_tp_http():
-      if addr:
-        p = urlparse(addr)
-        return TraceProcessorHttp(p.netloc if p.netloc else p.path)
-
-      url, self.subprocess = load_shell(
-          bin_path=bin_path, unique_port=unique_port, verbose=verbose)
-      return TraceProcessorHttp(url)
 
     if trace and file_path:
       raise TraceProcessorException(
           "trace and file_path cannot both be specified.")
 
-    self.http = create_tp_http()
-    self.protos = ProtoFactory()
+    self.config = config
+    self.platform_delegate = PLATFORM_DELEGATE()
+    self.protos = ProtoFactory(self.platform_delegate)
+    self.resolver_registry = config.resolver_registry or \
+      self.platform_delegate.default_resolver_registry()
+    self.http = self._create_tp_http(addr)
 
-    if file_path:
-      get_loader().parse_file(self.http, file_path)
-    elif isinstance(trace, str):
-      get_loader().parse_file(self.http, trace)
-    elif hasattr(trace, 'read'):
-      while True:
-        chunk = trace.read(32 * 1024 * 1024)
-        if not chunk:
-          break
-        self.http.parse(chunk)
-      self.http.notify_eof()
-    elif trace:
-      for chunk in trace:
-        self.http.parse(chunk)
-      self.http.notify_eof()
+    if trace or file_path:
+      self._parse_trace(trace if trace else file_path)
 
   def query(self, sql: str):
     """Executes passed in SQL query using class defined HTTP API, and returns
@@ -293,6 +310,35 @@ class TraceProcessor:
       raise TraceProcessorException(response.error)
 
     return response.metatrace
+
+  def _create_tp_http(self, addr: str) -> TraceProcessorHttp:
+    if addr:
+      p = urlparse(addr)
+      parsed = p.netloc if p.netloc else p.path
+      return TraceProcessorHttp(parsed, protos=self.protos)
+
+    url, self.subprocess = load_shell(self.config.bin_path,
+                                      self.config.unique_port,
+                                      self.config.verbose,
+                                      self.platform_delegate)
+    return TraceProcessorHttp(url, protos=self.protos)
+
+  def _parse_trace(self, trace: TraceReference):
+    resolved_lst = self.resolver_registry.resolve(trace)
+    if not resolved_lst:
+      raise TraceProcessorException(
+          'trace argument did not resolve to a trace.')
+
+    if len(resolved_lst) > 1:
+      raise TraceProcessorException(
+          'trace argument resolved to more than one trace. Trace processor '
+          'only supports loading a single trace; please use '
+          'BatchTraceProcessor to operate on multiple traces.')
+
+    resolved = resolved_lst[0]
+    for chunk in resolved.generator:
+      self.http.parse(chunk)
+    self.http.notify_eof()
 
   def __enter__(self):
     return self

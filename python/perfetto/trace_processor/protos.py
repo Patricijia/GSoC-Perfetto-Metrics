@@ -16,27 +16,27 @@ from google.protobuf import descriptor_pb2
 from google.protobuf import message_factory
 from google.protobuf.descriptor_pool import DescriptorPool
 
-from .loader import get_loader
+from perfetto.trace_processor.platform import PlatformDelegate
 
 
 class ProtoFactory:
 
-  def __init__(self):
+  def __init__(self, platform_delegate: PlatformDelegate):
     # Declare descriptor pool
     self.descriptor_pool = DescriptorPool()
 
     # Load trace processor descriptor and add to descriptor pool
-    tp_descriptor_bytes = get_loader().read_tp_descriptor()
+    tp_desc = platform_delegate.get_resource('trace_processor.descriptor')
     tp_file_desc_set_pb2 = descriptor_pb2.FileDescriptorSet()
-    tp_file_desc_set_pb2.MergeFromString(tp_descriptor_bytes)
+    tp_file_desc_set_pb2.MergeFromString(tp_desc)
 
     for f_desc_pb2 in tp_file_desc_set_pb2.file:
       self.descriptor_pool.Add(f_desc_pb2)
 
     # Load metrics descriptor and add to descriptor pool
-    metrics_descriptor_bytes = get_loader().read_metrics_descriptor()
+    metrics_desc = platform_delegate.get_resource('metrics.descriptor')
     metrics_file_desc_set_pb2 = descriptor_pb2.FileDescriptorSet()
-    metrics_file_desc_set_pb2.MergeFromString(metrics_descriptor_bytes)
+    metrics_file_desc_set_pb2.MergeFromString(metrics_desc)
 
     for f_desc_pb2 in metrics_file_desc_set_pb2.file:
       self.descriptor_pool.Add(f_desc_pb2)
