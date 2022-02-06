@@ -1360,6 +1360,10 @@ message SysStatsConfig {
   // This option can be used to record unchanging values.
   // Updates from frequency changes can come from ftrace/set_clock_rate.
   optional uint32 devfreq_period_ms = 7;
+
+  // Polls /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_cur_freq every X ms.
+  // This is required to be > 10ms to avoid excessive CPU usage.
+  optional uint32 cpufreq_period_ms = 8;
 }
 
 // End of protos/perfetto/config/sys_stats/sys_stats_config.proto
@@ -5424,6 +5428,20 @@ message TaskRenameFtraceEvent {
 
 // End of protos/perfetto/trace/ftrace/task.proto
 
+// Begin of protos/perfetto/trace/ftrace/tcp.proto
+
+message TcpRetransmitSkbFtraceEvent {
+  optional uint32 daddr = 1;
+  optional uint32 dport = 2;
+  optional uint32 saddr = 3;
+  optional uint64 skaddr = 4;
+  optional uint64 skbaddr = 5;
+  optional uint32 sport = 6;
+  optional int32 state = 7;
+}
+
+// End of protos/perfetto/trace/ftrace/tcp.proto
+
 // Begin of protos/perfetto/trace/ftrace/thermal.proto
 
 message ThermalTemperatureFtraceEvent {
@@ -5871,6 +5889,7 @@ message FtraceEvent {
     NetifReceiveSkbFtraceEvent netif_receive_skb = 360;
     NetDevXmitFtraceEvent net_dev_xmit = 361;
     InetSockSetStateFtraceEvent inet_sock_set_state = 362;
+    TcpRetransmitSkbFtraceEvent tcp_retransmit_skb = 363;
   }
 }
 
@@ -8770,6 +8789,11 @@ message SysStats {
 
   // One entry per device.
   repeated DevfreqValue devfreq = 10;
+
+  // Cpu current frequency from
+  // /sys/devices/system/cpu/cpu*/cpufreq/cpuinfo_cur_freq in kHz.
+  // One entry per cpu. Report 0 for offline cpu
+  repeated uint32 cpufreq_khz = 11;
 }
 
 // End of protos/perfetto/trace/sys_stats/sys_stats.proto

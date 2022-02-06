@@ -183,14 +183,14 @@ export const StateActions = {
       state: StateDraft, trackState: TrackState, uiTrackId: string) {
     const config = trackState.config as {trackId: number};
     if (config.trackId !== undefined) {
-      state.uiTrackIdByTraceTrackId.set(config.trackId, uiTrackId);
+      state.uiTrackIdByTraceTrackId[config.trackId] = uiTrackId;
       return;
     }
 
     const multiple = trackState.config as {trackIds: number[]};
     if (multiple.trackIds !== undefined) {
       for (const trackId of multiple.trackIds) {
-        state.uiTrackIdByTraceTrackId.set(trackId, uiTrackId);
+        state.uiTrackIdByTraceTrackId[trackId] = uiTrackId;
       }
     }
   },
@@ -855,10 +855,11 @@ export const StateActions = {
     state.metrics.requestedMetric = undefined;
   },
 
-  setAvailableMetrics(state: StateDraft, args: {metrics: string[]}): void {
-    state.metrics.availableMetrics = args.metrics;
-    if (args.metrics.length > 0) state.metrics.selectedIndex = 0;
-  },
+  setAvailableMetrics(state: StateDraft, args: {availableMetrics: string[]}):
+      void {
+        state.metrics.availableMetrics = args.availableMetrics;
+        if (args.availableMetrics.length > 0) state.metrics.selectedIndex = 0;
+      },
 
   setMetricSelectedIndex(state: StateDraft, args: {index: number}): void {
     if (!state.metrics.availableMetrics ||
