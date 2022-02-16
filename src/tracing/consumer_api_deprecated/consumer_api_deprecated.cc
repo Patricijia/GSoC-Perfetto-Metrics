@@ -17,6 +17,7 @@
 #include "perfetto/public/consumer_api.h"
 
 #include <fcntl.h>
+#include <inttypes.h>
 #include <stdlib.h>
 #include <sys/mman.h>
 #include <sys/select.h>
@@ -26,7 +27,6 @@
 #include <unistd.h>
 
 #include <atomic>
-#include <cinttypes>
 #include <condition_variable>
 #include <memory>
 #include <mutex>
@@ -34,7 +34,6 @@
 
 #include "perfetto/base/build_config.h"
 #include "perfetto/ext/base/scoped_file.h"
-#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/ext/base/temp_file.h"
 #include "perfetto/ext/base/thread_checker.h"
 #include "perfetto/ext/base/unix_task_runner.h"
@@ -150,10 +149,10 @@ bool TracingSession::Initialize() {
     return false;
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-
-  base::StackString<64> memfd_name("perfetto_trace_%" PRId64, handle_);
-  buf_fd_.reset(static_cast<int>(
-      syscall(__NR_memfd_create, memfd_name.c_str(), MFD_CLOEXEC)));
+  char memfd_name[64];
+  snprintf(memfd_name, sizeof(memfd_name), "perfetto_trace_%" PRId64, handle_);
+  buf_fd_.reset(
+      static_cast<int>(syscall(__NR_memfd_create, memfd_name, MFD_CLOEXEC)));
 #else
   // Fallback for testing on Linux/mac.
   buf_fd_ = base::TempFile::CreateUnlinked().ReleaseFD();

@@ -53,8 +53,8 @@ StringPool::StringPool() {
 
 StringPool::~StringPool() = default;
 
-StringPool::StringPool(StringPool&&) noexcept = default;
-StringPool& StringPool::operator=(StringPool&&) noexcept = default;
+StringPool::StringPool(StringPool&&) = default;
+StringPool& StringPool::operator=(StringPool&&) = default;
 
 StringPool::Id StringPool::InsertString(base::StringView str, uint64_t hash) {
   // Try and find enough space in the current block for the string and the
@@ -70,8 +70,9 @@ StringPool::Id StringPool::InsertString(base::StringView str, uint64_t hash) {
     // new block to store the string.
     if (str.size() + kMaxMetadataSize >= kMinLargeStringSizeBytes) {
       return InsertLargeString(str, hash);
+    } else {
+      blocks_.emplace_back(kBlockSizeBytes);
     }
-    blocks_.emplace_back(kBlockSizeBytes);
 
     // Try and reserve space again - this time we should definitely succeed.
     std::tie(success, offset) = blocks_.back().TryInsert(str);
@@ -81,11 +82,7 @@ StringPool::Id StringPool::InsertString(base::StringView str, uint64_t hash) {
   // Compute the id from the block index and offset and add a mapping from the
   // hash to the id.
   Id string_id = Id::BlockString(blocks_.size() - 1, offset);
-
-  // Deliberately not adding |string_id| to |string_index_|. The caller
-  // (InternString()) must take care of this.
-  PERFETTO_DCHECK(string_index_.Find(hash));
-
+  string_index_.emplace(hash, string_id);
   return string_id;
 }
 
@@ -94,11 +91,7 @@ StringPool::Id StringPool::InsertLargeString(base::StringView str,
   large_strings_.emplace_back(new std::string(str.begin(), str.size()));
   // Compute id from the index and add a mapping from the hash to the id.
   Id string_id = Id::LargeString(large_strings_.size() - 1);
-
-  // Deliberately not adding |string_id| to |string_index_|. The caller
-  // (InternString()) must take care of this.
-  PERFETTO_DCHECK(string_index_.Find(hash));
-
+  string_index_.emplace(hash, string_id);
   return string_id;
 }
 

@@ -16,7 +16,8 @@
 
 #include "src/kallsyms/kernel_symbol_map.h"
 
-#include <cinttypes>
+#include <inttypes.h>
+
 #include <random>
 #include <unordered_map>
 

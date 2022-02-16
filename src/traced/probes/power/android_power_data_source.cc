@@ -50,7 +50,7 @@ constexpr size_t kMaxNumPowerEntities = 256;
 // static
 const ProbesDataSource::Descriptor AndroidPowerDataSource::descriptor = {
     /*name*/ "android.power",
-    /*flags*/ Descriptor::kHandlesIncrementalState,
+    /*flags*/ Descriptor::kFlagsNone,
 };
 
 // Dynamically loads the libperfetto_android_internal.so library which
@@ -140,6 +140,8 @@ AndroidPowerDataSource::AndroidPowerDataSource(
     std::unique_ptr<TraceWriter> writer)
     : ProbesDataSource(session_id, &descriptor),
       task_runner_(task_runner),
+      rail_descriptors_logged_(false),
+      energy_consumer_loggged_(false),
       writer_(std::move(writer)),
       weak_factory_(this) {
   using protos::pbzero::AndroidPowerConfig;
@@ -199,19 +201,9 @@ void AndroidPowerDataSource::Tick() {
       },
       poll_interval_ms_ - static_cast<uint32_t>(now_ms % poll_interval_ms_));
 
-  if (should_emit_descriptors_) {
-    // We write incremental state cleared in its own packet to avoid the subtle
-    // code we'd need if we were to set this on the first enabled data source.
-    auto packet = writer_->NewTracePacket();
-    packet->set_sequence_flags(
-        protos::pbzero::TracePacket::SEQ_INCREMENTAL_STATE_CLEARED);
-  }
-
   WriteBatteryCounters();
   WritePowerRailsData();
   WriteEnergyEstimationBreakdown();
-
-  should_emit_descriptors_ = false;
 }
 
 void AndroidPowerDataSource::WriteBatteryCounters() {
@@ -260,14 +252,15 @@ void AndroidPowerDataSource::WritePowerRailsData() {
 
   auto packet = writer_->NewTracePacket();
   packet->set_timestamp(static_cast<uint64_t>(base::GetBootTimeNs().count()));
-  packet->set_sequence_flags(
-      protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
-
   auto* rails_proto = packet->set_power_rails();
-  if (should_emit_descriptors_) {
+
+  if (!rail_descriptors_logged_) {
+    // We only add the rail descriptors to the first package, to avoid logging
+    // all rail names etc. on each one.
+    rail_descriptors_logged_ = true;
     auto rail_descriptors = lib_->GetRailDescriptors();
     if (rail_descriptors.empty()) {
-      // No rails to collect data for. Don't try again.
+      // No rails to collect data for. Don't try again in the next iteration.
       rails_collection_enabled_ = false;
       return;
     }
@@ -298,7 +291,8 @@ void AndroidPowerDataSource::WriteEnergyEstimationBreakdown() {
   protos::pbzero::AndroidEnergyEstimationBreakdown* energy_estimation_proto =
       nullptr;
 
-  if (should_emit_descriptors_) {
+  if (!energy_consumer_loggged_) {
+    energy_consumer_loggged_ = true;
     packet = writer_->NewTracePacket();
     energy_estimation_proto = packet->set_android_energy_estimation_breakdown();
     auto* descriptor_proto =
@@ -322,9 +316,6 @@ void AndroidPowerDataSource::WriteEnergyEstimationBreakdown() {
       }
       packet = writer_->NewTracePacket();
       packet->set_timestamp(timestamp);
-      packet->set_sequence_flags(
-          protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
-
       energy_estimation_proto =
           packet->set_android_energy_estimation_breakdown();
       energy_estimation_proto->set_energy_consumer_id(
@@ -343,10 +334,6 @@ void AndroidPowerDataSource::WriteEnergyEstimationBreakdown() {
 void AndroidPowerDataSource::Flush(FlushRequestID,
                                    std::function<void()> callback) {
   writer_->Flush(callback);
-}
-
-void AndroidPowerDataSource::ClearIncrementalState() {
-  should_emit_descriptors_ = true;
 }
 
 }  // namespace perfetto

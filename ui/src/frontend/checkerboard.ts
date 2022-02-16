@@ -33,12 +33,11 @@ export function checkerboard(
   if (LOADING_TEXT_WIDTH === 0) {
     LOADING_TEXT_WIDTH = ctx.measureText(LOADING_TEXT).width;
   }
-  if (LOADING_TEXT_WIDTH <= widthPx) {
-    ctx.fillText(
-        LOADING_TEXT,
-        leftPx + widthPx / 2 - LOADING_TEXT_WIDTH / 2,
-        heightPx / 2);
-  }
+  ctx.fillText(
+      LOADING_TEXT,
+      leftPx + widthPx / 2 - LOADING_TEXT_WIDTH,
+      heightPx / 2,
+      widthPx);
   ctx.textBaseline = oldBaseline;
 }
 

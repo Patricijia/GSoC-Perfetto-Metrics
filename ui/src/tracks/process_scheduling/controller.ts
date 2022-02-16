@@ -13,7 +13,8 @@
 // limitations under the License.
 
 import {assertTrue} from '../../base/logging';
-import {NUM, QueryResult} from '../../common/query_result';
+import {RawQueryResult} from '../../common/protos';
+import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNs} from '../../common/time';
 import {
   TrackController,
@@ -44,14 +45,13 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
     assertTrue(cpus.length > 0);
     this.maxCpu = Math.max(...cpus) + 1;
 
-    const result = (await this.query(`
-      select ifnull(max(dur), 0) as maxDur, count(1) as count
+    const result = await this.query(`
+      select max(dur), count(1)
       from ${this.tableName('process_sched')}
-    `)).iter({maxDur: NUM, count: NUM});
-    assertTrue(result.valid());
-    this.maxDurNs = result.maxDur;
+    `);
+    this.maxDurNs = result.columns[0].longValues![0];
 
-    const rowCount = result.count;
+    const rowCount = result.columns[1].longValues![0];
     const bucketNs = this.cachedBucketSizeNs(rowCount);
     if (bucketNs === undefined) {
       return;
@@ -88,8 +88,9 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
     const bucketNs =
         Math.max(Math.round(resolutionNs * this.pxSize() / 2) * 2, 1);
 
-    const queryRes = await this.queryData(startNs, endNs, bucketNs);
-    const numRows = queryRes.numRows();
+    const rawResult = await this.queryData(startNs, endNs, bucketNs);
+
+    const numRows = slowlyCountRows(rawResult);
     const slices: Data = {
       kind: 'slice',
       start,
@@ -103,40 +104,37 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
       utids: new Uint32Array(numRows),
     };
 
-    const it = queryRes.iter({
-      tsq: NUM,
-      ts: NUM,
-      dur: NUM,
-      cpu: NUM,
-      utid: NUM,
-    });
-
-    for (let row = 0; it.valid(); it.next(), row++) {
-      const startNsQ = it.tsq;
-      const startNs = it.ts;
-      const durNs = it.dur;
+    const cols = rawResult.columns;
+    for (let row = 0; row < numRows; row++) {
+      const startNsQ = +cols[0].longValues![row];
+      const startNs = +cols[1].longValues![row];
+      const durNs = +cols[2].longValues![row];
       const endNs = startNs + durNs;
 
       let endNsQ = Math.floor((endNs + bucketNs / 2 - 1) / bucketNs) * bucketNs;
       endNsQ = Math.max(endNsQ, startNsQ + bucketNs);
 
+      if (startNsQ === endNsQ) {
+        throw new Error('Should never happen');
+      }
+
       slices.starts[row] = fromNs(startNsQ);
       slices.ends[row] = fromNs(endNsQ);
-      slices.cpus[row] = it.cpu;
-      slices.utids[row] = it.utid;
+      slices.cpus[row] = +cols[3].longValues![row];
+      slices.utids[row] = +cols[4].longValues![row];
       slices.end = Math.max(slices.ends[row], slices.end);
     }
     return slices;
   }
 
   private queryData(startNs: number, endNs: number, bucketNs: number):
-      Promise<QueryResult> {
+      Promise<RawQueryResult> {
     const isCached = this.cachedBucketNs <= bucketNs;
     const tsq = isCached ? `cached_tsq / ${bucketNs} * ${bucketNs}` :
                            `(ts + ${bucketNs / 2}) / ${bucketNs} * ${bucketNs}`;
     const queryTable = isCached ? this.tableName('process_sched_cached') :
                                   this.tableName('process_sched');
-    const constraintColumn = isCached ? 'cached_tsq' : 'ts';
+    const constainColumn = isCached ? 'cached_tsq' : 'ts';
     return this.query(`
       select
         ${tsq} as tsq,
@@ -146,8 +144,8 @@ class ProcessSchedulingTrackController extends TrackController<Config, Data> {
         utid
       from ${queryTable}
       where
-        ${constraintColumn} >= ${startNs - this.maxDurNs} and
-        ${constraintColumn} <= ${endNs}
+        ${constainColumn} >= ${startNs - this.maxDurNs} and
+        ${constainColumn} <= ${endNs}
       group by tsq, cpu
       order by tsq, cpu
     `);

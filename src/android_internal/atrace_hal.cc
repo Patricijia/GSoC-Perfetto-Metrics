@@ -19,8 +19,6 @@
 #include <android/hardware/atrace/1.0/IAtraceDevice.h>
 #include <iostream>
 
-#include <string.h>
-
 namespace perfetto {
 namespace android_internal {
 
@@ -55,9 +53,11 @@ bool ListCategories(TracingVendorCategory* categories, size_t* size_of_arr) {
     for (int i = 0; i < *size_of_arr; ++i) {
       const TracingCategory& cat = r[i];
       TracingVendorCategory& result = categories[i];
-      strlcpy(result.name, cat.name.c_str(), sizeof(result.name));
-      strlcpy(result.description, cat.description.c_str(),
+      strncpy(result.name, cat.name.c_str(), sizeof(result.name));
+      strncpy(result.description, cat.description.c_str(),
               sizeof(result.description));
+      result.name[sizeof(result.name) - 1] = '\0';
+      result.description[sizeof(result.description) - 1] = '\0';
     }
   };
 

@@ -15,6 +15,7 @@
 import {TRACE_SUFFIX} from '../common/constants';
 import {ConsumerPortResponse} from './consumer_port_types';
 
+export type ConsumerPortCallback = (_: ConsumerPortResponse) => void;
 export type ErrorCallback = (_: string) => void;
 export type StatusCallback = (_: string) => void;
 
@@ -23,7 +24,7 @@ export abstract class RpcConsumerPort {
   // This is done by the 3 "send" methods in this abstract class.
   private consumerPortListener: Consumer;
 
-  protected constructor(consumerPortListener: Consumer) {
+  constructor(consumerPortListener: Consumer) {
     this.consumerPortListener = consumerPortListener;
   }
 

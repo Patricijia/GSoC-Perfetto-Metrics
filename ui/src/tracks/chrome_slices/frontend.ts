@@ -16,11 +16,12 @@ import {hsluvToHex} from 'hsluv';
 
 import {Actions} from '../../common/actions';
 import {cropText, drawIncompleteSlice} from '../../common/canvas_utils';
-import {hslForSlice, hslForThreadIdleSlice} from '../../common/colorizer';
+import {hslForSlice} from '../../common/colorizer';
 import {TRACE_MARGIN_TIME_S} from '../../common/constants';
+import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
-import {NewTrackArgs, SliceRect, Track} from '../../frontend/track';
+import {SliceRect, Track} from '../../frontend/track';
 import {trackRegistry} from '../../frontend/track_registry';
 
 import {Config, Data, SLICE_TRACK_KIND} from './common';
@@ -35,14 +36,14 @@ const INNER_CHEVRON_SCALE =
 
 export class ChromeSliceTrack extends Track<Config, Data> {
   static readonly kind: string = SLICE_TRACK_KIND;
-  static create(args: NewTrackArgs): Track {
-    return new ChromeSliceTrack(args);
+  static create(trackState: TrackState): Track {
+    return new ChromeSliceTrack(trackState);
   }
 
   private hoveredTitleId = -1;
 
-  constructor(args: NewTrackArgs) {
-    super(args);
+  constructor(trackState: TrackState) {
+    super(trackState);
   }
 
   renderCanvas(ctx: CanvasRenderingContext2D): void {
@@ -84,7 +85,6 @@ export class ChromeSliceTrack extends Track<Config, Data> {
       const isIncomplete = data.isIncomplete[i];
       const title = data.strings[titleId];
       const colorOverride = data.colors && data.strings[data.colors[i]];
-      const isThreadSlice = this.config.isThreadSlice;
       if (isIncomplete) {  // incomplete slice
         tEnd = visibleWindowTime.end;
       }
@@ -101,11 +101,10 @@ export class ChromeSliceTrack extends Track<Config, Data> {
 
       const name = title.replace(/( )?\d+/g, '');
       const highlighted = titleId === this.hoveredTitleId ||
-          globals.state.highlightedSliceId === sliceId;
+          globals.frontendLocalState.highlightedSliceId === sliceId;
 
-      const hasFocus = highlighted || isSelected;
-
-      const [hue, saturation, lightness] = hslForSlice(name, hasFocus);
+      const [hue, saturation, lightness] =
+          hslForSlice(name, highlighted || isSelected);
 
       let color: string;
       if (colorOverride === undefined) {
@@ -151,27 +150,12 @@ export class ChromeSliceTrack extends Track<Config, Data> {
         }
         continue;
       }
-
       if (isIncomplete && rect.width > SLICE_HEIGHT / 4) {
-        drawIncompleteSlice(ctx, rect.left, rect.top, rect.width, SLICE_HEIGHT);
-      } else if (isThreadSlice) {
-        // We draw two rectangles, representing the ratio between wall time and
-        // time spent on cpu.
-        const cpuTimeRatio = data.cpuTimeRatio![i];
-        const firstPartWidth = rect.width * cpuTimeRatio;
-        const secondPartWidth = rect.width * (1 - cpuTimeRatio);
-        ctx.fillRect(rect.left, rect.top, firstPartWidth, SLICE_HEIGHT);
-        ctx.fillStyle = hsluvToHex(
-            hslForThreadIdleSlice(hue, saturation, lightness, hasFocus));
-        ctx.fillRect(
-            rect.left + firstPartWidth,
-            rect.top,
-            secondPartWidth,
-            SLICE_HEIGHT);
+        drawIncompleteSlice(
+            ctx, rect.left, rect.top, rect.width, SLICE_HEIGHT, color);
       } else {
         ctx.fillRect(rect.left, rect.top, rect.width, SLICE_HEIGHT);
       }
-
       // Selected case
       if (isSelected) {
         drawRectOnSelected = () => {
@@ -236,19 +220,18 @@ export class ChromeSliceTrack extends Track<Config, Data> {
 
   onMouseMove({x, y}: {x: number, y: number}) {
     this.hoveredTitleId = -1;
-    globals.dispatch(Actions.setHighlightedSliceId({sliceId: -1}));
+    globals.frontendLocalState.setHighlightedSliceId(-1);
     const sliceIndex = this.getSliceIndex({x, y});
     if (sliceIndex === undefined) return;
     const data = this.data();
     if (data === undefined) return;
     this.hoveredTitleId = data.titles[sliceIndex];
-    const sliceId = data.sliceIds[sliceIndex];
-    globals.dispatch(Actions.setHighlightedSliceId({sliceId}));
+    globals.frontendLocalState.setHighlightedSliceId(data.sliceIds[sliceIndex]);
   }
 
   onMouseOut() {
     this.hoveredTitleId = -1;
-    globals.dispatch(Actions.setHighlightedSliceId({sliceId: -1}));
+    globals.frontendLocalState.setHighlightedSliceId(-1);
   }
 
   onMouseClick({x, y}: {x: number, y: number}): boolean {
