@@ -17,7 +17,7 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_SYSTRACE_SYSTRACE_LINE_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_SYSTRACE_SYSTRACE_LINE_H_
 
-#include <cinttypes>
+#include <inttypes.h>
 #include <string>
 
 namespace perfetto {

@@ -9,7 +9,6 @@ android_powrails{
         timestamp_ms: 6
         energy_uws: 50
       }
-      avg_used_power_mw: 38
     }
    power_rails{
       name: "power.PR_2_uws"
@@ -21,7 +20,6 @@ android_powrails{
         timestamp_ms: 6
         energy_uws: 70
       }
-      avg_used_power_mw: 60
     }
     power_rails{
       name: "power.PR_3_uws"
@@ -33,6 +31,5 @@ android_powrails{
         timestamp_ms: 6
         energy_uws: 15
       }
-      avg_used_power_mw: 7
     }
 }

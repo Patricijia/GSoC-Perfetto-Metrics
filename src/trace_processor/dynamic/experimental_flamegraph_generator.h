@@ -17,7 +17,6 @@
 #ifndef SRC_TRACE_PROCESSOR_DYNAMIC_EXPERIMENTAL_FLAMEGRAPH_GENERATOR_H_
 #define SRC_TRACE_PROCESSOR_DYNAMIC_EXPERIMENTAL_FLAMEGRAPH_GENERATOR_H_
 
-#include "src/trace_processor/importers/proto/flamegraph_construction_algorithms.h"
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 
 #include "src/trace_processor/storage/trace_storage.h"
@@ -30,14 +29,10 @@ class TraceProcessorContext;
 class ExperimentalFlamegraphGenerator
     : public DbSqliteTable::DynamicTableGenerator {
  public:
-  enum class ProfileType { kGraph, kNative, kPerf };
-
   struct InputValues {
-    ProfileType profile_type;
     int64_t ts;
-    std::vector<TimeConstraints> time_constraints;
-    base::Optional<UniquePid> upid;
-    base::Optional<std::string> upid_group;
+    UniquePid upid;
+    std::string profile_type;
     std::string focus_str;
   };
 

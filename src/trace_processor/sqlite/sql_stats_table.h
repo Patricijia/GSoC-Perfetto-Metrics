@@ -34,9 +34,10 @@ class SqlStatsTable : public SqliteTable {
  public:
   enum Column {
     kQuery = 0,
-    kTimeStarted = 1,
-    kTimeFirstNext = 2,
-    kTimeEnded = 3,
+    kTimeQueued = 1,
+    kTimeStarted = 2,
+    kTimeFirstNext = 3,
+    kTimeEnded = 4,
   };
 
   // Implementation of the SQLite cursor interface.

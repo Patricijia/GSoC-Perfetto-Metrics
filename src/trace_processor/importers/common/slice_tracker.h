@@ -19,7 +19,6 @@
 
 #include <stdint.h>
 
-#include "perfetto/ext/base/flat_hash_map.h"
 #include "src/trace_processor/importers/common/args_tracker.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
@@ -125,7 +124,7 @@ class SliceTracker {
     uint32_t legacy_unnestable_begin_count = 0;
     int64_t legacy_unnestable_last_begin_ts = 0;
   };
-  using StackMap = base::FlatHashMap<TrackId, TrackInfo>;
+  using StackMap = std::unordered_map<TrackId, TrackInfo>;
 
   // virtual for testing.
   virtual base::Optional<SliceId> StartSlice(int64_t timestamp,

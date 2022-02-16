@@ -41,9 +41,7 @@ const char* MapToFriendlyPowerRailName(base::StringView raw) {
     return "cpu.big";
   } else if (raw == "S5M_VDD_INT") {
     return "system.fabric";
-  } else if (raw == "S10M_VDD_TPU") {
-    return "tpu";
-  } else if (raw == "PPVAR_VSYS_PWR_DISP" || raw == "VSYS_PWR_DISPLAY") {
+  } else if (raw == "PPVAR_VSYS_PWR_DISP") {
     return "display";
   } else if (raw == "VSYS_PWR_MODEM") {
     return "modem";
@@ -150,9 +148,10 @@ ModuleResult AndroidProbesModule::TokenizePacket(
     energy->set_timestamp_ms(static_cast<uint64_t>(actual_ts / 1000000));
 
     std::vector<uint8_t> vec = data_packet.SerializeAsArray();
-    TraceBlob blob = TraceBlob::CopyFrom(vec.data(), vec.size());
-    context_->sorter->PushTracePacket(actual_ts, state,
-                                      TraceBlobView(std::move(blob)));
+    std::unique_ptr<uint8_t[]> buffer(new uint8_t[vec.size()]);
+    memcpy(buffer.get(), vec.data(), vec.size());
+    context_->sorter->PushTracePacket(
+        actual_ts, state, TraceBlobView(std::move(buffer), 0, vec.size()));
   }
 
   return ModuleResult::Handled();

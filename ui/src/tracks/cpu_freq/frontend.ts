@@ -15,9 +15,10 @@
 import {searchSegment} from '../../base/binary_search';
 import {assertTrue} from '../../base/logging';
 import {hueForCpu} from '../../common/colorizer';
+import {TrackState} from '../../common/state';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
-import {NewTrackArgs, Track} from '../../frontend/track';
+import {Track} from '../../frontend/track';
 import {trackRegistry} from '../../frontend/track_registry';
 
 import {
@@ -32,18 +33,18 @@ const RECT_HEIGHT = 20;
 
 class CpuFreqTrack extends Track<Config, Data> {
   static readonly kind = CPU_FREQ_TRACK_KIND;
-  static create(args: NewTrackArgs): CpuFreqTrack {
-    return new CpuFreqTrack(args);
+  static create(trackState: TrackState): CpuFreqTrack {
+    return new CpuFreqTrack(trackState);
   }
 
-  private mousePos = {x: 0, y: 0};
+  private mouseXpos = 0;
   private hoveredValue: number|undefined = undefined;
   private hoveredTs: number|undefined = undefined;
   private hoveredTsEnd: number|undefined = undefined;
   private hoveredIdle: number|undefined = undefined;
 
-  constructor(args: NewTrackArgs) {
-    super(args);
+  constructor(trackState: TrackState) {
+    super(trackState);
   }
 
   getHeight() {
@@ -82,7 +83,7 @@ class CpuFreqTrack extends Track<Config, Data> {
     // Draw the CPU frequency graph.
     const hue = hueForCpu(this.config.cpu);
     let saturation = 45;
-    if (globals.state.hoveredUtid !== -1) {
+    if (globals.frontendLocalState.hoveredUtid !== -1) {
       saturation = 0;
     }
     ctx.fillStyle = `hsl(${hue}, ${saturation}%, 70%)`;
@@ -192,7 +193,7 @@ class CpuFreqTrack extends Track<Config, Data> {
       }
 
       // Draw the tooltip.
-      this.drawTrackHoverTooltip(ctx, this.mousePos, text);
+      this.drawTrackHoverTooltip(ctx, this.mouseXpos, text);
     }
 
     // Write the Y scale on the top left corner.
@@ -214,12 +215,12 @@ class CpuFreqTrack extends Track<Config, Data> {
         timeScale.timeToPx(data.end));
   }
 
-  onMouseMove(pos: {x: number, y: number}) {
+  onMouseMove({x}: {x: number, y: number}) {
     const data = this.data();
     if (data === undefined) return;
-    this.mousePos = pos;
+    this.mouseXpos = x;
     const {timeScale} = globals.frontendLocalState;
-    const time = timeScale.pxToTime(pos.x);
+    const time = timeScale.pxToTime(x);
 
     const [left, right] = searchSegment(data.timestamps, time);
     this.hoveredTs = left === -1 ? undefined : data.timestamps[left];

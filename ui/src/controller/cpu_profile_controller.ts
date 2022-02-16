@@ -13,10 +13,9 @@
 // limitations under the License.
 
 import {Engine} from '../common/engine';
-import {NUM, STR} from '../common/query_result';
+import {slowlyCountRows} from '../common/query_iterator';
 import {CallsiteInfo, CpuProfileSampleSelection} from '../common/state';
 import {CpuProfileDetails} from '../frontend/globals';
-import {publishCpuProfileDetails} from '../frontend/publish';
 
 import {Controller} from './controller';
 import {globals} from './globals';
@@ -51,7 +50,7 @@ export class CpuProfileController extends Controller<'main'> {
     }
 
     this.requestingData = true;
-    publishCpuProfileDetails({});
+    globals.publish('CpuProfileDetails', {});
     this.lastSelectedSample = this.copyCpuProfileSample(selection);
 
     this.getSampleData(selectedSample.id)
@@ -66,7 +65,7 @@ export class CpuProfileController extends Controller<'main'> {
               stack: sampleData,
             };
 
-            publishCpuProfileDetails(cpuProfileDetails);
+            globals.publish('CpuProfileDetails', cpuProfileDetails);
           }
         })
         .finally(() => {
@@ -107,7 +106,7 @@ export class CpuProfileController extends Controller<'main'> {
     // 5. Sort the query by the depth of the callstack frames.
     const sampleQuery = `
       SELECT
-        samples.id as id,
+        samples.id,
         IFNULL(
           (
             SELECT name
@@ -116,8 +115,8 @@ export class CpuProfileController extends Controller<'main'> {
             LIMIT 1
           ),
           spf.name
-        ) AS name,
-        spm.name AS mapping
+        ) AS frame_name,
+        spm.name AS mapping_name
       FROM cpu_profile_stack_sample AS samples
       LEFT JOIN (
         SELECT
@@ -144,26 +143,24 @@ export class CpuProfileController extends Controller<'main'> {
 
     const callsites = await this.args.engine.query(sampleQuery);
 
-    if (callsites.numRows() === 0) {
+    if (slowlyCountRows(callsites) < 1) {
       return undefined;
     }
 
-    const it = callsites.iter({
-      id: NUM,
-      name: STR,
-      mapping: STR,
-    });
-
     const sampleData: CallsiteInfo[] = new Array();
-    for (; it.valid(); it.next()) {
+    for (let i = 0; i < slowlyCountRows(callsites); i++) {
+      const id = +callsites.columns[0].longValues![i];
+      const name = callsites.columns[1].stringValues![i];
+      const mapping = callsites.columns[2].stringValues![i];
+
       sampleData.push({
-        id: it.id,
+        id,
         totalSize: 0,
         depth: 0,
         parentId: 0,
-        name: it.name,
+        name,
         selfSize: 0,
-        mapping: it.mapping,
+        mapping,
         merged: false,
         highlighted: false
       });

@@ -32,13 +32,6 @@
 #include <unordered_map>
 
 namespace perfetto {
-
-// Represents a point in time for the clock specified by |clock_id|.
-struct TraceTimestamp {
-  protos::pbzero::BuiltinClock clock_id;
-  uint64_t nanoseconds;
-};
-
 class EventContext;
 class TrackEventSessionObserver;
 struct Category;
@@ -146,12 +139,10 @@ class PERFETTO_EXPORT TrackEventInternal {
       const Category* category,
       const char* name,
       perfetto::protos::pbzero::TrackEvent::Type,
-      TraceTimestamp timestamp = {GetClockId(), GetTimeNs()});
+      uint64_t timestamp = GetTimeNs());
 
-  static void ResetIncrementalState(TraceWriterBase*, TraceTimestamp);
+  static void ResetIncrementalState(TraceWriterBase*, uint64_t timestamp);
 
-  // TODO(altimin): Remove this method once Chrome uses
-  // EventContext::AddDebugAnnotation directly.
   template <typename T>
   static void AddDebugAnnotation(perfetto::EventContext* event_ctx,
                                  const char* name,
@@ -180,7 +171,7 @@ class PERFETTO_EXPORT TrackEventInternal {
   static void WriteTrackDescriptor(const TrackType& track,
                                    TraceWriterBase* trace_writer) {
     TrackRegistry::Get()->SerializeTrack(
-        track, NewTracePacket(trace_writer, {GetClockId(), GetTimeNs()}));
+        track, NewTracePacket(trace_writer, GetTimeNs()));
   }
 
   // Get the current time in nanoseconds in the trace clock timebase.
@@ -204,7 +195,7 @@ class PERFETTO_EXPORT TrackEventInternal {
  private:
   static protozero::MessageHandle<protos::pbzero::TracePacket> NewTracePacket(
       TraceWriterBase*,
-      TraceTimestamp,
+      uint64_t timestamp,
       uint32_t seq_flags =
           protos::pbzero::TracePacket::SEQ_NEEDS_INCREMENTAL_STATE);
   static protos::pbzero::DebugAnnotation* AddDebugAnnotation(

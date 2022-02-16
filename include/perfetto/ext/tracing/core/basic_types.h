@@ -17,10 +17,15 @@
 #ifndef INCLUDE_PERFETTO_EXT_TRACING_CORE_BASIC_TYPES_H_
 #define INCLUDE_PERFETTO_EXT_TRACING_CORE_BASIC_TYPES_H_
 
+#include "perfetto/base/build_config.h"
+
 #include <stddef.h>
 #include <stdint.h>
+#include <sys/types.h>
 
-#include "perfetto/ext/base/sys_types.h"
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+using uid_t = unsigned int;
+#endif
 
 namespace perfetto {
 
@@ -71,7 +76,7 @@ static constexpr PacketSequenceID kServicePacketSequenceID = 1;
 static constexpr PacketSequenceID kMaxPacketSequenceID =
     static_cast<PacketSequenceID>(-1);
 
-constexpr uid_t kInvalidUid = ::perfetto::base::kInvalidUid;
+constexpr uid_t kInvalidUid = static_cast<uid_t>(-1);
 
 constexpr uint32_t kDefaultFlushTimeoutMs = 5000;
 
