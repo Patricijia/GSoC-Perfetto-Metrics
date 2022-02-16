@@ -19,7 +19,6 @@
 #include <benchmark/benchmark.h>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/utils.h"
 #include "src/base/test/utils.h"
 #include "src/kallsyms/kernel_symbol_map.h"
@@ -90,7 +89,7 @@ ExpectedSym kExpectedSyms[] = {
 
 }  // namespace
 
-static void BM_KallSymsFind(benchmark::State& state) {
+static void BM_KallSyms(benchmark::State& state) {
   perfetto::KernelSymbolMap::kTokenIndexSampling =
       static_cast<size_t>(state.range(0));
   perfetto::KernelSymbolMap::kSymIndexSampling =
@@ -114,31 +113,4 @@ static void BM_KallSymsFind(benchmark::State& state) {
   state.counters["mem"] = static_cast<double>(kallsyms.size_bytes());
 }
 
-BENCHMARK(BM_KallSymsFind)->Apply(BenchmarkArgs);
-
-static void BM_KallSymsLoad(benchmark::State& state) {
-  perfetto::KernelSymbolMap::kTokenIndexSampling =
-      static_cast<size_t>(state.range(0));
-  perfetto::KernelSymbolMap::kSymIndexSampling =
-      static_cast<size_t>(state.range(1));
-
-  // Don't run the benchmark on the CI as it requires pushing all test data,
-  // which slows down significantly the CI.
-  const bool skip = IsBenchmarkFunctionalOnly();
-
-  const std::string kallsyms_path = perfetto::base::GetTestDataPath("test/data/kallsyms.txt");
-  if (!skip) {
-    std::string tmp;
-    // Read the whole file once, so that it's cached.
-    PERFETTO_CHECK(perfetto::base::ReadFile(kallsyms_path, &tmp));
-  }
-
-  for (auto _ : state) {
-    perfetto::KernelSymbolMap kallsyms;
-    if (!skip) {
-      kallsyms.Parse(kallsyms_path);
-    }
-  }
-}
-
-BENCHMARK(BM_KallSymsLoad)->Apply(BenchmarkArgs);
+BENCHMARK(BM_KallSyms)->Apply(BenchmarkArgs);

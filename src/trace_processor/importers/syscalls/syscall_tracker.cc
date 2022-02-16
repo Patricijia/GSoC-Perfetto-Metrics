@@ -16,9 +16,10 @@
 
 #include "src/trace_processor/importers/syscalls/syscall_tracker.h"
 
-#include <cinttypes>
 #include <type_traits>
 #include <utility>
+
+#include <inttypes.h>
 
 #include "src/trace_processor/storage/stats.h"
 

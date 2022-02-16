@@ -230,29 +230,6 @@ void TestHelper::WaitForReadData(uint32_t read_count, uint32_t timeout_ms) {
                      timeout_ms);
 }
 
-void TestHelper::WaitFor(std::function<bool()> predicate,
-                         const std::string& error_msg,
-                         uint32_t timeout_ms) {
-  int64_t deadline_ms = base::GetWallTimeMs().count() + timeout_ms;
-  while (base::GetWallTimeMs().count() < deadline_ms) {
-    if (predicate())
-      return;
-    base::SleepMicroseconds(500 * 1000);  // 0.5 s.
-  }
-  PERFETTO_FATAL("Test timed out waiting for: %s", error_msg.c_str());
-}
-
-void TestHelper::WaitForDataSourceConnected(const std::string& ds_name) {
-  auto predicate = [&] {
-    auto dss = QueryServiceStateAndWait().data_sources();
-    return std::any_of(dss.begin(), dss.end(),
-                       [&](const TracingServiceState::DataSource& ds) {
-                         return ds.ds_descriptor().name() == ds_name;
-                       });
-  };
-  WaitFor(predicate, "connection of data source " + ds_name);
-}
-
 void TestHelper::SyncAndWaitProducer() {
   static int sync_id = 0;
   std::string checkpoint_name = "producer_sync_" + std::to_string(++sync_id);
@@ -264,15 +241,13 @@ void TestHelper::SyncAndWaitProducer() {
 
 TracingServiceState TestHelper::QueryServiceStateAndWait() {
   TracingServiceState res;
-  static int n = 0;
-  std::string checkpoint_name = "query_svc_state_" + std::to_string(n++);
-  auto checkpoint = CreateCheckpoint(checkpoint_name);
+  auto checkpoint = CreateCheckpoint("query_svc_state");
   auto callback = [&checkpoint, &res](bool, const TracingServiceState& tss) {
     res = tss;
     checkpoint();
   };
   endpoint_->QueryServiceState(callback);
-  RunUntilCheckpoint(checkpoint_name);
+  RunUntilCheckpoint("query_svc_state");
   return res;
 }
 

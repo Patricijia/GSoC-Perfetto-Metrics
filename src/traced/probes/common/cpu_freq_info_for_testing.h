@@ -20,19 +20,31 @@
 #include "src/traced/probes/common/cpu_freq_info.h"
 
 #include <memory>
+#include <string>
+#include <vector>
 
-#include "src/base/test/tmp_dir_tree.h"
+#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/temp_file.h"
 
 namespace perfetto {
 
 class CpuFreqInfoForTesting {
  public:
   CpuFreqInfoForTesting();
+  ~CpuFreqInfoForTesting();
 
   std::unique_ptr<CpuFreqInfo> GetInstance();
 
  private:
-  base::TmpDirTree tmpdir_;
+  base::TempDir fake_cpu_dir_;
+  std::vector<std::string> dirs_to_remove_;
+  std::vector<std::string> files_to_remove_;
+
+  void AddDir(std::string path);
+  void AddFile(std::string path, std::string content);
+  void RmDir(std::string path);
+  void RmFile(std::string path);
+  std::string AbsolutePath(std::string path);
 };
 
 }  // namespace perfetto

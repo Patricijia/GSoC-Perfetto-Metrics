@@ -57,7 +57,7 @@ class MockConsumer : public Consumer {
   FlushRequest Flush(uint32_t timeout_ms = 10000);
   std::vector<protos::gen::TracePacket> ReadBuffers();
   void GetTraceStats();
-  TraceStats WaitForTraceStats(bool success);
+  void WaitForTraceStats(bool success);
   TracingServiceState QueryServiceState();
   void ObserveEvents(uint32_t enabled_event_types);
   ObservableEvents WaitForObservableEvents();

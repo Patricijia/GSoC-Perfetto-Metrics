@@ -24,7 +24,6 @@
 #include <algorithm>
 #include <iterator>
 
-#include "perfetto/base/compiler.h"
 #include "perfetto/ext/base/utils.h"
 #include "protos/perfetto/trace/ftrace/sched.pbzero.h"
 #include "src/traced/probes/ftrace/atrace_wrapper.h"
@@ -37,8 +36,6 @@ constexpr int kDefaultPerCpuBufferSizeKb = 2 * 1024;  // 2mb
 constexpr int kMaxPerCpuBufferSizeKb = 64 * 1024;     // 64mb
 
 // trace_clocks in preference order.
-// If this list is changed, the FtraceClocks enum in ftrace_event_bundle.proto
-// and FtraceConfigMuxer::SetupClock() should be also changed accordingly.
 constexpr const char* kClocks[] = {"boot", "global", "local"};
 
 void AddEventGroup(const ProtoTranslationTable* table,
@@ -93,20 +90,6 @@ void IntersectInPlace(const std::vector<std::string>& unsorted_a,
   *out = std::move(v);
 }
 
-bool SupportsRssStatThrottled(const FtraceProcfs& ftrace_procfs) {
-  const auto trigger_info = ftrace_procfs.ReadEventTrigger("kmem", "rss_stat");
-
-  return trigger_info.find("rss_stat_throttled") != std::string::npos;
-}
-
-// This is just to reduce binary size and stack frame size of the insertions.
-// It effectively undoes STL's set::insert inlining.
-void PERFETTO_NO_INLINE InsertEvent(const char* group,
-                                    const char* name,
-                                    std::set<GroupAndName>* dst) {
-  dst->insert(GroupAndName(group, name));
-}
-
 }  // namespace
 
 std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
@@ -137,7 +120,7 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
     }
   }
   if (RequiresAtrace(request)) {
-    InsertEvent("ftrace", "print", &events);
+    events.insert(GroupAndName("ftrace", "print"));
 
     // Ideally we should keep this code in sync with:
     // platform/frameworks/native/cmds/atrace/atrace.cpp
@@ -147,53 +130,53 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
     for (const std::string& category : request.atrace_categories()) {
       if (category == "gfx") {
         AddEventGroup(table, "mdss", &events);
-        InsertEvent("mdss", "rotator_bw_ao_as_context", &events);
-        InsertEvent("mdss", "mdp_trace_counter", &events);
-        InsertEvent("mdss", "tracing_mark_write", &events);
-        InsertEvent("mdss", "mdp_cmd_wait_pingpong", &events);
-        InsertEvent("mdss", "mdp_cmd_kickoff", &events);
-        InsertEvent("mdss", "mdp_cmd_release_bw", &events);
-        InsertEvent("mdss", "mdp_cmd_readptr_done", &events);
-        InsertEvent("mdss", "mdp_cmd_pingpong_done", &events);
-        InsertEvent("mdss", "mdp_misr_crc", &events);
-        InsertEvent("mdss", "mdp_compare_bw", &events);
-        InsertEvent("mdss", "mdp_perf_update_bus", &events);
-        InsertEvent("mdss", "mdp_video_underrun_done", &events);
-        InsertEvent("mdss", "mdp_commit", &events);
-        InsertEvent("mdss", "mdp_mixer_update", &events);
-        InsertEvent("mdss", "mdp_perf_prefill_calc", &events);
-        InsertEvent("mdss", "mdp_perf_set_ot", &events);
-        InsertEvent("mdss", "mdp_perf_set_wm_levels", &events);
-        InsertEvent("mdss", "mdp_perf_set_panic_luts", &events);
-        InsertEvent("mdss", "mdp_perf_set_qos_luts", &events);
-        InsertEvent("mdss", "mdp_sspp_change", &events);
-        InsertEvent("mdss", "mdp_sspp_set", &events);
+        events.insert(GroupAndName("mdss", "rotator_bw_ao_as_context"));
+        events.insert(GroupAndName("mdss", "mdp_trace_counter"));
+        events.insert(GroupAndName("mdss", "tracing_mark_write"));
+        events.insert(GroupAndName("mdss", "mdp_cmd_wait_pingpong"));
+        events.insert(GroupAndName("mdss", "mdp_cmd_kickoff"));
+        events.insert(GroupAndName("mdss", "mdp_cmd_release_bw"));
+        events.insert(GroupAndName("mdss", "mdp_cmd_readptr_done"));
+        events.insert(GroupAndName("mdss", "mdp_cmd_pingpong_done"));
+        events.insert(GroupAndName("mdss", "mdp_misr_crc"));
+        events.insert(GroupAndName("mdss", "mdp_compare_bw"));
+        events.insert(GroupAndName("mdss", "mdp_perf_update_bus"));
+        events.insert(GroupAndName("mdss", "mdp_video_underrun_done"));
+        events.insert(GroupAndName("mdss", "mdp_commit"));
+        events.insert(GroupAndName("mdss", "mdp_mixer_update"));
+        events.insert(GroupAndName("mdss", "mdp_perf_prefill_calc"));
+        events.insert(GroupAndName("mdss", "mdp_perf_set_ot"));
+        events.insert(GroupAndName("mdss", "mdp_perf_set_wm_levels"));
+        events.insert(GroupAndName("mdss", "mdp_perf_set_panic_luts"));
+        events.insert(GroupAndName("mdss", "mdp_perf_set_qos_luts"));
+        events.insert(GroupAndName("mdss", "mdp_sspp_change"));
+        events.insert(GroupAndName("mdss", "mdp_sspp_set"));
         AddEventGroup(table, "mali", &events);
-        InsertEvent("mali", "tracing_mark_write", &events);
+        events.insert(GroupAndName("mali", "tracing_mark_write"));
 
         AddEventGroup(table, "sde", &events);
-        InsertEvent("sde", "tracing_mark_write", &events);
-        InsertEvent("sde", "sde_perf_update_bus", &events);
-        InsertEvent("sde", "sde_perf_set_qos_luts", &events);
-        InsertEvent("sde", "sde_perf_set_ot", &events);
-        InsertEvent("sde", "sde_perf_set_danger_luts", &events);
-        InsertEvent("sde", "sde_perf_crtc_update", &events);
-        InsertEvent("sde", "sde_perf_calc_crtc", &events);
-        InsertEvent("sde", "sde_evtlog", &events);
-        InsertEvent("sde", "sde_encoder_underrun", &events);
-        InsertEvent("sde", "sde_cmd_release_bw", &events);
+        events.insert(GroupAndName("sde", "tracing_mark_write"));
+        events.insert(GroupAndName("sde", "sde_perf_update_bus"));
+        events.insert(GroupAndName("sde", "sde_perf_set_qos_luts"));
+        events.insert(GroupAndName("sde", "sde_perf_set_ot"));
+        events.insert(GroupAndName("sde", "sde_perf_set_danger_luts"));
+        events.insert(GroupAndName("sde", "sde_perf_crtc_update"));
+        events.insert(GroupAndName("sde", "sde_perf_calc_crtc"));
+        events.insert(GroupAndName("sde", "sde_evtlog"));
+        events.insert(GroupAndName("sde", "sde_encoder_underrun"));
+        events.insert(GroupAndName("sde", "sde_cmd_release_bw"));
 
         AddEventGroup(table, "dpu", &events);
-        InsertEvent("dpu", "tracing_mark_write", &events);
+        events.insert(GroupAndName("dpu", "tracing_mark_write"));
 
         AddEventGroup(table, "g2d", &events);
-        InsertEvent("g2d", "tracing_mark_write", &events);
-        InsertEvent("g2d", "g2d_perf_update_qos", &events);
+        events.insert(GroupAndName("g2d", "tracing_mark_write"));
+        events.insert(GroupAndName("g2d", "g2d_perf_update_qos"));
         continue;
       }
 
       if (category == "ion") {
-        InsertEvent("kmem", "ion_alloc_buffer_start", &events);
+        events.insert(GroupAndName("kmem", "ion_alloc_buffer_start"));
         continue;
       }
 
@@ -201,102 +184,102 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
       // is high-volume, but mostly redundant when sched_waking is also enabled.
       // The event can still be enabled explicitly when necessary.
       if (category == "sched") {
-        InsertEvent("sched", "sched_switch", &events);
-        InsertEvent("sched", "sched_waking", &events);
-        InsertEvent("sched", "sched_blocked_reason", &events);
-        InsertEvent("sched", "sched_cpu_hotplug", &events);
-        InsertEvent("sched", "sched_pi_setprio", &events);
-        InsertEvent("sched", "sched_process_exit", &events);
+        events.insert(GroupAndName("sched", "sched_switch"));
+        events.insert(GroupAndName("sched", "sched_waking"));
+        events.insert(GroupAndName("sched", "sched_blocked_reason"));
+        events.insert(GroupAndName("sched", "sched_cpu_hotplug"));
+        events.insert(GroupAndName("sched", "sched_pi_setprio"));
+        events.insert(GroupAndName("sched", "sched_process_exit"));
         AddEventGroup(table, "cgroup", &events);
-        InsertEvent("cgroup", "cgroup_transfer_tasks", &events);
-        InsertEvent("cgroup", "cgroup_setup_root", &events);
-        InsertEvent("cgroup", "cgroup_rmdir", &events);
-        InsertEvent("cgroup", "cgroup_rename", &events);
-        InsertEvent("cgroup", "cgroup_remount", &events);
-        InsertEvent("cgroup", "cgroup_release", &events);
-        InsertEvent("cgroup", "cgroup_mkdir", &events);
-        InsertEvent("cgroup", "cgroup_destroy_root", &events);
-        InsertEvent("cgroup", "cgroup_attach_task", &events);
-        InsertEvent("oom", "oom_score_adj_update", &events);
-        InsertEvent("task", "task_rename", &events);
-        InsertEvent("task", "task_newtask", &events);
+        events.insert(GroupAndName("cgroup", "cgroup_transfer_tasks"));
+        events.insert(GroupAndName("cgroup", "cgroup_setup_root"));
+        events.insert(GroupAndName("cgroup", "cgroup_rmdir"));
+        events.insert(GroupAndName("cgroup", "cgroup_rename"));
+        events.insert(GroupAndName("cgroup", "cgroup_remount"));
+        events.insert(GroupAndName("cgroup", "cgroup_release"));
+        events.insert(GroupAndName("cgroup", "cgroup_mkdir"));
+        events.insert(GroupAndName("cgroup", "cgroup_destroy_root"));
+        events.insert(GroupAndName("cgroup", "cgroup_attach_task"));
+        events.insert(GroupAndName("oom", "oom_score_adj_update"));
+        events.insert(GroupAndName("task", "task_rename"));
+        events.insert(GroupAndName("task", "task_newtask"));
 
         AddEventGroup(table, "systrace", &events);
-        InsertEvent("systrace", "0", &events);
+        events.insert(GroupAndName("systrace", "0"));
 
         AddEventGroup(table, "scm", &events);
-        InsertEvent("scm", "scm_call_start", &events);
-        InsertEvent("scm", "scm_call_end", &events);
+        events.insert(GroupAndName("scm", "scm_call_start"));
+        events.insert(GroupAndName("scm", "scm_call_end"));
         continue;
       }
 
       if (category == "irq") {
         AddEventGroup(table, "irq", &events);
-        InsertEvent("irq", "tasklet_hi_exit", &events);
-        InsertEvent("irq", "tasklet_hi_entry", &events);
-        InsertEvent("irq", "tasklet_exit", &events);
-        InsertEvent("irq", "tasklet_entry", &events);
-        InsertEvent("irq", "softirq_raise", &events);
-        InsertEvent("irq", "softirq_exit", &events);
-        InsertEvent("irq", "softirq_entry", &events);
-        InsertEvent("irq", "irq_handler_exit", &events);
-        InsertEvent("irq", "irq_handler_entry", &events);
+        events.insert(GroupAndName("irq", "tasklet_hi_exit"));
+        events.insert(GroupAndName("irq", "tasklet_hi_entry"));
+        events.insert(GroupAndName("irq", "tasklet_exit"));
+        events.insert(GroupAndName("irq", "tasklet_entry"));
+        events.insert(GroupAndName("irq", "softirq_raise"));
+        events.insert(GroupAndName("irq", "softirq_exit"));
+        events.insert(GroupAndName("irq", "softirq_entry"));
+        events.insert(GroupAndName("irq", "irq_handler_exit"));
+        events.insert(GroupAndName("irq", "irq_handler_entry"));
         AddEventGroup(table, "ipi", &events);
-        InsertEvent("ipi", "ipi_raise", &events);
-        InsertEvent("ipi", "ipi_exit", &events);
-        InsertEvent("ipi", "ipi_entry", &events);
+        events.insert(GroupAndName("ipi", "ipi_raise"));
+        events.insert(GroupAndName("ipi", "ipi_exit"));
+        events.insert(GroupAndName("ipi", "ipi_entry"));
         continue;
       }
 
       if (category == "irqoff") {
-        InsertEvent("preemptirq", "irq_enable", &events);
-        InsertEvent("preemptirq", "irq_disable", &events);
+        events.insert(GroupAndName("preemptirq", "irq_enable"));
+        events.insert(GroupAndName("preemptirq", "irq_disable"));
         continue;
       }
 
       if (category == "preemptoff") {
-        InsertEvent("preemptirq", "preempt_enable", &events);
-        InsertEvent("preemptirq", "preempt_disable", &events);
+        events.insert(GroupAndName("preemptirq", "preempt_enable"));
+        events.insert(GroupAndName("preemptirq", "preempt_disable"));
         continue;
       }
 
       if (category == "i2c") {
         AddEventGroup(table, "i2c", &events);
-        InsertEvent("i2c", "i2c_read", &events);
-        InsertEvent("i2c", "i2c_write", &events);
-        InsertEvent("i2c", "i2c_result", &events);
-        InsertEvent("i2c", "i2c_reply", &events);
-        InsertEvent("i2c", "smbus_read", &events);
-        InsertEvent("i2c", "smbus_write", &events);
-        InsertEvent("i2c", "smbus_result", &events);
-        InsertEvent("i2c", "smbus_reply", &events);
+        events.insert(GroupAndName("i2c", "i2c_read"));
+        events.insert(GroupAndName("i2c", "i2c_write"));
+        events.insert(GroupAndName("i2c", "i2c_result"));
+        events.insert(GroupAndName("i2c", "i2c_reply"));
+        events.insert(GroupAndName("i2c", "smbus_read"));
+        events.insert(GroupAndName("i2c", "smbus_write"));
+        events.insert(GroupAndName("i2c", "smbus_result"));
+        events.insert(GroupAndName("i2c", "smbus_reply"));
         continue;
       }
 
       if (category == "freq") {
-        InsertEvent("power", "cpu_frequency", &events);
-        InsertEvent("power", "gpu_frequency", &events);
-        InsertEvent("power", "clock_set_rate", &events);
-        InsertEvent("power", "clock_disable", &events);
-        InsertEvent("power", "clock_enable", &events);
-        InsertEvent("clk", "clk_set_rate", &events);
-        InsertEvent("clk", "clk_disable", &events);
-        InsertEvent("clk", "clk_enable", &events);
-        InsertEvent("power", "cpu_frequency_limits", &events);
-        InsertEvent("power", "suspend_resume", &events);
-        InsertEvent("cpuhp", "cpuhp_enter", &events);
-        InsertEvent("cpuhp", "cpuhp_exit", &events);
-        InsertEvent("cpuhp", "cpuhp_pause", &events);
+        events.insert(GroupAndName("power", "cpu_frequency"));
+        events.insert(GroupAndName("power", "gpu_frequency"));
+        events.insert(GroupAndName("power", "clock_set_rate"));
+        events.insert(GroupAndName("power", "clock_disable"));
+        events.insert(GroupAndName("power", "clock_enable"));
+        events.insert(GroupAndName("clk", "clk_set_rate"));
+        events.insert(GroupAndName("clk", "clk_disable"));
+        events.insert(GroupAndName("clk", "clk_enable"));
+        events.insert(GroupAndName("power", "cpu_frequency_limits"));
+        events.insert(GroupAndName("power", "suspend_resume"));
+        events.insert(GroupAndName("cpuhp", "cpuhp_enter"));
+        events.insert(GroupAndName("cpuhp", "cpuhp_exit"));
+        events.insert(GroupAndName("cpuhp", "cpuhp_pause"));
         AddEventGroup(table, "msm_bus", &events);
-        InsertEvent("msm_bus", "bus_update_request_end", &events);
-        InsertEvent("msm_bus", "bus_update_request", &events);
-        InsertEvent("msm_bus", "bus_rules_matches", &events);
-        InsertEvent("msm_bus", "bus_max_votes", &events);
-        InsertEvent("msm_bus", "bus_client_status", &events);
-        InsertEvent("msm_bus", "bus_bke_params", &events);
-        InsertEvent("msm_bus", "bus_bimc_config_limiter", &events);
-        InsertEvent("msm_bus", "bus_avail_bw", &events);
-        InsertEvent("msm_bus", "bus_agg_bw", &events);
+        events.insert(GroupAndName("msm_bus", "bus_update_request_end"));
+        events.insert(GroupAndName("msm_bus", "bus_update_request"));
+        events.insert(GroupAndName("msm_bus", "bus_rules_matches"));
+        events.insert(GroupAndName("msm_bus", "bus_max_votes"));
+        events.insert(GroupAndName("msm_bus", "bus_client_status"));
+        events.insert(GroupAndName("msm_bus", "bus_bke_params"));
+        events.insert(GroupAndName("msm_bus", "bus_bimc_config_limiter"));
+        events.insert(GroupAndName("msm_bus", "bus_avail_bw"));
+        events.insert(GroupAndName("msm_bus", "bus_agg_bw"));
         continue;
       }
 
@@ -306,21 +289,21 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
       }
 
       if (category == "idle") {
-        InsertEvent("power", "cpu_idle", &events);
+        events.insert(GroupAndName("power", "cpu_idle"));
         continue;
       }
 
       if (category == "disk") {
-        InsertEvent("f2fs", "f2fs_sync_file_enter", &events);
-        InsertEvent("f2fs", "f2fs_sync_file_exit", &events);
-        InsertEvent("f2fs", "f2fs_write_begin", &events);
-        InsertEvent("f2fs", "f2fs_write_end", &events);
-        InsertEvent("ext4", "ext4_da_write_begin", &events);
-        InsertEvent("ext4", "ext4_da_write_end", &events);
-        InsertEvent("ext4", "ext4_sync_file_enter", &events);
-        InsertEvent("ext4", "ext4_sync_file_exit", &events);
-        InsertEvent("block", "block_rq_issue", &events);
-        InsertEvent("block", "block_rq_complete", &events);
+        events.insert(GroupAndName("f2fs", "f2fs_sync_file_enter"));
+        events.insert(GroupAndName("f2fs", "f2fs_sync_file_exit"));
+        events.insert(GroupAndName("f2fs", "f2fs_write_begin"));
+        events.insert(GroupAndName("f2fs", "f2fs_write_end"));
+        events.insert(GroupAndName("ext4", "ext4_da_write_begin"));
+        events.insert(GroupAndName("ext4", "ext4_da_write_end"));
+        events.insert(GroupAndName("ext4", "ext4_sync_file_enter"));
+        events.insert(GroupAndName("ext4", "ext4_sync_file_exit"));
+        events.insert(GroupAndName("block", "block_rq_issue"));
+        events.insert(GroupAndName("block", "block_rq_complete"));
         continue;
       }
 
@@ -337,19 +320,19 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
       if (category == "sync") {
         // linux kernel < 4.9
         AddEventGroup(table, "sync", &events);
-        InsertEvent("sync", "sync_pt", &events);
-        InsertEvent("sync", "sync_timeline", &events);
-        InsertEvent("sync", "sync_wait", &events);
+        events.insert(GroupAndName("sync", "sync_pt"));
+        events.insert(GroupAndName("sync", "sync_timeline"));
+        events.insert(GroupAndName("sync", "sync_wait"));
         // linux kernel == 4.9.x
         AddEventGroup(table, "fence", &events);
-        InsertEvent("fence", "fence_annotate_wait_on", &events);
-        InsertEvent("fence", "fence_destroy", &events);
-        InsertEvent("fence", "fence_emit", &events);
-        InsertEvent("fence", "fence_enable_signal", &events);
-        InsertEvent("fence", "fence_init", &events);
-        InsertEvent("fence", "fence_signaled", &events);
-        InsertEvent("fence", "fence_wait_end", &events);
-        InsertEvent("fence", "fence_wait_start", &events);
+        events.insert(GroupAndName("fence", "fence_annotate_wait_on"));
+        events.insert(GroupAndName("fence", "fence_destroy"));
+        events.insert(GroupAndName("fence", "fence_emit"));
+        events.insert(GroupAndName("fence", "fence_enable_signal"));
+        events.insert(GroupAndName("fence", "fence_init"));
+        events.insert(GroupAndName("fence", "fence_signaled"));
+        events.insert(GroupAndName("fence", "fence_wait_end"));
+        events.insert(GroupAndName("fence", "fence_wait_start"));
         // linux kernel > 4.9
         AddEventGroup(table, "dma_fence", &events);
         continue;
@@ -357,20 +340,20 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
 
       if (category == "workq") {
         AddEventGroup(table, "workqueue", &events);
-        InsertEvent("workqueue", "workqueue_queue_work", &events);
-        InsertEvent("workqueue", "workqueue_execute_start", &events);
-        InsertEvent("workqueue", "workqueue_execute_end", &events);
-        InsertEvent("workqueue", "workqueue_activate_work", &events);
+        events.insert(GroupAndName("workqueue", "workqueue_queue_work"));
+        events.insert(GroupAndName("workqueue", "workqueue_execute_start"));
+        events.insert(GroupAndName("workqueue", "workqueue_execute_end"));
+        events.insert(GroupAndName("workqueue", "workqueue_activate_work"));
         continue;
       }
 
       if (category == "memreclaim") {
-        InsertEvent("vmscan", "mm_vmscan_direct_reclaim_begin", &events);
-        InsertEvent("vmscan", "mm_vmscan_direct_reclaim_end", &events);
-        InsertEvent("vmscan", "mm_vmscan_kswapd_wake", &events);
-        InsertEvent("vmscan", "mm_vmscan_kswapd_sleep", &events);
+        events.insert(GroupAndName("vmscan", "mm_vmscan_direct_reclaim_begin"));
+        events.insert(GroupAndName("vmscan", "mm_vmscan_direct_reclaim_end"));
+        events.insert(GroupAndName("vmscan", "mm_vmscan_kswapd_wake"));
+        events.insert(GroupAndName("vmscan", "mm_vmscan_kswapd_sleep"));
         AddEventGroup(table, "lowmemorykiller", &events);
-        InsertEvent("lowmemorykiller", "lowmemory_kill", &events);
+        events.insert(GroupAndName("lowmemorykiller", "lowmemory_kill"));
         continue;
       }
 
@@ -378,27 +361,27 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         AddEventGroup(table, "regulator", &events);
         events.insert(
             GroupAndName("regulator", "regulator_set_voltage_complete"));
-        InsertEvent("regulator", "regulator_set_voltage", &events);
-        InsertEvent("regulator", "regulator_enable_delay", &events);
-        InsertEvent("regulator", "regulator_enable_complete", &events);
-        InsertEvent("regulator", "regulator_enable", &events);
-        InsertEvent("regulator", "regulator_disable_complete", &events);
-        InsertEvent("regulator", "regulator_disable", &events);
+        events.insert(GroupAndName("regulator", "regulator_set_voltage"));
+        events.insert(GroupAndName("regulator", "regulator_enable_delay"));
+        events.insert(GroupAndName("regulator", "regulator_enable_complete"));
+        events.insert(GroupAndName("regulator", "regulator_enable"));
+        events.insert(GroupAndName("regulator", "regulator_disable_complete"));
+        events.insert(GroupAndName("regulator", "regulator_disable"));
         continue;
       }
 
       if (category == "binder_driver") {
-        InsertEvent("binder", "binder_transaction", &events);
-        InsertEvent("binder", "binder_transaction_received", &events);
-        InsertEvent("binder", "binder_transaction_alloc_buf", &events);
-        InsertEvent("binder", "binder_set_priority", &events);
+        events.insert(GroupAndName("binder", "binder_transaction"));
+        events.insert(GroupAndName("binder", "binder_transaction_received"));
+        events.insert(GroupAndName("binder", "binder_transaction_alloc_buf"));
+        events.insert(GroupAndName("binder", "binder_set_priority"));
         continue;
       }
 
       if (category == "binder_lock") {
-        InsertEvent("binder", "binder_lock", &events);
-        InsertEvent("binder", "binder_locked", &events);
-        InsertEvent("binder", "binder_unlock", &events);
+        events.insert(GroupAndName("binder", "binder_lock"));
+        events.insert(GroupAndName("binder", "binder_locked"));
+        events.insert(GroupAndName("binder", "binder_unlock"));
         continue;
       }
 
@@ -406,50 +389,30 @@ std::set<GroupAndName> FtraceConfigMuxer::GetFtraceEvents(
         AddEventGroup(table, "filemap", &events);
         events.insert(
             GroupAndName("filemap", "mm_filemap_delete_from_page_cache"));
-        InsertEvent("filemap", "mm_filemap_add_to_page_cache", &events);
-        InsertEvent("filemap", "filemap_set_wb_err", &events);
-        InsertEvent("filemap", "file_check_and_advance_wb_err", &events);
+        events.insert(GroupAndName("filemap", "mm_filemap_add_to_page_cache"));
+        events.insert(GroupAndName("filemap", "filemap_set_wb_err"));
+        events.insert(GroupAndName("filemap", "file_check_and_advance_wb_err"));
         continue;
       }
 
       if (category == "memory") {
-        // Use rss_stat_throttled if supported
-        if (SupportsRssStatThrottled(*ftrace_)) {
-          InsertEvent("synthetic", "rss_stat_throttled", &events);
-        } else {
-          InsertEvent("kmem", "rss_stat", &events);
-        }
-        InsertEvent("kmem", "ion_heap_grow", &events);
-        InsertEvent("kmem", "ion_heap_shrink", &events);
+        events.insert(GroupAndName("kmem", "rss_stat"));
+        events.insert(GroupAndName("kmem", "ion_heap_grow"));
+        events.insert(GroupAndName("kmem", "ion_heap_shrink"));
         // ion_stat supersedes ion_heap_grow / shrink for kernel 4.19+
-        InsertEvent("ion", "ion_stat", &events);
-        InsertEvent("mm_event", "mm_event_record", &events);
-        InsertEvent("dmabuf_heap", "dma_heap_stat", &events);
-        InsertEvent("gpu_mem", "gpu_mem_total", &events);
+        events.insert(GroupAndName("ion", "ion_stat"));
+        events.insert(GroupAndName("mm_event", "mm_event_record"));
+        events.insert(GroupAndName("dmabuf_heap", "dma_heap_stat"));
         continue;
       }
 
       if (category == "thermal") {
-        InsertEvent("thermal", "thermal_temperature", &events);
-        InsertEvent("thermal", "cdev_update", &events);
+        events.insert(GroupAndName("thermal", "thermal_temperature"));
+        events.insert(GroupAndName("thermal", "cdev_update"));
         continue;
       }
     }
   }
-
-  // If throttle_rss_stat: true, use the rss_stat_throttled event if supported
-  if (request.throttle_rss_stat() && SupportsRssStatThrottled(*ftrace_)) {
-    auto it = std::find_if(
-        events.begin(), events.end(), [](const GroupAndName& event) {
-          return event.group() == "kmem" && event.name() == "rss_stat";
-        });
-
-    if (it != events.end()) {
-      events.erase(it);
-      InsertEvent("synthetic", "rss_stat_throttled", &events);
-    }
-  }
-
   return events;
 }
 
@@ -492,7 +455,7 @@ FtraceConfigId FtraceConfigMuxer::SetupConfig(const FtraceConfig& request) {
     PERFETTO_DCHECK(active_configs_.empty());
 
     // If someone outside of perfetto is using ftrace give up now.
-    if (is_ftrace_enabled && !IsOldAtrace()) {
+    if (is_ftrace_enabled) {
       PERFETTO_ELOG("ftrace in use by non-Perfetto.");
       return 0;
     }
@@ -503,7 +466,7 @@ FtraceConfigId FtraceConfigMuxer::SetupConfig(const FtraceConfig& request) {
     SetupBufferSize(request);
   } else {
     // Did someone turn ftrace off behind our back? If so give up.
-    if (!active_configs_.empty() && !is_ftrace_enabled && !IsOldAtrace()) {
+    if (!active_configs_.empty() && !is_ftrace_enabled) {
       PERFETTO_ELOG("ftrace disabled by non-Perfetto.");
       return 0;
     }
@@ -523,15 +486,8 @@ FtraceConfigId FtraceConfigMuxer::SetupConfig(const FtraceConfig& request) {
     }
   }
 
-  if (RequiresAtrace(request)) {
-    if (IsOldAtrace() && !ds_configs_.empty()) {
-      PERFETTO_ELOG(
-          "Concurrent atrace sessions are not supported before Android P, "
-          "bailing out.");
-      return 0;
-    }
+  if (RequiresAtrace(request))
     UpdateAtrace(request);
-  }
 
   for (const auto& group_and_name : events) {
     const Event* event = table_->GetOrCreateEvent(group_and_name);
@@ -577,7 +533,7 @@ bool FtraceConfigMuxer::ActivateConfig(FtraceConfigId id) {
   }
 
   if (active_configs_.empty()) {
-    if (ftrace_->IsTracingEnabled() && !IsOldAtrace()) {
+    if (ftrace_->IsTracingEnabled()) {
       // If someone outside of perfetto is using ftrace give up now.
       PERFETTO_ELOG("ftrace in use by non-Perfetto.");
       return false;
@@ -691,22 +647,7 @@ void FtraceConfigMuxer::SetupClock(const FtraceConfig&) {
     if (current_clock == clock)
       break;
     ftrace_->SetClock(clock);
-    current_clock = clock;
     break;
-  }
-
-  namespace pb0 = protos::pbzero;
-  if (current_clock == "boot") {
-    // "boot" is the default expectation on modern kernels, which is why we
-    // don't have an explicit FTRACE_CLOCK_BOOT enum and leave it unset.
-    // See comments in ftrace_event_bundle.proto.
-    current_state_.ftrace_clock = pb0::FTRACE_CLOCK_UNSPECIFIED;
-  } else if (current_clock == "global") {
-    current_state_.ftrace_clock = pb0::FTRACE_CLOCK_GLOBAL;
-  } else if (current_clock == "local") {
-    current_state_.ftrace_clock = pb0::FTRACE_CLOCK_LOCAL;
-  } else {
-    current_state_.ftrace_clock = pb0::FTRACE_CLOCK_UNKNOWN;
   }
 }
 
@@ -754,8 +695,7 @@ bool FtraceConfigMuxer::StartAtrace(
   std::vector<std::string> args;
   args.push_back("atrace");  // argv0 for exec()
   args.push_back("--async_start");
-  if (!IsOldAtrace())
-    args.push_back("--only_userspace");
+  args.push_back("--only_userspace");
 
   for (const auto& category : categories)
     args.push_back(category);
@@ -781,10 +721,7 @@ void FtraceConfigMuxer::DisableAtrace() {
 
   PERFETTO_DLOG("Stop atrace...");
 
-  std::vector<std::string> args{"atrace", "--async_stop"};
-  if (!IsOldAtrace())
-    args.push_back("--only_userspace");
-  if (RunAtrace(args)) {
+  if (RunAtrace({"atrace", "--async_stop", "--only_userspace"})) {
     current_state_.atrace_categories.clear();
     current_state_.atrace_apps.clear();
     current_state_.atrace_on = false;

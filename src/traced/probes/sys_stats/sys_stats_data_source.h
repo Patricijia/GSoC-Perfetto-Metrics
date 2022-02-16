@@ -29,7 +29,6 @@
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/tracing/core/data_source_config.h"
-#include "src/traced/probes/common/cpu_freq_info.h"
 #include "src/traced/probes/probes_data_source.h"
 
 namespace perfetto {
@@ -53,7 +52,6 @@ class SysStatsDataSource : public ProbesDataSource {
                      TracingSessionID,
                      std::unique_ptr<TraceWriter> writer,
                      const DataSourceConfig&,
-                     std::unique_ptr<CpuFreqInfo> cpu_freq_info,
                      OpenFunction = nullptr);
   ~SysStatsDataSource() override;
 
@@ -86,7 +84,6 @@ class SysStatsDataSource : public ProbesDataSource {
   void ReadVmstat(protos::pbzero::SysStats* sys_stats);
   void ReadStat(protos::pbzero::SysStats* sys_stats);
   void ReadDevfreq(protos::pbzero::SysStats* sys_stats);
-  void ReadCpufreq(protos::pbzero::SysStats* sys_stats);
   size_t ReadFile(base::ScopedFile*, const char* path);
 
   base::TaskRunner* const task_runner_;
@@ -106,10 +103,7 @@ class SysStatsDataSource : public ProbesDataSource {
   uint32_t stat_ticks_ = 0;
   uint32_t stat_enabled_fields_ = 0;
   uint32_t devfreq_ticks_ = 0;
-  uint32_t cpufreq_ticks_ = 0;
   bool devfreq_error_logged_ = false;
-
-  std::unique_ptr<CpuFreqInfo> cpu_freq_info_;
 
   base::WeakPtrFactory<SysStatsDataSource> weak_factory_;  // Keep last.
 };

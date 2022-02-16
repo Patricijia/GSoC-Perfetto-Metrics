@@ -23,12 +23,6 @@
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
 namespace perfetto {
-namespace protos {
-namespace pbzero {
-class DebugAnnotation;
-}  // namespace pbzero
-}  // namespace protos
-
 namespace internal {
 class TrackEventInternal;
 }
@@ -37,10 +31,9 @@ class TrackEventInternal;
 //
 //   TRACE_EVENT_BEGIN("category", "Title",
 //                     [](perfetto::EventContext ctx) {
-//                       auto* log = ctx.event()->set_log_message();
-//                       log->set_body_iid(1234);
-//
-//                       ctx.AddDebugAnnotation("name", 1234);
+//                       auto* dbg = ctx.event()->add_debug_annotations();
+//                       dbg->set_name("name");
+//                       dbg->set_int_value(1234);
 //                     });
 //
 class PERFETTO_EXPORT EventContext {
@@ -79,19 +72,7 @@ class PERFETTO_EXPORT EventContext {
     static_assert(std::is_base_of<protozero::Message, MessageType>::value,
                   "TracedProto can be used only with protozero messages");
 
-    return TracedProto<MessageType>(message, this);
-  }
-
-  // Add a new `debug_annotation` proto message and populate it from |value|
-  // using perfetto::TracedValue API. Users should generally prefer passing
-  // values directly to TRACE_EVENT (i.e. TRACE_EVENT(..., "arg", value, ...);)
-  // but in rare cases (e.g. when an argument should be written conditionally)
-  // EventContext::AddDebugAnnotation provides an explicit equivalent.
-  template <typename T>
-  void AddDebugAnnotation(const char* name, T&& value) {
-    auto annotation = AddDebugAnnotation(name);
-    WriteIntoTracedValue(internal::CreateTracedValueFromProto(annotation),
-                         std::forward<T>(value));
+    return TracedProto<MessageType>(message, *this);
   }
 
  private:
@@ -104,8 +85,6 @@ class PERFETTO_EXPORT EventContext {
 
   EventContext(TracePacketHandle, internal::TrackEventIncrementalState*);
   EventContext(const EventContext&) = delete;
-
-  protos::pbzero::DebugAnnotation* AddDebugAnnotation(const char* name);
 
   TracePacketHandle trace_packet_;
   protos::pbzero::TrackEvent* event_;
