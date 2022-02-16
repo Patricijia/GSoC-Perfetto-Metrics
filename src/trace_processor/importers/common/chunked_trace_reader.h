@@ -28,8 +28,6 @@
 namespace perfetto {
 namespace trace_processor {
 
-class TraceBlobView;
-
 // Base interface for first stage of parsing pipeline
 // (JsonTraceParser, ProtoTraceReader).
 class ChunkedTraceReader {
@@ -40,7 +38,7 @@ class ChunkedTraceReader {
   // caller to match line/protos boundaries. The parser class has to deal with
   // intermediate buffering lines/protos that span across different chunks.
   // The buffer size is guaranteed to be > 0.
-  virtual util::Status Parse(TraceBlobView) = 0;
+  virtual util::Status Parse(std::unique_ptr<uint8_t[]>, size_t) = 0;
 
   // Called after the last Parse() call.
   virtual void NotifyEndOfFile() = 0;

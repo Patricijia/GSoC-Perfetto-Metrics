@@ -16,9 +16,8 @@
 
 #include "src/tracing/core/packet_stream_validator.h"
 
+#include <inttypes.h>
 #include <stddef.h>
-
-#include <cinttypes>
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/utils.h"
@@ -39,7 +38,6 @@ const uint32_t kReservedFieldIds[] = {
     protos::pbzero::TracePacket::kTraceStatsFieldNumber,
     protos::pbzero::TracePacket::kCompressedPacketsFieldNumber,
     protos::pbzero::TracePacket::kSynchronizationMarkerFieldNumber,
-    protos::pbzero::TracePacket::kTrustedPidFieldNumber,
 };
 
 // This translation unit is quite subtle and perf-sensitive. Remember to check

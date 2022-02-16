@@ -1,5 +1,5 @@
 #!/bin/sh
 set -e
-rm -rf /run/perfetto
+rm -f /tmp/perfetto-consumer /tmp/perfetto-producer
 
 #DEBHELPER#

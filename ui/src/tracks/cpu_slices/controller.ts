@@ -13,7 +13,7 @@
 // limitations under the License.
 
 import {assertTrue} from '../../base/logging';
-import {NUM} from '../../common/query_result';
+import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNs} from '../../common/time';
 import {
   TrackController,
@@ -40,13 +40,13 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
       where cpu = ${this.config.cpu} and utid != 0
     `);
 
-    const queryRes = await this.query(`
-      select ifnull(max(dur), 0) as maxDur, count(1) as rowCount
+    const rawResult = await this.query(`
+      select max(dur), count(1)
       from ${this.tableName('sched')}
     `);
-    const row = queryRes.firstRow({maxDur: NUM, rowCount: NUM});
-    this.maxDurNs = row.maxDur;
-    const rowCount = row.rowCount;
+    this.maxDurNs = rawResult.columns[0].longValues![0];
+
+    const rowCount = rawResult.columns[1].longValues![0];
     const bucketNs = this.cachedBucketSizeNs(rowCount);
     if (bucketNs === undefined) {
       return;
@@ -88,9 +88,9 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
         `(ts + ${bucketNs / 2}) / ${bucketNs} * ${bucketNs}`;
     const queryTable =
         isCached ? this.tableName('sched_cached') : this.tableName('sched');
-    const constraintColumn = isCached ? 'cached_tsq' : 'ts';
+    const constainColumn = isCached ? 'cached_tsq' : 'ts';
 
-    const queryRes = await this.query(`
+    const rawResult = await this.query(`
       select
         ${queryTsq} as tsq,
         ts,
@@ -99,13 +99,13 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
         id
       from ${queryTable}
       where
-        ${constraintColumn} >= ${startNs - this.maxDurNs} and
-        ${constraintColumn} <= ${endNs}
+        ${constainColumn} >= ${startNs - this.maxDurNs} and
+        ${constainColumn} <= ${endNs}
       group by tsq
       order by tsq
     `);
 
-    const numRows = queryRes.numRows();
+    const numRows = slowlyCountRows(rawResult);
     const slices: Data = {
       start,
       end,
@@ -117,20 +117,24 @@ class CpuSliceTrackController extends TrackController<Config, Data> {
       utids: new Uint32Array(numRows),
     };
 
-    const it = queryRes.iter({tsq: NUM, ts: NUM, dur: NUM, utid: NUM, id: NUM});
-    for (let row = 0; it.valid(); it.next(), row++) {
-      const startNsQ = it.tsq;
-      const startNs = it.ts;
-      const durNs = it.dur;
+    const cols = rawResult.columns;
+    for (let row = 0; row < numRows; row++) {
+      const startNsQ = +cols[0].longValues![row];
+      const startNs = +cols[1].longValues![row];
+      const durNs = +cols[2].longValues![row];
       const endNs = startNs + durNs;
 
       let endNsQ = Math.floor((endNs + bucketNs / 2 - 1) / bucketNs) * bucketNs;
       endNsQ = Math.max(endNsQ, startNsQ + bucketNs);
 
+      if (startNsQ === endNsQ) {
+        throw new Error('Should never happen');
+      }
+
       slices.starts[row] = fromNs(startNsQ);
       slices.ends[row] = fromNs(endNsQ);
-      slices.utids[row] = it.utid;
-      slices.ids[row] = it.id;
+      slices.utids[row] = +cols[3].longValues![row];
+      slices.ids[row] = +cols[4].longValues![row];
     }
 
     return slices;

@@ -17,7 +17,6 @@ import {produce} from 'immer';
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
-import {featureFlags} from '../common/feature_flags';
 import {MeminfoCounters, VmstatCounters} from '../common/protos';
 import {
   AdbRecordingTarget,
@@ -29,33 +28,20 @@ import {
   isAndroidTarget,
   isChromeTarget,
   isCrOSTarget,
-  isLinuxTarget,
-  LoadedConfig,
-  MAX_TIME,
-  RecordingTarget,
-  RecordMode
+  RecordingTarget
 } from '../common/state';
+import {MAX_TIME, RecordMode} from '../common/state';
 import {AdbOverWebUsb} from '../controller/adb';
-import {
-  createEmptyRecordConfig,
-  RecordConfig
-} from '../controller/record_config_types';
 
 import {globals} from './globals';
-import {createPage, PageAttrs} from './pages';
-import {
-  autosaveConfigStore,
-  recordConfigStore,
-  recordTargetStore
-} from './record_config';
+import {createPage} from './pages';
+import {recordConfigStore} from './record_config';
 import {
   CodeSnippet,
-  CompactProbe,
   Dropdown,
   DropdownAttrs,
   Probe,
   ProbeAttrs,
-  SelectAllNoneDropdown,
   Slider,
   SliderAttrs,
   Textarea,
@@ -63,13 +49,9 @@ import {
   Toggle,
   ToggleAttrs
 } from './record_widgets';
+import {Router} from './router';
 
-const PERSIST_CONFIG_FLAG = featureFlags.register({
-  id: 'persistConfigsUI',
-  name: 'Config persistence UI',
-  description: 'Show experimental config persistence UI on the record page.',
-  defaultValue: true,
-});
+const LOCAL_STORAGE_SHOW_CONFIG = 'showConfigs';
 
 const POLL_INTERVAL_MS = [250, 500, 1000, 2500, 5000, 30000, 60000];
 
@@ -661,46 +643,67 @@ function AndroidSettings(cssClass: string) {
 function ChromeSettings(cssClass: string) {
   return m(
       `.record-section${cssClass}`,
-      CompactProbe({
+      m(Probe, {
         title: 'Task scheduling',
+        img: null,
+        descr: `Records events about task scheduling and execution on all
+                  threads`,
         setEnabled: (cfg, val) => cfg.taskScheduling = val,
-        isEnabled: (cfg) => cfg.taskScheduling,
-      }),
-      CompactProbe({
+        isEnabled: (cfg) => cfg.taskScheduling
+      } as ProbeAttrs),
+      m(Probe, {
         title: 'IPC flows',
+        img: null,
+        descr: `Records flow events for passing of IPC messages between
+                processes.`,
         setEnabled: (cfg, val) => cfg.ipcFlows = val,
         isEnabled: (cfg) => cfg.ipcFlows
-      }),
-      CompactProbe({
+      } as ProbeAttrs),
+      m(Probe, {
         title: 'Javascript execution',
+        img: null,
+        descr: `Records events about Javascript execution in the renderer
+                    processes.`,
         setEnabled: (cfg, val) => cfg.jsExecution = val,
         isEnabled: (cfg) => cfg.jsExecution
-      }),
-      CompactProbe({
-        title: 'Web content rendering, layout and compositing',
+      } as ProbeAttrs),
+      m(Probe, {
+        title: 'Web content rendering',
+        img: null,
+        descr: `Records events about rendering, layout, and compositing of
+        web content in Blink.`,
         setEnabled: (cfg, val) => cfg.webContentRendering = val,
         isEnabled: (cfg) => cfg.webContentRendering
-      }),
-      CompactProbe({
-        title: 'UI rendering & surface compositing',
+      } as ProbeAttrs),
+      m(Probe, {
+        title: 'UI rendering & compositing',
+        img: null,
+        descr: `Records events about rendering of browser UI surfaces and
+        compositing of surfaces.`,
         setEnabled: (cfg, val) => cfg.uiRendering = val,
         isEnabled: (cfg) => cfg.uiRendering
-      }),
-      CompactProbe({
+      } as ProbeAttrs),
+      m(Probe, {
         title: 'Input events',
+        img: null,
+        descr: `Records input events and their flow between processes.`,
         setEnabled: (cfg, val) => cfg.inputEvents = val,
         isEnabled: (cfg) => cfg.inputEvents
-      }),
-      CompactProbe({
+      } as ProbeAttrs),
+      m(Probe, {
         title: 'Navigation & Loading',
+        img: null,
+        descr: `Records network events for navigations and resources.`,
         setEnabled: (cfg, val) => cfg.navigationAndLoading = val,
         isEnabled: (cfg) => cfg.navigationAndLoading
-      }),
-      CompactProbe({
+      } as ProbeAttrs),
+      m(Probe, {
         title: 'Chrome Logs',
+        img: null,
+        descr: `Records Chrome log messages`,
         setEnabled: (cfg, val) => cfg.chromeLogs = val,
         isEnabled: (cfg) => cfg.chromeLogs
-      }),
+      } as ProbeAttrs),
       ChromeCategoriesSelection());
 }
 
@@ -713,34 +716,34 @@ function ChromeCategoriesSelection() {
     categories = getBuiltinChromeCategoryList();
   }
 
-  const defaultCategories = new Map<string, string>();
-  const disabledByDefaultCategories = new Map<string, string>();
+  // Show "disabled-by-default" categories last.
+  const categoriesMap = new Map<string, string>();
+  const disabledByDefaultCategories: string[] = [];
   const disabledPrefix = 'disabled-by-default-';
   categories.forEach(cat => {
     if (cat.startsWith(disabledPrefix)) {
-      disabledByDefaultCategories.set(cat, cat.replace(disabledPrefix, ''));
+      disabledByDefaultCategories.push(cat);
     } else {
-      defaultCategories.set(cat, cat);
+      categoriesMap.set(cat, cat);
     }
   });
+  disabledByDefaultCategories.forEach(cat => {
+    categoriesMap.set(
+        cat, `${cat.replace(disabledPrefix, '')} (high overhead)`);
+  });
 
-  return m(
-      '.chrome-categories',
-      SelectAllNoneDropdown({
-        categories: defaultCategories,
-        title: 'Additional Chrome categories',
-        get: (cfg) => cfg.chromeCategoriesSelected,
-        set: (cfg, val) => cfg.chromeCategoriesSelected = val,
-      }),
-      SelectAllNoneDropdown({
-        categories: disabledByDefaultCategories,
-        title: 'Additional high overhead Chrome categories',
-        get: (cfg) => cfg.chromeHighOverheadCategoriesSelected,
-        set: (cfg, val) => cfg.chromeHighOverheadCategoriesSelected = val,
-      }));
+  return m(Dropdown, {
+    title: 'Additional Chrome categories',
+    cssClass: '.multicolumn.two-columns',
+    options: categoriesMap,
+    set: (cfg, val) => cfg.chromeCategoriesSelected = val,
+    get: (cfg) => cfg.chromeCategoriesSelected
+  } as DropdownAttrs);
 }
 
 function AdvancedSettings(cssClass: string) {
+  const S = (x: number) => x * 1000;
+  const M = (x: number) => x * 1000 * 60;
   return m(
       `.record-section${cssClass}`,
       m(Probe,
@@ -753,14 +756,6 @@ function AdvancedSettings(cssClass: string) {
           setEnabled: (cfg, val) => cfg.ftrace = val,
           isEnabled: (cfg) => cfg.ftrace
         } as ProbeAttrs,
-        m(Toggle, {
-          title: 'Resolve kernel symbols',
-          cssClass: '.thin',
-          descr: `Enables lookup via /proc/kallsyms for workqueue,
-              sched_blocked_reason and other events (userdebug/eng builds only).`,
-          setEnabled: (cfg, val) => cfg.symbolizeKsyms = val,
-          isEnabled: (cfg) => cfg.symbolizeKsyms
-        } as ToggleAttrs),
         m(Slider, {
           title: 'Buf size',
           cssClass: '.thin',
@@ -790,7 +785,27 @@ function AdvancedSettings(cssClass: string) {
               'kmem/*',
           set: (cfg, val) => cfg.ftraceExtraEvents = val,
           get: (cfg) => cfg.ftraceExtraEvents
-        } as TextareaAttrs)));
+        } as TextareaAttrs)),
+      globals.state.videoEnabled ?
+          m(Probe,
+            {
+              title: 'Screen recording',
+              img: null,
+              descr: `Records the screen along with running a trace. Max
+                  time of recording is 3 minutes (180 seconds).`,
+              setEnabled: (cfg, val) => cfg.screenRecord = val,
+              isEnabled: (cfg) => cfg.screenRecord,
+            } as ProbeAttrs,
+            m(Slider, {
+              title: 'Max duration',
+              icon: 'timer',
+              values: [S(10), S(15), S(30), S(60), M(2), M(3)],
+              isTime: true,
+              unit: 'm:s',
+              set: (cfg, val) => cfg.durationMs = val,
+              get: (cfg) => cfg.durationMs,
+            } as SliderAttrs)) :
+          null);
 }
 
 function RecordHeader() {
@@ -862,11 +877,10 @@ function onTargetChange(target: string) {
       getDefaultRecordingTargets()[0];
 
   if (isChromeTarget(recordingTarget)) {
-    globals.dispatch(Actions.setFetchChromeCategories({fetch: true}));
+    globals.dispatch(Actions.setUpdateChromeCategories({update: true}));
   }
 
   globals.dispatch(Actions.setRecordingTarget({target: recordingTarget}));
-  recordTargetStore.save(target);
   globals.rafScheduler.scheduleFullRedraw();
 }
 
@@ -874,7 +888,7 @@ function Instructions(cssClass: string) {
   return m(
       `.record-section.instructions${cssClass}`,
       m('header', 'Recording command'),
-      PERSIST_CONFIG_FLAG.get() ?
+      localStorage.hasOwnProperty(LOCAL_STORAGE_SHOW_CONFIG) ?
           m('button.permalinkconfig',
             {
               onclick: () => {
@@ -890,88 +904,37 @@ function Instructions(cssClass: string) {
       recordingLog());
 }
 
-function loadedConfigEqual(cfg1: LoadedConfig, cfg2: LoadedConfig): boolean {
-  return cfg1.type === 'NAMED' && cfg2.type === 'NAMED' ?
-      cfg1.name === cfg2.name :
-      cfg1.type === cfg2.type;
-}
-
-function loadConfigButton(
-    config: RecordConfig, configType: LoadedConfig): m.Vnode {
-  return m(
-      'button',
-      {
-        class: 'config-button',
-        title: 'Apply configuration settings',
-        disabled: loadedConfigEqual(configType, globals.state.lastLoadedConfig),
-        onclick: () => {
-          globals.dispatch(Actions.setRecordConfig({config, configType}));
-          globals.rafScheduler.scheduleFullRedraw();
-        }
-      },
-      m('i.material-icons', 'file_upload'));
-}
-
 function displayRecordConfigs() {
-  const configs = [];
-  if (autosaveConfigStore.hasSavedConfig) {
-    configs.push(m('.config', [
-      m('span.title-config', m('strong', 'Latest started recording')),
-      loadConfigButton(autosaveConfigStore.get(), {type: 'AUTOMATIC'}),
-    ]));
-  }
-  for (const validated of recordConfigStore.recordConfigs) {
-    const item = validated.result;
-    configs.push(m('.config', [
+  return recordConfigStore.recordConfigs.map((item) => {
+    return m('.config', [
       m('span.title-config', item.title),
-      loadConfigButton(item.config, {type: 'NAMED', name: item.title}),
       m('button',
         {
-          class: 'config-button',
-          title: 'Overwrite configuration with current settings',
+          class: 'config-button load',
           onclick: () => {
-            if (confirm(`Overwrite config "${
-                    item.title}" with current settings?`)) {
-              recordConfigStore.overwrite(globals.state.recordConfig, item.key);
-              globals.dispatch(Actions.setRecordConfig({
-                config: item.config,
-                configType: {type: 'NAMED', name: item.title}
-              }));
-              globals.rafScheduler.scheduleFullRedraw();
-            }
+            globals.dispatch(Actions.setRecordConfig({config: item.config}));
+            globals.rafScheduler.scheduleFullRedraw();
           }
         },
-        m('i.material-icons', 'save')),
+        'load'),
       m('button',
         {
-          class: 'config-button',
-          title: 'Remove configuration',
+          class: 'config-button delete',
           onclick: () => {
             recordConfigStore.delete(item.key);
             globals.rafScheduler.scheduleFullRedraw();
           }
         },
-        m('i.material-icons', 'delete')),
-    ]));
+        'delete'),
+    ]);
+  });
+}
 
-    const errorItems = [];
-    for (const extraKey of validated.extraKeys) {
-      errorItems.push(m('li', `${extraKey} is unrecognised`));
-    }
-    for (const invalidKey of validated.invalidKeys) {
-      errorItems.push(m('li', `${invalidKey} contained an invalid value`));
-    }
-
-    if (errorItems.length > 0) {
-      configs.push(
-          m('.parsing-errors',
-            'One or more errors have been found while loading configuration "' +
-                item.title + '". Loading is possible, but make sure to check ' +
-                'the settings afterwards.',
-            m('ul', errorItems)));
-    }
+function getSavedConfigList() {
+  if (recordConfigStore.recordConfigs.length === 0) {
+    return [];
   }
-  return configs;
+  return displayRecordConfigs();
 }
 
 export const ConfigTitleState = {
@@ -988,7 +951,6 @@ export const ConfigTitleState = {
 };
 
 function Configurations(cssClass: string) {
-  const canSave = recordConfigStore.canSave(ConfigTitleState.getTitle());
   return m(
       `.record-section${cssClass}`,
       m('header', 'Save and load configurations'),
@@ -999,15 +961,11 @@ function Configurations(cssClass: string) {
             placeholder: 'Title for config',
             oninput() {
               ConfigTitleState.setTitle(this.value);
-              globals.rafScheduler.scheduleFullRedraw();
             }
           }),
           m('button',
             {
-              class: 'config-button',
-              disabled: !canSave,
-              title: canSave ? 'Save current config' :
-                               'Duplicate name, saving disabled',
+              class: 'config-button save',
               onclick: () => {
                 recordConfigStore.save(
                     globals.state.recordConfig, ConfigTitleState.getTitle());
@@ -1015,26 +973,9 @@ function Configurations(cssClass: string) {
                 ConfigTitleState.clearTitle();
               }
             },
-            m('i.material-icons', 'save')),
-          m('button',
-            {
-              class: 'config-button',
-              title: 'Clear current configuration',
-              onclick: () => {
-                if (confirm(
-                        'Current configuration will be cleared. ' +
-                        'Are you sure?')) {
-                  globals.dispatch(Actions.setRecordConfig({
-                    config: createEmptyRecordConfig(),
-                    configType: {type: 'NONE'}
-                  }));
-                  globals.rafScheduler.scheduleFullRedraw();
-                }
-              }
-            },
-            m('i.material-icons', 'delete_forever'))
+            'Save current config')
         ]),
-      displayRecordConfigs());
+      getSavedConfigList());
 }
 
 function BufferUsageProgressBar() {
@@ -1174,6 +1115,12 @@ function getRecordCommand(target: RecordingTarget) {
   const pbBase64 = data ? data.pbBase64 : '';
   const pbtx = data ? data.pbtxt : '';
   let cmd = '';
+  if (cfg.screenRecord) {
+    // Half-second delay to ensure Perfetto starts tracing before screenrecord
+    // starts recording
+    cmd += `(sleep 0.5 && adb shell screenrecord --time-limit ${time}`;
+    cmd += ' "/sdcard/tracescr.mp4") &\\\n';
+  }
   if (isAndroidP(target)) {
     cmd += `echo '${pbBase64}' | \n`;
     cmd += 'base64 --decode | \n';
@@ -1233,9 +1180,8 @@ function StopCancelButtons() {
 }
 
 function onStartRecordingPressed() {
-  location.href = '#!/record/instructions';
+  location.href = '#!/record?p=instructions';
   globals.rafScheduler.scheduleFullRedraw();
-  autosaveConfigStore.save(globals.state.recordConfig);
 
   const target = globals.state.recordingTarget;
   if (isAndroidTarget(target) || isChromeTarget(target)) {
@@ -1351,64 +1297,12 @@ function selectAndroidDeviceIfAvailable(
 function recordMenu(routePage: string) {
   const target = globals.state.recordingTarget;
   const chromeProbe =
-      m('a[href="#!/record/chrome"]',
+      m('a[href="#!/record?p=chrome"]',
         m(`li${routePage === 'chrome' ? '.active' : ''}`,
           m('i.material-icons', 'laptop_chromebook'),
           m('.title', 'Chrome'),
           m('.sub', 'Chrome traces')));
-  const cpuProbe =
-      m('a[href="#!/record/cpu"]',
-        m(`li${routePage === 'cpu' ? '.active' : ''}`,
-          m('i.material-icons', 'subtitles'),
-          m('.title', 'CPU'),
-          m('.sub', 'CPU usage, scheduling, wakeups')));
-  const gpuProbe =
-      m('a[href="#!/record/gpu"]',
-        m(`li${routePage === 'gpu' ? '.active' : ''}`,
-          m('i.material-icons', 'aspect_ratio'),
-          m('.title', 'GPU'),
-          m('.sub', 'GPU frequency, memory')));
-  const powerProbe =
-      m('a[href="#!/record/power"]',
-        m(`li${routePage === 'power' ? '.active' : ''}`,
-          m('i.material-icons', 'battery_charging_full'),
-          m('.title', 'Power'),
-          m('.sub', 'Battery and other energy counters')));
-  const memoryProbe =
-      m('a[href="#!/record/memory"]',
-        m(`li${routePage === 'memory' ? '.active' : ''}`,
-          m('i.material-icons', 'memory'),
-          m('.title', 'Memory'),
-          m('.sub', 'Physical mem, VM, LMK')));
-  const androidProbe =
-      m('a[href="#!/record/android"]',
-        m(`li${routePage === 'android' ? '.active' : ''}`,
-          m('i.material-icons', 'android'),
-          m('.title', 'Android apps & svcs'),
-          m('.sub', 'atrace and logcat')));
-  const advancedProbe =
-      m('a[href="#!/record/advanced"]',
-        m(`li${routePage === 'advanced' ? '.active' : ''}`,
-          m('i.material-icons', 'settings'),
-          m('.title', 'Advanced settings'),
-          m('.sub', 'Complicated stuff for wizards')));
   const recInProgress = globals.state.recordingInProgress;
-
-  const probes = [];
-  if (isCrOSTarget(target) || isLinuxTarget(target)) {
-    probes.push(cpuProbe, powerProbe, memoryProbe, chromeProbe, advancedProbe);
-  } else if (isChromeTarget(target)) {
-    probes.push(chromeProbe);
-  } else {
-    probes.push(
-        cpuProbe,
-        gpuProbe,
-        powerProbe,
-        memoryProbe,
-        androidProbe,
-        chromeProbe,
-        advancedProbe);
-  }
 
   return m(
       '.record-menu',
@@ -1418,35 +1312,68 @@ function recordMenu(routePage: string) {
       },
       m('header', 'Trace config'),
       m('ul',
-        m('a[href="#!/record/buffers"]',
+        m('a[href="#!/record?p=buffers"]',
           m(`li${routePage === 'buffers' ? '.active' : ''}`,
             m('i.material-icons', 'tune'),
             m('.title', 'Recording settings'),
             m('.sub', 'Buffer mode, size and duration'))),
-        m('a[href="#!/record/instructions"]',
+        m('a[href="#!/record?p=instructions"]',
           m(`li${routePage === 'instructions' ? '.active' : ''}`,
             m('i.material-icons.rec', 'fiber_manual_record'),
             m('.title', 'Recording command'),
             m('.sub', 'Manually record trace'))),
-        PERSIST_CONFIG_FLAG.get() ?
-            m('a[href="#!/record/config"]',
+        localStorage.hasOwnProperty(LOCAL_STORAGE_SHOW_CONFIG) ?
+            m('a[href="#!/record?p=config"]',
               {
                 onclick: () => {
                   recordConfigStore.reloadFromLocalStorage();
                 }
               },
               m(`li${routePage === 'config' ? '.active' : ''}`,
-                m('i.material-icons', 'save'),
+                m('i.material-icons', 'tune'),
                 m('.title', 'Saved configs'),
                 m('.sub', 'Manage local configs'))) :
             null),
       m('header', 'Probes'),
-      m('ul', probes));
+      m('ul',
+        isChromeTarget(target) && !isCrOSTarget(target) ? [chromeProbe] : [
+          m('a[href="#!/record?p=cpu"]',
+            m(`li${routePage === 'cpu' ? '.active' : ''}`,
+              m('i.material-icons', 'subtitles'),
+              m('.title', 'CPU'),
+              m('.sub', 'CPU usage, scheduling, wakeups'))),
+          m('a[href="#!/record?p=gpu"]',
+            m(`li${routePage === 'gpu' ? '.active' : ''}`,
+              m('i.material-icons', 'aspect_ratio'),
+              m('.title', 'GPU'),
+              m('.sub', 'GPU frequency, memory'))),
+          m('a[href="#!/record?p=power"]',
+            m(`li${routePage === 'power' ? '.active' : ''}`,
+              m('i.material-icons', 'battery_charging_full'),
+              m('.title', 'Power'),
+              m('.sub', 'Battery and other energy counters'))),
+          m('a[href="#!/record?p=memory"]',
+            m(`li${routePage === 'memory' ? '.active' : ''}`,
+              m('i.material-icons', 'memory'),
+              m('.title', 'Memory'),
+              m('.sub', 'Physical mem, VM, LMK'))),
+          m('a[href="#!/record?p=android"]',
+            m(`li${routePage === 'android' ? '.active' : ''}`,
+              m('i.material-icons', 'android'),
+              m('.title', 'Android apps & svcs'),
+              m('.sub', 'atrace and logcat'))),
+          chromeProbe,
+          m('a[href="#!/record?p=advanced"]',
+            m(`li${routePage === 'advanced' ? '.active' : ''}`,
+              m('i.material-icons', 'settings'),
+              m('.title', 'Advanced settings'),
+              m('.sub', 'Complicated stuff for wizards')))
+        ]));
 }
 
 
 export const RecordPage = createPage({
-  view({attrs}: m.Vnode<PageAttrs>) {
+  view() {
     const SECTIONS: {[property: string]: (cssClass: string) => m.Child} = {
       buffers: RecSettings,
       instructions: Instructions,
@@ -1461,8 +1388,8 @@ export const RecordPage = createPage({
     };
 
     const pages: m.Children = [];
-    // we need to remove the `/` character from the route
-    let routePage = attrs.subpage ? attrs.subpage.substr(1) : '';
+    const routePageParam = Router.param('p');
+    let routePage = typeof routePageParam === 'string' ? routePageParam : '';
     if (!Object.keys(SECTIONS).includes(routePage)) {
       routePage = 'buffers';
     }

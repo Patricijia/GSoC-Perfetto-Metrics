@@ -22,8 +22,6 @@
 namespace perfetto {
 namespace base {
 
-enum class WatchdogCrashReason;  // Defined in watchdog.h.
-
 class Watchdog {
  public:
   class Timer {
@@ -37,9 +35,7 @@ class Watchdog {
     static Watchdog* watchdog = new Watchdog();
     return watchdog;
   }
-  Timer CreateFatalTimer(uint32_t /*ms*/, WatchdogCrashReason) {
-    return Timer();
-  }
+  Timer CreateFatalTimer(uint32_t /*ms*/) { return Timer(); }
   void Start() {}
   void SetMemoryLimit(uint64_t /*bytes*/, uint32_t /*window_ms*/) {}
   void SetCpuLimit(uint32_t /*percentage*/, uint32_t /*window_ms*/) {}

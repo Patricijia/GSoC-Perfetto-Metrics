@@ -22,8 +22,6 @@
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <io.h>
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
-#include <lib/fdio/fdio.h>
 #else
 #include <unistd.h>
 // Double closing of file handles on Windows leads to invocation of the invalid
@@ -38,46 +36,16 @@ namespace perfetto {
 namespace base {
 namespace {
 
-int OpenDevNull() {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
-  return fdio_fd_create_null();
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  return open("NUL", O_RDONLY);
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
+const char kNullFilename[] = "NUL";
+const char kZeroFilename[] = "NUL";
 #else
-  return open("/dev/null", O_RDONLY);
+const char kNullFilename[] = "/dev/null";
+const char kZeroFilename[] = "/dev/zero";
 #endif
-}
-
-FILE* OpenDevNullStream() {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
-  return fdopen(fdio_fd_create_null(), "r");
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  return fopen("NUL", "r");
-#else
-  return fopen("/dev/null", "r");
-#endif
-}
-
-// Returns a file descriptor to some file. On Fuchsia: returns a descriptor of a
-// file in /tmp. On other platforms: returns a descriptor of /dev/zero.
-int MakeSecondFileDescriptor() {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_FUCHSIA)
-  // Create a random file in /tmp and unlink it straight away since its name
-  // never need be known or uttered.
-  char path[] = "/tmp/sfuXXXXXX";
-  const int fd = mkstemp(&path[0]);
-  if (fd >= 0)
-    unlink(path);
-  return fd;
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  return open("NUL", O_RDONLY);
-#else
-  return open("/dev/zero", O_RDONLY);
-#endif
-}
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-TEST(ScopedDirTest, CloseOutOfScope) {
+  TEST(ScopedDirTest, CloseOutOfScope) {
   DIR* dir_handle = opendir(".");
   ASSERT_NE(nullptr, dir_handle);
   int dir_handle_fd = dirfd(dir_handle);
@@ -92,7 +60,7 @@ TEST(ScopedDirTest, CloseOutOfScope) {
 #endif
 
 TEST(ScopedFileTest, CloseOutOfScope) {
-  int raw_fd = OpenDevNull();
+  int raw_fd = open(kNullFilename, O_RDONLY);
   ASSERT_GE(raw_fd, 0);
   {
     ScopedFile scoped_file(raw_fd);
@@ -106,7 +74,7 @@ TEST(ScopedFileTest, CloseOutOfScope) {
 }
 
 TEST(ScopedFstreamTest, CloseOutOfScope) {
-  FILE* raw_stream = OpenDevNullStream();
+  FILE* raw_stream = fopen(kNullFilename, "r");
   ASSERT_NE(nullptr, raw_stream);
   {
     ScopedFstream scoped_stream(raw_stream);
@@ -118,8 +86,8 @@ TEST(ScopedFstreamTest, CloseOutOfScope) {
 }
 
 TEST(ScopedFileTest, Reset) {
-  int raw_fd1 = OpenDevNull();
-  int raw_fd2 = MakeSecondFileDescriptor();
+  int raw_fd1 = open(kNullFilename, O_RDONLY);
+  int raw_fd2 = open(kZeroFilename, O_RDONLY);
   ASSERT_GE(raw_fd1, 0);
   ASSERT_GE(raw_fd2, 0);
   {
@@ -134,13 +102,13 @@ TEST(ScopedFileTest, Reset) {
 #ifdef TEST_INVALID_CLOSE
     ASSERT_NE(0, close(raw_fd2));
 #endif
-    scoped_file.reset(OpenDevNull());
+    scoped_file.reset(open(kNullFilename, O_RDONLY));
     ASSERT_GE(scoped_file.get(), 0);
   }
 }
 
 TEST(ScopedFileTest, Release) {
-  int raw_fd = OpenDevNull();
+  int raw_fd = open(kNullFilename, O_RDONLY);
   ASSERT_GE(raw_fd, 0);
   {
     ScopedFile scoped_file(raw_fd);
@@ -151,8 +119,8 @@ TEST(ScopedFileTest, Release) {
 }
 
 TEST(ScopedFileTest, MoveCtor) {
-  int raw_fd1 = OpenDevNull();
-  int raw_fd2 = MakeSecondFileDescriptor();
+  int raw_fd1 = open(kNullFilename, O_RDONLY);
+  int raw_fd2 = open(kZeroFilename, O_RDONLY);
   ASSERT_GE(raw_fd1, 0);
   ASSERT_GE(raw_fd2, 0);
   {
@@ -173,8 +141,8 @@ TEST(ScopedFileTest, MoveCtor) {
 }
 
 TEST(ScopedFileTest, MoveAssignment) {
-  int raw_fd1 = OpenDevNull();
-  int raw_fd2 = MakeSecondFileDescriptor();
+  int raw_fd1 = open(kNullFilename, O_RDONLY);
+  int raw_fd2 = open(kZeroFilename, O_RDONLY);
   ASSERT_GE(raw_fd1, 0);
   ASSERT_GE(raw_fd2, 0);
   {
@@ -202,7 +170,7 @@ TEST(ScopedFileTest, MoveAssignment) {
 // might have leaked a capability.
 #ifdef TEST_INVALID_CLOSE
 TEST(ScopedFileTest, CloseFailureIsFatal) {
-  int raw_fd = OpenDevNull();
+  int raw_fd = open(kNullFilename, O_RDONLY);
   ASSERT_DEATH_IF_SUPPORTED(
       {
         ScopedFile scoped_file(raw_fd);

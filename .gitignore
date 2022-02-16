@@ -25,6 +25,5 @@
 /node_modules/
 /out*
 /ui/dist
-/venv/*
-perf.data*
 TAGS
+/venv/*

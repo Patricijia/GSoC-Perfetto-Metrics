@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {NUM} from '../../common/query_result';
+import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNs} from '../../common/time';
 import {LIMIT} from '../../common/track_data';
 import {
@@ -46,18 +46,12 @@ class ProcessSummaryTrackController extends TrackController<Config, Data> {
       if (this.config.upid) {
         const threadQuery = await this.query(
             `select utid from thread where upid=${this.config.upid}`);
-        utids = [];
-        for (const it = threadQuery.iter({utid: NUM}); it.valid(); it.next()) {
-          utids.push(it.utid);
-        }
+        utids = threadQuery.columns[0].longValues!;
       }
 
       const trackQuery = await this.query(
           `select id from thread_track where utid in (${utids.join(',')})`);
-      const tracks = [];
-      for (const it = trackQuery.iter({id: NUM}); it.valid(); it.next()) {
-        tracks.push(it.id);
-      }
+      const tracks = trackQuery.columns[0].longValues!;
 
       const processSliceView = this.tableName('process_slice_view');
       await this.query(
@@ -79,7 +73,7 @@ class ProcessSummaryTrackController extends TrackController<Config, Data> {
     const windowStartNs = Math.floor(startNs / bucketSizeNs) * bucketSizeNs;
     const windowDurNs = Math.max(1, endNs - windowStartNs);
 
-    await this.query(`update ${this.tableName('window')} set
+    this.query(`update ${this.tableName('window')} set
       window_start=${windowStartNs},
       window_dur=${windowDurNs},
       quantum=${bucketSizeNs}
@@ -104,6 +98,9 @@ class ProcessSummaryTrackController extends TrackController<Config, Data> {
       group by quantum_ts
       limit ${LIMIT}`;
 
+    const rawResult = await this.query(query);
+    const numRows = slowlyCountRows(rawResult);
+
     const summary: Data = {
       start,
       end,
@@ -112,17 +109,14 @@ class ProcessSummaryTrackController extends TrackController<Config, Data> {
       bucketSizeSeconds: fromNs(bucketSizeNs),
       utilizations: new Float64Array(numBuckets),
     };
-
-    const queryRes = await this.query(query);
-    const it = queryRes.iter({bucket: NUM, utilization: NUM});
-    for (; it.valid(); it.next()) {
-      const bucket = it.bucket;
+    const cols = rawResult.columns;
+    for (let row = 0; row < numRows; row++) {
+      const bucket = +cols[0].longValues![row];
       if (bucket > numBuckets) {
         continue;
       }
-      summary.utilizations[bucket] = it.utilization;
+      summary.utilizations[bucket] = +cols[1].doubleValues![row];
     }
-
     return summary;
   }
 

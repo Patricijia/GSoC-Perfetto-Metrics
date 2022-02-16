@@ -17,7 +17,7 @@
 #include "perfetto/heap_profile.h"
 #include "src/profiling/memory/heap_profile_internal.h"
 
-#include <cinttypes>
+#include <inttypes.h>
 
 __attribute__((visibility("default"))) uint64_t
 AHeapProfileEnableCallbackInfo_getSamplingInterval(

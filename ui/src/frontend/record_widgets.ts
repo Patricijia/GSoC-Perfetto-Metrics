@@ -15,19 +15,16 @@
 import {Draft, produce} from 'immer';
 import * as m from 'mithril';
 
-import {assertExists} from '../base/logging';
 import {Actions} from '../common/actions';
-import {RecordConfig} from '../controller/record_config_types';
+import {RecordConfig} from '../common/state';
 
 import {copyToClipboard} from './clipboard';
 import {globals} from './globals';
+import {assertExists} from '../base/logging';
+
 
 declare type Setter<T> = (draft: Draft<RecordConfig>, val: T) => void;
 declare type Getter<T> = (cfg: RecordConfig) => T;
-
-function defaultSort(a: string, b: string) {
-  return a.localeCompare(b);
-}
 
 // +---------------------------------------------------------------------------+
 // | Docs link with 'i' in circle icon.                                        |
@@ -54,7 +51,6 @@ class DocsChip implements m.ClassComponent<DocsChipAttrs> {
 export interface ProbeAttrs {
   title: string;
   img: string|null;
-  compact?: boolean;
   descr: m.Children;
   isEnabled: Getter<boolean>;
   setEnabled: Setter<boolean>;
@@ -72,7 +68,7 @@ export class Probe implements m.ClassComponent<ProbeAttrs> {
     const enabled = attrs.isEnabled(globals.state.recordConfig);
 
     return m(
-        `.probe${attrs.compact ? '.compact' : ''}${enabled ? '.enabled' : ''}`,
+        `.probe${enabled ? '.enabled' : ''}`,
         attrs.img && m('img', {
           src: `${globals.root}assets/${attrs.img}`,
           onclick: () => onToggle(!enabled),
@@ -85,25 +81,8 @@ export class Probe implements m.ClassComponent<ProbeAttrs> {
             },
           }),
           m('span', attrs.title)),
-        attrs.compact ?
-            '' :
-            m('div', m('div', attrs.descr), m('.probe-config', children)));
+        m('div', m('div', attrs.descr), m('.probe-config', children)));
   }
-}
-
-export function CompactProbe(args: {
-  title: string,
-  isEnabled: Getter<boolean>,
-  setEnabled: Setter<boolean>
-}) {
-  return m(Probe, {
-    title: args.title,
-    img: null,
-    compact: true,
-    descr: '',
-    isEnabled: args.isEnabled,
-    setEnabled: args.setEnabled
-  } as ProbeAttrs);
 }
 
 // +-------------------------------------------------------------+
@@ -241,14 +220,13 @@ export interface DropdownAttrs {
   title: string;
   cssClass?: string;
   options: Map<string, string>;
-  sort?: (a: string, b: string) => number;
   get: Getter<string[]>;
   set: Setter<string[]>;
 }
 
 export class Dropdown implements m.ClassComponent<DropdownAttrs> {
   resetScroll(dom: HTMLSelectElement) {
-    // Chrome seems to override the scroll offset on creationa, b without this,
+    // Chrome seems to override the scroll offset on creation without this,
     // even though we call it after having marked the options as selected.
     setTimeout(() => {
       // Don't reset the scroll position if the element is still focused.
@@ -274,8 +252,7 @@ export class Dropdown implements m.ClassComponent<DropdownAttrs> {
     const selItems = attrs.get(globals.state.recordConfig);
     let numSelected = 0;
     const entries = [...attrs.options.entries()];
-    const f = attrs.sort === undefined ? defaultSort : attrs.sort;
-    entries.sort((a, b) => f(a[1], b[1]));
+    entries.sort((a, b) => a[1].localeCompare(b[1]));
     for (const [key, label] of entries) {
       const opts = {value: key, selected: false};
       if (selItems.includes(key)) {
@@ -357,47 +334,4 @@ export class CodeSnippet implements m.ClassComponent<CodeSnippetAttrs> {
         m('code', attrs.text),
     );
   }
-}
-
-// Dropdown augmented with select all/none buttons
-export function SelectAllNoneDropdown(args: {
-  categories: Map<string, string>,
-  title: string,
-  get: Getter<string[]>,
-  set: Setter<string[]>,
-}) {
-  return m(
-      '.categories-list',
-      m('button.config-button',
-        {
-          onclick: () => {
-            const config = produce(globals.state.recordConfig, draft => {
-              args.set(draft, Array.from(args.categories.keys()));
-            });
-            globals.dispatch(Actions.setRecordConfig({config}));
-          }
-        },
-        'All'),
-      m('button.config-button',
-        {
-          onclick: () => {
-            const config = produce(globals.state.recordConfig, draft => {
-              args.set(draft, Array.from([]));
-            });
-            globals.dispatch(Actions.setRecordConfig({config}));
-          },
-        },
-        'None'),
-      m('br'),
-      m(Dropdown, {
-        cssClass: '.singlecolumn',
-        title: args.title,
-        options: args.categories,
-        set: args.set,
-        get: args.get,
-        sort: (a, b) => {
-          return a.localeCompare(b);
-        },
-      } as DropdownAttrs),
-  );
 }
