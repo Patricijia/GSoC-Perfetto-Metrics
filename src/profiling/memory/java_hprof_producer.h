@@ -69,23 +69,11 @@ class JavaHprofProducer : public Producer {
     kConnected,
   };
 
-  class DataSource {
-   public:
-    DataSource(DataSourceConfig ds_config,
-               JavaHprofConfig config,
-               std::vector<std::string> normalized_cmdlines);
-    void CollectPids();
-    void SendSignal() const;
-
-    const JavaHprofConfig& config() const { return config_; }
-    const DataSourceConfig& ds_config() const { return ds_config_; }
-
-   private:
-    DataSourceConfig ds_config_;
-    JavaHprofConfig config_;
-    std::vector<std::string> normalized_cmdlines_;
-
-    std::set<pid_t> pids_;
+  struct DataSource {
+    DataSourceInstanceID id;
+    std::set<pid_t> pids;
+    JavaHprofConfig config;
+    DataSourceConfig ds_config;
   };
 
   void ConnectService();
@@ -94,6 +82,7 @@ class JavaHprofProducer : public Producer {
   void IncreaseConnectionBackoff();
 
   void DoContinuousDump(DataSourceInstanceID id, uint32_t dump_interval);
+  static void SignalDataSource(const DataSource& ds);
 
   // State of connection to the tracing service.
   State state_ = kNotStarted;

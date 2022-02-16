@@ -42,6 +42,7 @@ export function installFileDropHandler() {
     if (evt.dataTransfer && dragEventHasFiles(evt)) {
       const file = evt.dataTransfer.files[0];
       if (file) {
+        globals.frontendLocalState.localOnlyMode = false;
         globals.dispatch(Actions.openTraceFromFile({file}));
       }
     }

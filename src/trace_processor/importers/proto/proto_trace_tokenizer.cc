@@ -15,7 +15,6 @@
  */
 
 #include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
-#include "perfetto/trace_processor/trace_blob.h"
 
 #include "perfetto/ext/base/utils.h"
 
@@ -26,27 +25,33 @@ ProtoTraceTokenizer::ProtoTraceTokenizer() = default;
 
 util::Status ProtoTraceTokenizer::Decompress(TraceBlobView input,
                                              TraceBlobView* output) {
-  PERFETTO_DCHECK(util::IsGzipSupported());
+  PERFETTO_DCHECK(gzip::IsGzipSupported());
+
+  uint8_t out[4096];
 
   std::vector<uint8_t> data;
   data.reserve(input.length());
 
   // Ensure that the decompressor is able to cope with a new stream of data.
   decompressor_.Reset();
-  using ResultCode = util::GzipDecompressor::ResultCode;
-  ResultCode ret = decompressor_.FeedAndExtract(
-      input.data(), input.length(),
-      [&data](const uint8_t* buffer, size_t buffer_len) {
-        data.insert(data.end(), buffer, buffer + buffer_len);
-      });
+  decompressor_.SetInput(input.data(), input.length());
 
-  if (ret == ResultCode::kError || ret == ResultCode::kNeedsMoreInput) {
-    return util::ErrStatus("Failed to decompress (error code: %d)",
-                           static_cast<int>(ret));
+  using ResultCode = GzipDecompressor::ResultCode;
+  for (auto ret = ResultCode::kOk; ret != ResultCode::kEof;) {
+    auto res = decompressor_.Decompress(out, base::ArraySize(out));
+    ret = res.ret;
+    if (ret == ResultCode::kError || ret == ResultCode::kNoProgress ||
+        ret == ResultCode::kNeedsMoreInput) {
+      return util::ErrStatus("Failed to decompress (error code: %d)",
+                             static_cast<int>(ret));
+    }
+
+    data.insert(data.end(), out, out + res.bytes_written);
   }
 
-  TraceBlob out_blob = TraceBlob::CopyFrom(data.data(), data.size());
-  *output = TraceBlobView(std::move(out_blob));
+  std::unique_ptr<uint8_t[]> out_data(new uint8_t[data.size()]);
+  memcpy(out_data.get(), data.data(), data.size());
+  *output = TraceBlobView(std::move(out_data), 0, data.size());
   return util::OkStatus();
 }
 

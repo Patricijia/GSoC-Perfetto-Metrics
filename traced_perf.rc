@@ -25,9 +25,9 @@ service traced_perf /system/bin/traced_perf
     disabled
     socket traced_perf stream 0666 root root
     user nobody
-    group nobody readproc readtracefs
+    group nobody readproc
     capabilities KILL DAC_READ_SEARCH
-    task_profiles ProcessCapacityHigh
+    writepid /dev/cpuset/foreground/tasks
 
 # Daemon run state:
 # * initially off

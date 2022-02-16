@@ -17,10 +17,11 @@ import {assertTrue} from '../../base/logging';
 import {Actions} from '../../common/actions';
 import {cropText, drawDoubleHeadedArrow} from '../../common/canvas_utils';
 import {colorForThread} from '../../common/colorizer';
+import {TrackState} from '../../common/state';
 import {timeToString} from '../../common/time';
 import {checkerboardExcept} from '../../frontend/checkerboard';
 import {globals} from '../../frontend/globals';
-import {NewTrackArgs, Track} from '../../frontend/track';
+import {Track} from '../../frontend/track';
 import {trackRegistry} from '../../frontend/track_registry';
 
 import {
@@ -35,15 +36,15 @@ const TRACK_HEIGHT = MARGIN_TOP * 2 + RECT_HEIGHT;
 
 class CpuSliceTrack extends Track<Config, Data> {
   static readonly kind = CPU_SLICE_TRACK_KIND;
-  static create(args: NewTrackArgs): CpuSliceTrack {
-    return new CpuSliceTrack(args);
+  static create(trackState: TrackState): CpuSliceTrack {
+    return new CpuSliceTrack(trackState);
   }
 
-  private mousePos?: {x: number, y: number};
+  private mouseXpos?: number;
   private utidHoveredInThisTrack = -1;
 
-  constructor(args: NewTrackArgs) {
-    super(args);
+  constructor(trackState: TrackState) {
+    super(trackState);
   }
 
   getHeight(): number {
@@ -98,9 +99,9 @@ class CpuSliceTrack extends Track<Config, Data> {
       const threadInfo = globals.threads.get(utid);
       const pid = threadInfo && threadInfo.pid ? threadInfo.pid : -1;
 
-      const isHovering = globals.state.hoveredUtid !== -1;
-      const isThreadHovered = globals.state.hoveredUtid === utid;
-      const isProcessHovered = globals.state.hoveredPid === pid;
+      const isHovering = globals.frontendLocalState.hoveredUtid !== -1;
+      const isThreadHovered = globals.frontendLocalState.hoveredUtid === utid;
+      const isProcessHovered = globals.frontendLocalState.hoveredPid === pid;
       const color = colorForThread(threadInfo);
       if (isHovering && !isThreadHovered) {
         if (!isProcessHovered) {
@@ -211,28 +212,28 @@ class CpuSliceTrack extends Track<Config, Data> {
     }
 
     const hoveredThread = globals.threads.get(this.utidHoveredInThisTrack);
-    if (hoveredThread !== undefined && this.mousePos !== undefined) {
+    if (hoveredThread !== undefined && this.mouseXpos !== undefined) {
       const tidText = `T: ${hoveredThread.threadName} [${hoveredThread.tid}]`;
       if (hoveredThread.pid) {
         const pidText = `P: ${hoveredThread.procName} [${hoveredThread.pid}]`;
-        this.drawTrackHoverTooltip(ctx, this.mousePos, pidText, tidText);
+        this.drawTrackHoverTooltip(ctx, this.mouseXpos, pidText, tidText);
       } else {
-        this.drawTrackHoverTooltip(ctx, this.mousePos, tidText);
+        this.drawTrackHoverTooltip(ctx, this.mouseXpos, tidText);
       }
     }
   }
 
-  onMouseMove(pos: {x: number, y: number}) {
+  onMouseMove({x, y}: {x: number, y: number}) {
     const data = this.data();
-    this.mousePos = pos;
+    this.mouseXpos = x;
     if (data === undefined) return;
     const {timeScale} = globals.frontendLocalState;
-    if (pos.y < MARGIN_TOP || pos.y > MARGIN_TOP + RECT_HEIGHT) {
+    if (y < MARGIN_TOP || y > MARGIN_TOP + RECT_HEIGHT) {
       this.utidHoveredInThisTrack = -1;
-      globals.dispatch(Actions.setHoveredUtidAndPid({utid: -1, pid: -1}));
+      globals.frontendLocalState.setHoveredUtidAndPid(-1, -1);
       return;
     }
-    const t = timeScale.pxToTime(pos.x);
+    const t = timeScale.pxToTime(x);
     let hoveredUtid = -1;
 
     for (let i = 0; i < data.starts.length; i++) {
@@ -247,14 +248,13 @@ class CpuSliceTrack extends Track<Config, Data> {
     this.utidHoveredInThisTrack = hoveredUtid;
     const threadInfo = globals.threads.get(hoveredUtid);
     const hoveredPid = threadInfo ? (threadInfo.pid ? threadInfo.pid : -1) : -1;
-    globals.dispatch(
-        Actions.setHoveredUtidAndPid({utid: hoveredUtid, pid: hoveredPid}));
+    globals.frontendLocalState.setHoveredUtidAndPid(hoveredUtid, hoveredPid);
   }
 
   onMouseOut() {
     this.utidHoveredInThisTrack = -1;
-    globals.dispatch(Actions.setHoveredUtidAndPid({utid: -1, pid: -1}));
-    this.mousePos = undefined;
+    globals.frontendLocalState.setHoveredUtidAndPid(-1, -1);
+    this.mouseXpos = 0;
   }
 
   onMouseClick({x}: {x: number}) {

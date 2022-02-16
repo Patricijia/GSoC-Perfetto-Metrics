@@ -17,7 +17,7 @@
 #ifndef SRC_TRACED_PROBES_PACKAGES_LIST_PACKAGES_LIST_PARSER_H_
 #define SRC_TRACED_PROBES_PACKAGES_LIST_PACKAGES_LIST_PARSER_H_
 
-#include <cinttypes>
+#include <inttypes.h>
 #include <string>
 
 namespace perfetto {

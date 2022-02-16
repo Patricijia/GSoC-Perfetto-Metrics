@@ -20,9 +20,8 @@ import {
   LogEntriesKey,
   LogExistsKey
 } from '../common/logs';
-import {NUM, STR} from '../common/query_result';
+import {slowlyCountRows} from '../common/query_iterator';
 import {fromNs, TimeSpan, toNsCeil, toNsFloor} from '../common/time';
-import {publishTrackData} from '../frontend/publish';
 
 import {Controller} from './controller';
 import {App} from './globals';
@@ -32,28 +31,21 @@ async function updateLogBounds(
   const vizStartNs = toNsFloor(span.start);
   const vizEndNs = toNsCeil(span.end);
 
-  const countResult = await engine.query(`
-     select
-      ifnull(min(ts), 0) as minTs,
-      ifnull(max(ts), 0) as maxTs,
-      count(ts) as countTs
+  const countResult = await engine.queryOneRow(`
+     select min(ts), max(ts), count(ts)
      from android_logs where ts >= ${vizStartNs} and ts <= ${vizEndNs}`);
 
-  const countRow = countResult.firstRow({minTs: NUM, maxTs: NUM, countTs: NUM});
+  const firstRowNs = countResult[0];
+  const lastRowNs = countResult[1];
+  const total = countResult[2];
 
-  const firstRowNs = countRow.minTs;
-  const lastRowNs = countRow.maxTs;
-  const total = countRow.countTs;
+  const minResult = await engine.queryOneRow(`
+     select max(ts) from android_logs where ts < ${vizStartNs}`);
+  const startNs = minResult[0];
 
-  const minResult = await engine.query(`
-     select ifnull(max(ts), 0) as maxTs from android_logs where ts < ${
-      vizStartNs}`);
-  const startNs = minResult.firstRow({maxTs: NUM}).maxTs;
-
-  const maxResult = await engine.query(`
-     select ifnull(min(ts), 0) as minTs from android_logs where ts > ${
-      vizEndNs}`);
-  const endNs = maxResult.firstRow({minTs: NUM}).minTs;
+  const maxResult = await engine.queryOneRow(`
+     select min(ts) from android_logs where ts > ${vizEndNs}`);
+  const endNs = maxResult[0];
 
   const trace = await engine.getTraceTimeBounds();
   const startTs = startNs ? fromNs(startNs) : trace.start;
@@ -76,30 +68,26 @@ async function updateLogEntries(
   const vizEndNs = toNsCeil(span.end);
   const vizSqlBounds = `ts >= ${vizStartNs} and ts <= ${vizEndNs}`;
 
-  const rowsResult = await engine.query(`
-        select
-          ts,
-          prio,
-          ifnull(tag, '[NULL]') as tag,
-          ifnull(msg, '[NULL]') as msg
-        from android_logs
+  const rowsResult =
+      await engine.query(`select ts, prio, tag, msg from android_logs
         where ${vizSqlBounds}
         order by ts
-        limit ${pagination.start}, ${pagination.count}
-    `);
+        limit ${pagination.start}, ${pagination.count}`);
 
-  const timestamps = [];
-  const priorities = [];
-  const tags = [];
-  const messages = [];
-
-  const it = rowsResult.iter({ts: NUM, prio: NUM, tag: STR, msg: STR});
-  for (; it.valid(); it.next()) {
-    timestamps.push(it.ts);
-    priorities.push(it.prio);
-    tags.push(it.tag);
-    messages.push(it.msg);
+  if (!slowlyCountRows(rowsResult)) {
+    return {
+      offset: pagination.start,
+      timestamps: [],
+      priorities: [],
+      tags: [],
+      messages: [],
+    };
   }
+
+  const timestamps = rowsResult.columns[0].longValues!;
+  const priorities = rowsResult.columns[1].longValues!;
+  const tags = rowsResult.columns[2].stringValues!;
+  const messages = rowsResult.columns[3].stringValues!;
 
   return {
     offset: pagination.start,
@@ -170,7 +158,7 @@ export class LogsController extends Controller<'main'> {
     this.pagination = new Pagination(0, 0);
     this.hasAnyLogs().then(exists => {
       this.hasLogs = exists;
-      publishTrackData({
+      this.app.publish('TrackData', {
         id: LogExistsKey,
         data: {
           exists,
@@ -180,10 +168,10 @@ export class LogsController extends Controller<'main'> {
   }
 
   async hasAnyLogs() {
-    const result = await this.engine.query(`
-      select count(*) as cnt from android_logs
+    const result = await this.engine.queryOneRow(`
+      select count(*) from android_logs
     `);
-    return result.firstRow({cnt: NUM}).cnt > 0;
+    return result[0] > 0;
   }
 
   run() {
@@ -214,7 +202,7 @@ export class LogsController extends Controller<'main'> {
       this.span = newSpan;
       updateLogBounds(this.engine, newSpan).then(data => {
         if (!newSpan.equals(this.span)) return;
-        publishTrackData({
+        this.app.publish('TrackData', {
           id: LogBoundsKey,
           data,
         });
@@ -228,7 +216,7 @@ export class LogsController extends Controller<'main'> {
 
       updateLogEntries(this.engine, newSpan, this.pagination).then(data => {
         if (!this.pagination.contains(requestedPagination)) return;
-        publishTrackData({
+        this.app.publish('TrackData', {
           id: LogEntriesKey,
           data,
         });
