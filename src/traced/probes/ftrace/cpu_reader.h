@@ -44,13 +44,11 @@ namespace perfetto {
 class FtraceDataSource;
 class LazyKernelSymbolizer;
 class ProtoTranslationTable;
-struct FtraceClockSnapshot;
 struct FtraceDataSourceConfig;
 
 namespace protos {
 namespace pbzero {
 class FtraceEventBundle;
-enum FtraceClock : int32_t;
 }  // namespace pbzero
 }  // namespace protos
 
@@ -69,7 +67,6 @@ class CpuReader {
   CpuReader(size_t cpu,
             const ProtoTranslationTable* table,
             LazyKernelSymbolizer* symbolizer,
-            const FtraceClockSnapshot*,
             base::ScopedFile trace_fd);
   ~CpuReader();
 
@@ -242,13 +239,7 @@ class CpuReader {
                                         const uint8_t* parsing_buf,
                                         const size_t pages_read,
                                         const ProtoTranslationTable* table,
-                                        LazyKernelSymbolizer* symbolizer,
-                                        const FtraceClockSnapshot*,
-                                        protos::pbzero::FtraceClock);
-
-  void set_ftrace_clock(protos::pbzero::FtraceClock clock) {
-    ftrace_clock_ = clock;
-  }
+                                        LazyKernelSymbolizer* symbolizer);
 
  private:
   CpuReader(const CpuReader&) = delete;
@@ -267,9 +258,7 @@ class CpuReader {
   const size_t cpu_;
   const ProtoTranslationTable* const table_;
   LazyKernelSymbolizer* const symbolizer_;
-  const FtraceClockSnapshot* const ftrace_clock_snapshot_;
   base::ScopedFile trace_fd_;
-  protos::pbzero::FtraceClock ftrace_clock_{};
 };
 
 }  // namespace perfetto

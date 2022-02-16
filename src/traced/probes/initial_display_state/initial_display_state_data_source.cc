@@ -18,7 +18,6 @@
 
 #include "perfetto/base/task_runner.h"
 #include "perfetto/base/time.h"
-#include "perfetto/ext/base/android_utils.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "perfetto/tracing/core/data_source_config.h"
@@ -26,6 +25,10 @@
 #include "protos/perfetto/config/android/android_polled_state_config.pbzero.h"
 #include "protos/perfetto/trace/android/initial_display_state.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+#include <sys/system_properties.h>
+#endif
 
 namespace perfetto {
 
@@ -111,12 +114,13 @@ void InitialDisplayStateDataSource::WriteState() {
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 const base::Optional<std::string> InitialDisplayStateDataSource::ReadProperty(
     const std::string name) {
-  std::string value = base::GetAndroidProp(name.c_str());
-  if (value.empty()) {
+  char value[PROP_VALUE_MAX];
+  if (__system_property_get(name.c_str(), value)) {
+    return base::make_optional(value);
+  } else {
     PERFETTO_ELOG("Unable to read %s", name.c_str());
     return base::nullopt;
   }
-  return base::make_optional(value);
 }
 #else
 const base::Optional<std::string> InitialDisplayStateDataSource::ReadProperty(

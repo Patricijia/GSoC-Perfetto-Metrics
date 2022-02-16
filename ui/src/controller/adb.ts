@@ -14,8 +14,6 @@
 
 import {_TextDecoder, _TextEncoder} from 'custom_utils';
 
-import {assertExists} from '../base/logging';
-
 import {Adb, AdbMsg, AdbStream, CmdType} from './adb_interfaces';
 
 const textEncoder = new _TextEncoder();
@@ -74,8 +72,7 @@ export class AdbOverWebUsb implements Adb {
   useChecksum = true;
 
   private lastStreamId = 0;
-  private dev?: USBDevice;
-  private usbInterfaceNumber?: number;
+  private dev: USBDevice|undefined;
   private usbReadEndpoint = -1;
   private usbWriteEpEndpoint = -1;
   private filter = {
@@ -117,10 +114,11 @@ export class AdbOverWebUsb implements Adb {
     this.key = await AdbOverWebUsb.initKey();
 
     await this.dev.open();
+    await this.dev.reset();  // The reset is done so that we can claim the
+                             // device before adb server can.
 
     const {configValue, usbInterfaceNumber, endpoints} =
         this.findInterfaceAndEndpoint();
-    this.usbInterfaceNumber = usbInterfaceNumber;
 
     this.usbReadEndpoint = this.findEndpointNumber(endpoints, 'in');
     this.usbWriteEpEndpoint = this.findEndpointNumber(endpoints, 'out');
@@ -139,19 +137,13 @@ export class AdbOverWebUsb implements Adb {
   }
 
   async disconnect(): Promise<void> {
-    if (this.state === AdbState.DISCONNECTED) {
-      return;
-    }
     this.state = AdbState.DISCONNECTED;
 
     if (!this.dev) return;
 
     new Map(this.streams).forEach((stream, _id) => stream.setClosed());
     console.assert(this.streams.size === 0);
-
-    await this.dev.releaseInterface(assertExists(this.usbInterfaceNumber));
     this.dev = undefined;
-    this.usbInterfaceNumber = undefined;
   }
 
   async startAuthentication() {
@@ -303,7 +295,7 @@ export class AdbOverWebUsb implements Adb {
         stream.onClose = () => {};
         resolve(stream);
       };
-      stream.onClose = () => reject(`Failed to openStream svc=${svc}`);
+      stream.onClose = () => reject();
     });
   }
 
@@ -360,7 +352,9 @@ export class AdbOverWebUsb implements Adb {
     };
 
     const key = await crypto.subtle.generateKey(
-        keySpec, /*extractable=*/ true, ['sign', 'verify']);
+                    keySpec, /*extractable=*/ true, ['sign', 'verify']) as
+        CryptoKeyPair;
+
     return key;
   }
 

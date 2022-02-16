@@ -16,22 +16,20 @@
 
 #include "src/trace_processor/trace_processor_impl.h"
 
+#include <inttypes.h>
 #include <algorithm>
-#include <memory>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/base/status.h"
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/dynamic/ancestor_generator.h"
 #include "src/trace_processor/dynamic/connected_flow_generator.h"
-#include "src/trace_processor/dynamic/descendant_generator.h"
+#include "src/trace_processor/dynamic/descendant_slice_generator.h"
 #include "src/trace_processor/dynamic/describe_slice_generator.h"
 #include "src/trace_processor/dynamic/experimental_annotated_stack_generator.h"
 #include "src/trace_processor/dynamic/experimental_counter_dur_generator.h"
 #include "src/trace_processor/dynamic/experimental_flamegraph_generator.h"
-#include "src/trace_processor/dynamic/experimental_flat_slice_generator.h"
 #include "src/trace_processor/dynamic/experimental_sched_upid_generator.h"
 #include "src/trace_processor/dynamic/experimental_slice_layout_generator.h"
 #include "src/trace_processor/dynamic/thread_state_generator.h"
@@ -46,9 +44,6 @@
 #include "src/trace_processor/importers/proto/metadata_tracker.h"
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/iterator_impl.h"
-#include "src/trace_processor/sqlite/create_function.h"
-#include "src/trace_processor/sqlite/register_function.h"
-#include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
 #include "src/trace_processor/sqlite/sql_stats_table.h"
 #include "src/trace_processor/sqlite/sqlite3_str_split.h"
@@ -60,16 +55,15 @@
 #include "src/trace_processor/tp_metatrace.h"
 #include "src/trace_processor/types/variadic.h"
 #include "src/trace_processor/util/protozero_to_text.h"
-#include "src/trace_processor/util/status_macros.h"
 
 #include "protos/perfetto/trace/perfetto/perfetto_metatrace.pbzero.h"
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 
-#include "src/trace_processor/metrics/all_chrome_metrics.descriptor.h"
+#include "src/trace_processor/metrics/chrome/all_chrome_metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
-#include "src/trace_processor/metrics/sql/amalgamated_sql_metrics.h"
+#include "src/trace_processor/metrics/sql_metrics.h"
 
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
 #include <cxxabi.h>
@@ -92,29 +86,12 @@ const char kAllTablesQuery[] =
     "SELECT tbl_name, type FROM (SELECT * FROM sqlite_master UNION ALL SELECT "
     "* FROM sqlite_temp_master)";
 
-template <typename SqlFunction, typename Ptr = typename SqlFunction::Context*>
-void RegisterFunction(sqlite3* db,
-                      const char* name,
-                      int argc,
-                      Ptr context = nullptr,
-                      bool deterministic = true) {
-  auto status = RegisterSqlFunction<SqlFunction>(
-      db, name, argc, std::move(context), deterministic);
-  if (!status.ok())
-    PERFETTO_ELOG("%s", status.c_message());
-}
-
 void InitializeSqlite(sqlite3* db) {
   char* error = nullptr;
   sqlite3_exec(db, "PRAGMA temp_store=2", 0, 0, &error);
   if (error) {
     PERFETTO_FATAL("Error setting pragma temp_store: %s", error);
   }
-  sqlite3_exec(db, "PRAGMA case_sensitive_like = 1", 0, 0, &error);
-  if (error) {
-    PERFETTO_FATAL("Error setting pragma case_sensitive_like: %s", error);
-  }
-
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -309,57 +286,47 @@ void CreateBuiltinViews(sqlite3* db) {
   }
 }
 
-struct ExportJson : public SqlFunction {
-  using Context = TraceStorage;
-  static base::Status Run(TraceStorage* storage,
-                          size_t /*argc*/,
-                          sqlite3_value** argv,
-                          SqlValue& /*out*/,
-                          Destructors&);
-};
-
-base::Status ExportJson::Run(TraceStorage* storage,
-                             size_t /*argc*/,
-                             sqlite3_value** argv,
-                             SqlValue& /*out*/,
-                             Destructors&) {
+void ExportJson(sqlite3_context* ctx, int /*argc*/, sqlite3_value** argv) {
+  TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   FILE* output;
   if (sqlite3_value_type(argv[0]) == SQLITE_INTEGER) {
     // Assume input is an FD.
     output = fdopen(sqlite3_value_int(argv[0]), "w");
     if (!output) {
-      return base::ErrStatus(
-          "EXPORT_JSON: Couldn't open output file from given FD");
+      sqlite3_result_error(ctx, "Couldn't open output file from given FD", -1);
+      return;
     }
   } else {
     const char* filename =
         reinterpret_cast<const char*>(sqlite3_value_text(argv[0]));
     output = fopen(filename, "w");
     if (!output) {
-      return base::ErrStatus("EXPORT_JSON: Couldn't open output file");
+      sqlite3_result_error(ctx, "Couldn't open output file", -1);
+      return;
     }
   }
-  return json::ExportJson(storage, output);
+
+  util::Status result = json::ExportJson(storage, output);
+  if (!result.ok()) {
+    sqlite3_result_error(ctx, result.message().c_str(), -1);
+    return;
+  }
 }
 
-struct Hash : public SqlFunction {
-  static base::Status Run(void*,
-                          size_t argc,
-                          sqlite3_value** argv,
-                          SqlValue& out,
-                          Destructors&);
-};
+void CreateJsonExportFunction(TraceStorage* ts, sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(db, "EXPORT_JSON", 1, SQLITE_UTF8, ts,
+                                        ExportJson, nullptr, nullptr,
+                                        sqlite_utils::kSqliteStatic);
+  if (ret) {
+    PERFETTO_ELOG("Error initializing EXPORT_JSON");
+  }
+}
 
-base::Status Hash::Run(void*,
-                       size_t argc,
-                       sqlite3_value** argv,
-                       SqlValue& out,
-                       Destructors&) {
+void Hash(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
   base::Hash hash;
-  for (size_t i = 0; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     sqlite3_value* value = argv[i];
-    int type = sqlite3_value_type(value);
-    switch (type) {
+    switch (sqlite3_value_type(value)) {
       case SQLITE_INTEGER:
         hash.Update(sqlite3_value_int64(value));
         break;
@@ -370,50 +337,41 @@ base::Status Hash::Run(void*,
         break;
       }
       default:
-        return base::ErrStatus("HASH: arg %zu has unknown type %d", i, type);
+        sqlite3_result_error(ctx, "Unsupported type of arg passed to HASH", -1);
+        return;
     }
   }
-  out = SqlValue::Long(static_cast<int64_t>(hash.digest()));
-  return base::OkStatus();
+  sqlite3_result_int64(ctx, static_cast<int64_t>(hash.digest()));
 }
 
-struct Demangle : public SqlFunction {
-  static base::Status Run(void*,
-                          size_t argc,
-                          sqlite3_value** argv,
-                          SqlValue& out,
-                          Destructors& destructors);
-};
-
-base::Status Demangle::Run(void*,
-                           size_t argc,
-                           sqlite3_value** argv,
-                           SqlValue& out,
-                           Destructors& destructors) {
-  if (argc != 1)
-    return base::ErrStatus("Unsupported number of arg passed to DEMANGLE");
+void Demangle(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  if (argc != 1) {
+    sqlite3_result_error(ctx, "Unsupported number of arg passed to DEMANGLE",
+                         -1);
+    return;
+  }
   sqlite3_value* value = argv[0];
-  if (sqlite3_value_type(value) == SQLITE_NULL)
-    return base::OkStatus();
-
-  if (sqlite3_value_type(value) != SQLITE_TEXT)
-    return base::ErrStatus("Unsupported type of arg passed to DEMANGLE");
-
+  if (sqlite3_value_type(value) == SQLITE_NULL) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+  if (sqlite3_value_type(value) != SQLITE_TEXT) {
+    sqlite3_result_error(ctx, "Unsupported type of arg passed to DEMANGLE", -1);
+    return;
+  }
   const char* ptr = reinterpret_cast<const char*>(sqlite3_value_text(value));
 #if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
   int ignored = 0;
   // This memory was allocated by malloc and will be passed to SQLite to free.
   char* demangled_name = abi::__cxa_demangle(ptr, nullptr, nullptr, &ignored);
-  if (!demangled_name)
-    return base::OkStatus();
-
-  destructors.string_destructor = free;
-  out = SqlValue::String(demangled_name);
+  if (!demangled_name) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+  sqlite3_result_text(ctx, demangled_name, -1, free);
 #else
-  destructors.string_destructor = sqlite_utils::kSqliteTransient;
-  out = SqlValue::String(ptr);
+  sqlite3_result_text(ctx, ptr, -1, sqlite_utils::kSqliteTransient);
 #endif
-  return base::OkStatus();
 }
 
 void LastNonNullStep(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
@@ -464,7 +422,25 @@ void LastNonNullFinal(sqlite3_context* ctx) {
   }
 }
 
-void RegisterLastNonNullFunction(sqlite3* db) {
+void CreateHashFunction(sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(
+      db, "HASH", -1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr, &Hash,
+      nullptr, nullptr, nullptr);
+  if (ret) {
+    PERFETTO_ELOG("Error initializing HASH");
+  }
+}
+
+void CreateDemangledNameFunction(sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(
+      db, "DEMANGLE", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr, &Demangle,
+      nullptr, nullptr, nullptr);
+  if (ret != SQLITE_OK) {
+    PERFETTO_ELOG("Error initializing DEMANGLE: %s", sqlite3_errmsg(db));
+  }
+}
+
+void CreateLastNonNullFunction(sqlite3* db) {
   auto ret = sqlite3_create_window_function(
       db, "LAST_NON_NULL", 1, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
       &LastNonNullStep, &LastNonNullFinal, &LastNonNullValue,
@@ -552,7 +528,7 @@ void ValueAtMaxTsFinal(sqlite3_context* ctx) {
   }
 }
 
-void RegisterValueAtMaxTsFunction(sqlite3* db) {
+void CreateValueAtMaxTsFunction(sqlite3* db) {
   auto ret = sqlite3_create_function_v2(
       db, "VALUE_AT_MAX_TS", 2, SQLITE_UTF8 | SQLITE_DETERMINISTIC, nullptr,
       nullptr, &ValueAtMaxTsStep, &ValueAtMaxTsFinal, nullptr);
@@ -561,160 +537,130 @@ void RegisterValueAtMaxTsFunction(sqlite3* db) {
   }
 }
 
-struct ExtractArg : public SqlFunction {
-  using Context = TraceStorage;
-  static base::Status Run(TraceStorage* storage,
-                          size_t argc,
-                          sqlite3_value** argv,
-                          SqlValue& out,
-                          Destructors& destructors);
-};
-
-base::Status ExtractArg::Run(TraceStorage* storage,
-                             size_t argc,
-                             sqlite3_value** argv,
-                             SqlValue& out,
-                             Destructors& destructors) {
-  if (argc != 2)
-    return base::ErrStatus("EXTRACT_ARG: 2 args required");
+void ExtractArg(sqlite3_context* ctx, int argc, sqlite3_value** argv) {
+  if (argc != 2) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 2 args required", -1);
+    return;
+  }
 
   // If the arg set id is null, just return null as the result.
-  if (sqlite3_value_type(argv[0]) == SQLITE_NULL)
-    return base::OkStatus();
+  if (sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    sqlite3_result_null(ctx);
+    return;
+  }
+  if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 1st argument should be arg set id",
+                         -1);
+    return;
+  }
+  if (sqlite3_value_type(argv[1]) != SQLITE_TEXT) {
+    sqlite3_result_error(ctx, "EXTRACT_ARG: 2nd argument should be key", -1);
+    return;
+  }
 
-  if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER)
-    return base::ErrStatus("EXTRACT_ARG: 1st argument should be arg set id");
-
-  if (sqlite3_value_type(argv[1]) != SQLITE_TEXT)
-    return base::ErrStatus("EXTRACT_ARG: 2nd argument should be key");
-
+  TraceStorage* storage = static_cast<TraceStorage*>(sqlite3_user_data(ctx));
   uint32_t arg_set_id = static_cast<uint32_t>(sqlite3_value_int(argv[0]));
   const char* key = reinterpret_cast<const char*>(sqlite3_value_text(argv[1]));
 
   base::Optional<Variadic> opt_value;
-  RETURN_IF_ERROR(storage->ExtractArg(arg_set_id, key, &opt_value));
+  util::Status status = storage->ExtractArg(arg_set_id, key, &opt_value);
+  if (!status.ok()) {
+    sqlite3_result_error(ctx, status.c_message(), -1);
+    return;
+  }
 
-  if (!opt_value)
-    return base::OkStatus();
-
-  // This function always returns static strings (i.e. scoped to lifetime
-  // of the TraceStorage thread pool) so prevent SQLite from making copies.
-  destructors.string_destructor = sqlite_utils::kSqliteStatic;
+  if (!opt_value) {
+    sqlite3_result_null(ctx);
+    return;
+  }
 
   switch (opt_value->type) {
-    case Variadic::kNull:
-      return base::OkStatus();
     case Variadic::kInt:
-      out = SqlValue::Long(opt_value->int_value);
-      return base::OkStatus();
-    case Variadic::kUint:
-      out = SqlValue::Long(static_cast<int64_t>(opt_value->uint_value));
-      return base::OkStatus();
-    case Variadic::kString:
-      out =
-          SqlValue::String(storage->GetString(opt_value->string_value).data());
-      return base::OkStatus();
-    case Variadic::kReal:
-      out = SqlValue::Double(opt_value->real_value);
-      return base::OkStatus();
+      sqlite3_result_int64(ctx, opt_value->int_value);
+      break;
     case Variadic::kBool:
-      out = SqlValue::Long(opt_value->bool_value);
-      return base::OkStatus();
+      sqlite3_result_int64(ctx, opt_value->bool_value);
+      break;
+    case Variadic::kUint:
+      sqlite3_result_int64(ctx, static_cast<int64_t>(opt_value->uint_value));
+      break;
     case Variadic::kPointer:
-      out = SqlValue::Long(static_cast<int64_t>(opt_value->pointer_value));
-      return base::OkStatus();
+      sqlite3_result_int64(ctx, static_cast<int64_t>(opt_value->pointer_value));
+      break;
     case Variadic::kJson:
-      out = SqlValue::String(storage->GetString(opt_value->json_value).data());
-      return base::OkStatus();
+      sqlite3_result_text(ctx, storage->GetString(opt_value->json_value).data(),
+                          -1, nullptr);
+      break;
+    case Variadic::kString:
+      sqlite3_result_text(
+          ctx, storage->GetString(opt_value->string_value).data(), -1, nullptr);
+      break;
+    case Variadic::kReal:
+      sqlite3_result_double(ctx, opt_value->real_value);
+      break;
   }
-  PERFETTO_FATAL("For GCC");
 }
 
-std::vector<std::string> SanitizeMetricMountPaths(
-    const std::vector<std::string>& mount_paths) {
-  std::vector<std::string> sanitized;
-  for (const auto& path : mount_paths) {
-    if (path.length() == 0)
-      continue;
-    sanitized.push_back(path);
-    if (path.back() != '/')
-      sanitized.back().append("/");
+void CreateExtractArgFunction(TraceStorage* ts, sqlite3* db) {
+  auto ret = sqlite3_create_function_v2(db, "EXTRACT_ARG", 2,
+                                        SQLITE_UTF8 | SQLITE_DETERMINISTIC, ts,
+                                        &ExtractArg, nullptr, nullptr, nullptr);
+  if (ret != SQLITE_OK) {
+    PERFETTO_FATAL("Error initializing EXTRACT_ARG: %s", sqlite3_errmsg(db));
   }
-  return sanitized;
 }
 
-struct SourceGeq : public SqlFunction {
-  static base::Status Run(void*,
-                          size_t,
-                          sqlite3_value**,
-                          SqlValue&,
-                          Destructors&) {
-    return base::ErrStatus(
-        "SOURCE_GEQ should not be called from the global scope");
+void CreateSourceGeqFunction(sqlite3* db) {
+  auto fn = [](sqlite3_context* ctx, int, sqlite3_value**) {
+    sqlite3_result_error(
+        ctx, "SOURCE_GEQ should not be called from the global scope", -1);
+  };
+  auto ret = sqlite3_create_function_v2(db, "SOURCE_GEQ", -1,
+                                        SQLITE_UTF8 | SQLITE_DETERMINISTIC,
+                                        nullptr, fn, nullptr, nullptr, nullptr);
+  if (ret != SQLITE_OK) {
+    PERFETTO_FATAL("Error initializing SOURCE_GEQ: %s", sqlite3_errmsg(db));
   }
-};
-
-struct Glob : public SqlFunction {
-  static base::Status Run(void*,
-                          size_t,
-                          sqlite3_value** argv,
-                          SqlValue& out,
-                          Destructors&) {
-    const char* pattern =
-        reinterpret_cast<const char*>(sqlite3_value_text(argv[0]));
-    const char* text =
-        reinterpret_cast<const char*>(sqlite3_value_text(argv[1]));
-    if (pattern && text) {
-      out = SqlValue::Long(sqlite3_strglob(pattern, text) == 0);
-    }
-    return base::OkStatus();
-  }
-};
+}
 
 void SetupMetrics(TraceProcessor* tp,
                   sqlite3* db,
-                  std::vector<metrics::SqlMetricFile>* sql_metrics,
-                  const std::vector<std::string>& extension_paths) {
-  const std::vector<std::string> sanitized_extension_paths =
-      SanitizeMetricMountPaths(extension_paths);
-  std::vector<std::string> skip_prefixes;
-  skip_prefixes.reserve(sanitized_extension_paths.size());
-  for (const auto& path : sanitized_extension_paths) {
-    skip_prefixes.push_back(kMetricProtoRoot + path);
-  }
-  tp->ExtendMetricsProto(kMetricsDescriptor.data(), kMetricsDescriptor.size(),
-                         skip_prefixes);
+                  std::vector<metrics::SqlMetricFile>* sql_metrics) {
+  tp->ExtendMetricsProto(kMetricsDescriptor.data(), kMetricsDescriptor.size());
   tp->ExtendMetricsProto(kAllChromeMetricsDescriptor.data(),
-                         kAllChromeMetricsDescriptor.size(), skip_prefixes);
+                         kAllChromeMetricsDescriptor.size());
 
-  // TODO(lalitm): remove this special casing and change
-  // SanitizeMetricMountPaths if/when we move all protos for builtin metrics to
-  // match extension protos.
-  bool skip_all_sql = std::find(extension_paths.begin(), extension_paths.end(),
-                                "") != extension_paths.end();
-  if (!skip_all_sql) {
-    for (const auto& file_to_sql : metrics::sql_metrics::kFileToSql) {
-      if (base::StartsWithAny(file_to_sql.path, sanitized_extension_paths))
-        continue;
-      tp->RegisterMetric(file_to_sql.path, file_to_sql.sql);
-    }
+  for (const auto& file_to_sql : metrics::sql_metrics::kFileToSql) {
+    tp->RegisterMetric(file_to_sql.path, file_to_sql.sql);
   }
 
-  RegisterFunction<metrics::NullIfEmpty>(db, "NULL_IF_EMPTY", 1);
-  RegisterFunction<metrics::UnwrapMetricProto>(db, "UNWRAP_METRIC_PROTO", 2);
-  RegisterFunction<metrics::RunMetric>(
-      db, "RUN_METRIC", -1,
-      std::unique_ptr<metrics::RunMetric::Context>(
-          new metrics::RunMetric::Context{tp, sql_metrics}));
+  {
+    std::unique_ptr<metrics::RunMetricContext> ctx(
+        new metrics::RunMetricContext());
+    ctx->tp = tp;
+    ctx->metrics = sql_metrics;
+    auto ret = sqlite3_create_function_v2(
+        db, "RUN_METRIC", -1, SQLITE_UTF8, ctx.release(), metrics::RunMetric,
+        nullptr, nullptr,
+        [](void* ptr) { delete static_cast<metrics::RunMetricContext*>(ptr); });
+    if (ret)
+      PERFETTO_FATAL("Error initializing RUN_METRIC");
+  }
 
-  // TODO(lalitm): migrate this over to using RegisterFunction once aggregate
-  // functions are supported.
   {
     auto ret = sqlite3_create_function_v2(
         db, "RepeatedField", 1, SQLITE_UTF8, nullptr, nullptr,
         metrics::RepeatedFieldStep, metrics::RepeatedFieldFinal, nullptr);
     if (ret)
       PERFETTO_FATAL("Error initializing RepeatedField");
+  }
+
+  {
+    auto ret = sqlite3_create_function_v2(db, "NULL_IF_EMPTY", 1, SQLITE_UTF8,
+                                          nullptr, metrics::NullIfEmpty,
+                                          nullptr, nullptr, nullptr);
+    if (ret)
+      PERFETTO_FATAL("Error initializing NULL_IF_EMPTY");
   }
 }
 
@@ -738,106 +684,6 @@ void InsertIntoTraceMetricsTable(sqlite3* db, const std::string& metric_name) {
   }
 }
 
-void IncrementCountForStmt(sqlite3_stmt* stmt,
-                           IteratorImpl::StmtMetadata* metadata) {
-  metadata->statement_count++;
-
-  // If the stmt is already done, it clearly didn't have any output.
-  if (sqlite_utils::IsStmtDone(stmt))
-    return;
-
-  // If the statement only has a single column and that column is named
-  // "suppress_query_output", treat it as a statement without output for
-  // accounting purposes. This is done so that embedders (e.g. shell) can
-  // strictly check that only the last query produces output while also
-  // providing an escape hatch for SELECT RUN_METRIC() invocations (which
-  // sadly produce output).
-  if (sqlite3_column_count(stmt) == 1 &&
-      strcmp(sqlite3_column_name(stmt, 0), "suppress_query_output") == 0) {
-    return;
-  }
-
-  // Otherwise, the statement has output and so increment the count.
-  metadata->statement_count_with_output++;
-}
-
-base::Status PrepareAndStepUntilLastValidStmt(
-    sqlite3* db,
-    const std::string& sql,
-    ScopedStmt* output_stmt,
-    IteratorImpl::StmtMetadata* metadata) {
-  ScopedStmt prev_stmt;
-  // A sql string can contain several statements. Some of them might be comment
-  // only, e.g. "SELECT 1; /* comment */; SELECT 2;". Here we process one
-  // statement on each iteration. SQLite's sqlite_prepare_v2 (wrapped by
-  // PrepareStmt) returns on each iteration a pointer to the unprocessed string.
-  //
-  // Unfortunately we cannot call PrepareStmt and tokenize all statements
-  // upfront because sqlite_prepare_v2 also semantically checks the statement
-  // against the schema. In some cases statements might depend on the execution
-  // of previous ones (e.e. CREATE VIEW x; SELECT FROM x; DELETE VIEW x;).
-  //
-  // Also, unfortunately, we need to PrepareStmt to find out if a statement is a
-  // comment or a real statement.
-  //
-  // The logic here is the following:
-  //  - We invoke PrepareStmt on each statement.
-  //  - If the statement is a comment we simply skip it.
-  //  - If the statement is valid, we step once to make sure side effects take
-  //    effect.
-  //  - If we encounter a valid statement afterwards, we step internally through
-  //    all rows of the previous one. This ensures that any further side effects
-  //    take hold *before* we step into the next statement.
-  //  - Once no further non-comment statements are encountered, we return an
-  //    iterator to the last valid statement.
-  for (const char* rem_sql = sql.c_str(); rem_sql && rem_sql[0];) {
-    ScopedStmt cur_stmt;
-    {
-      PERFETTO_TP_TRACE("QUERY_PREPARE");
-      const char* tail = nullptr;
-      RETURN_IF_ERROR(sqlite_utils::PrepareStmt(db, rem_sql, &cur_stmt, &tail));
-      rem_sql = tail;
-    }
-
-    // The only situation where we'd have an ok status but also no prepared
-    // statement is if the statement of SQL we parsed was a pure comment. In
-    // this case, just continue to the next statement.
-    if (!cur_stmt)
-      continue;
-
-    // Before stepping into |cur_stmt|, we need to finish iterating through
-    // the previous statement so we don't have two clashing statements (e.g.
-    // SELECT * FROM v and DROP VIEW v) partially stepped into.
-    if (prev_stmt)
-      RETURN_IF_ERROR(sqlite_utils::StepStmtUntilDone(prev_stmt.get()));
-
-    PERFETTO_DLOG("Executing statement: %s", sqlite3_sql(*cur_stmt));
-
-    // Now step once into |cur_stmt| so that when we prepare the next statment
-    // we will have executed any dependent bytecode in this one.
-    int err = sqlite3_step(*cur_stmt);
-    if (err != SQLITE_ROW && err != SQLITE_DONE)
-      return base::ErrStatus("%s (errcode: %d)", sqlite3_errmsg(db), err);
-
-    // Increment the neecessary counts for the statement.
-    IncrementCountForStmt(cur_stmt.get(), metadata);
-
-    // Propogate the current statement to the next iteration.
-    prev_stmt = std::move(cur_stmt);
-  }
-
-  // If we didn't manage to prepare a single statment, that means everything
-  // in the SQL was treated as a comment.
-  if (!prev_stmt)
-    return base::ErrStatus("No valid SQL to run");
-
-  // Update the output statment and column count.
-  *output_stmt = std::move(prev_stmt);
-  metadata->column_count =
-      static_cast<uint32_t>(sqlite3_column_count(output_stmt->get()));
-  return base::OkStatus();
-}
-
 }  // namespace
 
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
@@ -847,7 +693,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
 
-  if (util::IsGzipSupported())
+  if (gzip::IsGzipSupported())
     context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
 
   if (json::IsJsonSupported()) {
@@ -865,26 +711,15 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   CreateBuiltinViews(db);
   db_.reset(std::move(db));
 
-  // New style function registration.
-  RegisterFunction<Glob>(db, "glob", 2);
-  RegisterFunction<Hash>(db, "HASH", -1);
-  RegisterFunction<Demangle>(db, "DEMANGLE", 1);
-  RegisterFunction<SourceGeq>(db, "SOURCE_GEQ", -1);
-  RegisterFunction<ExportJson>(db, "EXPORT_JSON", 1, context_.storage.get(),
-                               false);
-  RegisterFunction<ExtractArg>(db, "EXTRACT_ARG", 2, context_.storage.get());
-  RegisterFunction<CreateFunction>(
-      db, "CREATE_FUNCTION", 3,
-      std::unique_ptr<CreateFunction::Context>(
-          new CreateFunction::Context{db_.get(), &create_function_state_}));
+  CreateJsonExportFunction(context_.storage.get(), db);
+  CreateHashFunction(db);
+  CreateDemangledNameFunction(db);
+  CreateLastNonNullFunction(db);
+  CreateExtractArgFunction(context_.storage.get(), db);
+  CreateSourceGeqFunction(db);
+  CreateValueAtMaxTsFunction(db);
 
-  // Old style function registration.
-  // TODO(lalitm): migrate this over to using RegisterFunction once aggregate
-  // functions are supported.
-  RegisterLastNonNullFunction(db);
-  RegisterValueAtMaxTsFunction(db);
-
-  SetupMetrics(this, *db_, &sql_metrics_, cfg.skip_builtin_metric_paths);
+  SetupMetrics(this, *db_, &sql_metrics_);
 
   // Setup the query cache.
   query_cache_.reset(new QueryCache());
@@ -916,14 +751,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
       new AncestorGenerator(AncestorGenerator::Ancestor::kSlice, &context_)));
   RegisterDynamicTable(std::unique_ptr<AncestorGenerator>(new AncestorGenerator(
       AncestorGenerator::Ancestor::kStackProfileCallsite, &context_)));
-  RegisterDynamicTable(std::unique_ptr<AncestorGenerator>(new AncestorGenerator(
-      AncestorGenerator::Ancestor::kSliceByStack, &context_)));
-  RegisterDynamicTable(
-      std::unique_ptr<DescendantGenerator>(new DescendantGenerator(
-          DescendantGenerator::Descendant::kSlice, &context_)));
-  RegisterDynamicTable(
-      std::unique_ptr<DescendantGenerator>(new DescendantGenerator(
-          DescendantGenerator::Descendant::kSliceByStack, &context_)));
+  RegisterDynamicTable(std::unique_ptr<DescendantSliceGenerator>(
+      new DescendantSliceGenerator(&context_)));
   RegisterDynamicTable(
       std::unique_ptr<ConnectedFlowGenerator>(new ConnectedFlowGenerator(
           ConnectedFlowGenerator::Mode::kDirectlyConnectedFlow, &context_)));
@@ -940,8 +769,6 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
       new ThreadStateGenerator(&context_)));
   RegisterDynamicTable(std::unique_ptr<ExperimentalAnnotatedStackGenerator>(
       new ExperimentalAnnotatedStackGenerator(&context_)));
-  RegisterDynamicTable(std::unique_ptr<ExperimentalFlatSliceGenerator>(
-      new ExperimentalFlatSliceGenerator(&context_)));
 
   // New style db-backed tables.
   RegisterDbTable(storage->arg_table());
@@ -1008,9 +835,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
 TraceProcessorImpl::~TraceProcessorImpl() = default;
 
-base::Status TraceProcessorImpl::Parse(TraceBlobView blob) {
-  bytes_parsed_ += blob.size();
-  return TraceProcessorStorageImpl::Parse(std::move(blob));
+util::Status TraceProcessorImpl::Parse(std::unique_ptr<uint8_t[]> data,
+                                       size_t size) {
+  bytes_parsed_ += size;
+  return TraceProcessorStorageImpl::Parse(std::move(data), size);
 }
 
 std::string TraceProcessorImpl::GetCurrentTraceName() {
@@ -1049,7 +877,6 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 }
 
 size_t TraceProcessorImpl::RestoreInitialTables() {
-  // Step 1: figure out what tables/views/indices we need to delete.
   std::vector<std::pair<std::string, std::string>> deletion_list;
   std::string msg = "Resetting DB to initial state, deleting table/views:";
   for (auto it = ExecuteQuery(kAllTablesQuery); it.Next();) {
@@ -1063,8 +890,6 @@ size_t TraceProcessorImpl::RestoreInitialTables() {
   }
 
   PERFETTO_LOG("%s", msg.c_str());
-
-  // Step 2: actually delete those tables/views/indices.
   for (const auto& tn : deletion_list) {
     std::string query = "DROP " + tn.first + " " + tn.second;
     auto it = ExecuteQuery(query);
@@ -1080,21 +905,31 @@ size_t TraceProcessorImpl::RestoreInitialTables() {
   return deletion_list.size();
 }
 
-Iterator TraceProcessorImpl::ExecuteQuery(const std::string& sql) {
-  PERFETTO_TP_TRACE("QUERY_EXECUTE");
+Iterator TraceProcessorImpl::ExecuteQuery(const std::string& sql,
+                                          int64_t time_queued) {
+  sqlite3_stmt* raw_stmt;
+  int err;
+  {
+    PERFETTO_TP_TRACE("QUERY_PREPARE");
+    err = sqlite3_prepare_v2(*db_, sql.c_str(), static_cast<int>(sql.size()),
+                             &raw_stmt, nullptr);
+  }
 
+  util::Status status;
+  uint32_t col_count = 0;
+  if (err != SQLITE_OK) {
+    status = util::ErrStatus("%s", sqlite3_errmsg(*db_));
+  } else {
+    col_count = static_cast<uint32_t>(sqlite3_column_count(raw_stmt));
+  }
+
+  base::TimeNanos t_start = base::GetWallTimeNs();
   uint32_t sql_stats_row =
-      context_.storage->mutable_sql_stats()->RecordQueryBegin(
-          sql, base::GetWallTimeNs().count());
-
-  ScopedStmt stmt;
-  IteratorImpl::StmtMetadata metadata;
-  base::Status status =
-      PrepareAndStepUntilLastValidStmt(*db_, sql, &stmt, &metadata);
-  PERFETTO_DCHECK((status.ok() && stmt) || (!status.ok() && !stmt));
+      context_.storage->mutable_sql_stats()->RecordQueryBegin(sql, time_queued,
+                                                              t_start.count());
 
   std::unique_ptr<IteratorImpl> impl(new IteratorImpl(
-      this, *db_, status, std::move(stmt), std::move(metadata), sql_stats_row));
+      this, *db_, ScopedStmt(raw_stmt), col_count, status, sql_stats_row));
   return Iterator(std::move(impl));
 }
 
@@ -1114,7 +949,7 @@ bool TraceProcessorImpl::IsRootMetricField(const std::string& metric_name) {
   return field_idx != nullptr;
 }
 
-base::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
+util::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
                                                 const std::string& sql) {
   std::string stripped_sql;
   for (base::StringSplitter sp(sql, '\n'); sp.Next();) {
@@ -1131,7 +966,7 @@ base::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
       [&path](const metrics::SqlMetricFile& m) { return m.path == path; });
   if (it != sql_metrics_.end()) {
     it->sql = stripped_sql;
-    return base::OkStatus();
+    return util::OkStatus();
   }
 
   auto sep_idx = path.rfind('/');
@@ -1140,7 +975,7 @@ base::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
 
   auto sql_idx = basename.rfind(".sql");
   if (sql_idx == std::string::npos) {
-    return base::ErrStatus("Unable to find .sql extension for metric");
+    return util::ErrStatus("Unable to find .sql extension for metric");
   }
   auto no_ext_name = basename.substr(0, sql_idx);
 
@@ -1151,41 +986,16 @@ base::Status TraceProcessorImpl::RegisterMetric(const std::string& path,
   if (IsRootMetricField(no_ext_name)) {
     metric.proto_field_name = no_ext_name;
     metric.output_table_name = no_ext_name + "_output";
-
-    auto field_it_and_inserted =
-        proto_field_to_sql_metric_path_.emplace(*metric.proto_field_name, path);
-    if (!field_it_and_inserted.second) {
-      // We already had a metric with this field name in the map. However, if
-      // this was the case, we should have found the metric in
-      // |path_to_sql_metric_file_| above if we are simply overriding the
-      // metric. Return an error since this means we have two different SQL
-      // files which are trying to output the same metric.
-      const auto& prev_path = field_it_and_inserted.first->second;
-      PERFETTO_DCHECK(prev_path != path);
-      return base::ErrStatus(
-          "RegisterMetric Error: Metric paths %s (which is already registered) "
-          "and %s are both trying to output the proto field %s",
-          prev_path.c_str(), path.c_str(), metric.proto_field_name->c_str());
-    }
-
     InsertIntoTraceMetricsTable(*db_, no_ext_name);
   }
 
   sql_metrics_.emplace_back(metric);
-  return base::OkStatus();
+  return util::OkStatus();
 }
 
-base::Status TraceProcessorImpl::ExtendMetricsProto(const uint8_t* data,
+util::Status TraceProcessorImpl::ExtendMetricsProto(const uint8_t* data,
                                                     size_t size) {
-  return ExtendMetricsProto(data, size, /*skip_prefixes*/ {});
-}
-
-base::Status TraceProcessorImpl::ExtendMetricsProto(
-    const uint8_t* data,
-    size_t size,
-    const std::vector<std::string>& skip_prefixes) {
-  base::Status status =
-      pool_.AddFromFileDescriptorSet(data, size, skip_prefixes);
+  util::Status status = pool_.AddFromFileDescriptorSet(data, size);
   if (!status.ok())
     return status;
 
@@ -1194,32 +1004,42 @@ base::Status TraceProcessorImpl::ExtendMetricsProto(
     // into a function name of the form (TraceMetrics_SubMetric).
     auto fn_name = desc.full_name().substr(desc.package_name().size() + 1);
     std::replace(fn_name.begin(), fn_name.end(), '.', '_');
-    RegisterFunction<metrics::BuildProto>(
-        db_.get(), fn_name.c_str(), -1,
-        std::unique_ptr<metrics::BuildProto::Context>(
-            new metrics::BuildProto::Context{this, &pool_, &desc}));
+
+    std::unique_ptr<metrics::BuildProtoContext> ctx(
+        new metrics::BuildProtoContext());
+    ctx->tp = this;
+    ctx->pool = &pool_;
+    ctx->desc = &desc;
+
+    auto ret = sqlite3_create_function_v2(
+        *db_, fn_name.c_str(), -1, SQLITE_UTF8, ctx.release(),
+        metrics::BuildProto, nullptr, nullptr, [](void* ptr) {
+          delete static_cast<metrics::BuildProtoContext*>(ptr);
+        });
+    if (ret != SQLITE_OK)
+      return util::ErrStatus("%s", sqlite3_errmsg(*db_));
   }
-  return base::OkStatus();
+  return util::OkStatus();
 }
 
-base::Status TraceProcessorImpl::ComputeMetric(
+util::Status TraceProcessorImpl::ComputeMetric(
     const std::vector<std::string>& metric_names,
     std::vector<uint8_t>* metrics_proto) {
   auto opt_idx = pool_.FindDescriptorIdx(".perfetto.protos.TraceMetrics");
   if (!opt_idx.has_value())
-    return base::Status("Root metrics proto descriptor not found");
+    return util::Status("Root metrics proto descriptor not found");
 
   const auto& root_descriptor = pool_.descriptors()[opt_idx.value()];
-  return metrics::ComputeMetrics(this, metric_names, sql_metrics_, pool_,
+  return metrics::ComputeMetrics(this, metric_names, sql_metrics_,
                                  root_descriptor, metrics_proto);
 }
 
-base::Status TraceProcessorImpl::ComputeMetricText(
+util::Status TraceProcessorImpl::ComputeMetricText(
     const std::vector<std::string>& metric_names,
     TraceProcessor::MetricResultFormat format,
     std::string* metrics_string) {
   std::vector<uint8_t> metrics_proto;
-  base::Status status = ComputeMetric(metric_names, &metrics_proto);
+  util::Status status = ComputeMetric(metric_names, &metrics_proto);
   if (!status.ok())
     return status;
   switch (format) {
@@ -1245,7 +1065,7 @@ void TraceProcessorImpl::EnableMetatrace() {
   metatrace::Enable();
 }
 
-base::Status TraceProcessorImpl::DisableAndReadMetatrace(
+util::Status TraceProcessorImpl::DisableAndReadMetatrace(
     std::vector<uint8_t>* trace_proto) {
   protozero::HeapBuffered<protos::pbzero::Trace> trace;
   metatrace::DisableAndReadBuffer([&trace](metatrace::Record* record) {
@@ -1270,7 +1090,7 @@ base::Status TraceProcessorImpl::DisableAndReadMetatrace(
     }
   });
   *trace_proto = trace.SerializeAsArray();
-  return base::OkStatus();
+  return util::OkStatus();
 }
 
 }  // namespace trace_processor

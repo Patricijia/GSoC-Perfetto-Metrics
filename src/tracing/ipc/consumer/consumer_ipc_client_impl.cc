@@ -16,9 +16,8 @@
 
 #include "src/tracing/ipc/consumer/consumer_ipc_client_impl.h"
 
+#include <inttypes.h>
 #include <string.h>
-
-#include <cinttypes>
 
 #include "perfetto/base/task_runner.h"
 #include "perfetto/ext/ipc/client.h"

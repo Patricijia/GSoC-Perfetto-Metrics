@@ -16,7 +16,7 @@
 
 #include "src/trace_processor/importers/proto/gpu_event_parser.h"
 
-#include <cinttypes>
+#include <inttypes.h>
 
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/protozero/field.h"
@@ -238,8 +238,9 @@ const StringId GpuEventParser::GetFullStageName(
     if (stage_id < gpu_render_stage_ids_.size()) {
       stage_name = gpu_render_stage_ids_[static_cast<size_t>(stage_id)].first;
     } else {
-      base::StackString<64> name("render stage(%" PRIu64 ")", stage_id);
-      stage_name = context_->storage->InternString(name.string_view());
+      char buffer[64];
+      snprintf(buffer, sizeof(buffer), "render stage(%" PRIu64 ")", stage_id);
+      stage_name = context_->storage->InternString(buffer);
     }
   }
   return stage_name;
