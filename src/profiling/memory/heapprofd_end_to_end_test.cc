@@ -19,7 +19,6 @@
 #include <vector>
 
 #include <fcntl.h>
-#include <stdint.h>
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -312,9 +311,6 @@ void __attribute__((constructor(1024))) RunAccurateMalloc() {
 
   // Wait around so we can verify it did't crash.
   for (;;) {
-    // Call sleep, otherwise an empty busy loop is undefined behavior:
-    // http://en.cppreference.com/w/cpp/language/memory_model#Progress_guarantee
-    sleep(1);
   }
 }
 
@@ -354,9 +350,6 @@ void __attribute__((noreturn)) RunAccurateMallocWithVforkCommon() {
 
   // Wait around so we can verify it did't crash.
   for (;;) {
-    // Call sleep, otherwise an empty busy loop is undefined behavior:
-    // http://en.cppreference.com/w/cpp/language/memory_model#Progress_guarantee
-    sleep(1);
   }
 }
 
@@ -393,9 +386,6 @@ void __attribute__((constructor(1024))) RunAccurateSample() {
 
   // Wait around so we can verify it did't crash.
   for (;;) {
-    // Call sleep, otherwise an empty busy loop is undefined behavior:
-    // http://en.cppreference.com/w/cpp/language/memory_model#Progress_guarantee
-    sleep(1);
   }
 }
 
@@ -464,7 +454,6 @@ void __attribute__((constructor(1024))) RunCustomLifetime() {
   static std::atomic<bool> disabled{false};
   static std::atomic<uint64_t> sampling_interval;
 
-  static uint32_t other_heap_id = 0;
   auto enabled_callback = [](void*,
                              const AHeapProfileEnableCallbackInfo* info) {
     sampling_interval =
@@ -472,8 +461,6 @@ void __attribute__((constructor(1024))) RunCustomLifetime() {
     initialized = true;
   };
   auto disabled_callback = [](void*, const AHeapProfileDisableCallbackInfo*) {
-    PERFETTO_CHECK(other_heap_id);
-    AHeapProfile_reportFree(other_heap_id, 0);
     disabled = true;
   };
   static uint32_t heap_id =
@@ -482,7 +469,6 @@ void __attribute__((constructor(1024))) RunCustomLifetime() {
                                        enabled_callback, nullptr),
           disabled_callback, nullptr));
 
-  other_heap_id = AHeapProfile_registerHeap(AHeapInfo_create("othertest"));
   ChildFinishHandshake();
 
   // heapprofd_client needs malloc to see the signal.
@@ -502,9 +488,6 @@ void __attribute__((constructor(1024))) RunCustomLifetime() {
 
   // Wait around so we can verify it didn't crash.
   for (;;) {
-    // Call sleep, otherwise an empty busy loop is undefined behavior:
-    // http://en.cppreference.com/w/cpp/language/memory_model#Progress_guarantee
-    sleep(1);
   }
 }
 
@@ -1153,7 +1136,6 @@ TEST_P(HeapprofdEndToEnd, CustomLifetime) {
     cfg->set_sampling_interval_bytes(1000000);
     cfg->add_pid(pid);
     cfg->add_heaps("test");
-    cfg->add_heaps("othertest");
   });
 
   auto helper = Trace(trace_config);
@@ -1762,10 +1744,6 @@ TEST_P(HeapprofdEndToEnd, NativeProfilingActiveAtProcessExit) {
   EXPECT_GT(total_allocated, 0u);
 }
 
-// Disable these tests when running with sanitizers. They (double) fork and that
-// seems to cause flaky crashes with sanitizers.
-#if !defined(ADDRESS_SANITIZER) && !defined(THREAD_SANITIZER) && \
-    !defined(MEMORY_SANITIZER) && !defined(LEAK_SANITIZER)
 // On in-tree Android, we use the system heapprofd in fork or central mode.
 // For Linux and out-of-tree Android, we statically include a copy of
 // heapprofd and use that. This one does not support intercepting malloc.
@@ -1774,7 +1752,7 @@ TEST_P(HeapprofdEndToEnd, NativeProfilingActiveAtProcessExit) {
 #error "Need to start daemons for Linux test."
 #endif
 
-INSTANTIATE_TEST_CASE_P(Run,
+INSTANTIATE_TEST_CASE_P(DISABLED_Run,
                         HeapprofdEndToEnd,
                         Values(std::make_tuple(TestMode::kStatic,
                                                AllocatorMode::kCustom)),
@@ -1787,8 +1765,6 @@ INSTANTIATE_TEST_CASE_P(
            std::make_tuple(TestMode::kCentral, AllocatorMode::kCustom)),
     TestSuffix);
 #endif
-#endif
-
 
 }  // namespace
 }  // namespace profiling

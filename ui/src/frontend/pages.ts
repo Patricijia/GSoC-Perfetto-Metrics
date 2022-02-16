@@ -16,7 +16,6 @@ import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
 
-import {onClickCopy} from './clipboard';
 import {CookieConsent} from './cookie_consent';
 import {globals} from './globals';
 import {Sidebar} from './sidebar';
@@ -26,10 +25,9 @@ function renderPermalink(): m.Children {
   const permalink = globals.state.permalink;
   if (!permalink.requestId || !permalink.hash) return null;
   const url = `${self.location.origin}/#!/?s=${permalink.hash}`;
-  const linkProps = {title: 'Click to copy the URL', onclick: onClickCopy(url)};
 
   return m('.alert-permalink', [
-    m('div', 'Permalink: ', m(`a[href=${url}]`, linkProps, url)),
+    m('div', 'Permalink: ', m(`a[href=${url}]`, url)),
     m('button',
       {
         onclick: () => globals.dispatch(Actions.clearPermalink({})),
@@ -47,18 +45,17 @@ class Alerts implements m.ClassComponent {
 /**
  * Wrap component with common UI elements (nav bar etc).
  */
-export function createPage(component: m.Component<PageAttrs>):
-    m.Component<PageAttrs> {
+export function createPage(component: m.Component): m.Component {
   const pageComponent = {
-    view({attrs}: m.Vnode<PageAttrs>) {
+    view() {
       const children = [
         m(Sidebar),
         m(Topbar),
         m(Alerts),
-        m(component, attrs),
+        m(component),
         m(CookieConsent),
       ];
-      if (globals.state.perfDebug) {
+      if (globals.frontendLocalState.perfDebug) {
         children.push(m('.perf-stats'));
       }
       return children;
@@ -66,8 +63,4 @@ export function createPage(component: m.Component<PageAttrs>):
   };
 
   return pageComponent;
-}
-
-export interface PageAttrs {
-  subpage?: string;
 }

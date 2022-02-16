@@ -185,7 +185,7 @@ base::Optional<FrameId> SequenceStackProfileTracker::AddFrame(
       cur_id = frames->Insert(row).id;
       context_->global_stack_profile_tracker->InsertFrameRow(
           mapping_id, static_cast<uint64_t>(row.rel_pc), *cur_id);
-      if (base::Contains(name, '.')) {
+      if (name.find('.') != std::string::npos) {
         // Java frames always contain a '.'
         base::Optional<std::string> package =
             PackageFromLocation(context_->storage.get(), mapping_name);

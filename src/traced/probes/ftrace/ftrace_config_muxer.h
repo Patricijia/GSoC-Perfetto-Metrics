@@ -28,12 +28,6 @@
 
 namespace perfetto {
 
-namespace protos {
-namespace pbzero {
-enum FtraceClock : int32_t;
-}  // namespace pbzero
-}  // namespace protos
-
 // State held by the muxer per data source, used to parse ftrace according to
 // that data source's config.
 struct FtraceDataSourceConfig {
@@ -59,7 +53,7 @@ struct FtraceDataSourceConfig {
   std::vector<std::string> atrace_apps;
   std::vector<std::string> atrace_categories;
 
-  // When enabled will turn on the kallsyms symbolizer in CpuReader.
+  // When enabled will turn on the the kallsyms symbolizer in CpuReader.
   const bool symbolize_ksyms;
 };
 
@@ -115,10 +109,6 @@ class FtraceConfigMuxer {
     SetupClock(request);
   }
 
-  protos::pbzero::FtraceClock ftrace_clock() const {
-    return current_state_.ftrace_clock;
-  }
-
   std::set<GroupAndName> GetFtraceEventsForTesting(
       const FtraceConfig& request,
       const ProtoTranslationTable* table) {
@@ -140,7 +130,6 @@ class FtraceConfigMuxer {
     std::vector<std::string> atrace_categories;
     size_t cpu_buffer_size_pages = 0;
     bool atrace_on = false;
-    protos::pbzero::FtraceClock ftrace_clock{};
   };
 
   FtraceConfigMuxer(const FtraceConfigMuxer&) = delete;

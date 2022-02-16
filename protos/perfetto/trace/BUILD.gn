@@ -76,7 +76,6 @@ perfetto_proto_library("non_minimal_@TYPE@") {
     "cpp",
     "lite",
     "zero",
-    "source_set",
   ]
   deps = [
     ":minimal_@TYPE@",
@@ -110,11 +109,12 @@ perfetto_proto_library("merged_trace") {
   sources = [ "perfetto_trace.proto" ]
 }
 
-perfetto_proto_library("descriptor") {
-  proto_generators = [ "descriptor" ]
-  generate_descriptor = "trace.descriptor"
-  sources = [ "trace.proto" ]
-  deps = [ ":non_minimal_source_set" ]
+if (perfetto_build_standalone) {
+  perfetto_proto_library("descriptor") {
+    proto_generators = [ "descriptor" ]
+    generate_descriptor = "trace.descriptor"
+    sources = [ "trace.proto" ]
+  }
 }
 
 # This target exports perfetto trace protos allowing both host and device

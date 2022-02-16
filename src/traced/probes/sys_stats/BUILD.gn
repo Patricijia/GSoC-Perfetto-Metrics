@@ -26,7 +26,6 @@ source_set("sys_stats") {
     "../../../../protos/perfetto/trace:zero",
     "../../../../protos/perfetto/trace/sys_stats:zero",
     "../../../base",
-    "../common",
   ]
   sources = [
     "sys_stats_data_source.cc",
@@ -44,7 +43,6 @@ perfetto_unittest_source_set("unittests") {
     "../../../../protos/perfetto/trace/sys_stats:cpp",
     "../../../../src/base:test_support",
     "../../../../src/tracing/test:test_support",
-    "../common:test_support",
   ]
   sources = [ "sys_stats_data_source_unittest.cc" ]
 }

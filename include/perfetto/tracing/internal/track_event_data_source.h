@@ -35,6 +35,11 @@
 
 namespace perfetto {
 
+struct TraceTimestamp {
+  protos::pbzero::BuiltinClock clock_id;
+  uint64_t nanoseconds;
+};
+
 // This template provides a way to convert an abstract timestamp into the trace
 // clock timebase in nanoseconds. By specialising this template and defining
 // static ConvertTimestampToTraceTimeNs function in it the user can register
@@ -52,15 +57,6 @@ struct TraceTimestampTraits<uint64_t> {
   static inline TraceTimestamp ConvertTimestampToTraceTimeNs(
       const uint64_t& timestamp) {
     return {internal::TrackEventInternal::GetClockId(), timestamp};
-  }
-};
-
-// A pass-through implementation for the trace timestamp structure.
-template <>
-struct TraceTimestampTraits<TraceTimestamp> {
-  static inline TraceTimestamp ConvertTimestampToTraceTimeNs(
-      const TraceTimestamp& timestamp) {
-    return timestamp;
   }
 };
 
@@ -444,16 +440,19 @@ class TrackEventDataSource
             return;
           }
 
+          // TODO(skyostil): Support additional clock ids.
           TraceTimestamp trace_timestamp = ::perfetto::TraceTimestampTraits<
               TimestampType>::ConvertTimestampToTraceTimeNs(timestamp);
+          PERFETTO_DCHECK(trace_timestamp.clock_id ==
+                          TrackEventInternal::GetClockId());
 
           // Make sure incremental state is valid.
           TraceWriterBase* trace_writer = ctx.tls_inst_->trace_writer.get();
           TrackEventIncrementalState* incr_state = ctx.GetIncrementalState();
           if (incr_state->was_cleared) {
             incr_state->was_cleared = false;
-            TrackEventInternal::ResetIncrementalState(trace_writer,
-                                                      trace_timestamp);
+            TrackEventInternal::ResetIncrementalState(
+                trace_writer, trace_timestamp.nanoseconds);
           }
 
           // Write the track descriptor before any event on the track.
@@ -466,7 +465,7 @@ class TrackEventDataSource
           {
             auto event_ctx = TrackEventInternal::WriteEvent(
                 trace_writer, incr_state, static_category, event_name, type,
-                trace_timestamp);
+                trace_timestamp.nanoseconds);
             // Write dynamic categories (except for events that don't require
             // categories). For counter events, the counter name (and optional
             // category) is stored as part of the track descriptor instead being

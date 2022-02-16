@@ -16,7 +16,7 @@
 
 #include "src/kallsyms/lazy_kernel_symbolizer.h"
 
-#include <cinttypes>
+#include <inttypes.h>
 
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/temp_file.h"

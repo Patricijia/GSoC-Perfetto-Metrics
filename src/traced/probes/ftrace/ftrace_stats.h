@@ -17,7 +17,8 @@
 #ifndef SRC_TRACED_PROBES_FTRACE_FTRACE_STATS_H_
 #define SRC_TRACED_PROBES_FTRACE_FTRACE_STATS_H_
 
-#include <cinttypes>
+#include <inttypes.h>
+
 #include <vector>
 
 namespace perfetto {
