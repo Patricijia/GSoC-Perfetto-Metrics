@@ -20,7 +20,6 @@ export interface Config {
   maxDepth: number;
   namespace: string;
   trackId: number;
-  isThreadSlice?: boolean;
 }
 
 export interface Data extends TrackData {
@@ -34,5 +33,4 @@ export interface Data extends TrackData {
   colors?: Uint16Array;  // Index into strings.
   isInstant: Uint16Array;
   isIncomplete: Uint16Array;
-  cpuTimeRatio?: Float64Array;
 }

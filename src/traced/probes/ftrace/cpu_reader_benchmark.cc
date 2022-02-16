@@ -328,8 +328,7 @@ static void BM_ParsePageFullOfSchedSwitch(benchmark::State& state) {
   while (state.KeepRunning()) {
     writer.Reset(&stream);
 
-    std::unique_ptr<CompactSchedBuffer> compact_buffer(
-        new CompactSchedBuffer());
+    CompactSchedBuffer compact_buffer;
     const uint8_t* parse_pos = page.get();
     perfetto::base::Optional<CpuReader::PageHeader> page_header =
         CpuReader::ParsePageHeader(&parse_pos, table->page_header_size_len());
@@ -338,7 +337,7 @@ static void BM_ParsePageFullOfSchedSwitch(benchmark::State& state) {
       return;
 
     CpuReader::ParsePagePayload(parse_pos, &page_header.value(), table,
-                                &ds_config, compact_buffer.get(), &writer,
+                                &ds_config, &compact_buffer, &writer,
                                 &metadata);
 
     metadata.Clear();

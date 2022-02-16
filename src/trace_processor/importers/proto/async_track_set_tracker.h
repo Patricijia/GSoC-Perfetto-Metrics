@@ -17,6 +17,8 @@
 #ifndef SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_ASYNC_TRACK_SET_TRACKER_H_
 #define SRC_TRACE_PROCESSOR_IMPORTERS_PROTO_ASYNC_TRACK_SET_TRACKER_H_
 
+#include <unordered_map>
+
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
@@ -42,7 +44,7 @@ class AsyncTrackSetTrackerUnittest;
 // The intended usage of this class is for callers to first call one of the
 // Intern* methods to obtain a TrackSetId followed by Begin/End just before
 // calling into SliceTracker's Begin/End respectively. For example:
-//  TrackSetId set_id = track_set_tracker->InternProcessTrackSet(upid, name);
+//  TrackSetId set_id = track_set_tracker->InternAndroidSet(upid, name);
 //  if (event.begin) {
 //    TrackId id = track_set_tracker->Begin(set_id, cookie);
 //    slice_tracker->Begin(ts, id, ...)
@@ -61,17 +63,17 @@ class AsyncTrackSetTracker {
   // Interns a set of global async slice tracks associated with the given name.
   TrackSetId InternGlobalTrackSet(StringId name);
 
-  // Interns a set of process async slice tracks associated with the given name
-  // and upid.
-  TrackSetId InternProcessTrackSet(UniquePid, StringId name);
-
-  // Interns a set of Android legacy unnesteable async slice tracks
-  // associated with the given upid and name.
+  // Interns a set of Android async slice tracks associated with the given
+  // upid and name.
   // Scoped is *not* supported for this track set type.
-  TrackSetId InternAndroidLegacyUnnestableTrackSet(UniquePid, StringId name);
+  TrackSetId InternAndroidSet(UniquePid, StringId name);
 
   // Starts a new slice on the given async track set which has the given cookie.
   TrackId Begin(TrackSetId id, int64_t cookie);
+
+  // Interns the expected and actual timeline tracks coming from FrameTimeline
+  // producer for the associated upid.
+  TrackSetId InternFrameTimelineSet(UniquePid, StringId name);
 
   // Ends a new slice on the given async track set which has the given cookie.
   TrackId End(TrackSetId id, int64_t cookie);
@@ -86,11 +88,21 @@ class AsyncTrackSetTracker {
  private:
   friend class AsyncTrackSetTrackerUnittest;
 
-  struct ProcessTuple {
+  struct AndroidTuple {
     UniquePid upid;
     StringId name;
 
-    friend bool operator<(const ProcessTuple& l, const ProcessTuple& r) {
+    friend bool operator<(const AndroidTuple& l, const AndroidTuple& r) {
+      return std::tie(l.upid, l.name) < std::tie(r.upid, r.name);
+    }
+  };
+
+  struct FrameTimelineTuple {
+    UniquePid upid;
+    StringId name;
+
+    friend bool operator<(const FrameTimelineTuple& l,
+                          const FrameTimelineTuple& r) {
       return std::tie(l.upid, l.name) < std::tie(r.upid, r.name);
     }
   };
@@ -115,8 +127,8 @@ class AsyncTrackSetTracker {
 
   enum class TrackSetType {
     kGlobal,
-    kProcess,
-    kAndroidLegacyUnnestable,
+    kAndroid,
+    kFrameTimeline,
   };
 
   struct TrackState {
@@ -140,11 +152,11 @@ class AsyncTrackSetTracker {
   struct TrackSet {
     TrackSetType type;
     union {
-      // Only set when |type| == |TrackSetType::kGlobal|.
       StringId global_track_name;
-      // Only set when |type| == |TrackSetType::kFrameTimeline| or
-      // |TrackSetType::kAndroidLegacyUnnestable|.
-      ProcessTuple process_tuple;
+      // Only set when |type| == |TrackSetType::kAndroid|.
+      AndroidTuple android_tuple;
+      // Only set when |type| == |TrackSetType::kFrameTimeline|.
+      FrameTimelineTuple frame_timeline_tuple;
     };
     NestingBehaviour nesting_behaviour;
     std::vector<TrackState> tracks;
@@ -152,8 +164,8 @@ class AsyncTrackSetTracker {
 
   TrackSetId CreateUnnestableTrackSetForTesting(UniquePid upid, StringId name) {
     AsyncTrackSetTracker::TrackSet set;
-    set.process_tuple = ProcessTuple{upid, name};
-    set.type = AsyncTrackSetTracker::TrackSetType::kAndroidLegacyUnnestable;
+    set.android_tuple = AndroidTuple{upid, name};
+    set.type = AsyncTrackSetTracker::TrackSetType::kAndroid;
     set.nesting_behaviour = NestingBehaviour::kUnnestable;
     track_sets_.emplace_back(set);
     return static_cast<TrackSetId>(track_sets_.size() - 1);
@@ -170,11 +182,9 @@ class AsyncTrackSetTracker {
   TrackId CreateTrackForSet(const TrackSet& set);
 
   std::map<StringId, TrackSetId> global_track_set_ids_;
-  std::map<ProcessTuple, TrackSetId> process_track_set_ids_;
-  std::map<ProcessTuple, TrackSetId> android_legacy_unnestable_track_set_ids_;
+  std::map<AndroidTuple, TrackSetId> android_track_set_ids_;
+  std::map<FrameTimelineTuple, TrackSetId> frame_timeline_track_set_ids_;
   std::vector<TrackSet> track_sets_;
-
-  const StringId android_source_ = kNullStringId;
 
   TraceProcessorContext* const context_;
 };

@@ -16,7 +16,6 @@
 
 #include "perfetto/trace_processor/trace_processor_storage.h"
 
-#include "perfetto/trace_processor/trace_blob_view.h"
 #include "src/trace_processor/trace_processor_storage_impl.h"
 
 namespace perfetto {
@@ -30,11 +29,6 @@ std::unique_ptr<TraceProcessorStorage> TraceProcessorStorage::CreateInstance(
 }
 
 TraceProcessorStorage::~TraceProcessorStorage() = default;
-
-util::Status TraceProcessorStorage::Parse(std::unique_ptr<uint8_t[]> buf,
-                                          size_t size) {
-  return Parse(TraceBlobView(TraceBlob::TakeOwnership(std::move(buf), size)));
-}
 
 }  // namespace trace_processor
 }  // namespace perfetto

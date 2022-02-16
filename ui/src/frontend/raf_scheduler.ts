@@ -115,10 +115,6 @@ export class RafScheduler {
     }
   }
 
-  get hasPendingRedraws(): boolean {
-    return this.isRedrawing || this.hasScheduledNextFrame;
-  }
-
   private syncCanvasRedraw(nowMs: number) {
     const redrawStart = debugNow();
     if (this.isRedrawing) return;

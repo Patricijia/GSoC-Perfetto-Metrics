@@ -46,7 +46,6 @@ namespace metadata {
   F(system_release,                    KeyType::kSingle,  Variadic::kString), \
   F(system_machine,                    KeyType::kSingle,  Variadic::kString), \
   F(android_build_fingerprint,         KeyType::kSingle,  Variadic::kString), \
-  F(android_sdk_version,               KeyType::kSingle,  Variadic::kInt),    \
   F(trace_size_bytes,                  KeyType::kSingle,  Variadic::kInt),    \
   F(all_data_source_started_ns,        KeyType::kSingle,  Variadic::kInt),    \
   F(tracing_started_ns,                KeyType::kSingle,  Variadic::kInt),    \

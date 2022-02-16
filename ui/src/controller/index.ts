@@ -12,23 +12,47 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import '../gen/all_tracks';
+import '../tracks/all_controller';
 
-import {assertTrue} from '../base/logging';
-import {ControllerWorkerInitMessage} from '../common/worker_messages';
+import {reportError, setErrorHandler} from '../base/logging';
+import {Remote} from '../base/remote';
+import {warmupWasmEngine} from '../common/wasm_engine_proxy';
+
 import {AppController} from './app_controller';
 import {globals} from './globals';
 
-let initialized = false;
-export function initController(init: ControllerWorkerInitMessage) {
-  assertTrue(!initialized);
-  initialized = true;
-  const controllerPort = init.controllerPort;
-  const extensionPort = init.extensionPort;
-  controllerPort.onmessage = ({data}) => globals.patchState(data);
-  globals.initialize(new AppController(extensionPort));
+interface OnMessageArg {
+  data: {
+    frontendPort: MessagePort; controllerPort: MessagePort;
+    extensionPort: MessagePort;
+    errorReportingPort: MessagePort;
+  };
 }
 
+function main() {
+  self.addEventListener('error', e => reportError(e));
+  self.addEventListener('unhandledrejection', e => reportError(e));
+  warmupWasmEngine();
+  let initialized = false;
+  self.onmessage = ({data}: OnMessageArg) => {
+    if (initialized) {
+      console.error('Already initialized');
+      return;
+    }
+    initialized = true;
+    const frontendPort = data.frontendPort;
+    const controllerPort = data.controllerPort;
+    const extensionPort = data.extensionPort;
+    const errorReportingPort = data.errorReportingPort;
+    setErrorHandler((err: string) => errorReportingPort.postMessage(err));
+    const frontend = new Remote(frontendPort);
+    controllerPort.onmessage = ({data}) => globals.dispatch(data);
+
+    globals.initialize(new AppController(extensionPort), frontend);
+  };
+}
+
+main();
 
 // For devtools-based debugging.
-(self as {} as {controllerGlobals: {}}).controllerGlobals = globals;
+(self as {} as {globals: {}}).globals = globals;

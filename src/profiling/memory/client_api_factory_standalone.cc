@@ -16,7 +16,6 @@
 
 #include "src/profiling/memory/client_api_factory.h"
 
-#include "perfetto/base/logging.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/unix_socket.h"
 #include "perfetto/ext/base/unix_task_runner.h"
@@ -108,11 +107,6 @@ void StartHeapprofdIfStatic() {
 
   daemon(/* nochdir= */ 0, /* noclose= */ 1);
 
-  // On debug builds, we want to turn on crash reporting for heapprofd.
-#if PERFETTO_BUILDFLAG(PERFETTO_STDERR_CRASH_DUMP)
-  base::EnableStacktraceOnCrashForDebug();
-#endif
-
   cli_sock.ReleaseFd();
 
   // Leave stderr open for logging.
@@ -155,9 +149,6 @@ void StartHeapprofdIfStatic() {
         }
       });
   task_runner.Run();
-  // We currently do not Quit the task_runner, but if we ever do it will be
-  // very hard to debug if we don't exit here.
-  exit(0);
 }
 
 // This is called by AHeapProfile_initSession (client_api.cc) to construct a

@@ -130,12 +130,6 @@ std::string FtraceProcfs::ReadEventFormat(const std::string& group,
   return ReadFileIntoString(path);
 }
 
-std::string FtraceProcfs::ReadEventTrigger(const std::string& group,
-                                           const std::string& name) const {
-  std::string path = root_ + "events/" + group + "/" + name + "/trigger";
-  return ReadFileIntoString(path);
-}
-
 std::string FtraceProcfs::ReadPrintkFormats() const {
   std::string path = root_ + "printk_formats";
   return ReadFileIntoString(path);
@@ -158,11 +152,6 @@ std::vector<std::string> FtraceProcfs::ReadEnabledEvents() {
 std::string FtraceProcfs::ReadPageHeaderFormat() const {
   std::string path = root_ + "events/header_page";
   return ReadFileIntoString(path);
-}
-
-base::ScopedFile FtraceProcfs::OpenCpuStats(size_t cpu) const {
-  std::string path = root_ + "per_cpu/cpu" + std::to_string(cpu) + "/stats";
-  return base::OpenFile(path, O_RDONLY);
 }
 
 std::string FtraceProcfs::ReadCpuStats(size_t cpu) const {
@@ -294,7 +283,9 @@ std::set<std::string> FtraceProcfs::AvailableClocks() {
 bool FtraceProcfs::WriteNumberToFile(const std::string& path, size_t value) {
   // 2^65 requires 20 digits to write.
   char buf[21];
-  snprintf(buf, sizeof(buf), "%zu", value);
+  int res = snprintf(buf, 21, "%zu", value);
+  if (res < 0 || res >= 21)
+    return false;
   return WriteToFile(path, std::string(buf));
 }
 

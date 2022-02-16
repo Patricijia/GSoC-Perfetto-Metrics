@@ -16,7 +16,6 @@
 
 #include "src/trace_processor/importers/default_modules.h"
 #include "src/trace_processor/importers/ftrace/ftrace_module.h"
-#include "src/trace_processor/importers/proto/android_camera_event_module.h"
 #include "src/trace_processor/importers/proto/chrome_system_probes_module.h"
 #include "src/trace_processor/importers/proto/memory_tracker_snapshot_module.h"
 #include "src/trace_processor/importers/proto/metadata_module.h"
@@ -39,7 +38,6 @@ void RegisterDefaultModules(TraceProcessorContext* context) {
   context->modules.emplace_back(new TrackEventModule(context));
   context->modules.emplace_back(new ProfileModule(context));
   context->modules.emplace_back(new MetadataModule(context));
-  context->modules.emplace_back(new AndroidCameraEventModule(context));
 }
 
 }  // namespace trace_processor
