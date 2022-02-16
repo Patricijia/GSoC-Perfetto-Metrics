@@ -42,7 +42,6 @@
 #include "src/traced/probes/metatrace/metatrace_data_source.h"
 #include "src/traced/probes/packages_list/packages_list_data_source.h"
 #include "src/traced/probes/power/android_power_data_source.h"
-#include "src/traced/probes/power/linux_power_sysfs_data_source.h"
 #include "src/traced/probes/probes_data_source.h"
 #include "src/traced/probes/ps/process_stats_data_source.h"
 #include "src/traced/probes/sys_stats/sys_stats_data_source.h"
@@ -72,7 +71,6 @@ ProbesDataSource::Descriptor const* const kAllDataSources[]{
     &InodeFileDataSource::descriptor,            //
     &SysStatsDataSource::descriptor,             //
     &AndroidPowerDataSource::descriptor,         //
-    &LinuxPowerSysfsDataSource::descriptor,      //
     &AndroidLogDataSource::descriptor,           //
     &PackagesListDataSource::descriptor,         //
     &MetatraceDataSource::descriptor,            //
@@ -124,11 +122,6 @@ void ProbesProducer::OnConnect() {
       proto_desc.set_handles_incremental_state_clear(true);
     endpoint_->RegisterDataSource(proto_desc);
   }
-
-  // Used by tracebox to synchronize with traced_probes being registered.
-  if (all_data_sources_registered_cb_) {
-    endpoint_->Sync(all_data_sources_registered_cb_);
-  }
 }
 
 void ProbesProducer::OnDisconnect() {
@@ -178,8 +171,6 @@ void ProbesProducer::SetupDataSource(DataSourceInstanceID instance_id,
     data_source = CreateSysStatsDataSource(session_id, config);
   } else if (config.name() == AndroidPowerDataSource::descriptor.name) {
     data_source = CreateAndroidPowerDataSource(session_id, config);
-  } else if (config.name() == LinuxPowerSysfsDataSource::descriptor.name) {
-    data_source = CreateLinuxPowerSysfsDataSource(session_id, config);
   } else if (config.name() == AndroidLogDataSource::descriptor.name) {
     data_source = CreateAndroidLogDataSource(session_id, config);
   } else if (config.name() == PackagesListDataSource::descriptor.name) {
@@ -217,8 +208,7 @@ void ProbesProducer::StartDataSource(DataSourceInstanceID instance_id,
   if (config.trace_duration_ms() != 0) {
     uint32_t timeout = 5000 + 2 * config.trace_duration_ms();
     watchdogs_.emplace(
-        instance_id, base::Watchdog::GetInstance()->CreateFatalTimer(
-                         timeout, base::WatchdogCrashReason::kTraceDidntStop));
+        instance_id, base::Watchdog::GetInstance()->CreateFatalTimer(timeout));
   }
   data_source->started = true;
   data_source->Start();
@@ -293,16 +283,6 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateAndroidPowerDataSource(
                                  endpoint_->CreateTraceWriter(buffer_id)));
 }
 
-std::unique_ptr<ProbesDataSource>
-ProbesProducer::CreateLinuxPowerSysfsDataSource(
-    TracingSessionID session_id,
-    const DataSourceConfig& config) {
-  auto buffer_id = static_cast<BufferID>(config.target_buffer());
-  return std::unique_ptr<ProbesDataSource>(
-      new LinuxPowerSysfsDataSource(config, task_runner_, session_id,
-                                    endpoint_->CreateTraceWriter(buffer_id)));
-}
-
 std::unique_ptr<ProbesDataSource> ProbesProducer::CreateAndroidLogDataSource(
     TracingSessionID session_id,
     const DataSourceConfig& config) {
@@ -324,9 +304,9 @@ std::unique_ptr<ProbesDataSource> ProbesProducer::CreateSysStatsDataSource(
     TracingSessionID session_id,
     const DataSourceConfig& config) {
   auto buffer_id = static_cast<BufferID>(config.target_buffer());
-  return std::unique_ptr<SysStatsDataSource>(new SysStatsDataSource(
-      task_runner_, session_id, endpoint_->CreateTraceWriter(buffer_id), config,
-      std::unique_ptr<CpuFreqInfo>(new CpuFreqInfo())));
+  return std::unique_ptr<SysStatsDataSource>(
+      new SysStatsDataSource(task_runner_, session_id,
+                             endpoint_->CreateTraceWriter(buffer_id), config));
 }
 
 std::unique_ptr<ProbesDataSource> ProbesProducer::CreateMetatraceDataSource(

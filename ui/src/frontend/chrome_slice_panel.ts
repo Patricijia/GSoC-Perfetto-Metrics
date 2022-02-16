@@ -16,12 +16,11 @@ import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
 import {Arg, ArgsTree, isArgTreeArray, isArgTreeMap} from '../common/arg_types';
-import {timeToCode} from '../common/time';
+import {timeToCode, toNs} from '../common/time';
 
 import {globals, SliceDetails} from './globals';
-import {PanelSize} from './panel';
+import {Panel, PanelSize} from './panel';
 import {verticalScrollToTrack} from './scroll_helper';
-import {SlicePanel} from './slice_panel';
 
 // Table row contents is one of two things:
 // 1. Key-value pair
@@ -123,7 +122,7 @@ class TableBuilder {
   }
 }
 
-export class ChromeSliceDetailsPanel extends SlicePanel {
+export class ChromeSliceDetailsPanel extends Panel {
   view() {
     const sliceInfo = globals.sliceDetails;
     if (sliceInfo.ts !== undefined && sliceInfo.dur !== undefined &&
@@ -137,15 +136,9 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
               sliceInfo.category);
       builder.add('Start time', timeToCode(sliceInfo.ts));
       builder.add(
-          'Duration', this.computeDuration(sliceInfo.ts, sliceInfo.dur));
-      if (sliceInfo.thread_ts !== undefined &&
-          sliceInfo.thread_dur !== undefined) {
-        builder.add(
-            'Thread duration',
-            this.computeDuration(sliceInfo.thread_ts, sliceInfo.thread_dur));
-      }
-      builder.add(
-          'Slice ID', sliceInfo.id ? sliceInfo.id.toString() : 'Unknown');
+          'Duration',
+          toNs(sliceInfo.dur) === -1 ? '-1 (Did not end)' :
+                                       timeToCode(sliceInfo.dur));
       if (sliceInfo.description) {
         this.fillDescription(sliceInfo.description, builder);
       }
@@ -242,7 +235,7 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
       rows.push(m('tr', renderedRow));
     }
 
-    return m('table.half-width.auto-layout', rows);
+    return m('table.half-width', rows);
   }
 
   fillDescription(description: Map<string, string>, builder: TableBuilder) {

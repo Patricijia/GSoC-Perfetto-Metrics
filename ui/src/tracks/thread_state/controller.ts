@@ -13,7 +13,13 @@
 // limitations under the License.
 
 import {assertFalse} from '../../base/logging';
-import {NUM, NUM_NULL, STR_NULL} from '../../common/query_result';
+import {
+  iter,
+  NUM,
+  NUM_NULL,
+  slowlyCountRows,
+  STR_NULL
+} from '../../common/query_iterator';
 import {translateState} from '../../common/thread_state';
 import {fromNs, toNs} from '../../common/time';
 import {
@@ -41,16 +47,16 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
         dur,
         cpu,
         state,
-        io_wait as ioWait
+        io_wait
       from thread_state
       where utid = ${this.config.utid} and utid != 0
     `);
 
-    const queryRes = await this.query(`
-      select ifnull(max(dur), 0) as maxDur
+    const rawResult = await this.query(`
+      select max(dur)
       from ${this.tableName('thread_state')}
     `);
-    this.maxDurNs = queryRes.firstRow({maxDur: NUM}).maxDur;
+    this.maxDurNs = rawResult.columns[0].longValues![0];
   }
 
   async onBoundsChange(start: number, end: number, resolution: number):
@@ -68,22 +74,21 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       select
         (ts + ${bucketNs / 2}) / ${bucketNs} * ${bucketNs} as tsq,
         ts,
-        state = 'S' as is_sleep,
         max(dur) as dur,
-        ifnull(cast(cpu as integer), -1) as cpu,
+        cast(cpu as integer) as cpu,
         state,
-        ioWait,
-        ifnull(id, -1) as id
+        io_wait,
+        id
       from ${this.tableName('thread_state')}
       where
         ts >= ${startNs - this.maxDurNs} and
         ts <= ${endNs}
-      group by tsq, is_sleep
-      order by tsq
+      group by tsq, state, io_wait
+      order by tsq, state, io_wait
     `;
 
-    const queryRes = await this.query(query);
-    const numRows = queryRes.numRows();
+    const result = await this.query(query);
+    const numRows = slowlyCountRows(result);
 
     const data: Data = {
       start,
@@ -98,11 +103,9 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       cpu: new Int8Array(numRows),
     };
 
-    const stringIndexes = new Map<
-        {shortState: string | undefined; ioWait: boolean | undefined},
-        number>();
-    function internState(
-        shortState: string|undefined, ioWait: boolean|undefined) {
+    const stringIndexes =
+        new Map<{shortState: string, ioWait: boolean | undefined}, number>();
+    function internState(shortState: string, ioWait: boolean|undefined) {
       let idx = stringIndexes.get({shortState, ioWait});
       if (idx !== undefined) return idx;
       idx = data.strings.length;
@@ -110,28 +113,31 @@ class ThreadStateTrackController extends TrackController<Config, Data> {
       stringIndexes.set({shortState, ioWait}, idx);
       return idx;
     }
-    const it = queryRes.iter({
-      'tsq': NUM,
-      'ts': NUM,
-      'dur': NUM,
-      'cpu': NUM,
-      'state': STR_NULL,
-      'ioWait': NUM_NULL,
-      'id': NUM,
-    });
-    for (let row = 0; it.valid(); it.next(), row++) {
-      const startNsQ = it.tsq;
-      const startNs = it.ts;
-      const durNs = it.dur;
+    iter(
+        {
+          'ts': NUM,
+          'dur': NUM,
+          'cpu': NUM_NULL,
+          'state': STR_NULL,
+          'io_wait': NUM_NULL,
+          'id': NUM_NULL,
+        },
+        result);
+    for (let row = 0; row < numRows; row++) {
+      const cols = result.columns;
+      const startNsQ = +cols[0].longValues![row];
+      const startNs = +cols[1].longValues![row];
+      const durNs = +cols[2].longValues![row];
       const endNs = startNs + durNs;
 
       let endNsQ = Math.floor((endNs + bucketNs / 2 - 1) / bucketNs) * bucketNs;
       endNsQ = Math.max(endNsQ, startNsQ + bucketNs);
 
-      const cpu = it.cpu;
-      const state = it.state || undefined;
-      const ioWait = it.ioWait === null ? undefined : !!it.ioWait;
-      const id = it.id;
+      const cpu = cols[3].isNulls![row] ? -1 : cols[3].longValues![row];
+      const state = cols[4].stringValues![row];
+      const ioWait =
+          cols[5].isNulls![row] ? undefined : !!cols[5].longValues![row];
+      const id = cols[6].isNulls![row] ? -1 : cols[6].longValues![row];
 
       // We should never have the end timestamp being the same as the bucket
       // start.

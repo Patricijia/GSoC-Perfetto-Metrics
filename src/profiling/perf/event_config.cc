@@ -156,91 +156,23 @@ base::Optional<uint32_t> ChooseActualRingBufferPages(uint32_t config_value) {
 }
 
 base::Optional<PerfCounter> ToPerfCounter(
-    std::string name,
     protos::gen::PerfEvents::Counter pb_enum) {
   using protos::gen::PerfEvents;
   switch (static_cast<int>(pb_enum)) {  // cast to pacify -Wswitch-enum
     case PerfEvents::SW_CPU_CLOCK:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_CPU_CLOCK,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_CPU_CLOCK);
+      return PerfCounter::Counter(PerfEvents::SW_CPU_CLOCK, PERF_TYPE_SOFTWARE,
+                                  PERF_COUNT_SW_CPU_CLOCK);
     case PerfEvents::SW_PAGE_FAULTS:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_PAGE_FAULTS,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_PAGE_FAULTS);
-    case PerfEvents::SW_TASK_CLOCK:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_TASK_CLOCK,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_TASK_CLOCK);
-    case PerfEvents::SW_CONTEXT_SWITCHES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_CONTEXT_SWITCHES,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_CONTEXT_SWITCHES);
-    case PerfEvents::SW_CPU_MIGRATIONS:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_CPU_MIGRATIONS,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_CPU_MIGRATIONS);
-    case PerfEvents::SW_PAGE_FAULTS_MIN:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_PAGE_FAULTS_MIN,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_PAGE_FAULTS_MIN);
-    case PerfEvents::SW_PAGE_FAULTS_MAJ:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_PAGE_FAULTS_MAJ,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_PAGE_FAULTS_MAJ);
-    case PerfEvents::SW_ALIGNMENT_FAULTS:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_ALIGNMENT_FAULTS,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_ALIGNMENT_FAULTS);
-    case PerfEvents::SW_EMULATION_FAULTS:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::SW_EMULATION_FAULTS,
-                                         PERF_TYPE_SOFTWARE,
-                                         PERF_COUNT_SW_EMULATION_FAULTS);
-    case PerfEvents::SW_DUMMY:
-      return PerfCounter::BuiltinCounter(
-          name, PerfEvents::SW_DUMMY, PERF_TYPE_SOFTWARE, PERF_COUNT_SW_DUMMY);
-
+      return PerfCounter::Counter(PerfEvents::SW_PAGE_FAULTS,
+                                  PERF_TYPE_SOFTWARE,
+                                  PERF_COUNT_SW_PAGE_FAULTS);
     case PerfEvents::HW_CPU_CYCLES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_CPU_CYCLES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_CPU_CYCLES);
+      return PerfCounter::Counter(PerfEvents::HW_CPU_CYCLES, PERF_TYPE_HARDWARE,
+                                  PERF_COUNT_HW_CPU_CYCLES);
     case PerfEvents::HW_INSTRUCTIONS:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_INSTRUCTIONS,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_INSTRUCTIONS);
-    case PerfEvents::HW_CACHE_REFERENCES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_CACHE_REFERENCES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_CACHE_REFERENCES);
-    case PerfEvents::HW_CACHE_MISSES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_CACHE_MISSES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_CACHE_MISSES);
-    case PerfEvents::HW_BRANCH_INSTRUCTIONS:
-      return PerfCounter::BuiltinCounter(
-          name, PerfEvents::HW_BRANCH_INSTRUCTIONS, PERF_TYPE_HARDWARE,
-          PERF_COUNT_HW_BRANCH_INSTRUCTIONS);
-    case PerfEvents::HW_BRANCH_MISSES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_BRANCH_MISSES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_BRANCH_MISSES);
-    case PerfEvents::HW_BUS_CYCLES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_BUS_CYCLES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_BUS_CYCLES);
-    case PerfEvents::HW_STALLED_CYCLES_FRONTEND:
-      return PerfCounter::BuiltinCounter(
-          name, PerfEvents::HW_STALLED_CYCLES_FRONTEND, PERF_TYPE_HARDWARE,
-          PERF_COUNT_HW_STALLED_CYCLES_FRONTEND);
-    case PerfEvents::HW_STALLED_CYCLES_BACKEND:
-      return PerfCounter::BuiltinCounter(
-          name, PerfEvents::HW_STALLED_CYCLES_BACKEND, PERF_TYPE_HARDWARE,
-          PERF_COUNT_HW_STALLED_CYCLES_BACKEND);
-    case PerfEvents::HW_REF_CPU_CYCLES:
-      return PerfCounter::BuiltinCounter(name, PerfEvents::HW_REF_CPU_CYCLES,
-                                         PERF_TYPE_HARDWARE,
-                                         PERF_COUNT_HW_REF_CPU_CYCLES);
-
+      return PerfCounter::Counter(PerfEvents::HW_INSTRUCTIONS,
+                                  PERF_TYPE_HARDWARE,
+                                  PERF_COUNT_HW_INSTRUCTIONS);
     default:
       PERFETTO_ELOG("Unrecognised PerfEvents::Counter enum value: %zu",
                     static_cast<size_t>(pb_enum));
@@ -248,74 +180,27 @@ base::Optional<PerfCounter> ToPerfCounter(
   }
 }
 
-int32_t ToClockId(protos::gen::PerfEvents::PerfClock pb_enum) {
-  using protos::gen::PerfEvents;
-  switch (static_cast<int>(pb_enum)) {  // cast to pacify -Wswitch-enum
-    case PerfEvents::PERF_CLOCK_REALTIME:
-      return CLOCK_REALTIME;
-    case PerfEvents::PERF_CLOCK_MONOTONIC:
-      return CLOCK_MONOTONIC;
-    case PerfEvents::PERF_CLOCK_MONOTONIC_RAW:
-      return CLOCK_MONOTONIC_RAW;
-    case PerfEvents::PERF_CLOCK_BOOTTIME:
-      return CLOCK_BOOTTIME;
-    // Default to a monotonic clock since it should be compatible with all types
-    // of events. Whereas boottime cannot be used with hardware events due to
-    // potential access within non-maskable interrupts.
-    default:
-      return CLOCK_MONOTONIC_RAW;
-  }
-}
-
 }  // namespace
 
 // static
-PerfCounter PerfCounter::BuiltinCounter(
-    std::string name,
-    protos::gen::PerfEvents::Counter counter,
-    uint32_t type,
-    uint64_t config) {
+PerfCounter PerfCounter::Counter(protos::gen::PerfEvents::Counter counter,
+                                 uint32_t type,
+                                 uint32_t config) {
   PerfCounter ret;
-  ret.type = PerfCounter::Type::kBuiltinCounter;
   ret.counter = counter;
-  ret.name = std::move(name);
-
-  ret.attr_type = type;
-  ret.attr_config = config;
-  // none of the builtin counters require config1 and config2 at the moment
+  ret.type = type;
+  ret.config = config;
   return ret;
 }
 
 // static
-PerfCounter PerfCounter::Tracepoint(std::string name,
-                                    std::string tracepoint_name,
-                                    std::string tracepoint_filter,
-                                    uint64_t id) {
+PerfCounter PerfCounter::Tracepoint(
+    protos::gen::PerfEvents::Tracepoint tracepoint,
+    uint32_t id) {
   PerfCounter ret;
-  ret.type = PerfCounter::Type::kTracepoint;
-  ret.tracepoint_name = std::move(tracepoint_name);
-  ret.tracepoint_filter = std::move(tracepoint_filter);
-  ret.name = std::move(name);
-
-  ret.attr_type = PERF_TYPE_TRACEPOINT;
-  ret.attr_config = id;
-  return ret;
-}
-
-// static
-PerfCounter PerfCounter::RawEvent(std::string name,
-                                  uint32_t type,
-                                  uint64_t config,
-                                  uint64_t config1,
-                                  uint64_t config2) {
-  PerfCounter ret;
-  ret.type = PerfCounter::Type::kRawEvent;
-  ret.name = std::move(name);
-
-  ret.attr_type = type;
-  ret.attr_config = config;
-  ret.attr_config1 = config1;
-  ret.attr_config2 = config2;
+  ret.tracepoint = std::move(tracepoint);
+  ret.type = PERF_TYPE_TRACEPOINT;
+  ret.config = id;
   return ret;
 }
 
@@ -352,10 +237,8 @@ base::Optional<EventConfig> EventConfig::Create(
 
   // Timebase event. Default: CPU timer.
   PerfCounter timebase_event;
-  std::string timebase_name = pb_config.timebase().name();
   if (pb_config.timebase().has_counter()) {
-    auto maybe_counter =
-        ToPerfCounter(timebase_name, pb_config.timebase().counter());
+    auto maybe_counter = ToPerfCounter(pb_config.timebase().counter());
     if (!maybe_counter)
       return base::nullopt;
     timebase_event = *maybe_counter;
@@ -366,18 +249,12 @@ base::Optional<EventConfig> EventConfig::Create(
         ParseTracepointAndResolveId(tracepoint_pb, tracepoint_id_lookup);
     if (!maybe_id)
       return base::nullopt;
-    timebase_event = PerfCounter::Tracepoint(
-        timebase_name, tracepoint_pb.name(), tracepoint_pb.filter(), *maybe_id);
-
-  } else if (pb_config.timebase().has_raw_event()) {
-    const auto& raw = pb_config.timebase().raw_event();
-    timebase_event = PerfCounter::RawEvent(
-        timebase_name, raw.type(), raw.config(), raw.config1(), raw.config2());
+    timebase_event = PerfCounter::Tracepoint(tracepoint_pb, *maybe_id);
 
   } else {
-    timebase_event = PerfCounter::BuiltinCounter(
-        timebase_name, protos::gen::PerfEvents::PerfEvents::SW_CPU_CLOCK,
-        PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK);
+    timebase_event =
+        PerfCounter::Counter(protos::gen::PerfEvents::PerfEvents::SW_CPU_CLOCK,
+                             PERF_TYPE_SOFTWARE, PERF_COUNT_SW_CPU_CLOCK);
   }
 
   // Callstack sampling.
@@ -421,7 +298,7 @@ base::Optional<EventConfig> EventConfig::Create(
     // expected = rate * period, with a conversion of period from ms to s:
     uint64_t expected_samples_per_tick =
         1 + (sampling_frequency * read_tick_period_ms) / 1000;
-    // Double the limit to account of actual sample rate uncertainties, as
+    // Double the the limit to account of actual sample rate uncertainties, as
     // well as any other factors:
     samples_per_tick_limit = 2 * expected_samples_per_tick;
   } else {  // sampling_period
@@ -455,10 +332,8 @@ base::Optional<EventConfig> EventConfig::Create(
   pe.disabled = 1;  // will be activated via ioctl
 
   // Sampling timebase.
-  pe.type = timebase_event.attr_type;
-  pe.config = timebase_event.attr_config;
-  pe.config1 = timebase_event.attr_config1;
-  pe.config2 = timebase_event.attr_config2;
+  pe.type = timebase_event.type;
+  pe.config = timebase_event.config;
   if (sampling_frequency) {
     pe.freq = true;
     pe.sample_freq = sampling_frequency;
@@ -469,7 +344,9 @@ base::Optional<EventConfig> EventConfig::Create(
   // What the samples will contain.
   pe.sample_type = PERF_SAMPLE_TID | PERF_SAMPLE_TIME | PERF_SAMPLE_READ;
   // PERF_SAMPLE_TIME:
-  pe.clockid = ToClockId(pb_config.timebase().timestamp_clock());
+  // We used to use CLOCK_BOOTTIME, but that is not nmi-safe, and therefore
+  // works only for software events.
+  pe.clockid = CLOCK_MONOTONIC_RAW;
   pe.use_clockid = true;
 
   if (sample_callstacks) {

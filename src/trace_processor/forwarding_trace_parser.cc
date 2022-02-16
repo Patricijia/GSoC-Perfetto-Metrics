@@ -40,17 +40,6 @@ std::string RemoveWhitespace(std::string str) {
   return str;
 }
 
-TraceSorter::SortingMode ConvertSortingMode(SortingMode sorting_mode) {
-  switch (sorting_mode) {
-    case SortingMode::kDefaultHeuristics:
-    case SortingMode::kForceFlushPeriodWindowedSort:
-      return TraceSorter::SortingMode::kDefault;
-    case SortingMode::kForceFullSort:
-      return TraceSorter::SortingMode::kFullSort;
-  }
-  PERFETTO_FATAL("For GCC");
-}
-
 // Fuchsia traces have a magic number as documented here:
 // https://fuchsia.googlesource.com/fuchsia/+/HEAD/docs/development/tracing/trace-format/README.md#magic-number-record-trace-info-type-0
 constexpr uint64_t kFuchsiaMagicNumber = 0x0016547846040010;
@@ -62,15 +51,17 @@ ForwardingTraceParser::ForwardingTraceParser(TraceProcessorContext* context)
 
 ForwardingTraceParser::~ForwardingTraceParser() {}
 
-util::Status ForwardingTraceParser::Parse(TraceBlobView blob) {
+util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
+                                          size_t size) {
   // If this is the first Parse() call, guess the trace type and create the
   // appropriate parser.
+  static const int64_t kMaxWindowSize = std::numeric_limits<int64_t>::max();
   if (!reader_) {
     TraceType trace_type;
     {
       auto scoped_trace = context_->storage->TraceExecutionTimeIntoStats(
           stats::guess_trace_type_duration_ns);
-      trace_type = GuessTraceType(blob.data(), blob.size());
+      trace_type = GuessTraceType(data.get(), size);
     }
     switch (trace_type) {
       case kJsonTraceType: {
@@ -79,9 +70,8 @@ util::Status ForwardingTraceParser::Parse(TraceBlobView blob) {
           reader_ = std::move(context_->json_trace_tokenizer);
 
           // JSON traces have no guarantees about the order of events in them.
-          context_->sorter.reset(
-              new TraceSorter(context_, std::move(context_->json_trace_parser),
-                              TraceSorter::SortingMode::kFullSort));
+          context_->sorter.reset(new TraceSorter(
+              std::move(context_->json_trace_parser), kMaxWindowSize));
         } else {
           return util::ErrStatus("JSON support is disabled");
         }
@@ -89,12 +79,12 @@ util::Status ForwardingTraceParser::Parse(TraceBlobView blob) {
       }
       case kProtoTraceType: {
         PERFETTO_DLOG("Proto trace detected");
-        auto sorting_mode = ConvertSortingMode(context_->config.sorting_mode);
+        // This will be reduced once we read the trace config and we see flush
+        // period being set.
         reader_.reset(new ProtoTraceReader(context_));
         context_->sorter.reset(new TraceSorter(
-            context_,
             std::unique_ptr<TraceParser>(new ProtoTraceParser(context_)),
-            sorting_mode));
+            kMaxWindowSize));
         context_->process_tracker->SetPidZeroIgnoredForIdleProcess();
         break;
       }
@@ -111,8 +101,7 @@ util::Status ForwardingTraceParser::Parse(TraceBlobView blob) {
 
           // Fuschia traces can have massively out of order events.
           context_->sorter.reset(new TraceSorter(
-              context_, std::move(context_->fuchsia_trace_parser),
-              TraceSorter::SortingMode::kFullSort));
+              std::move(context_->fuchsia_trace_parser), kMaxWindowSize));
         } else {
           return util::ErrStatus("Fuchsia support is disabled");
         }
@@ -147,7 +136,7 @@ util::Status ForwardingTraceParser::Parse(TraceBlobView blob) {
     }
   }
 
-  return reader_->Parse(std::move(blob));
+  return reader_->Parse(std::move(data), size);
 }
 
 void ForwardingTraceParser::NotifyEndOfFile() {
@@ -158,7 +147,7 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
   if (size == 0)
     return kUnknownTraceType;
   std::string start(reinterpret_cast<const char*>(data),
-                    std::min<size_t>(size, kGuessTraceMaxLookahead));
+                    std::min<size_t>(size, 20));
   if (size >= 8) {
     uint64_t first_word;
     memcpy(&first_word, data, sizeof(first_word));
@@ -166,9 +155,9 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
       return kFuchsiaTraceType;
   }
   std::string start_minus_white_space = RemoveWhitespace(start);
-  if (base::StartsWith(start_minus_white_space, "{\""))
+  if (base::StartsWith(start_minus_white_space, "{"))
     return kJsonTraceType;
-  if (base::StartsWith(start_minus_white_space, "[{\""))
+  if (base::StartsWith(start_minus_white_space, "[{"))
     return kJsonTraceType;
 
   // Systrace with header but no leading HTML.
@@ -180,15 +169,9 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
       base::StartsWith(start, "<html>"))
     return kSystraceTraceType;
 
-  // Traces obtained from atrace -z (compress).
-  // They all have the string "TRACE:" followed by 78 9C which is a zlib header
-  // for "deflate, default compression, window size=32K" (see b/208691037)
-  if (base::Contains(start, "TRACE:\n\x78\x9c"))
+  // Ctrace is deflate'ed systrace.
+  if (base::Contains(start, "TRACE:"))
     return kCtraceTraceType;
-
-  // Traces obtained from atrace without -z (no compression).
-  if (base::Contains(start, "TRACE:\n"))
-    return kSystraceTraceType;
 
   // Ninja's buils log (.ninja_log).
   if (base::StartsWith(start, "# ninja log"))

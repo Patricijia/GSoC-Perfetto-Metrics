@@ -24,8 +24,6 @@
 #include "perfetto/base/export.h"
 #include "perfetto/trace_processor/basic_types.h"
 #include "perfetto/trace_processor/status.h"
-#include "perfetto/trace_processor/trace_blob.h"
-#include "perfetto/trace_processor/trace_blob_view.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -45,11 +43,7 @@ class PERFETTO_EXPORT TraceProcessorStorage {
   // status if some unrecoverable error happened. If this happens, the
   // TraceProcessor will ignore the following Parse() requests, drop data on the
   // floor and return errors forever.
-  virtual util::Status Parse(TraceBlobView) = 0;
-
-  // Shorthand for Parse(TraceBlobView(TraceBlob(TakeOwnership(buf, size))).
-  // For compatibility with older API clients.
-  util::Status Parse(std::unique_ptr<uint8_t[]> buf, size_t size);
+  virtual util::Status Parse(std::unique_ptr<uint8_t[]>, size_t) = 0;
 
   // When parsing a bounded file (as opposite to streaming from a device) this
   // function should be called when the last chunk of the file has been passed
