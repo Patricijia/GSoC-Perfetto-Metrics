@@ -48,7 +48,6 @@ class MockProducerEndpoint : public TracingService::ProducerEndpoint {
   MOCK_METHOD1(ActivateTriggers, void(const std::vector<std::string>&));
 
   MOCK_METHOD1(RegisterDataSource, void(const DataSourceDescriptor&));
-  MOCK_METHOD1(UpdateDataSource, void(const DataSourceDescriptor&));
   MOCK_METHOD2(CommitData, void(const CommitDataRequest&, CommitDataCallback));
   MOCK_METHOD2(RegisterTraceWriter, void(uint32_t, uint32_t));
   MOCK_METHOD1(UnregisterTraceWriter, void(uint32_t));

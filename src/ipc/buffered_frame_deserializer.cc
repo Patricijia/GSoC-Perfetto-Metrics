@@ -16,8 +16,9 @@
 
 #include "src/ipc/buffered_frame_deserializer.h"
 
+#include <inttypes.h>
+
 #include <algorithm>
-#include <cinttypes>
 #include <type_traits>
 #include <utility>
 

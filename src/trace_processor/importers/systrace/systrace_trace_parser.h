@@ -35,7 +35,7 @@ class SystraceTraceParser : public ChunkedTraceReader {
   ~SystraceTraceParser() override;
 
   // ChunkedTraceReader implementation.
-  util::Status Parse(TraceBlobView) override;
+  util::Status Parse(std::unique_ptr<uint8_t[]>, size_t size) override;
   void NotifyEndOfFile() override;
 
  private:

@@ -49,18 +49,13 @@ export class TrackGroupPanel extends Panel<Attrs> {
   private readonly trackGroupId: string;
   private shellWidth = 0;
   private backgroundColor = '#ffffff';  // Updated from CSS later.
-  private summaryTrack: Track|undefined;
+  private summaryTrack: Track;
 
   constructor({attrs}: m.CVnode<Attrs>) {
     super();
     this.trackGroupId = attrs.trackGroupId;
     const trackCreator = trackRegistry.get(this.summaryTrackState.kind);
-    const engineId = this.summaryTrackState.engineId;
-    const engine = globals.engines.get(engineId);
-    if (engine !== undefined) {
-      this.summaryTrack =
-          trackCreator.create({trackId: this.summaryTrackState.id, engine});
-    }
+    this.summaryTrack = trackCreator.create(this.summaryTrackState);
   }
 
   get trackGroupState(): TrackGroupState {
@@ -81,9 +76,10 @@ export class TrackGroupPanel extends Panel<Attrs> {
     // The shell should be highlighted if the current search result is inside
     // this track group.
     let highlightClass = '';
-    const searchIndex = globals.state.searchIndex;
+    const searchIndex = globals.frontendLocalState.searchIndex;
     if (searchIndex !== -1) {
-      const trackId = globals.currentSearchResults.trackIds[searchIndex];
+      const trackId = globals.currentSearchResults
+                          .trackIds[globals.frontendLocalState.searchIndex];
       const parentTrackId = getContainingTrackId(globals.state, trackId);
       if (parentTrackId === attrs.trackGroupId) {
         highlightClass = 'flash';
@@ -106,12 +102,6 @@ export class TrackGroupPanel extends Panel<Attrs> {
       }
     }
 
-    let child = '';
-    if (this.summaryTrackState.labels &&
-        this.summaryTrackState.labels.length > 0) {
-      child = this.summaryTrackState.labels.join(', ');
-    }
-
     return m(
         `.track-group-panel[collapsed=${collapsed}]`,
         {id: 'track_' + this.trackGroupId},
@@ -129,11 +119,11 @@ export class TrackGroupPanel extends Panel<Attrs> {
           m('.fold-button',
             m('i.material-icons',
               this.trackGroupState.collapsed ? EXPAND_DOWN : EXPAND_UP)),
-          m('h1.track-title',
-            {title: name},
-            name,
-            ('namespace' in this.summaryTrackState.config) &&
-                m('span.chip', 'metric')),
+          m('h1',
+            {
+              title: name,
+            },
+            name),
           selection && selection.kind === 'AREA' ?
               m('i.material-icons.track-button',
                 {
@@ -146,10 +136,7 @@ export class TrackGroupPanel extends Panel<Attrs> {
                 checkBox) :
               ''),
 
-        this.summaryTrack ? m(TrackContent,
-                              {track: this.summaryTrack},
-                              this.trackGroupState.collapsed ? '' : child) :
-                            null);
+        this.summaryTrack ? m(TrackContent, {track: this.summaryTrack}) : null);
   }
 
   oncreate(vnode: m.CVnodeDOM<Attrs>) {
@@ -166,9 +153,6 @@ export class TrackGroupPanel extends Panel<Attrs> {
     } else {
       this.backgroundColor =
           getComputedStyle(dom).getPropertyValue('--expanded-background');
-    }
-    if (this.summaryTrack !== undefined) {
-      this.summaryTrack.onFullRedraw();
     }
   }
 
@@ -217,19 +201,19 @@ export class TrackGroupPanel extends Panel<Attrs> {
 
     const localState = globals.frontendLocalState;
     // Draw vertical line when hovering on the notes panel.
-    if (globals.state.hoveredNoteTimestamp !== -1) {
+    if (localState.hoveredNoteTimestamp !== -1) {
       drawVerticalLineAtTime(
           ctx,
           localState.timeScale,
-          globals.state.hoveredNoteTimestamp,
+          localState.hoveredNoteTimestamp,
           size.height,
           `#aaa`);
     }
-    if (globals.state.hoveredLogsTimestamp !== -1) {
+    if (localState.hoveredLogsTimestamp !== -1) {
       drawVerticalLineAtTime(
           ctx,
           localState.timeScale,
-          globals.state.hoveredLogsTimestamp,
+          localState.hoveredLogsTimestamp,
           size.height,
           `#344596`);
     }

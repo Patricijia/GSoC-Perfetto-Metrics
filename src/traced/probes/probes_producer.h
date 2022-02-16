@@ -17,7 +17,6 @@
 #ifndef SRC_TRACED_PROBES_PROBES_PRODUCER_H_
 #define SRC_TRACED_PROBES_PROBES_PRODUCER_H_
 
-#include <functional>
 #include <memory>
 #include <unordered_map>
 #include <utility>
@@ -87,9 +86,6 @@ class ProbesProducer : public Producer, public FtraceController::Observer {
   std::unique_ptr<ProbesDataSource> CreateAndroidLogDataSource(
       TracingSessionID session_id,
       const DataSourceConfig& config);
-  std::unique_ptr<ProbesDataSource> CreateLinuxPowerSysfsDataSource(
-      TracingSessionID session_id,
-      const DataSourceConfig& config);
   std::unique_ptr<ProbesDataSource> CreatePackagesListDataSource(
       TracingSessionID session_id,
       const DataSourceConfig& config);
@@ -103,11 +99,6 @@ class ProbesProducer : public Producer, public FtraceController::Observer {
       TracingSessionID session_id,
       const DataSourceConfig& config);
   void ActivateTrigger(std::string trigger);
-
-  // Calls `cb` when all data sources have been registered.
-  void SetAllDataSourcesRegisteredCb(std::function<void()> cb) {
-    all_data_sources_registered_cb_ = cb;
-  }
 
  private:
   static ProbesProducer* instance_;
@@ -147,8 +138,6 @@ class ProbesProducer : public Producer, public FtraceController::Observer {
 
   std::unordered_multimap<FlushRequestID, DataSourceInstanceID>
       pending_flushes_;
-
-  std::function<void()> all_data_sources_registered_cb_;
 
   std::unordered_map<DataSourceInstanceID, base::Watchdog::Timer> watchdogs_;
   LRUInodeCache cache_{kLRUInodeCacheSize};

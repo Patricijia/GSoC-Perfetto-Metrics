@@ -17,18 +17,16 @@
 #ifndef INCLUDE_PERFETTO_EXT_BASE_WATCHDOG_POSIX_H_
 #define INCLUDE_PERFETTO_EXT_BASE_WATCHDOG_POSIX_H_
 
-#include "perfetto/base/time.h"
-#include "perfetto/ext/base/scoped_file.h"
+#include "perfetto/ext/base/optional.h"
+#include "perfetto/ext/base/thread_checker.h"
 
 #include <atomic>
+#include <condition_variable>
 #include <mutex>
 #include <thread>
-#include <vector>
 
 namespace perfetto {
 namespace base {
-
-enum class WatchdogCrashReason;  // Defined in watchdog.h.
 
 struct ProcStat {
   unsigned long int utime = 0l;
@@ -43,21 +41,6 @@ bool ReadProcStat(int fd, ProcStat* out);
 // crashed.
 class Watchdog {
  public:
-  struct TimerData {
-    TimeMillis deadline{};  // Absolute deadline, CLOCK_MONOTONIC.
-    int thread_id = 0;      // The tid we'll send a SIGABRT to on expiry.
-    WatchdogCrashReason crash_reason{};  // Becomes a crash key.
-
-    TimerData() = default;
-    TimerData(TimeMillis d, int t) : deadline(d), thread_id(t) {}
-    bool operator<(const TimerData& x) const {
-      return std::tie(deadline, thread_id) < std::tie(x.deadline, x.thread_id);
-    }
-    bool operator==(const TimerData& x) const {
-      return std::tie(deadline, thread_id) == std::tie(x.deadline, x.thread_id);
-    }
-  };
-
   // Handle to the timer set to crash the program. If the handle is dropped,
   // the timer is removed so the program does not crash.
   class Timer {
@@ -68,14 +51,11 @@ class Watchdog {
    private:
     friend class Watchdog;
 
-    explicit Timer(Watchdog*, uint32_t ms, WatchdogCrashReason);
+    explicit Timer(uint32_t ms);
     Timer(const Timer&) = delete;
     Timer& operator=(const Timer&) = delete;
 
-    // In production this is always Watchdog::GetInstance(), which is long
-    // lived. However unittests use a non-global instance.
-    Watchdog* watchdog_ = nullptr;
-    TimerData timer_data_;
+    Optional<timer_t> timerid_;
   };
   virtual ~Watchdog();
 
@@ -83,9 +63,7 @@ class Watchdog {
 
   // Sets a timer which will crash the program in |ms| milliseconds if the
   // returned handle is not destroyed before this point.
-  // WatchdogCrashReason is used only to set a crash key in the case of a crash,
-  // to disambiguate different timer types.
-  Timer CreateFatalTimer(uint32_t ms, WatchdogCrashReason);
+  Timer CreateFatalTimer(uint32_t ms);
 
   // Starts the watchdog thread which monitors the memory and CPU usage
   // of the program.
@@ -102,6 +80,10 @@ class Watchdog {
   // removed.
   // Note: |window_ms| has to be a multiple of |polling_interval_ms_|.
   void SetCpuLimit(uint32_t percentage, uint32_t window_ms);
+
+ protected:
+  // Protected for testing.
+  Watchdog(uint32_t polling_interval_ms);
 
  private:
   // Represents a ring buffer in which integer values can be stored.
@@ -144,23 +126,15 @@ class Watchdog {
     std::unique_ptr<uint64_t[]> buffer_;
   };
 
-  Watchdog(const Watchdog&) = delete;
+  explicit Watchdog(const Watchdog&) = delete;
   Watchdog& operator=(const Watchdog&) = delete;
-  Watchdog(Watchdog&&) = delete;
-  Watchdog& operator=(Watchdog&&) = delete;
 
   // Main method for the watchdog thread.
   void ThreadMain();
 
   // Check each type of resource every |polling_interval_ms_| miillis.
-  // Returns true if the threshold is exceeded and the process should be killed.
-  bool CheckMemory_Locked(uint64_t rss_bytes);
-  bool CheckCpu_Locked(uint64_t cpu_time);
-
-  void AddFatalTimer(TimerData);
-  void RemoveFatalTimer(TimerData);
-  void RearmTimerFd_Locked();
-  void SerializeLogsAndKillThread(int tid, WatchdogCrashReason);
+  void CheckMemory(uint64_t rss_bytes);
+  void CheckCpu(uint64_t cpu_time);
 
   // Computes the time interval spanned by a given ring buffer with respect
   // to |polling_interval_ms_|.
@@ -169,7 +143,7 @@ class Watchdog {
   const uint32_t polling_interval_ms_;
   std::atomic<bool> enabled_{false};
   std::thread thread_;
-  ScopedPlatformHandle timer_fd_;
+  std::condition_variable exit_signal_;
 
   // --- Begin lock-protected members ---
 
@@ -181,20 +155,7 @@ class Watchdog {
   uint32_t cpu_limit_percentage_ = 0;
   WindowedInterval cpu_window_time_ticks_;
 
-  // Outstanding timers created via CreateFatalTimer() and not yet destroyed.
-  // The vector is not sorted. In most cases there are only 1-2 timers, we can
-  // afford O(N) operations.
-  // All the timers in the list share the same |timer_fd_|, which is keeped
-  // armed on the min(timers_) through RearmTimerFd_Locked().
-  std::vector<TimerData> timers_;
-
   // --- End lock-protected members ---
-
- protected:
-  // Protected for testing.
-  explicit Watchdog(uint32_t polling_interval_ms);
-
-  bool disable_kill_failsafe_for_testing_ = false;
 };
 
 }  // namespace base
