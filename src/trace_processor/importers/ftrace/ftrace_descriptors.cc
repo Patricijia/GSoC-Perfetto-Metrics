@@ -24,7 +24,7 @@ namespace perfetto {
 namespace trace_processor {
 namespace {
 
-std::array<MessageDescriptor, 359> descriptors{{
+std::array<MessageDescriptor, 367> descriptors{{
     {nullptr, 0, {}},
     {nullptr, 0, {}},
     {nullptr, 0, {}},
@@ -617,7 +617,7 @@ std::array<MessageDescriptor, 359> descriptors{{
     },
     {
         "cgroup_attach_task",
-        5,
+        7,
         {
             {},
             {"dst_root", ProtoSchemaType::kInt32},
@@ -625,6 +625,8 @@ std::array<MessageDescriptor, 359> descriptors{{
             {"pid", ProtoSchemaType::kInt32},
             {"comm", ProtoSchemaType::kString},
             {"cname", ProtoSchemaType::kString},
+            {"dst_level", ProtoSchemaType::kInt32},
+            {"dst_path", ProtoSchemaType::kString},
         },
     },
     {
@@ -3839,6 +3841,115 @@ std::array<MessageDescriptor, 359> descriptors{{
             {"bus_id", ProtoSchemaType::kUint32},
             {"client", ProtoSchemaType::kInt32},
             {"ib_quota", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "rss_stat_throttled",
+        4,
+        {
+            {},
+            {"curr", ProtoSchemaType::kUint32},
+            {"member", ProtoSchemaType::kInt32},
+            {"mm_id", ProtoSchemaType::kUint32},
+            {"size", ProtoSchemaType::kInt64},
+        },
+    },
+    {
+        "netif_receive_skb",
+        3,
+        {
+            {},
+            {"len", ProtoSchemaType::kUint32},
+            {"name", ProtoSchemaType::kString},
+            {"skbaddr", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "net_dev_xmit",
+        4,
+        {
+            {},
+            {"len", ProtoSchemaType::kUint32},
+            {"name", ProtoSchemaType::kString},
+            {"rc", ProtoSchemaType::kInt32},
+            {"skbaddr", ProtoSchemaType::kUint64},
+        },
+    },
+    {
+        "inet_sock_set_state",
+        9,
+        {
+            {},
+            {"daddr", ProtoSchemaType::kUint32},
+            {"dport", ProtoSchemaType::kUint32},
+            {"family", ProtoSchemaType::kUint32},
+            {"newstate", ProtoSchemaType::kInt32},
+            {"oldstate", ProtoSchemaType::kInt32},
+            {"protocol", ProtoSchemaType::kUint32},
+            {"saddr", ProtoSchemaType::kUint32},
+            {"skaddr", ProtoSchemaType::kUint64},
+            {"sport", ProtoSchemaType::kUint32},
+        },
+    },
+    {
+        "tcp_retransmit_skb",
+        7,
+        {
+            {},
+            {"daddr", ProtoSchemaType::kUint32},
+            {"dport", ProtoSchemaType::kUint32},
+            {"saddr", ProtoSchemaType::kUint32},
+            {"skaddr", ProtoSchemaType::kUint64},
+            {"skbaddr", ProtoSchemaType::kUint64},
+            {"sport", ProtoSchemaType::kUint32},
+            {"state", ProtoSchemaType::kInt32},
+        },
+    },
+    {
+        "cros_ec_sensorhub_data",
+        6,
+        {
+            {},
+            {"current_time", ProtoSchemaType::kInt64},
+            {"current_timestamp", ProtoSchemaType::kInt64},
+            {"delta", ProtoSchemaType::kInt64},
+            {"ec_fifo_timestamp", ProtoSchemaType::kUint32},
+            {"ec_sensor_num", ProtoSchemaType::kUint32},
+            {"fifo_timestamp", ProtoSchemaType::kInt64},
+        },
+    },
+    {
+        "napi_gro_receive_entry",
+        19,
+        {
+            {},
+            {"data_len", ProtoSchemaType::kUint32},
+            {"gso_size", ProtoSchemaType::kUint32},
+            {"gso_type", ProtoSchemaType::kUint32},
+            {"hash", ProtoSchemaType::kUint32},
+            {"ip_summed", ProtoSchemaType::kUint32},
+            {"l4_hash", ProtoSchemaType::kUint32},
+            {"len", ProtoSchemaType::kUint32},
+            {"mac_header", ProtoSchemaType::kInt32},
+            {"mac_header_valid", ProtoSchemaType::kUint32},
+            {"name", ProtoSchemaType::kString},
+            {"napi_id", ProtoSchemaType::kUint32},
+            {"nr_frags", ProtoSchemaType::kUint32},
+            {"protocol", ProtoSchemaType::kUint32},
+            {"queue_mapping", ProtoSchemaType::kUint32},
+            {"skbaddr", ProtoSchemaType::kUint64},
+            {"truesize", ProtoSchemaType::kUint32},
+            {"vlan_proto", ProtoSchemaType::kUint32},
+            {"vlan_tagged", ProtoSchemaType::kUint32},
+            {"vlan_tci", ProtoSchemaType::kUint32},
+        },
+    },
+    {
+        "napi_gro_receive_exit",
+        1,
+        {
+            {},
+            {"ret", ProtoSchemaType::kInt32},
         },
     },
 }};
