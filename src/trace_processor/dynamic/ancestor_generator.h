@@ -30,11 +30,16 @@ class TraceProcessorContext;
 // Implements the following dynamic tables:
 // * ancestor_slice
 // * experimental_ancestor_stack_profile_callsite
+// * ancestor_slice_by_stack
 //
 // See docs/analysis/trace-processor for usage.
 class AncestorGenerator : public DbSqliteTable::DynamicTableGenerator {
  public:
-  enum class Ancestor { kSlice = 1, kStackProfileCallsite = 2 };
+  enum class Ancestor {
+    kSlice = 1,
+    kStackProfileCallsite = 2,
+    kSliceByStack = 3
+  };
 
   AncestorGenerator(Ancestor type, TraceProcessorContext* context);
 
@@ -43,7 +48,8 @@ class AncestorGenerator : public DbSqliteTable::DynamicTableGenerator {
   uint32_t EstimateRowCount() override;
   util::Status ValidateConstraints(const QueryConstraints&) override;
   std::unique_ptr<Table> ComputeTable(const std::vector<Constraint>& cs,
-                                      const std::vector<Order>& ob) override;
+                                      const std::vector<Order>& ob,
+                                      const BitVector& cols_used) override;
 
   // Returns a RowMap of slice IDs which are ancestors of |slice_id|. Returns
   // NULL if an invalid |slice_id| is given. This is used by

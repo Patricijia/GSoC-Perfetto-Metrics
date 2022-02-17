@@ -19,6 +19,7 @@
 
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 
+#include "perfetto/ext/base/flat_hash_map.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
@@ -39,7 +40,8 @@ class ThreadStateGenerator : public DbSqliteTable::DynamicTableGenerator {
   uint32_t EstimateRowCount() override;
   util::Status ValidateConstraints(const QueryConstraints&) override;
   std::unique_ptr<Table> ComputeTable(const std::vector<Constraint>& cs,
-                                      const std::vector<Order>& ob) override;
+                                      const std::vector<Order>& ob,
+                                      const BitVector& cols_used) override;
 
   // Visible for testing.
   std::unique_ptr<tables::ThreadStateTable> ComputeThreadStateTable(
@@ -54,22 +56,25 @@ class ThreadStateGenerator : public DbSqliteTable::DynamicTableGenerator {
     base::Optional<int64_t> runnable_ts;
     base::Optional<StringId> blocked_function;
   };
+  using TidInfoMap = base::FlatHashMap<UniqueTid,
+                                       ThreadSchedInfo,
+                                       base::AlreadyHashed<UniqueTid>,
+                                       base::QuadraticProbe,
+                                       /*AppendOnly=*/true>;
 
   void AddSchedEvent(const Table& sched,
                      uint32_t sched_idx,
-                     std::unordered_map<UniqueTid, ThreadSchedInfo>& state_map,
+                     TidInfoMap& state_map,
                      int64_t trace_end_ts,
                      tables::ThreadStateTable* table);
 
-  void AddWakingEvent(
-      const Table& wakeup,
-      uint32_t wakeup_idx,
-      std::unordered_map<UniqueTid, ThreadSchedInfo>& state_map);
+  void AddWakingEvent(const Table& wakeup,
+                      uint32_t wakeup_idx,
+                      TidInfoMap& state_map);
 
-  void AddBlockedReasonEvent(
-      const Table& blocked_reason,
-      uint32_t blocked_idx,
-      std::unordered_map<UniqueTid, ThreadSchedInfo>& state_map);
+  void AddBlockedReasonEvent(const Table& blocked_reason,
+                             uint32_t blocked_idx,
+                             TidInfoMap& state_map);
 
   void FlushPendingEventsForThread(UniqueTid utid,
                                    const ThreadSchedInfo&,

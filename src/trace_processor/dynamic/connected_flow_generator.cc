@@ -21,7 +21,7 @@
 #include <set>
 
 #include "src/trace_processor/dynamic/ancestor_generator.h"
-#include "src/trace_processor/dynamic/descendant_slice_generator.h"
+#include "src/trace_processor/dynamic/descendant_generator.h"
 #include "src/trace_processor/importers/common/flow_tracker.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
@@ -127,7 +127,7 @@ class BFS {
     }
     if (visit_relatives & VISIT_DESCENDANTS) {
       base::Optional<RowMap> descendants =
-          DescendantSliceGenerator::GetDescendantSlices(
+          DescendantGenerator::GetDescendantSlices(
               context_->storage->slice_table(), slice_id);
       GoToRelativesImpl(descendants->IterateRows());
     }
@@ -162,8 +162,8 @@ class BFS {
     auto rows = flow.FilterToRowMap({start_col.eq(slice_id.value)});
 
     for (auto row_it = rows.IterateRows(); row_it; row_it.Next()) {
-      flow_rows_.push_back(row_it.row());
-      SliceId next_slice_id = end_col[row_it.row()];
+      flow_rows_.push_back(row_it.index());
+      SliceId next_slice_id = end_col[row_it.index()];
       if (known_slices_.count(next_slice_id) != 0) {
         continue;
       }
@@ -179,7 +179,7 @@ class BFS {
   void GoToRelativesImpl(RowMap::Iterator it) {
     const auto& slice = context_->storage->slice_table();
     for (; it; it.Next()) {
-      auto relative_slice_id = slice.id()[it.row()];
+      auto relative_slice_id = slice.id()[it.index()];
       if (known_slices_.count(relative_slice_id))
         continue;
       known_slices_.insert(relative_slice_id);
@@ -198,7 +198,8 @@ class BFS {
 
 std::unique_ptr<Table> ConnectedFlowGenerator::ComputeTable(
     const std::vector<Constraint>& cs,
-    const std::vector<Order>&) {
+    const std::vector<Order>&,
+    const BitVector&) {
   const auto& flow = context_->storage->flow_table();
   const auto& slice = context_->storage->slice_table();
 
