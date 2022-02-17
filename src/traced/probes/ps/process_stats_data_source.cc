@@ -23,6 +23,7 @@
 
 #include "perfetto/base/task_runner.h"
 #include "perfetto/base/time.h"
+#include "perfetto/ext/base/crash_keys.h"
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/hash.h"
 #include "perfetto/ext/base/metatrace.h"
@@ -53,6 +54,10 @@ namespace {
 // Default upper bound on the number of thread cpu frequency keys, used if none
 // was provided in the config. The cache is trimmed if it exceeds this size.
 const size_t kThreadTimeInStateCacheSize = 10000;
+
+// TODO(b/189749310): For debugging of b/189749310. Remove by Jan 2022.
+base::CrashKey g_crash_key_proc_file("proc_file");
+base::CrashKey g_crash_key_proc_count("proc_count");
 
 int32_t ReadNextNumericDir(DIR* dirp) {
   while (struct dirent* dir_ent = readdir(dirp)) {
@@ -152,9 +157,8 @@ void ProcessStatsDataSource::WriteAllProcesses() {
     return;
   while (int32_t pid = ReadNextNumericDir(*proc_dir)) {
     WriteProcessOrThread(pid);
-    char task_path[255];
-    sprintf(task_path, "/proc/%d/task", pid);
-    base::ScopedDir task_dir(opendir(task_path));
+    base::StackString<128> task_path("/proc/%d/task", pid);
+    base::ScopedDir task_dir(opendir(task_path.c_str()));
     if (!task_dir)
       continue;
 
@@ -166,8 +170,10 @@ void ProcessStatsDataSource::WriteAllProcesses() {
       } else {
         // If we are not interested in thread names, there is no need to open
         // a proc file for each thread. We can save time and directly write the
-        // thread record.
-        WriteThread(tid, pid, /*optional_name=*/nullptr);
+        // thread record. Note that we still read proc_status for recording
+        // NSpid entries.
+        std::string proc_status = ReadProcPidFile(tid, "status");
+        WriteThread(tid, pid, /*optional_name=*/nullptr, proc_status);
       }
     }
   }
@@ -230,7 +236,37 @@ void ProcessStatsDataSource::WriteProcessOrThread(int32_t pid) {
     std::string thread_name;
     if (record_thread_names_)
       thread_name = ReadProcStatusEntry(proc_status, "Name:");
-    WriteThread(pid, tgid, thread_name.empty() ? nullptr : thread_name.c_str());
+    WriteThread(pid, tgid, thread_name.empty() ? nullptr : thread_name.c_str(),
+                proc_status);
+  }
+}
+
+void ProcessStatsDataSource::ReadNamespacedTids(int32_t tid,
+                                                const std::string& proc_status,
+                                                TidArray& out) {
+  // If a process has entered a PID namespace, NSpid shows the mapping in
+  // the status file like: NSpid:  28971   2
+  // NStgid: 28971   2
+  // which denotes that the thread (or process) 28971 in the root PID namespace
+  // has PID = 2 in the child PID namespace. This information can be read from
+  // the NSpid entry in /proc/<tid>/status.
+  if (proc_status.empty())
+    return;
+  std::string nspid = ReadProcStatusEntry(proc_status, "NSpid:");
+  if (nspid.empty())
+    return;
+
+  out.fill(0);  // Zero-initialize the array in case the caller doesn't.
+  auto it = out.begin();
+
+  base::StringSplitter ss(std::move(nspid), '\t');
+  ss.Next();  // Skip the 1st element.
+  PERFETTO_DCHECK(base::CStringToInt32(ss.cur_token()) == tid);
+  while (ss.Next()) {
+    PERFETTO_CHECK(it < out.end());
+    auto maybe_int32 = base::CStringToInt32(ss.cur_token());
+    PERFETTO_DCHECK(maybe_int32.has_value());
+    *it++ = *maybe_int32;
   }
 }
 
@@ -242,6 +278,15 @@ void ProcessStatsDataSource::WriteProcess(int32_t pid,
   proc->set_ppid(ToInt(ReadProcStatusEntry(proc_status, "PPid:")));
   // Uid will have multiple entries, only return first (real uid).
   proc->set_uid(ToInt(ReadProcStatusEntry(proc_status, "Uid:")));
+
+  // Optionally write namespace-local PIDs.
+  TidArray nspids = {};
+  ReadNamespacedTids(pid, proc_status, nspids);
+  for (auto nspid : nspids) {
+    if (nspid == 0)  // No more elements.
+      break;
+    proc->add_nspid(nspid);
+  }
 
   std::string cmdline = ReadProcPidFile(pid, "cmdline");
   if (!cmdline.empty()) {
@@ -261,12 +306,22 @@ void ProcessStatsDataSource::WriteProcess(int32_t pid,
 
 void ProcessStatsDataSource::WriteThread(int32_t tid,
                                          int32_t tgid,
-                                         const char* optional_name) {
+                                         const char* optional_name,
+                                         const std::string& proc_status) {
   auto* thread = GetOrCreatePsTree()->add_threads();
   thread->set_tid(tid);
   thread->set_tgid(tgid);
   if (optional_name)
     thread->set_name(optional_name);
+
+  // Optionally write namespace-local TIDs.
+  TidArray nstids = {};
+  ReadNamespacedTids(tid, proc_status, nstids);
+  for (auto nstid : nstids) {
+    if (nstid == 0)  // No more elements.
+      break;
+    thread->add_nstid(nstid);
+  }
   seen_pids_.insert(tid);
 }
 
@@ -279,17 +334,19 @@ base::ScopedDir ProcessStatsDataSource::OpenProcDir() {
 
 std::string ProcessStatsDataSource::ReadProcPidFile(int32_t pid,
                                                     const std::string& file) {
+  base::StackString<128> path("/proc/%" PRId32 "/%s", pid, file.c_str());
+  auto scoped_key = g_crash_key_proc_file.SetScoped(path.string_view());
+  g_crash_key_proc_count.Set(g_crash_key_proc_count.int_value() + 1);
   std::string contents;
   contents.reserve(4096);
-  if (!base::ReadFile("/proc/" + std::to_string(pid) + "/" + file, &contents))
+  if (!base::ReadFile(path.c_str(), &contents))
     return "";
   return contents;
 }
 
 base::ScopedDir ProcessStatsDataSource::OpenProcTaskDir(int32_t pid) {
-  char task_path[255];
-  sprintf(task_path, "/proc/%d/task", pid);
-  return base::ScopedDir(opendir(task_path));
+  base::StackString<128> task_path("/proc/%d/task", pid);
+  return base::ScopedDir(opendir(task_path.c_str()));
 }
 
 std::string ProcessStatsDataSource::ReadProcStatusEntry(const std::string& buf,
@@ -367,6 +424,7 @@ void ProcessStatsDataSource::Tick(
     base::WeakPtr<ProcessStatsDataSource> weak_this) {
   if (!weak_this)
     return;
+  g_crash_key_proc_count.Clear();
   ProcessStatsDataSource& thiz = *weak_this;
   uint32_t period_ms = thiz.poll_period_ms_;
   uint32_t delay_ms =
