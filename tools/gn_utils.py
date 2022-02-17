@@ -60,7 +60,9 @@ def repo_root():
 
 
 def _tool_path(name):
-  return os.path.join(repo_root(), 'tools', name)
+  wrapper = os.path.abspath(
+      os.path.join(repo_root(), 'tools', 'run_buildtools_binary.py'))
+  return ['python3', wrapper, name]
 
 
 def prepare_out_directory(gn_args, name, root=repo_root()):
@@ -75,18 +77,17 @@ def prepare_out_directory(gn_args, name, root=repo_root()):
   except OSError as e:
     if e.errno != errno.EEXIST:
       raise
-  _check_command_output([_tool_path('gn'), 'gen', out,
-                         '--args=%s' % gn_args],
-                        cwd=repo_root())
+  _check_command_output(
+      _tool_path('gn') + ['gen', out, '--args=%s' % gn_args], cwd=repo_root())
   return out
 
 
 def load_build_description(out):
   """Creates the JSON build description by running GN."""
-  desc = _check_command_output([
-      _tool_path('gn'), 'desc', out, '--format=json', '--all-toolchains', '//*'
-  ],
-                               cwd=repo_root())
+  desc = _check_command_output(
+      _tool_path('gn') +
+      ['desc', out, '--format=json', '--all-toolchains', '//*'],
+      cwd=repo_root())
   return json.loads(desc)
 
 
@@ -111,14 +112,14 @@ def build_targets(out, targets, quiet=False):
   targets = [t.replace('//', '') for t in targets]
   with open(os.devnull, 'w') as devnull:
     stdout = devnull if quiet else None
-    subprocess.check_call(
-        [_tool_path('ninja')] + targets, cwd=out, stdout=stdout)
+    cmd = _tool_path('ninja') + targets
+    subprocess.check_call(cmd, cwd=os.path.abspath(out), stdout=stdout)
 
 
 def compute_source_dependencies(out):
   """For each source file, computes a set of headers it depends on."""
-  ninja_deps = _check_command_output([_tool_path('ninja'), '-t', 'deps'],
-                                     cwd=out)
+  ninja_deps = _check_command_output(
+      _tool_path('ninja') + ['-t', 'deps'], cwd=out)
   deps = {}
   current_source = None
   for line in ninja_deps.split('\n'):
@@ -309,6 +310,7 @@ class GnParser(object):
       # This is typically: 'proto', 'protozero', 'ipc'.
       self.proto_plugin = None
       self.proto_paths = set()
+      self.proto_exports = set()
 
       self.sources = set()
       # TODO(primiano): consider whether the public section should be part of
@@ -394,12 +396,13 @@ class GnParser(object):
       target.is_third_party_dep_ = True
       return target
 
-    proto_target_type, proto_desc = self.get_proto_target_type_(target)
+    proto_target_type, proto_desc = self.get_proto_target_type(target)
     if proto_target_type is not None:
       self.proto_libs[target.name] = target
       target.type = 'proto_library'
       target.proto_plugin = proto_target_type
       target.proto_paths.update(self.get_proto_paths(proto_desc))
+      target.proto_exports.update(self.get_proto_exports(proto_desc))
       target.sources.update(proto_desc.get('sources', []))
       assert (all(x.endswith('.proto') for x in target.sources))
     elif target.type == 'source_set':
@@ -443,7 +446,7 @@ class GnParser(object):
         target.proto_paths.update(dep.proto_paths)
 
         # Don't bubble deps for action targets
-        if target.type != 'action':
+        if target.type != 'action' and proto_target_type != 'descriptor':
           target.proto_deps.update(dep.proto_deps)  # Bubble up deps.
       elif dep.type == 'source_set':
         target.source_set_deps.add(dep_name)
@@ -458,24 +461,17 @@ class GnParser(object):
 
     return target
 
+  def get_proto_exports(self, proto_desc):
+    # exports in metadata will be available for source_set targets.
+    metadata = proto_desc.get('metadata', {})
+    return metadata.get('exports', [])
+
   def get_proto_paths(self, proto_desc):
     # import_dirs in metadata will be available for source_set targets.
     metadata = proto_desc.get('metadata', {})
-    import_dirs = metadata.get('import_dirs', [])
-    if import_dirs:
-      return import_dirs
+    return metadata.get('import_dirs', [])
 
-    # For all non-source-set targets, we need to parse the command line
-    # of the protoc invocation.
-    proto_paths = []
-    args = proto_desc.get('args', [])
-    for i, arg in enumerate(args):
-      if arg != '--proto_path':
-        continue
-      proto_paths.append(re.sub('^../../', '//', args[i + 1]))
-    return proto_paths
-
-  def get_proto_target_type_(self, target):
+  def get_proto_target_type(self, target):
     """ Checks if the target is a proto library and return the plugin.
 
         Returns:
@@ -496,7 +492,7 @@ class GnParser(object):
       return 'descriptor', desc
 
     # Source set proto targets have a non-empty proto_library_sources in the
-    # metadata of the descirption.
+    # metadata of the description.
     metadata = desc.get('metadata', {})
     if 'proto_library_sources' in metadata:
       return 'source_set', desc
