@@ -17,6 +17,7 @@
 #ifndef SRC_TRACE_PROCESSOR_DYNAMIC_EXPERIMENTAL_FLAMEGRAPH_GENERATOR_H_
 #define SRC_TRACE_PROCESSOR_DYNAMIC_EXPERIMENTAL_FLAMEGRAPH_GENERATOR_H_
 
+#include "src/trace_processor/importers/proto/flamegraph_construction_algorithms.h"
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 
 #include "src/trace_processor/storage/trace_storage.h"
@@ -29,10 +30,14 @@ class TraceProcessorContext;
 class ExperimentalFlamegraphGenerator
     : public DbSqliteTable::DynamicTableGenerator {
  public:
+  enum class ProfileType { kGraph, kNative, kPerf };
+
   struct InputValues {
+    ProfileType profile_type;
     int64_t ts;
-    UniquePid upid;
-    std::string profile_type;
+    std::vector<TimeConstraints> time_constraints;
+    base::Optional<UniquePid> upid;
+    base::Optional<std::string> upid_group;
     std::string focus_str;
   };
 
@@ -44,7 +49,8 @@ class ExperimentalFlamegraphGenerator
   uint32_t EstimateRowCount() override;
   util::Status ValidateConstraints(const QueryConstraints&) override;
   std::unique_ptr<Table> ComputeTable(const std::vector<Constraint>& cs,
-                                      const std::vector<Order>& ob) override;
+                                      const std::vector<Order>& ob,
+                                      const BitVector& cols_used) override;
 
  private:
   TraceProcessorContext* context_ = nullptr;
