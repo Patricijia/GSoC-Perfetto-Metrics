@@ -49,7 +49,13 @@ PERFETTO_CONFIG = struct(
         protoc_lib = ["@com_google_protobuf//:protoc_lib"],
         protobuf_lite = ["@com_google_protobuf//:protobuf_lite"],
         protobuf_full = ["@com_google_protobuf//:protobuf"],
-        protobuf_descriptor_proto = ["@com_google_protobuf//:descriptor_proto"]
+        protobuf_descriptor_proto = ["@com_google_protobuf//:descriptor_proto"],
+
+        # The Python targets are empty on the standalone build because we assume
+        # any relevant deps are installed on the system or are not applicable.
+        protobuf_py = [],
+        pandas_py = [],
+        tp_vendor_py = [],
     ),
 
     # This struct allows embedders to customize the cc_opts for Perfetto
