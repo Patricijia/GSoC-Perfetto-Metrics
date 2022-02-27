@@ -1931,6 +1931,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -1953,6 +1954,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.gen.cc",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.gen.cc",
         "external/perfetto/protos/perfetto/common/descriptor.gen.cc",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.gen.cc",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.gen.cc",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.gen.cc",
         "external/perfetto/protos/perfetto/common/observable_events.gen.cc",
@@ -1975,6 +1977,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -1997,6 +2000,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.gen.h",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.gen.h",
         "external/perfetto/protos/perfetto/common/descriptor.gen.h",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.gen.h",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.gen.h",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.gen.h",
         "external/perfetto/protos/perfetto/common/observable_events.gen.h",
@@ -2023,6 +2027,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -2044,6 +2049,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.pb.cc",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.pb.cc",
         "external/perfetto/protos/perfetto/common/descriptor.pb.cc",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.pb.cc",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pb.cc",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.pb.cc",
         "external/perfetto/protos/perfetto/common/observable_events.pb.cc",
@@ -2066,6 +2072,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -2087,6 +2094,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.pb.h",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.pb.h",
         "external/perfetto/protos/perfetto/common/descriptor.pb.h",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.pb.h",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pb.h",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.pb.h",
         "external/perfetto/protos/perfetto/common/observable_events.pb.h",
@@ -2113,6 +2121,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -2135,6 +2144,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.pbzero.cc",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.pbzero.cc",
         "external/perfetto/protos/perfetto/common/descriptor.pbzero.cc",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.pbzero.cc",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pbzero.cc",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.pbzero.cc",
         "external/perfetto/protos/perfetto/common/observable_events.pbzero.cc",
@@ -2157,6 +2167,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -2179,6 +2190,7 @@ genrule {
         "external/perfetto/protos/perfetto/common/commit_data_request.pbzero.h",
         "external/perfetto/protos/perfetto/common/data_source_descriptor.pbzero.h",
         "external/perfetto/protos/perfetto/common/descriptor.pbzero.h",
+        "external/perfetto/protos/perfetto/common/ftrace_descriptor.pbzero.h",
         "external/perfetto/protos/perfetto/common/gpu_counter_descriptor.pbzero.h",
         "external/perfetto/protos/perfetto/common/interceptor_descriptor.pbzero.h",
         "external/perfetto/protos/perfetto/common/observable_events.pbzero.h",
@@ -2391,6 +2403,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -2918,21 +2931,6 @@ genrule {
     export_include_dirs: [
         ".",
         "protos",
-    ],
-}
-
-// GN: //protos/perfetto/config:merged_config_descriptor
-genrule {
-    name: "perfetto_protos_perfetto_config_merged_config_descriptor",
-    srcs: [
-        "protos/perfetto/config/perfetto_config.proto",
-    ],
-    tools: [
-        "aprotoc",
-    ],
-    cmd: "mkdir -p $(genDir)/external/perfetto/ && $(location aprotoc) --proto_path=external/perfetto --descriptor_set_out=$(out) $(in)",
-    out: [
-        "perfetto_protos_perfetto_config_merged_config_descriptor.bin",
     ],
 }
 
@@ -4094,6 +4092,7 @@ genrule {
         "protos/perfetto/common/commit_data_request.proto",
         "protos/perfetto/common/data_source_descriptor.proto",
         "protos/perfetto/common/descriptor.proto",
+        "protos/perfetto/common/ftrace_descriptor.proto",
         "protos/perfetto/common/gpu_counter_descriptor.proto",
         "protos/perfetto/common/interceptor_descriptor.proto",
         "protos/perfetto/common/observable_events.proto",
@@ -7221,11 +7220,11 @@ filegroup {
 genrule {
     name: "perfetto_src_perfetto_cmd_gen_cc_config_descriptor",
     srcs: [
-        ":perfetto_protos_perfetto_config_merged_config_descriptor",
+        ":perfetto_protos_perfetto_config_descriptor",
     ],
     cmd: "$(location tools/gen_cc_proto_descriptor.py) --gen_dir=$(genDir) --cpp_out=$(out) $(in)",
     out: [
-        "src/perfetto_cmd/perfetto_config.descriptor.h",
+        "src/perfetto_cmd/config.descriptor.h",
     ],
     tool_files: [
         "tools/gen_cc_proto_descriptor.py",
@@ -9217,14 +9216,6 @@ filegroup {
     ],
 }
 
-// GN: //tools/trace_to_text:unittests
-filegroup {
-    name: "perfetto_tools_trace_to_text_unittests",
-    srcs: [
-        "tools/trace_to_text/trace_to_text_unittest.cc",
-    ],
-}
-
 // GN: //tools/trace_to_text:utils
 filegroup {
     name: "perfetto_tools_trace_to_text_utils",
@@ -9495,7 +9486,6 @@ cc_test {
         ":perfetto_src_profiling_perf_producer_unittests",
         ":perfetto_src_profiling_perf_regs_parsing",
         ":perfetto_src_profiling_perf_unwinding",
-        ":perfetto_src_profiling_symbolizer_symbolize_database",
         ":perfetto_src_profiling_symbolizer_symbolizer",
         ":perfetto_src_profiling_symbolizer_unittests",
         ":perfetto_src_profiling_unittests",
@@ -9596,9 +9586,6 @@ cc_test {
         ":perfetto_src_tracing_test_tracing_integration_test",
         ":perfetto_src_tracing_unittests",
         ":perfetto_tools_sanitizers_unittests_sanitizers_unittests",
-        ":perfetto_tools_trace_to_text_trace_to_text_lib",
-        ":perfetto_tools_trace_to_text_unittests",
-        ":perfetto_tools_trace_to_text_utils",
     ],
     shared_libs: [
         "libandroidicu",
@@ -9724,7 +9711,6 @@ cc_test {
         "perfetto_src_traced_probes_ftrace_test_messages_cpp_gen_headers",
         "perfetto_src_traced_probes_ftrace_test_messages_lite_gen_headers",
         "perfetto_src_traced_probes_ftrace_test_messages_zero_gen_headers",
-        "perfetto_tools_trace_to_text_gen_cc_trace_descriptor",
     ],
     defaults: [
         "perfetto_defaults",
