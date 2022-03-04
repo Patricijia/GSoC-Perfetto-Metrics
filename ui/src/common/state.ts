@@ -335,6 +335,7 @@ export interface PivotTableState {
 // correctly. Generated together with the text of query and passed without the
 // change to the query response.
 export interface PivotTableReduxQueryMetadata {
+  tableName: string;
   pivotColumns: string[];
   aggregationColumns: string[];
 }
@@ -355,8 +356,8 @@ export interface PivotTableReduxResult {
 }
 
 export interface PivotTableReduxState {
-  // Whether the panel should be visible
-  enabled: boolean;
+  // Currently selected area, if null, pivot table is not going to be visible.
+  selectionArea: Area|null;
   // Increasing identifier of the query request, used to avoid performing the
   // same query more than once.
   queryId: number;

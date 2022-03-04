@@ -327,11 +327,13 @@ export class DetailsPanel implements m.ClassComponent {
       });
     }
 
-    if (globals.state.pivotTableRedux.enabled) {
+    if (globals.state.pivotTableRedux.selectionArea !== null) {
       detailsPanels.push({
         key: 'pivot_table_redux',
         name: 'Pivot Table',
-        vnode: m(PivotTableRedux)
+        vnode:
+            m(PivotTableRedux,
+              {selectionArea: globals.state.pivotTableRedux.selectionArea})
       });
     }
 
@@ -405,7 +407,7 @@ export class DetailsPanel implements m.ClassComponent {
             return {key: tab.key, name: tab.name};
           }),
         }),
-        m('.details-panel-container',
+        m('.details-panel-container.x-scrollable',
           m(PanelContainer, {doesScroll: true, panels, kind: 'DETAILS'})));
   }
 }

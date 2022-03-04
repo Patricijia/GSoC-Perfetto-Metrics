@@ -13,6 +13,22 @@ package perfetto.protos;
 
 option go_package = "github.com/google/perfetto/perfetto_proto";
 
+// Begin of protos/perfetto/common/ftrace_descriptor.proto
+
+message FtraceDescriptor {
+  message AtraceCategory {
+    optional string name = 1;
+    optional string description = 2;
+  }
+
+  // Report the available atrace categories.
+  //
+  // Used by Traceur via `perfetto --query`.
+  repeated AtraceCategory atrace_categories = 1;
+}
+
+// End of protos/perfetto/common/ftrace_descriptor.proto
+
 // Begin of protos/perfetto/common/gpu_counter_descriptor.proto
 
 // Description of GPU counters.
@@ -186,6 +202,8 @@ message DataSourceDescriptor {
   optional GpuCounterDescriptor gpu_counter_descriptor = 5 [lazy = true];
 
   optional TrackEventDescriptor track_event_descriptor = 6 [lazy = true];
+
+  optional FtraceDescriptor ftrace_descriptor = 8 [lazy = true];
 }
 
 // End of protos/perfetto/common/data_source_descriptor.proto
@@ -1506,6 +1524,18 @@ message TrackEventConfig {
 
   // Default: []
   repeated string enabled_tags = 4;
+
+  // Default: false (i.e. enabled by default)
+  // Note: This isn't supported in the SDK yet. It will be supported soon.
+  optional bool disable_incremental_timestamps = 5;
+
+  // Allows to specify a custom unit different than the default (ns).
+  // A multiplier of 1000 means that a timestamp = 3 should be interpreted as
+  // 3000 ns = 3 us.
+  // Default: 1 (if unset, it should be read as 1).
+  // For now, this multiplier only affects incremental timestamps.
+  // Note: This isn't supported in the SDK yet. It will be supported soon.
+  optional uint64 timestamp_unit_multipler = 6;
 }
 
 // End of protos/perfetto/config/track_event/track_event_config.proto
@@ -2109,7 +2139,7 @@ message TraceConfig {
 
 // Statistics for the internals of the tracing service.
 //
-// Next id: 11.
+// Next id: 16.
 message TraceStats {
   // From TraceBuffer::Stats.
   //
@@ -2256,6 +2286,25 @@ message TraceStats {
     optional uint64 errors = 4;
   }
   optional FilterStats filter_stats = 11;
+
+  // Count of Flush() requests (either from the Consumer, or self-induced
+  // periodic flushes). The final Flush() is also included in the count.
+  optional uint64 flushes_requested = 12;
+
+  // The count of the Flush() requests that were completed succesfully.
+  // In a well behaving trace this should always be == `flush_requests`.
+  optional uint64 flushes_succeeded = 13;
+
+  // The count of the Flush() requests that failed (in most timed out).
+  // In a well behaving trace this should always be == 0.
+  optional uint64 flushes_failed = 14;
+
+  enum FinalFlushOutcome {
+    FINAL_FLUSH_UNSPECIFIED = 0;
+    FINAL_FLUSH_SUCCEEDED = 1;
+    FINAL_FLUSH_FAILED = 2;
+  }
+  optional FinalFlushOutcome final_flush_outcome = 15;
 }
 
 // End of protos/perfetto/common/trace_stats.proto
@@ -3543,6 +3592,19 @@ message CpuhpPauseFtraceEvent {
 }
 
 // End of protos/perfetto/trace/ftrace/cpuhp.proto
+
+// Begin of protos/perfetto/trace/ftrace/cros_ec.proto
+
+message CrosEcSensorhubDataFtraceEvent {
+  optional int64 current_time = 1;
+  optional int64 current_timestamp = 2;
+  optional int64 delta = 3;
+  optional uint32 ec_fifo_timestamp = 4;
+  optional uint32 ec_sensor_num = 5;
+  optional int64 fifo_timestamp = 6;
+}
+
+// End of protos/perfetto/trace/ftrace/cros_ec.proto
 
 // Begin of protos/perfetto/trace/ftrace/dmabuf_heap.proto
 
@@ -5132,6 +5194,30 @@ message NetDevXmitFtraceEvent {
   optional int32 rc = 3;
   optional uint64 skbaddr = 4;
 }
+message NapiGroReceiveEntryFtraceEvent {
+  optional uint32 data_len = 1;
+  optional uint32 gso_size = 2;
+  optional uint32 gso_type = 3;
+  optional uint32 hash = 4;
+  optional uint32 ip_summed = 5;
+  optional uint32 l4_hash = 6;
+  optional uint32 len = 7;
+  optional int32 mac_header = 8;
+  optional uint32 mac_header_valid = 9;
+  optional string name = 10;
+  optional uint32 napi_id = 11;
+  optional uint32 nr_frags = 12;
+  optional uint32 protocol = 13;
+  optional uint32 queue_mapping = 14;
+  optional uint64 skbaddr = 15;
+  optional uint32 truesize = 16;
+  optional uint32 vlan_proto = 17;
+  optional uint32 vlan_tagged = 18;
+  optional uint32 vlan_tci = 19;
+}
+message NapiGroReceiveExitFtraceEvent {
+  optional int32 ret = 1;
+}
 
 // End of protos/perfetto/trace/ftrace/net.proto
 
@@ -5396,6 +5482,16 @@ message SignalGenerateFtraceEvent {
 }
 
 // End of protos/perfetto/trace/ftrace/signal.proto
+
+// Begin of protos/perfetto/trace/ftrace/skb.proto
+
+message KfreeSkbFtraceEvent {
+  optional uint64 location = 1;
+  optional uint32 protocol = 2;
+  optional uint64 skbaddr = 3;
+}
+
+// End of protos/perfetto/trace/ftrace/skb.proto
 
 // Begin of protos/perfetto/trace/ftrace/sock.proto
 
@@ -5932,6 +6028,10 @@ message FtraceEvent {
     NetDevXmitFtraceEvent net_dev_xmit = 361;
     InetSockSetStateFtraceEvent inet_sock_set_state = 362;
     TcpRetransmitSkbFtraceEvent tcp_retransmit_skb = 363;
+    CrosEcSensorhubDataFtraceEvent cros_ec_sensorhub_data = 364;
+    NapiGroReceiveEntryFtraceEvent napi_gro_receive_entry = 365;
+    NapiGroReceiveExitFtraceEvent napi_gro_receive_exit = 366;
+    KfreeSkbFtraceEvent kfree_skb = 367;
   }
 }
 

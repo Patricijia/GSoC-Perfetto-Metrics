@@ -22,6 +22,7 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/containers/null_term_string_view.h"
 #include "src/trace_processor/containers/nullable_vector.h"
 #include "src/trace_processor/containers/row_map.h"
 #include "src/trace_processor/containers/string_pool.h"
@@ -54,6 +55,7 @@ enum class FilterOp {
   kLe,
   kIsNull,
   kIsNotNull,
+  kGlob,
 };
 
 // Represents a constraint on a column.
@@ -67,11 +69,6 @@ struct Constraint {
 struct Order {
   uint32_t col_idx;
   bool desc;
-};
-
-// Represents a column which is to be joined on.
-struct JoinKey {
-  uint32_t col_idx;
 };
 
 class Table;
@@ -201,6 +198,11 @@ class Column {
                   row_map_idx, ptr, std::move(storage));
   }
 
+  // Creates a Column which does not have any data backing it.
+  static Column DummyColumn(const char* name,
+                            Table* table,
+                            uint32_t col_idx_in_table);
+
   // Creates a Column which returns the index as the value of the row.
   static Column IdColumn(Table* table,
                          uint32_t col_idx_in_table,
@@ -231,6 +233,8 @@ class Column {
           return base::nullopt;
         return row_map().RowOf(static_cast<uint32_t>(value.long_value));
       }
+      case ColumnType::kDummy:
+        PERFETTO_FATAL("IndexOf not allowed on dummy column");
     }
     PERFETTO_FATAL("For GCC");
   }
@@ -265,6 +269,8 @@ class Column {
       case ColumnType::kId: {
         PERFETTO_FATAL("Cannot set value on a id column");
       }
+      case ColumnType::kDummy:
+        PERFETTO_FATAL("Set not allowed on dummy column");
     }
   }
 
@@ -330,6 +336,9 @@ class Column {
   // Returns true if this column is considered an id column.
   bool IsId() const { return type_ == ColumnType::kId; }
 
+  // Returns true if this column is a dummy column.
+  bool IsDummy() const { return type_ == ColumnType::kDummy; }
+
   // Returns true if this column is a nullable column.
   bool IsNullable() const { return (flags_ & Flag::kNonNull) == 0; }
 
@@ -384,13 +393,14 @@ class Column {
   Constraint is_null() const {
     return Constraint{col_idx_in_table_, FilterOp::kIsNull, SqlValue()};
   }
+  Constraint glob(const char* value) const {
+    return Constraint{col_idx_in_table_, FilterOp::kGlob,
+                      SqlValue::String(value)};
+  }
 
   // Returns an Order for each Order type for this Column.
   Order ascending() const { return Order{col_idx_in_table_, false}; }
   Order descending() const { return Order{col_idx_in_table_, true}; }
-
-  // Returns the JoinKey for this Column.
-  JoinKey join_key() const { return JoinKey{col_idx_in_table_}; }
 
   // Returns an iterator to the first entry in this column.
   Iterator begin() const { return Iterator(this, 0); }
@@ -434,6 +444,9 @@ class Column {
 
     // Types generated on the fly.
     kId,
+
+    // Types which don't have any data backing them.
+    kDummy,
   };
 
   friend class Table;
@@ -476,6 +489,8 @@ class Column {
       }
       case ColumnType::kId:
         return SqlValue::Long(idx);
+      case ColumnType::kDummy:
+        PERFETTO_FATAL("GetAtIdx not allowed on dummy column");
     }
     PERFETTO_FATAL("For GCC");
   }
@@ -524,9 +539,10 @@ class Column {
       case FilterOp::kNe:
       case FilterOp::kIsNull:
       case FilterOp::kIsNotNull:
-        break;
+      case FilterOp::kGlob:
+        return false;
     }
-    return false;
+    PERFETTO_FATAL("For GCC");
   }
 
   // Slow path filter method which will perform a full table scan.
@@ -586,6 +602,8 @@ class Column {
         return SqlValue::Type::kDouble;
       case ColumnType::kString:
         return SqlValue::Type::kString;
+      case ColumnType::kDummy:
+        PERFETTO_FATAL("ToSqlValueType not allowed on dummy column");
     }
     PERFETTO_FATAL("For GCC");
   }

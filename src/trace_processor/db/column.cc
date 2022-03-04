@@ -69,8 +69,17 @@ Column::Column(const char* name,
       PERFETTO_CHECK(nullable_vector<StringPool::Id>().IsDense() == IsDense());
       break;
     case ColumnType::kId:
+    case ColumnType::kDummy:
       break;
   }
+}
+
+Column Column::DummyColumn(const char* name,
+                           Table* table,
+                           uint32_t col_idx_in_table) {
+  return Column(name, ColumnType::kDummy, Flag::kNoFlag, table,
+                col_idx_in_table, std::numeric_limits<uint32_t>::max(), nullptr,
+                nullptr);
 }
 
 Column Column::IdColumn(Table* table, uint32_t col_idx, uint32_t row_map_idx) {
@@ -128,6 +137,8 @@ void Column::FilterIntoSlow(FilterOp op, SqlValue value, RowMap* rm) const {
       FilterIntoIdSlow(op, value, rm);
       break;
     }
+    case ColumnType::kDummy:
+      PERFETTO_FATAL("FilterIntoSlow not allowed on dummy column");
   }
 }
 
@@ -149,13 +160,18 @@ void Column::FilterIntoNumericSlow(FilterOp op,
       rm->Intersect(RowMap());
     }
     return;
-  } else if (op == FilterOp::kIsNotNull) {
+  }
+  if (op == FilterOp::kIsNotNull) {
     PERFETTO_DCHECK(value.is_null());
     if (is_nullable) {
       row_map().FilterInto(rm, [this](uint32_t row) {
         return nullable_vector<T>().Get(row).has_value();
       });
     }
+    return;
+  }
+  if (op == FilterOp::kGlob) {
+    rm->Intersect(RowMap());
     return;
   }
 
@@ -264,6 +280,7 @@ void Column::FilterIntoNumericWithComparatorSlow(FilterOp op,
       break;
     case FilterOp::kIsNull:
     case FilterOp::kIsNotNull:
+    case FilterOp::kGlob:
       PERFETTO_FATAL("Should be handled above");
   }
 }
@@ -279,7 +296,9 @@ void Column::FilterIntoStringSlow(FilterOp op,
       return GetStringPoolStringAtIdx(row).data() == nullptr;
     });
     return;
-  } else if (op == FilterOp::kIsNotNull) {
+  }
+
+  if (op == FilterOp::kIsNotNull) {
     PERFETTO_DCHECK(value.is_null());
     row_map().FilterInto(rm, [this](uint32_t row) {
       return GetStringPoolStringAtIdx(row).data() != nullptr;
@@ -332,6 +351,12 @@ void Column::FilterIntoStringSlow(FilterOp op,
         return v.data() != nullptr && compare::String(v, str_value) >= 0;
       });
       break;
+    case FilterOp::kGlob:
+      row_map().FilterInto(rm, [this, str_value](uint32_t idx) {
+        auto v = GetStringPoolStringAtIdx(idx);
+        return v.data() != nullptr && compare::Glob(v, str_value) == 0;
+      });
+      break;
     case FilterOp::kIsNull:
     case FilterOp::kIsNotNull:
       PERFETTO_FATAL("Should be handled above");
@@ -345,8 +370,15 @@ void Column::FilterIntoIdSlow(FilterOp op, SqlValue value, RowMap* rm) const {
     PERFETTO_DCHECK(value.is_null());
     rm->Intersect(RowMap());
     return;
-  } else if (op == FilterOp::kIsNotNull) {
+  }
+
+  if (op == FilterOp::kIsNotNull) {
     PERFETTO_DCHECK(value.is_null());
+    return;
+  }
+
+  if (op == FilterOp::kGlob) {
+    rm->Intersect(RowMap());
     return;
   }
 
@@ -389,6 +421,7 @@ void Column::FilterIntoIdSlow(FilterOp op, SqlValue value, RowMap* rm) const {
       break;
     case FilterOp::kIsNull:
     case FilterOp::kIsNotNull:
+    case FilterOp::kGlob:
       PERFETTO_FATAL("Should be handled above");
   }
 }
@@ -443,6 +476,9 @@ void Column::StableSort(std::vector<uint32_t>* out) const {
         int res = compare::Numeric(a_idx, b_idx);
         return desc ? res > 0 : res < 0;
       });
+      break;
+    case ColumnType::kDummy:
+      PERFETTO_FATAL("StableSort not allowed on dummy column");
   }
 }
 
@@ -469,6 +505,7 @@ void Column::StableSortNumeric(std::vector<uint32_t>* out) const {
 }
 
 const RowMap& Column::row_map() const {
+  PERFETTO_DCHECK(type_ != ColumnType::kDummy);
   return table_->row_maps_[row_map_idx_];
 }
 
