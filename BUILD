@@ -1903,36 +1903,6 @@ perfetto_filegroup(
     ],
 )
 
-# GN target: //tools/trace_to_text:common
-perfetto_filegroup(
-    name = "tools_trace_to_text_common",
-    srcs = [
-        "tools/trace_to_text/deobfuscate_profile.cc",
-        "tools/trace_to_text/deobfuscate_profile.h",
-        "tools/trace_to_text/main.cc",
-        "tools/trace_to_text/symbolize_profile.cc",
-        "tools/trace_to_text/symbolize_profile.h",
-        "tools/trace_to_text/trace_to_hprof.cc",
-        "tools/trace_to_text/trace_to_hprof.h",
-        "tools/trace_to_text/trace_to_json.cc",
-        "tools/trace_to_text/trace_to_json.h",
-        "tools/trace_to_text/trace_to_profile.cc",
-        "tools/trace_to_text/trace_to_profile.h",
-        "tools/trace_to_text/trace_to_systrace.cc",
-        "tools/trace_to_text/trace_to_systrace.h",
-        "tools/trace_to_text/trace_to_text.h",
-    ],
-)
-
-# GN target: //tools/trace_to_text:full
-perfetto_filegroup(
-    name = "tools_trace_to_text_full",
-    srcs = [
-        "tools/trace_to_text/proto_full_utils.cc",
-        "tools/trace_to_text/proto_full_utils.h",
-    ],
-)
-
 perfetto_cc_proto_descriptor(
     name = "tools_trace_to_text_gen_cc_trace_descriptor",
     deps = [
@@ -1943,21 +1913,40 @@ perfetto_cc_proto_descriptor(
     ],
 )
 
+# GN target: //tools/trace_to_text:lib
+perfetto_filegroup(
+    name = "tools_trace_to_text_lib",
+    srcs = [
+        "tools/trace_to_text/deobfuscate_profile.cc",
+        "tools/trace_to_text/deobfuscate_profile.h",
+        "tools/trace_to_text/symbolize_profile.cc",
+        "tools/trace_to_text/symbolize_profile.h",
+        "tools/trace_to_text/trace_to_hprof.cc",
+        "tools/trace_to_text/trace_to_hprof.h",
+        "tools/trace_to_text/trace_to_json.cc",
+        "tools/trace_to_text/trace_to_json.h",
+        "tools/trace_to_text/trace_to_profile.cc",
+        "tools/trace_to_text/trace_to_profile.h",
+        "tools/trace_to_text/trace_to_systrace.cc",
+        "tools/trace_to_text/trace_to_systrace.h",
+        "tools/trace_to_text/trace_to_text.cc",
+        "tools/trace_to_text/trace_to_text.h",
+    ],
+)
+
+# GN target: //tools/trace_to_text:main
+perfetto_filegroup(
+    name = "tools_trace_to_text_main",
+    srcs = [
+        "tools/trace_to_text/main.cc",
+    ],
+)
+
 # GN target: //tools/trace_to_text:pprofbuilder
 perfetto_filegroup(
     name = "tools_trace_to_text_pprofbuilder",
     srcs = [
         "tools/trace_to_text/pprof_builder.cc",
-    ],
-)
-
-# GN target: //tools/trace_to_text:trace_to_text_lib
-perfetto_filegroup(
-    name = "tools_trace_to_text_trace_to_text_lib",
-    srcs = [
-        "tools/trace_to_text/proto_full_utils.h",
-        "tools/trace_to_text/trace_to_text.cc",
-        "tools/trace_to_text/trace_to_text.h",
     ],
 )
 
@@ -1979,10 +1968,22 @@ perfetto_proto_library(
     name = "config_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
     deps = [
+        ":protos_perfetto_common_protos",
+        ":protos_perfetto_config_android_protos",
+        ":protos_perfetto_config_ftrace_protos",
+        ":protos_perfetto_config_gpu_protos",
+        ":protos_perfetto_config_inode_file_protos",
+        ":protos_perfetto_config_interceptors_protos",
+        ":protos_perfetto_config_power_protos",
+        ":protos_perfetto_config_process_stats_protos",
+        ":protos_perfetto_config_profiling_protos",
         ":protos_perfetto_config_protos",
+        ":protos_perfetto_config_sys_stats_protos",
+        ":protos_perfetto_config_track_event_protos",
     ],
 )
 
+# GN target: [//protos/perfetto/config:source_set]
 perfetto_cc_proto_library(
     name = "config_cc_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
@@ -1991,6 +1992,7 @@ perfetto_cc_proto_library(
     ],
 )
 
+# GN target: [//protos/perfetto/config:source_set]
 perfetto_java_proto_library(
     name = "config_java_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
@@ -1999,7 +2001,8 @@ perfetto_java_proto_library(
     ],
 )
 
-perfetto_java_proto_library(
+# GN target: [//protos/perfetto/config:source_set]
+perfetto_java_lite_proto_library(
     name = "config_java_proto_lite",
     visibility = PERFETTO_CONFIG.public_visibility,
     deps = [
@@ -2012,11 +2015,37 @@ perfetto_proto_library(
     name = "trace_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
     deps = [
+        ":protos_perfetto_common_protos",
+        ":protos_perfetto_config_android_protos",
+        ":protos_perfetto_config_ftrace_protos",
+        ":protos_perfetto_config_gpu_protos",
+        ":protos_perfetto_config_inode_file_protos",
+        ":protos_perfetto_config_interceptors_protos",
+        ":protos_perfetto_config_power_protos",
+        ":protos_perfetto_config_process_stats_protos",
+        ":protos_perfetto_config_profiling_protos",
+        ":protos_perfetto_config_protos",
+        ":protos_perfetto_config_sys_stats_protos",
+        ":protos_perfetto_config_track_event_protos",
+        ":protos_perfetto_trace_android_protos",
+        ":protos_perfetto_trace_chrome_protos",
+        ":protos_perfetto_trace_filesystem_protos",
+        ":protos_perfetto_trace_ftrace_protos",
+        ":protos_perfetto_trace_gpu_protos",
+        ":protos_perfetto_trace_interned_data_protos",
         ":protos_perfetto_trace_minimal_protos",
         ":protos_perfetto_trace_non_minimal_protos",
+        ":protos_perfetto_trace_perfetto_protos",
+        ":protos_perfetto_trace_power_protos",
+        ":protos_perfetto_trace_profiling_protos",
+        ":protos_perfetto_trace_ps_protos",
+        ":protos_perfetto_trace_sys_stats_protos",
+        ":protos_perfetto_trace_system_info_protos",
+        ":protos_perfetto_trace_track_event_protos",
     ],
 )
 
+# GN target: [//protos/perfetto/trace:non_minimal_source_set, //protos/perfetto/trace:minimal_source_set]
 perfetto_cc_proto_library(
     name = "trace_cc_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
@@ -2025,6 +2054,7 @@ perfetto_cc_proto_library(
     ],
 )
 
+# GN target: [//protos/perfetto/trace:non_minimal_source_set, //protos/perfetto/trace:minimal_source_set]
 perfetto_java_proto_library(
     name = "trace_java_proto",
     visibility = PERFETTO_CONFIG.public_visibility,
@@ -2033,11 +2063,86 @@ perfetto_java_proto_library(
     ],
 )
 
-perfetto_java_proto_library(
+# GN target: [//protos/perfetto/trace:non_minimal_source_set, //protos/perfetto/trace:minimal_source_set]
+perfetto_java_lite_proto_library(
     name = "trace_java_proto_lite",
     visibility = PERFETTO_CONFIG.public_visibility,
     deps = [
         ":trace_proto",
+    ],
+)
+
+# GN target: [//protos/perfetto/metrics:source_set]
+perfetto_proto_library(
+    name = "metrics_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":protos_perfetto_metrics_android_protos",
+        ":protos_perfetto_metrics_protos",
+    ],
+)
+
+# GN target: [//protos/perfetto/metrics:source_set]
+perfetto_cc_proto_library(
+    name = "metrics_cc_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":metrics_proto",
+    ],
+)
+
+# GN target: [//protos/perfetto/metrics:source_set]
+perfetto_java_proto_library(
+    name = "metrics_java_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":metrics_proto",
+    ],
+)
+
+# GN target: [//protos/perfetto/metrics:source_set]
+perfetto_java_lite_proto_library(
+    name = "metrics_java_proto_lite",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":metrics_proto",
+    ],
+)
+
+# GN target: [//protos/third_party/chromium:source_set]
+perfetto_proto_library(
+    name = "chromium_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":protos_perfetto_trace_track_event_protos",
+        ":protos_third_party_chromium_protos",
+    ],
+)
+
+# GN target: [//protos/third_party/chromium:source_set]
+perfetto_cc_proto_library(
+    name = "chromium_cc_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":chromium_proto",
+    ],
+)
+
+# GN target: [//protos/third_party/chromium:source_set]
+perfetto_java_proto_library(
+    name = "chromium_java_proto",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":chromium_proto",
+    ],
+)
+
+# GN target: [//protos/third_party/chromium:source_set]
+perfetto_java_lite_proto_library(
+    name = "chromium_java_proto_lite",
+    visibility = PERFETTO_CONFIG.public_visibility,
+    deps = [
+        ":chromium_proto",
     ],
 )
 
@@ -2592,9 +2697,7 @@ perfetto_proto_library(
         "protos/perfetto/metrics/android/trace_quality.proto",
         "protos/perfetto/metrics/android/unsymbolized_frames.proto",
     ],
-    visibility = [
-        PERFETTO_CONFIG.proto_library_visibility,
-    ],
+    visibility = PERFETTO_CONFIG.public_visibility,
 )
 
 # GN target: //protos/perfetto/metrics/chrome:descriptor
@@ -2786,6 +2889,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/ipi.proto",
         "protos/perfetto/trace/ftrace/irq.proto",
         "protos/perfetto/trace/ftrace/kmem.proto",
+        "protos/perfetto/trace/ftrace/kvm.proto",
         "protos/perfetto/trace/ftrace/lowmemorykiller.proto",
         "protos/perfetto/trace/ftrace/mali.proto",
         "protos/perfetto/trace/ftrace/mdss.proto",
@@ -2799,6 +2903,7 @@ perfetto_proto_library(
         "protos/perfetto/trace/ftrace/scm.proto",
         "protos/perfetto/trace/ftrace/sde.proto",
         "protos/perfetto/trace/ftrace/signal.proto",
+        "protos/perfetto/trace/ftrace/skb.proto",
         "protos/perfetto/trace/ftrace/sock.proto",
         "protos/perfetto/trace/ftrace/sync.proto",
         "protos/perfetto/trace/ftrace/synthetic.proto",
@@ -3805,10 +3910,9 @@ perfetto_cc_binary(
         ":src_trace_processor_util_proto_to_args_parser",
         ":src_trace_processor_util_protozero_to_text",
         ":src_trace_processor_util_util",
-        ":tools_trace_to_text_common",
-        ":tools_trace_to_text_full",
+        ":tools_trace_to_text_lib",
+        ":tools_trace_to_text_main",
         ":tools_trace_to_text_pprofbuilder",
-        ":tools_trace_to_text_trace_to_text_lib",
         ":tools_trace_to_text_utils",
     ],
     visibility = [
@@ -3855,7 +3959,6 @@ perfetto_cc_binary(
                ":src_trace_processor_metrics_gen_cc_metrics_descriptor",
                ":tools_trace_to_text_gen_cc_trace_descriptor",
            ] + PERFETTO_CONFIG.deps.jsoncpp +
-           PERFETTO_CONFIG.deps.protobuf_full +
            PERFETTO_CONFIG.deps.sqlite +
            PERFETTO_CONFIG.deps.sqlite_ext_percentile +
            PERFETTO_CONFIG.deps.zlib + [

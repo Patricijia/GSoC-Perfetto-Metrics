@@ -55,6 +55,7 @@
 #include "protos/perfetto/trace/ftrace/scm.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sde.pbzero.h"
 #include "protos/perfetto/trace/ftrace/signal.pbzero.h"
+#include "protos/perfetto/trace/ftrace/skb.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sock.pbzero.h"
 #include "protos/perfetto/trace/ftrace/systrace.pbzero.h"
 #include "protos/perfetto/trace/ftrace/task.pbzero.h"
@@ -111,6 +112,7 @@ FtraceParser::FtraceParser(TraceProcessorContext* context)
       cpu_freq_name_id_(context->storage->InternString("cpufreq")),
       gpu_freq_name_id_(context->storage->InternString("gpufreq")),
       cpu_idle_name_id_(context->storage->InternString("cpuidle")),
+      kfree_skb_name_id_(context->storage->InternString("Kfree Skb")),
       ion_total_id_(context->storage->InternString("mem.ion")),
       ion_change_id_(context->storage->InternString("mem.ion_change")),
       ion_buffer_id_(context->storage->InternString("mem.ion_buffer")),
@@ -674,6 +676,14 @@ util::Status FtraceParser::ParseFtraceEvent(uint32_t cpu,
       }
       case FtraceEvent::kNapiGroReceiveExitFieldNumber: {
         ParseNapiGroReceiveExit(cpu, ts, data);
+        break;
+      }
+      case FtraceEvent::kCpuFrequencyLimitsFieldNumber: {
+        ParseCpuFrequencyLimits(ts, data);
+        break;
+      }
+      case FtraceEvent::kKfreeSkbFieldNumber: {
+        ParseKfreeSkb(ts, data);
         break;
       }
       default:
@@ -1851,6 +1861,40 @@ void FtraceParser::ParseNapiGroReceiveExit(uint32_t cpu,
   };
   context_->slice_tracker->End(timestamp, track, napi_gro_id_, {},
                                args_inserter);
+}
+
+void FtraceParser::ParseCpuFrequencyLimits(int64_t timestamp,
+                                           protozero::ConstBytes blob) {
+  protos::pbzero::CpuFrequencyLimitsFtraceEvent::Decoder evt(blob.data,
+                                                             blob.size);
+  base::StackString<255> max_counter_name("Cpu %" PRIu32 " Max Freq Limit",
+                                          evt.cpu_id());
+  base::StackString<255> min_counter_name("Cpu %" PRIu32 " Min Freq Limit",
+                                          evt.cpu_id());
+  // Push max freq to global counter.
+  StringId max_name = context_->storage->InternString(max_counter_name.c_str());
+  TrackId max_track =
+      context_->track_tracker->InternGlobalCounterTrack(max_name);
+  context_->event_tracker->PushCounter(
+      timestamp, static_cast<double>(evt.max_freq()), max_track);
+
+  // Push min freq to global counter.
+  StringId min_name = context_->storage->InternString(min_counter_name.c_str());
+  TrackId min_track =
+      context_->track_tracker->InternGlobalCounterTrack(min_name);
+  context_->event_tracker->PushCounter(
+      timestamp, static_cast<double>(evt.min_freq()), min_track);
+}
+
+void FtraceParser::ParseKfreeSkb(int64_t timestamp,
+                                 protozero::ConstBytes blob) {
+  protos::pbzero::KfreeSkbFtraceEvent::Decoder evt(blob.data, blob.size);
+
+  num_of_kfree_skb_ += 1;
+  TrackId track =
+      context_->track_tracker->InternGlobalCounterTrack(kfree_skb_name_id_);
+  context_->event_tracker->PushCounter(
+      timestamp, static_cast<double>(num_of_kfree_skb_), track);
 }
 
 }  // namespace trace_processor
