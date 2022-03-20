@@ -169,8 +169,11 @@ class FtraceParser {
                                protozero::ConstBytes);
   void ParseCpuFrequencyLimits(int64_t timestamp, protozero::ConstBytes);
   void ParseKfreeSkb(int64_t timestamp, protozero::ConstBytes);
+  void ParseUfshcdCommand(int64_t timestamp, protozero::ConstBytes);
 
   void ParseCrosEcSensorhubData(int64_t timestamp, protozero::ConstBytes);
+  void ParseWakeSourceActivate(int64_t timestamp, protozero::ConstBytes);
+  void ParseWakeSourceDeactivate(int64_t timestamp, protozero::ConstBytes);
 
   TraceProcessorContext* context_;
   RssStatTracker rss_stat_tracker_;
@@ -222,6 +225,7 @@ class FtraceParser {
   const StringId cros_ec_arg_num_id_;
   const StringId cros_ec_arg_ec_id_;
   const StringId cros_ec_arg_sample_ts_id_;
+  const StringId ufs_command_count_id_;
 
   struct FtraceMessageStrings {
     // The string id of name of the event field (e.g. sched_switch's id).
@@ -262,6 +266,10 @@ class FtraceParser {
 
   // Record number of tcp steams.
   uint32_t num_of_tcp_stream_ = 0;
+
+  // A name collision is possible, always show if active wakelock exists
+  // with a give name
+  std::unordered_map<std::string, uint32_t> active_wakelock_to_count_;
 
   bool has_seen_first_ftrace_packet_ = false;
 
