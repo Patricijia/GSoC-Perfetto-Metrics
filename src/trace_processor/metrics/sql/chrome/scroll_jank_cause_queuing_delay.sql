@@ -79,6 +79,7 @@ CREATE TABLE blocking_tasks_queuing_delay AS
     EXTRACT_ARG(slice.arg_set_id, "task.posted_from.function_name") as function,
     trace_id,
     queuing_time_ns,
+    avg_vsync_interval,
     next_track_id,
     CASE WHEN queuing.ancestor_end <= slice.ts THEN
       CASE WHEN slice.ts + slice.dur <= queuing.maybe_next_ancestor_ts THEN
@@ -116,24 +117,23 @@ CREATE TABLE blocking_tasks_queuing_delay AS
 -- descendant slice. So all fields in base.* will be repeated ONCE for each
 -- child, but if it has no slice it will occur only once but all the
 -- |descendant_.*| fields will be NULL because of the LEFT JOIN.
--- Additionally for mojo events, append "(interface_name)" to the end of the
--- descendant name.
+-- Additionally for mojo events we replace the descendant_name with just the
+-- "interface_name" since that is more descriptive for our jank purposes.
 DROP VIEW IF EXISTS all_descendant_blocking_tasks_queuing_delay;
 CREATE VIEW all_descendant_blocking_tasks_queuing_delay AS
   SELECT
     descendant.id AS descendant_id,
     descendant.ts AS descendant_ts,
     descendant.dur AS descendant_dur,
-    COALESCE(descendant.name || "(" ||
+    COALESCE(
       IIF(descendant.arg_set_id IS NOT NULL,
           EXTRACT_ARG(descendant.arg_set_id,
               "chrome_mojo_event_info.watcher_notify_interface_tag"),
-          NULL) || ")",
-      descendant.name || "(" ||
-          IIF(descendant.arg_set_id IS NOT NULL,
+          NULL),
+      IIF(descendant.arg_set_id IS NOT NULL,
           EXTRACT_ARG(descendant.arg_set_id,
               "chrome_mojo_event_info.mojo_interface_tag"),
-          NULL) || ")",
+          NULL),
       descendant.name) AS descendant_name,
     descendant.parent_id As descendant_parent_id,
     descendant.depth AS descendant_depth,
@@ -244,6 +244,7 @@ CREATE VIEW descendant_blocking_tasks_queuing_delay AS
     thread_name,
     process_name,
     function,
+    avg_vsync_interval,
     GROUP_CONCAT(
       CASE WHEN descendant_depth < invalid_depth OR descendant_major_slice THEN
         descendant_id
@@ -310,9 +311,8 @@ CREATE VIEW descendant_blocking_tasks_queuing_delay AS
     , "-") AS java_name
   FROM
     blocking_tasks_queuing_delay_with_invalid_depth
-  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19
+  GROUP BY 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20
   ORDER BY descendant_cpu_percentage DESC;
-
 
 SELECT CREATE_FUNCTION(
   -- Function prototype: takes a '-' separated list of slice names (formed by
@@ -329,6 +329,58 @@ SELECT CREATE_FUNCTION(
       LENGTH($name)+1 ELSE
       INSTR($name, "-")
     END)'
+);
+
+SELECT CREATE_FUNCTION(
+  -- Function prototype: takes a '-' separated list of slice names (formed by
+  -- the GROUP_CONCAT above) and checks for certain important view names and
+  -- falls back on GetFirstSliceNameOrNull if it can't find one.
+  'GetJavaSliceSummaryOrNull(name STRING)',
+  -- Returns the summary of the provided list of java slice names.
+  'STRING',
+  -- Performs a bunch of GLOB matches in an order, now there could be multiple
+  -- matches (both Toolbar & TabList could be true) so the order matters in
+  -- tagging since we don't support multiple tagging of values. Ideally we would
+  -- determine which one was the longest duration, but this should be sufficient
+  -- for now.
+  'SELECT
+    CASE WHEN $name GLOB "*ToolbarControlContainer*" THEN
+      "ToolbarControlContainer"
+    WHEN $name GLOB "*ToolbarProgressBar*" THEN
+      "ToolbarProgressBar"
+    WHEN $name GLOB "*TabGroupUiToolbarView*" THEN
+      "TabGroupUiToolbarView"
+    WHEN $name GLOB "*TabGridThumbnailView*" THEN
+      "TabGridThumbnailView"
+    WHEN $name GLOB "*TabGridDialogView*" THEN
+      "TabGridDialogView"
+    WHEN $name GLOB "*BottomContainer*" THEN
+      "BottomContainer"
+    WHEN $name GLOB "*FeedSwipeRefreshLayout*" THEN
+      "FeedSwipeRefreshLayout"
+    WHEN $name GLOB "*AutocompleteEditText*" THEN
+      "AutocompleteEditText"
+    WHEN $name GLOB "*HomeButton*" THEN
+      "HomeButton"
+    WHEN $name GLOB "*ToggleTabStackButton*" THEN
+      "ToggleTabStackButton"
+    WHEN $name GLOB "*ListMenuButton*" THEN
+      "ListMenuButton"
+    WHEN $name GLOB "*ScrimView*" THEN
+      "ScrimView"
+    WHEN $name GLOB "*ChromeImageView*" THEN
+      "ChromeImageView"
+    WHEN $name GLOB "*AppCompatImageView*" THEN
+      "AppCompatImageView"
+    WHEN $name GLOB "*ChromeImageButton*" THEN
+      "ChromeImageButton"
+    WHEN $name GLOB "*AppCompatImageButton*" THEN
+      "AppCompatImageButton"
+    WHEN $name GLOB "*TabListRecyclerView*" THEN
+      "TabListRecyclerView"
+    ELSE
+      GetFirstSliceNameOrNull($name)
+    END'
 );
 
 SELECT CREATE_FUNCTION(
@@ -351,23 +403,49 @@ SELECT CREATE_FUNCTION(
       END'
 );
 
+SELECT CREATE_FUNCTION(
+  -- Function prototype: Takes a slice name, function, and file, and determines
+  -- if we should use the slice name, or if its a RunTask event uses the
+  -- function & file name, however if the RunTask posted from is one of the
+  -- simple_watcher paths we collapse them for attributation.
+  'TopLevelName(name STRING, function STRING, file STRING)',
+  'STRING',
+  -- The difference for the mojom functions are:
+  --  1) PostDispatchNextMessageFromPipe:
+  --         We knew that there is a message in the pipe, didn't try to set up a
+  --         SimpleWatcher to monitor when a new one arrives.
+  --  2) ArmOrNotify:
+  --         We tried to set up SimpleWatcher, but the setup failed as the
+  --         message arrived as we were setting this up, so we posted a task
+  --         instead.
+  --  3) Notify:
+  --         SimpleWatcher was set up and after a period of monitoring detected
+  --         a new message.
+  -- For our jank use case this distinction isn't very useful so we group them
+  -- together.
+  'SELECT
+     CASE WHEN $name = "ThreadControllerImpl::RunTask" THEN
+       CASE WHEN $function IN
+           ("PostDispatchNextMessageFromPipe", "ArmOrNotify", "Notify") THEN
+         "posted-from-mojo-pipe"
+        ELSE
+         "posted-from-" || $function || "()-in-" || $file
+        END
+    ELSE
+      $name
+    END'
+);
+
 -- Create a common name for each "cause" based on the slice stack we found.
 DROP VIEW IF EXISTS scroll_jank_cause_queuing_delay_temp;
 CREATE VIEW scroll_jank_cause_queuing_delay_temp AS
   SELECT
-    CASE WHEN name = "ThreadControllerImpl::RunTask" THEN
-      'posted-from-' || function || '()-in-' || file
-    ELSE
-      name
-    END || COALESCE("-" || descendant_name, "") AS location,
-    CASE WHEN name = "ThreadControllerImpl::RunTask" THEN
-      'posted-from-' || function || '()-in-' || file
-    ELSE
-      name
-    END || COALESCE(
+    TopLevelName(name, function, file) || COALESCE(
+      "-" || descendant_name, "") AS location,
+    TopLevelName(name, function, file) || COALESCE(
       "-" || GetFirstSliceNameOrNull(mojom_name),
       "-" || GetFirstSliceNameOrNull(toplevel_name),
-      "-" || GetFirstSliceNameOrNull(java_name),
+      "-" || GetJavaSliceSummaryOrNull(java_name),
       UnknownEventOrEmptyString(name, category, descendant_name)
     ) AS restricted_location,
     base.*

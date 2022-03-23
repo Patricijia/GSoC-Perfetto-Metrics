@@ -16,6 +16,7 @@ import * as m from 'mithril';
 import {QueryResponse} from 'src/common/queries';
 
 import {Actions} from '../common/actions';
+import {isEmptyData} from '../common/aggregation_data';
 import {LogExists, LogExistsKey} from '../common/logs';
 import {DEFAULT_PIVOT_TABLE_ID} from '../common/pivot_table_common';
 
@@ -37,6 +38,7 @@ import {AnyAttrsVnode, PanelContainer} from './panel_container';
 import {PivotTable} from './pivot_table';
 import {ColumnDisplay, ColumnPicker} from './pivot_table_editor';
 import {PivotTableHelper} from './pivot_table_helper';
+import {PivotTableRedux} from './pivot_table_redux';
 import {QueryTable} from './query_table';
 import {SliceDetailsPanel} from './slice_details_panel';
 import {ThreadStatePanel} from './thread_state_panel';
@@ -326,6 +328,16 @@ export class DetailsPanel implements m.ClassComponent {
       });
     }
 
+    if (globals.state.pivotTableRedux.selectionArea !== null) {
+      detailsPanels.push({
+        key: 'pivot_table_redux',
+        name: 'Pivot Table',
+        vnode:
+            m(PivotTableRedux,
+              {selectionArea: globals.state.pivotTableRedux.selectionArea})
+      });
+    }
+
     for (const pivotTableId of Object.keys(globals.state.pivotTable)) {
       const pivotTable = globals.state.pivotTable[pivotTableId];
       const helper = globals.pivotTableHelper.get(pivotTableId);
@@ -353,7 +365,7 @@ export class DetailsPanel implements m.ClassComponent {
     }
 
     for (const [key, value] of globals.aggregateDataStore.entries()) {
-      if (value.columns.length > 0 && value.columns[0].data.length > 0) {
+      if (!isEmptyData(value)) {
         detailsPanels.push({
           key: value.tabName,
           name: value.tabName,
@@ -396,7 +408,7 @@ export class DetailsPanel implements m.ClassComponent {
             return {key: tab.key, name: tab.name};
           }),
         }),
-        m('.details-panel-container',
+        m('.details-panel-container.x-scrollable',
           m(PanelContainer, {doesScroll: true, panels, kind: 'DETAILS'})));
   }
 }

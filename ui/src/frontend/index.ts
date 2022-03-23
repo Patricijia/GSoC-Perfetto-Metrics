@@ -146,6 +146,7 @@ function setupContentSecurityPolicy() {
     'connect-src': [
       `'self'`,
       'http://127.0.0.1:9001',  // For trace_processor_shell --httpd.
+      'ws://127.0.0.1:9001',    // Ditto, for the websocket RPC.
       'https://www.google-analytics.com',
       'https://*.googleapis.com',  // For Google Cloud Storage fetches.
       'blob:',
@@ -300,15 +301,7 @@ function onCssLoaded() {
     m.render(main, globals.router.resolve());
   };
 
-  // Add support for opening traces from postMessage().
-  window.addEventListener('message', postMessageHandler, {passive: true});
-
-  // Will update the chip on the sidebar footer that notifies that the RPC is
-  // connected. Has no effect on the controller (which will repeat this check
-  // before creating a new engine).
-  CheckHttpRpcConnection();
   initLiveReloadIfLocalhost();
-
   updateAvailableAdbDevices();
   try {
     navigator.usb.addEventListener(
@@ -318,10 +311,31 @@ function onCssLoaded() {
   } catch (e) {
     console.error('WebUSB API not supported');
   }
-  installFileDropHandler();
 
-  // Handles the initial ?trace_id=a0b1c2 or ?s=permalink or ?url=... cases.
-  maybeOpenTraceFromRoute(Router.parseUrl(window.location.href));
+  // Will update the chip on the sidebar footer that notifies that the RPC is
+  // connected. Has no effect on the controller (which will repeat this check
+  // before creating a new engine).
+  // Don't auto-open any trace URLs until we get a response here because we may
+  // accidentially clober the state of an open trace processor instance
+  // otherwise.
+  CheckHttpRpcConnection().then(() => {
+    installFileDropHandler();
+
+    // Don't allow postMessage or opening trace from route when the user says
+    // that they want to reuse the already loaded trace in trace processor.
+    const values = Object.values(globals.state.engines);
+    if (values.length > 0 &&
+        globals.state.engines[values.length - 1].source.type === 'HTTP_RPC') {
+      return;
+    }
+
+    // Add support for opening traces from postMessage().
+    window.addEventListener('message', postMessageHandler, {passive: true});
+
+    // Handles the initial ?local_cache_key=123 or ?s=permalink or ?url=...
+    // cases.
+    maybeOpenTraceFromRoute(Router.parseUrl(window.location.href));
+  });
 }
 
 main();
