@@ -23,7 +23,7 @@
 #include "perfetto/protozero/message_handle.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "perfetto/tracing/internal/compile_time_hash.h"
-#include "perfetto/tracing/internal/tracing_muxer.h"
+#include "perfetto/tracing/platform.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
 #include "protos/perfetto/trace/track_event/counter_descriptor.pbzero.h"
 #include "protos/perfetto/trace/track_event/track_descriptor.gen.h"
@@ -154,8 +154,7 @@ struct PERFETTO_EXPORT ProcessTrack : public Track {
 
  private:
   ProcessTrack()
-      : Track(MakeProcessTrack()),
-        pid(internal::TracingMuxer::Get()->GetProcessId()) {}
+      : Track(MakeProcessTrack()), pid(Platform::GetCurrentProcessId()) {}
 };
 
 // A thread track is associated with a specific thread of execution. Currently
