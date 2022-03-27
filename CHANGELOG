@@ -3,9 +3,16 @@ Unreleased:
     * Added prebuilts for mac-arm64.
     * Removed merged trace and config protos from Bazel. Embedder should
       instead depend on the non-merged proto targets.
+    * Added FtraceConfig.disable_generic_events. If set, the ftrace data source
+      will not emit events for which it doesn't have a compile-time proto
+      message.
   Trace Processor:
     * Added prebuilts for mac-arm64.
-    *
+    * Added an optional dependency from trace processor onto a subset of
+      sources from llvm-project for function name demangling. Bazel embedders
+      might need to update their PERFETTO_CONFIG in perfetto_cfg.bzl to opt in
+      or out of the new dependency. See
+      perfetto/bazel/standalone/perfetto_cfg.bzl for details.
   UI:
     * Added flow arrows between binder transaction pairs (request/reply
       and async send/async recv).
