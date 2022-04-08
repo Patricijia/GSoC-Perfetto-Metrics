@@ -32,7 +32,7 @@ namespace trace_processor {
 // - Generated at parsing time (e.g., clock events out-of-order).
 class StatsTable : public SqliteTable {
  public:
-  enum Column { kName = 0, kIndex, kSeverity, kSource, kValue, kDescription };
+  enum Column { kName = 0, kIndex, kSeverity, kSource, kValue };
   class Cursor : public SqliteTable::Cursor {
    public:
     Cursor(StatsTable*);

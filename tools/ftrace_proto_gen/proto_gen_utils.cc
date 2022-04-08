@@ -16,6 +16,9 @@
 
 #include "tools/ftrace_proto_gen/proto_gen_utils.h"
 
+#include <fcntl.h>
+#include <sys/wait.h>
+#include <unistd.h>
 #include <algorithm>
 #include <fstream>
 #include <regex>
@@ -32,7 +35,7 @@ namespace perfetto {
 namespace {
 
 std::string RunClangFmt(const std::string& input) {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_MAC)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
   const std::string platform = "mac";
 #else
   const std::string platform = "linux64";

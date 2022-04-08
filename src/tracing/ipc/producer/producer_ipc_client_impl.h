@@ -23,7 +23,6 @@
 #include <vector>
 
 #include "perfetto/ext/base/thread_checker.h"
-#include "perfetto/ext/ipc/client.h"
 #include "perfetto/ext/ipc/service_proxy.h"
 #include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/shared_memory.h"
@@ -38,6 +37,10 @@ namespace base {
 class TaskRunner;
 }  // namespace base
 
+namespace ipc {
+class Client;
+}  // namespace ipc
+
 class Producer;
 class SharedMemoryArbiter;
 
@@ -48,15 +51,16 @@ class SharedMemoryArbiter;
 class ProducerIPCClientImpl : public TracingService::ProducerEndpoint,
                               public ipc::ServiceProxy::EventListener {
  public:
-  ProducerIPCClientImpl(ipc::Client::ConnArgs,
-                        Producer*,
-                        const std::string& producer_name,
-                        base::TaskRunner*,
-                        TracingService::ProducerSMBScrapingMode,
-                        size_t shared_memory_size_hint_bytes,
-                        size_t shared_memory_page_size_hint_bytes,
-                        std::unique_ptr<SharedMemory> shm,
-                        std::unique_ptr<SharedMemoryArbiter> shm_arbiter);
+  ProducerIPCClientImpl(
+      const char* service_sock_name,
+      Producer*,
+      const std::string& producer_name,
+      base::TaskRunner*,
+      TracingService::ProducerSMBScrapingMode,
+      size_t shared_memory_size_hint_bytes = 0,
+      size_t shared_memory_page_size_hint_bytes = 0,
+      std::unique_ptr<SharedMemory> shm = nullptr,
+      std::unique_ptr<SharedMemoryArbiter> shm_arbiter = nullptr);
   ~ProducerIPCClientImpl() override;
 
   // TracingService::ProducerEndpoint implementation.
@@ -87,13 +91,10 @@ class ProducerIPCClientImpl : public TracingService::ProducerEndpoint,
   void OnConnect() override;
   void OnDisconnect() override;
 
-  ipc::Client* GetClientForTesting() { return ipc_channel_.get(); }
-
  private:
   // Invoked soon after having established the connection with the service.
   void OnConnectionInitialized(bool connection_succeeded,
-                               bool using_shmem_provided_by_producer,
-                               bool direct_smb_patching_supported);
+                               bool using_shmem_provided_by_producer);
 
   // Invoked when the remote Service sends an IPC to tell us to do something
   // (e.g. start/stop a data source).
@@ -120,7 +121,6 @@ class ProducerIPCClientImpl : public TracingService::ProducerEndpoint,
   size_t shared_memory_size_hint_bytes_ = 0;
   TracingService::ProducerSMBScrapingMode const smb_scraping_mode_;
   bool is_shmem_provided_by_producer_ = false;
-  bool direct_smb_patching_supported_ = false;
   std::vector<std::function<void()>> pending_sync_reqs_;
   PERFETTO_THREAD_CHECKER(thread_checker_)
 };

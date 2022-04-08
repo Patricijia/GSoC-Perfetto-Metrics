@@ -15,6 +15,7 @@
  */
 
 #include "perfetto/protozero/message.h"
+#include "perfetto/protozero/message_handle.h"
 
 #include <limits>
 #include <memory>
@@ -22,8 +23,6 @@
 #include <vector>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/protozero/message_handle.h"
-#include "perfetto/protozero/root_message.h"
 #include "src/base/test/utils.h"
 #include "src/protozero/test/fake_scattered_buffer.h"
 #include "test/gtest_and_gmock.h"
@@ -39,7 +38,7 @@ constexpr const char kStartWatermark[] = {'a', 'b', 'c', 'd',
 constexpr const char kEndWatermark[] = {'9', '8', '7', '6',
                                         'z', 'w', 'y', '\0'};
 
-class FakeRootMessage : public RootMessage<Message> {};
+class FakeRootMessage : public Message {};
 class FakeChildMessage : public Message {};
 
 uint32_t SimpleHash(const std::string& str) {
@@ -64,10 +63,7 @@ class MessageTest : public ::testing::Test {
       EXPECT_STREQ(kStartWatermark, reinterpret_cast<char*>(mem.get()));
       EXPECT_STREQ(kEndWatermark,
                    reinterpret_cast<char*>(mem.get() + sizeof(kStartWatermark) +
-                                           sizeof(FakeRootMessage)));
-      FakeRootMessage* msg = reinterpret_cast<FakeRootMessage*>(
-          mem.get() + sizeof(kStartWatermark));
-      msg->~FakeRootMessage();
+                                           sizeof(Message)));
       mem.reset();
     }
     messages_.clear();
@@ -87,7 +83,7 @@ class MessageTest : public ::testing::Test {
     memcpy(msg_start + sizeof(FakeRootMessage), kEndWatermark,
            sizeof(kEndWatermark));
     messages_.push_back(std::move(mem));
-    FakeRootMessage* msg = new (msg_start) FakeRootMessage();
+    FakeRootMessage* msg = reinterpret_cast<FakeRootMessage*>(msg_start);
     msg->Reset(stream_writer_.get());
     return msg;
   }
@@ -105,16 +101,14 @@ class MessageTest : public ::testing::Test {
     return buffer_->GetBytesAsString(old_readback_pos, num_bytes);
   }
 
-  static void BuildNestedMessages(Message* msg,
-                                  uint32_t max_depth,
-                                  uint32_t depth = 0) {
+  static void BuildNestedMessages(Message* msg, uint32_t depth = 0) {
     for (uint32_t i = 1; i <= 128; ++i)
       msg->AppendBytes(i, kTestBytes, sizeof(kTestBytes));
 
-    if (depth < max_depth) {
+    if (depth < Message::kMaxNestingDepth) {
       auto* nested_msg =
           msg->BeginNestedMessage<FakeChildMessage>(1 + depth * 10);
-      BuildNestedMessages(nested_msg, max_depth, depth + 1);
+      BuildNestedMessages(nested_msg, depth + 1);
     }
 
     for (uint32_t i = 129; i <= 256; ++i)
@@ -285,7 +279,7 @@ TEST_F(MessageTest, StressTest) {
   std::vector<Message*> nested_msgs;
 
   Message* root_msg = NewMessage();
-  BuildNestedMessages(root_msg, /*max_depth=*/10);
+  BuildNestedMessages(root_msg);
   root_msg->Finalize();
 
   // The main point of this test is to stress the code paths and test for
@@ -297,24 +291,13 @@ TEST_F(MessageTest, StressTest) {
   EXPECT_EQ(0xf9e32b65, buf_hash);
 }
 
-TEST_F(MessageTest, DeeplyNested) {
-  std::vector<Message*> nested_msgs;
-
-  Message* root_msg = NewMessage();
-  BuildNestedMessages(root_msg, /*max_depth=*/1000);
-  root_msg->Finalize();
-
-  std::string full_buf = GetNextSerializedBytes(GetNumSerializedBytes());
-  size_t buf_hash = SimpleHash(full_buf);
-  EXPECT_EQ(0xc0fde419, buf_hash);
-}
-
 TEST_F(MessageTest, DestructInvalidMessageHandle) {
   FakeRootMessage* msg = NewMessage();
-  EXPECT_DCHECK_DEATH({
-    MessageHandle<FakeRootMessage> handle(msg);
-    ResetMessage(msg);
-  });
+  EXPECT_DCHECK_DEATH(
+      {
+        MessageHandle<FakeRootMessage> handle(msg);
+        ResetMessage(msg);
+      });
 }
 
 TEST_F(MessageTest, MessageHandle) {

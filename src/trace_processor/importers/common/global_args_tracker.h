@@ -49,7 +49,7 @@ class GlobalArgsTracker {
   struct ArgHasher {
     uint64_t operator()(const Arg& arg) const noexcept {
       base::Hash hash;
-      hash.Update(arg.key.raw_id());
+      hash.Update(arg.key);
       // We don't hash arg.flat_key because it's a subsequence of arg.key.
       switch (arg.value.type) {
         case Variadic::Type::kInt:
@@ -59,7 +59,7 @@ class GlobalArgsTracker {
           hash.Update(arg.value.uint_value);
           break;
         case Variadic::Type::kString:
-          hash.Update(arg.value.string_value.raw_id());
+          hash.Update(arg.value.string_value);
           break;
         case Variadic::Type::kReal:
           hash.Update(arg.value.real_value);
@@ -71,7 +71,7 @@ class GlobalArgsTracker {
           hash.Update(arg.value.bool_value);
           break;
         case Variadic::Type::kJson:
-          hash.Update(arg.value.json_value.raw_id());
+          hash.Update(arg.value.json_value);
           break;
       }
       return hash.digest();

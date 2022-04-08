@@ -23,7 +23,7 @@ namespace perfetto {
 namespace {
 using protozero::proto_utils::ProtoSchemaType;
 
-TEST(EventInfoTest, GetStaticEventInfoValidations) {
+TEST(EventInfoTest, GetStaticEventInfoSanityCheck) {
   std::vector<Event> events = GetStaticEventInfo();
   for (const Event& event : events) {
     // For each event the following fields should be filled
@@ -53,7 +53,7 @@ TEST(EventInfoTest, GetStaticEventInfoValidations) {
   }
 }
 
-TEST(EventInfoTest, GetStaticCommonFieldsInfoValidations) {
+TEST(EventInfoTest, GetStaticCommonFieldsInfoSanityCheck) {
   std::vector<Field> fields = GetStaticCommonFieldsInfo();
   for (const Field& field : fields) {
     // Non-empty name, group, and proto field id.
@@ -69,7 +69,7 @@ TEST(EventInfoTest, GetStaticCommonFieldsInfoValidations) {
   }
 }
 
-TEST(EventInfoTest, SetTranslationStrategyValidations) {
+TEST(EventInfoTest, SetTranslationStrategySanityCheck) {
   TranslationStrategy strategy = kUint32ToUint32;
   ASSERT_FALSE(SetTranslationStrategy(kFtraceCString, ProtoSchemaType::kUint64,
                                       &strategy));

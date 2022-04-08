@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {slowlyCountRows} from '../../common/query_iterator';
 import {fromNs, toNsCeil, toNsFloor} from '../../common/time';
 import {LIMIT} from '../../common/track_data';
 import {
@@ -43,7 +42,7 @@ class AndroidLogTrackController extends TrackController<Config, Data> {
       group by ts_quant, prio
       order by ts_quant, prio limit ${LIMIT};`);
 
-    const rowCount = slowlyCountRows(rawResult);
+    const rowCount = +rawResult.numRecords;
     const result = {
       start,
       end,

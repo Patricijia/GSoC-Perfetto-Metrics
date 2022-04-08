@@ -132,8 +132,7 @@ export class LogPanel extends Panel<{}> {
                 formatTimestamp(ts / 1e9 - globals.state.traceTime.startSec)),
               m('.cell', priorityLetter || '?'),
               m('.cell', tags[i]),
-              m('.cell', messages[i]),
-              m('br')));
+              m('.cell', messages[i])));
       }
     }
 

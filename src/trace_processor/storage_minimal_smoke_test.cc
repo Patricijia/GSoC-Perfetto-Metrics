@@ -59,16 +59,11 @@ TEST_F(StorageMinimalSmokeTest, GraphicEventsIgnored) {
 
   JsonStringOutputWriter output_writer;
   json::ExportJson(storage_.get(), &output_writer);
-  Json::CharReaderBuilder b;
-  auto reader = std::unique_ptr<Json::CharReader>(b.newCharReader());
-
+  Json::Reader reader;
   Json::Value result;
-  std::string& o = output_writer.buffer;
-  ASSERT_TRUE(reader->parse(o.data(), o.data() + o.length(), &result, nullptr));
+  reader.parse(output_writer.buffer, result);
 
-  // We should only see a single event (the mapping of the idle thread to have
-  // name "swapper").
-  ASSERT_EQ(result["traceEvents"].size(), 1u);
+  ASSERT_EQ(result["traceEvents"].size(), 0u);
 }
 
 TEST_F(StorageMinimalSmokeTest, SystraceReturnsError) {
@@ -84,7 +79,7 @@ TEST_F(StorageMinimalSmokeTest, SystraceReturnsError) {
 
 TEST_F(StorageMinimalSmokeTest, TrackEventsImported) {
   const size_t MAX_SIZE = 1 << 20;
-  auto f = fopen("test/data/track_event_typed_args.pb", "rb");
+  auto f = fopen("test/trace_processor/track_event_typed_args.pb", "rb");
   std::unique_ptr<uint8_t[]> buf(new uint8_t[MAX_SIZE]);
   auto rsize = fread(reinterpret_cast<char*>(buf.get()), 1, MAX_SIZE, f);
   util::Status status = storage_->Parse(std::move(buf), rsize);
@@ -93,16 +88,11 @@ TEST_F(StorageMinimalSmokeTest, TrackEventsImported) {
 
   JsonStringOutputWriter output_writer;
   json::ExportJson(storage_.get(), &output_writer);
-  Json::CharReaderBuilder b;
-  auto reader = std::unique_ptr<Json::CharReader>(b.newCharReader());
-
+  Json::Reader reader;
   Json::Value result;
-  std::string& o = output_writer.buffer;
-  ASSERT_TRUE(reader->parse(o.data(), o.data() + o.length(), &result, nullptr));
+  reader.parse(output_writer.buffer, result);
 
-  // We have an "extra" event from the mapping of the idle thread to have name
-  // "swapper".
-  ASSERT_EQ(result["traceEvents"].size(), 5u);
+  ASSERT_EQ(result["traceEvents"].size(), 4u);
 }
 
 }  // namespace

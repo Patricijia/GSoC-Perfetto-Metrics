@@ -20,7 +20,6 @@
 
 #include "perfetto/ext/tracing/core/trace_writer.h"
 #include "perfetto/protozero/message_handle.h"
-#include "perfetto/protozero/root_message.h"
 #include "perfetto/protozero/scattered_heap_buffer.h"
 #include "protos/perfetto/trace/trace_packet.gen.h"
 
@@ -54,8 +53,7 @@ class TraceWriterForTesting : public TraceWriter {
 
   // The packet returned via NewTracePacket(). Its owned by this class,
   // TracePacketHandle has just a pointer to it.
-  std::unique_ptr<protozero::RootMessage<protos::pbzero::TracePacket>>
-      cur_packet_;
+  std::unique_ptr<protos::pbzero::TracePacket> cur_packet_;
 };
 
 }  // namespace perfetto

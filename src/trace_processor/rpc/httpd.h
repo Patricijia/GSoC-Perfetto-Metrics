@@ -18,7 +18,6 @@
 #define SRC_TRACE_PROCESSOR_RPC_HTTPD_H_
 
 #include <memory>
-#include <string>
 
 namespace perfetto {
 namespace trace_processor {
@@ -30,7 +29,7 @@ class TraceProcessor;
 // The unique_ptr argument is optional. If non-null, the HTTP server will adopt
 // an existing instance with a pre-loaded trace. If null, it will create a new
 // instance when pushing data into the /parse endpoint.
-void RunHttpRPCServer(std::unique_ptr<TraceProcessor>, std::string);
+void RunHttpRPCServer(std::unique_ptr<TraceProcessor>);
 
 }  // namespace trace_processor
 }  // namespace perfetto

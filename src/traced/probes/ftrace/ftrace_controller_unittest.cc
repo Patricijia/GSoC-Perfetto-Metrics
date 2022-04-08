@@ -20,7 +20,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 
-#include "perfetto/ext/base/file_utils.h"
 #include "src/traced/probes/ftrace/compact_sched.h"
 #include "src/traced/probes/ftrace/cpu_reader.h"
 #include "src/traced/probes/ftrace/ftrace_config_muxer.h"
@@ -88,7 +87,7 @@ std::unique_ptr<Table> FakeTable(FtraceProcfs* ftrace) {
   return std::unique_ptr<Table>(
       new Table(ftrace, events, std::move(common_fields),
                 ProtoTranslationTable::DefaultPageHeaderSpecForTesting(),
-                InvalidCompactSchedEventFormatForTesting(), PrintkMap()));
+                InvalidCompactSchedEventFormatForTesting()));
 }
 
 std::unique_ptr<FtraceConfigMuxer> FakeModel(FtraceProcfs* ftrace,

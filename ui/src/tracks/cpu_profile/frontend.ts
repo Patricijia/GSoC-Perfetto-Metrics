@@ -12,11 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {hsluvToHex} from 'hsluv';
-
 import {searchSegment} from '../../base/binary_search';
 import {Actions} from '../../common/actions';
-import {hslForSlice} from '../../common/colorizer';
 import {TrackState} from '../../common/state';
 import {fromNs, toNs} from '../../common/time';
 import {globals} from '../../frontend/globals';
@@ -29,9 +26,8 @@ import {Config, CPU_PROFILE_TRACK_KIND, Data} from './common';
 const MARGIN_TOP = 4.5;
 const RECT_HEIGHT = 30.5;
 
-function colorForSample(callsiteId: number, isHovered: boolean): string {
-  return hsluvToHex(hslForSlice(String(callsiteId), isHovered));
-}
+const CPU_PROFILE_COLOR = 'hsl(350, 45%, 70%)';
+const CPU_PROFILE_HOVERED_COLOR = 'hsl(350, 45%, 55%)';
 
 class CpuProfileTrack extends Track<Config, Data> {
   static readonly kind = CPU_PROFILE_TRACK_KIND;
@@ -71,24 +67,23 @@ class CpuProfileTrack extends Track<Config, Data> {
           timeScale.timeToPx(fromNs(centerX)),
           this.centerY,
           isHovered,
-          strokeWidth,
-          data.callsiteId[i]);
+          strokeWidth);
     }
   }
 
   drawMarker(
       ctx: CanvasRenderingContext2D, x: number, y: number, isHovered: boolean,
-      strokeWidth: number, callsiteId: number): void {
+      strokeWidth: number): void {
     ctx.beginPath();
     ctx.moveTo(x - this.markerWidth, y - this.markerWidth);
     ctx.lineTo(x, y + this.markerWidth);
     ctx.lineTo(x + this.markerWidth, y - this.markerWidth);
     ctx.lineTo(x - this.markerWidth, y - this.markerWidth);
     ctx.closePath();
-    ctx.fillStyle = colorForSample(callsiteId, isHovered);
+    ctx.fillStyle = isHovered ? CPU_PROFILE_HOVERED_COLOR : CPU_PROFILE_COLOR;
     ctx.fill();
     if (strokeWidth > 0) {
-      ctx.strokeStyle = colorForSample(callsiteId, false);
+      ctx.strokeStyle = CPU_PROFILE_HOVERED_COLOR;
       ctx.lineWidth = strokeWidth;
       ctx.stroke();
     }

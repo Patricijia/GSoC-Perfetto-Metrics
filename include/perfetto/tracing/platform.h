@@ -22,7 +22,6 @@
 
 #include <functional>
 #include <memory>
-#include <string>
 
 #include "perfetto/base/export.h"
 

@@ -18,8 +18,14 @@
 #define INCLUDE_PERFETTO_EXT_BASE_EVENT_FD_H_
 
 #include "perfetto/base/build_config.h"
-#include "perfetto/base/platform_handle.h"
 #include "perfetto/ext/base/scoped_file.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) || \
+    PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+#define PERFETTO_USE_EVENTFD() 1
+#else
+#define PERFETTO_USE_EVENTFD() 0
+#endif
 
 namespace perfetto {
 namespace base {
@@ -35,7 +41,7 @@ class EventFd {
   EventFd& operator=(EventFd&&) = default;
 
   // The non-blocking file descriptor that can be polled to wait for the event.
-  PlatformHandle fd() const { return event_handle_.get(); }
+  int fd() const { return fd_.get(); }
 
   // Can be called from any thread.
   void Notify();
@@ -47,12 +53,9 @@ class EventFd {
  private:
   // The eventfd, when eventfd is supported, otherwise this is the read end of
   // the pipe for fallback mode.
-  ScopedPlatformHandle event_handle_;
+  ScopedFile fd_;
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) &&   \
-    !PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) && \
-    !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  // On Mac and other non-Linux UNIX platforms a pipe-based fallback is used.
+#if !PERFETTO_USE_EVENTFD()
   // The write end of the wakeup pipe.
   ScopedFile write_fd_;
 #endif

@@ -21,12 +21,11 @@
     <application android:debuggable="true">
         <activity
           android:name="android.perfetto.cts.app.MainActivity"
-          android:exported="true">
+          android:exported="false">
         </activity>
         <activity-alias
           android:name="android.perfetto.cts.app.debuggable.MainActivity"
-          android:targetActivity="android.perfetto.cts.app.MainActivity"
-           android:exported="true">
+          android:targetActivity="android.perfetto.cts.app.MainActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -34,12 +33,11 @@
         </activity-alias>
         <activity
           android:name="android.perfetto.cts.app.BusyWaitActivity"
-          android:exported="true">
+          android:exported="false">
         </activity>
         <activity-alias
           android:name="android.perfetto.cts.app.debuggable.BusyWaitActivity"
-          android:targetActivity="android.perfetto.cts.app.BusyWaitActivity"
-          android:exported="true">
+          android:targetActivity="android.perfetto.cts.app.BusyWaitActivity">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
@@ -47,3 +45,4 @@
         </activity-alias>
     </application>
 </manifest>
+

@@ -35,14 +35,9 @@ message IPCFrame {
 
   // Client -> Host.
   message InvokeMethod {
-    // BindServiceReply.id.
-    optional uint32 service_id = 1;
-
-    // BindServiceReply.method.id.
-    optional uint32 method_id = 2;
-
-    // Proto-encoded request argument.
-    optional bytes args_proto = 3;
+    optional uint32 service_id = 1;  // BindServiceReply.id.
+    optional uint32 method_id = 2;   // BindServiceReply.method.id.
+    optional bytes args_proto = 3;   // Proto-encoded request argument.
 
     // When true the client specifies that a reply is not needed. The use case
     // is a method with an empty, where the client doesn't care about the
@@ -54,12 +49,8 @@ message IPCFrame {
   // Host -> Client.
   message InvokeMethodReply {
     optional bool success = 1;
-
-    // only for streaming RPCs.
-    optional bool has_more = 2;
-
-    // proto-encoded response value.
-    optional bytes reply_proto = 3;
+    optional bool has_more = 2;      // only for streaming RPCs.
+    optional bytes reply_proto = 3;  // proto-encoded response value.
   }
 
   // Host -> Client.

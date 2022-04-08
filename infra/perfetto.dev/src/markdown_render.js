@@ -23,6 +23,7 @@ const CS_BASE_URL =
     'https://cs.android.com/android/platform/superproject/+/master:external/perfetto';
 
 const ROOT_DIR = path.dirname(path.dirname(path.dirname(__dirname)));
+const DOCS_DIR = path.join(ROOT_DIR, 'docs');
 
 let outDir = '';
 let curMdFile = '';
@@ -199,7 +200,7 @@ function main() {
     const templateData = {
       markdown: markdownHtml,
       title: title ? `${title} - Perfetto Tracing Docs` : fallbackTitle,
-      fileName: '/' + path.relative(outDir, outFile),
+      fileName: '/' + outFile.split('/').slice(1).join('/'),
     };
     if (fs.existsSync(navFilePath)) {
       templateData['nav'] = fs.readFileSync(navFilePath, 'utf8');

@@ -27,21 +27,11 @@ std::string PrefixFinder::Node::ToString() const {
 }
 
 PrefixFinder::Node* PrefixFinder::Node::AddChild(std::string name) {
-  auto it = children_.emplace(std::move(name), this);
-  return const_cast<Node*>(&(*it.first));
+  return children_.Emplace(std::move(name), this);
 }
 
 PrefixFinder::Node* PrefixFinder::Node::MaybeChild(const std::string& name) {
-  // This will be nicer with C++14 transparent comparators.
-  // Then we will be able to look up by just the key using a sutiable
-  // comparator.
-  //
-  // For now we need to allow to construct Node from the key.
-  Node node(name);
-  auto it = children_.find(node);
-  if (it == children_.end())
-    return nullptr;
-  return const_cast<Node*>(&(*it));
+  return children_.Get(name);
 }
 
 PrefixFinder::PrefixFinder(size_t limit) : limit_(limit) {}

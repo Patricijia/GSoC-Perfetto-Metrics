@@ -208,7 +208,7 @@ CompactSchedConfig DisabledCompactSchedConfigForTesting() {
   return CompactSchedConfig{/*enabled=*/false};
 }
 
-// Check size of stack-allocated bundle state.
+// Sanity check size of stack-allocated bundle state.
 static_assert(sizeof(CompactSchedBuffer) <= 1 << 18,
               "CompactSchedBuffer's on-stack size excessively large.");
 

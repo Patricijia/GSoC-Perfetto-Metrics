@@ -171,9 +171,7 @@ int TraceToSystrace(std::istream* input,
       ctrace ? new DeflateTraceWriter(output) : new TraceWriter(output));
 
   trace_processor::Config config;
-  config.sorting_mode = full_sort
-                            ? trace_processor::SortingMode::kForceFullSort
-                            : trace_processor::SortingMode::kDefaultHeuristics;
+  config.force_full_sort = full_sort;
   std::unique_ptr<trace_processor::TraceProcessor> tp =
       trace_processor::TraceProcessor::CreateInstance(config);
 
@@ -192,7 +190,7 @@ int ExtractSystrace(trace_processor::TraceProcessor* tp,
                     TraceWriter* trace_writer,
                     bool wrapped_in_json,
                     Keep truncate_keep) {
-  using trace_processor::Iterator;
+  using Iterator = trace_processor::TraceProcessor::Iterator;
 
   QueryWriter q_writer(tp, trace_writer);
   if (wrapped_in_json) {

@@ -35,6 +35,20 @@ data_sources {
 }
 ```
 
+A wildcard can be used to collect all events in a category:
+
+```protobuf
+data_sources {
+  config {
+    name: "linux.ftrace"
+    ftrace_config {
+      ftrace_events: "ftrace/print"
+      ftrace_events: "sched/*"
+    }
+  }
+}
+```
+
 The full configuration options for ftrace can be seen in [ftrace_config.proto](/protos/perfetto/config/ftrace/ftrace_config.proto).
 
 ## Android system logs

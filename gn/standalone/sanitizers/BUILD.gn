@@ -36,7 +36,11 @@ config("sanitizers_cflags") {
   cflags = []
   defines = []
   if (using_sanitizer) {
-    cflags += [ "-fno-omit-frame-pointer" ]
+    blacklist_path_ = rebase_path("blacklist.txt", root_build_dir)
+    cflags += [
+      "-fno-omit-frame-pointer",
+      "-fsanitize-blacklist=$blacklist_path_",
+    ]
   }
 
   if (is_asan) {

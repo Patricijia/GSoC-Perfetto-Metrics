@@ -19,15 +19,6 @@ import {toNs} from '../common/time';
 import {globals} from './globals';
 import {scrollToTrackAndTs} from './scroll_helper';
 
-function setToPrevious(current: number) {
-  globals.frontendLocalState.setSearchIndex(Math.max(current - 1, 0));
-}
-
-function setToNext(current: number) {
-  globals.frontendLocalState.setSearchIndex(
-      Math.min(current + 1, globals.currentSearchResults.totalResults - 1));
-}
-
 export function executeSearch(reverse = false) {
   const state = globals.frontendLocalState;
   const index = state.searchIndex;
@@ -41,27 +32,24 @@ export function executeSearch(reverse = false) {
     if (reverse) {
       const [smaller,] =
         searchSegment(globals.currentSearchResults.tsStarts, endNs);
-      // If there is no item in the viewport just go to the previous.
-      smaller === -1 ? setToPrevious(index) :
-                       globals.frontendLocalState.setSearchIndex(smaller);
+      globals.frontendLocalState.setSearchIndex(smaller);
     } else {
       const [, larger] =
           searchSegment(globals.currentSearchResults.tsStarts, startNs);
-      // If there is no item in the viewport just go to the next.
-      larger === -1 ? setToNext(index) :
-                      globals.frontendLocalState.setSearchIndex(larger);
+      globals.frontendLocalState.setSearchIndex(larger);
     }
   } else {
     // If the currentTs is in the viewport, increment the index.
     if (reverse) {
-      setToPrevious(index);
+      globals.frontendLocalState.setSearchIndex(Math.max(index - 1, 0));
     } else {
-      setToNext(index);
+      globals.frontendLocalState.setSearchIndex(Math.min(
+          index + 1, globals.currentSearchResults.sliceIds.length - 1));
     }
   }
   selectCurrentSearchResult();
 
-  // TODO(hjd): If the user does a search before any other selection,
+  // TODO(taylori): If the user does a search before any other selection,
   // the details panel will pop up when the search is executed. If the search
   // result is behind where the details panel appears then it won't get scrolled
   // to. This time delay is a workaround for this specific situation.

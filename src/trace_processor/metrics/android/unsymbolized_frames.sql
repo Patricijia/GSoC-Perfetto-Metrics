@@ -14,7 +14,6 @@
 -- limitations under the License.
 --
 
-DROP VIEW IF EXISTS unsymbolized_frames_view;
 CREATE VIEW unsymbolized_frames_view AS
 SELECT UnsymbolizedFrames_Frame(
     'module', spm.name,
@@ -27,7 +26,6 @@ ON spf.mapping = spm.id
 WHERE spm.build_id != ''
 AND (spf.symbol_set_id == 0 OR spf.symbol_set_id IS NULL);
 
-DROP VIEW IF EXISTS unsymbolized_frames_output;
 CREATE VIEW unsymbolized_frames_output AS
 SELECT UnsymbolizedFrames(
   'frames',

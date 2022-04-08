@@ -12,10 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {assertFalse, assertTrue} from '../base/logging';
 import {TimeSpan} from '../common/time';
 
-const MAX_ZOOM_SPAN_SEC = 1e-6;  // 1us.
+const MAX_ZOOM_SPAN_SEC = 1e-4;  // 0.1 ms.
 
 /**
  * Defines a mapping between number and seconds for the entire application.
@@ -61,8 +60,6 @@ export class TimeScale {
   }
 
   setLimitsPx(pxStart: number, pxEnd: number) {
-    assertFalse(pxStart === pxEnd);
-    assertTrue(pxStart >= 0 && pxEnd >= 0);
     this._startPx = pxStart;
     this._endPx = pxEnd;
     this.updateSlope();

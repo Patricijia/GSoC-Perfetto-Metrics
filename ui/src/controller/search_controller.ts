@@ -12,27 +12,18 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine} from '../common/engine';
-import {slowlyCountRows} from '../common/query_iterator';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 import {TimeSpan} from '../common/time';
 
 import {Controller} from './controller';
 import {App} from './globals';
 
-export function escapeQuery(s: string): string {
-  // See https://www.sqlite.org/lang_expr.html#:~:text=A%20string%20constant
-  s = s.replace(/\'/g, '\'\'');
-  s = s.replace(/_/g, '^_');
-  s = s.replace(/%/g, '^%');
-  return `'%${s}%' escape '^'`;
-}
-
 export interface SearchControllerArgs {
   engine: Engine;
   app: App;
 }
+
 
 export class SearchController extends Controller<'main'> {
   private engine: Engine;
@@ -80,14 +71,14 @@ export class SearchController extends Controller<'main'> {
     }
     const newSpan = new TimeSpan(visibleState.startSec, visibleState.endSec);
     const newSearch = omniboxState.omnibox;
-    let newResolution = visibleState.resolution;
+    const newResolution = visibleState.resolution;
     if (this.previousSpan.contains(newSpan) &&
         this.previousResolution === newResolution &&
         newSearch === this.previousSearch) {
       return;
     }
     this.previousSpan = new TimeSpan(
-        Math.max(newSpan.start - newSpan.duration, -TRACE_MARGIN_TIME_S),
+        Math.max(newSpan.start - newSpan.duration, 0),
         newSpan.end + newSpan.duration);
     this.previousResolution = newResolution;
     this.previousSearch = newSearch;
@@ -108,20 +99,8 @@ export class SearchController extends Controller<'main'> {
       return;
     }
 
-    let startNs = Math.round(newSpan.start * 1e9);
-    let endNs = Math.round(newSpan.end * 1e9);
-
-    // TODO(hjd): We shouldn't need to be so defensive here:
-    if (!Number.isFinite(startNs)) {
-      startNs = 0;
-    }
-    if (!Number.isFinite(endNs)) {
-      endNs = 1;
-    }
-    if (!Number.isFinite(newResolution)) {
-      newResolution = 1;
-    }
-
+    const startNs = Math.round(newSpan.start * 1e9);
+    const endNs = Math.round(newSpan.end * 1e9);
     this.updateInProgress = true;
     const computeSummary =
         this.update(newSearch, startNs, endNs, newResolution).then(summary => {
@@ -147,8 +126,6 @@ export class SearchController extends Controller<'main'> {
       resolution: number): Promise<SearchSummary> {
     const quantumNs = Math.round(resolution * 10 * 1e9);
 
-    const searchLiteral = escapeQuery(search);
-
     startNs = Math.floor(startNs / quantumNs) * quantumNs;
 
     await this.query(`update search_summary_window set
@@ -158,8 +135,8 @@ export class SearchController extends Controller<'main'> {
       where rowid = 0;`);
 
     const rawUtidResult = await this.query(`select utid from thread join process
-      using(upid) where thread.name like ${searchLiteral}
-      or process.name like ${searchLiteral}`);
+      using(upid) where thread.name like "%${search}%" or process.name like "%${
+        search}%"`);
 
     const utids = [...rawUtidResult.columns[0].longValues!];
 
@@ -180,12 +157,12 @@ export class SearchController extends Controller<'main'> {
               select
               quantum_ts
               from search_summary_slice_span
-              where name like ${searchLiteral}
+              where name like '%${search}%'
           )
           group by quantum_ts
           order by quantum_ts;`);
 
-    const numRows = slowlyCountRows(rawResult);
+    const numRows = +rawResult.numRecords;
     const summary = {
       tsStarts: new Float64Array(numRows),
       tsEnds: new Float64Array(numRows),
@@ -202,7 +179,6 @@ export class SearchController extends Controller<'main'> {
   }
 
   private async specificSearch(search: string) {
-    const searchLiteral = escapeQuery(search);
     // TODO(hjd): we should avoid recomputing this every time. This will be
     // easier once the track table has entries for all the tracks.
     const cpuToTrackId = new Map();
@@ -212,24 +188,17 @@ export class SearchController extends Controller<'main'> {
         cpuToTrackId.set((track.config as {cpu: number}).cpu, track.id);
         continue;
       }
-      if (track.kind === 'ChromeSliceTrack') {
-        const config = (track.config as {trackId: number});
-        engineTrackIdToTrackId.set(config.trackId, track.id);
-        continue;
-      }
-      if (track.kind === 'AsyncSliceTrack') {
-        const config = (track.config as {trackIds: number[]});
-        for (const trackId of config.trackIds) {
-          engineTrackIdToTrackId.set(trackId, track.id);
-        }
+      if (track.kind === 'ChromeSliceTrack' ||
+          track.kind === 'AsyncSliceTrack') {
+        engineTrackIdToTrackId.set(
+            (track.config as {trackId: number}).trackId, track.id);
         continue;
       }
     }
 
     const rawUtidResult = await this.query(`select utid from thread join process
-    using(upid) where
-      thread.name like ${searchLiteral} or
-      process.name like ${searchLiteral}`);
+    using(upid) where thread.name like "%${search}%" or process.name like "%${
+        search}%"`);
     const utids = [...rawUtidResult.columns[0].longValues!];
 
     const rawResult = await this.query(`
@@ -248,25 +217,16 @@ export class SearchController extends Controller<'main'> {
       track_id as source_id,
       0 as utid
       from slice
-      where slice.name like ${searchLiteral}
-    union
-    select
-      slice_id,
-      ts,
-      'track' as source,
-      track_id as source_id,
-      0 as utid
-      from slice
-      join args using(arg_set_id)
-      where string_value like ${searchLiteral}
+      inner join track on slice.track_id = track.id
+      and slice.name like '%${search}%'
     order by ts`);
 
-    const numRows = slowlyCountRows(rawResult);
+    const numRows = +rawResult.numRecords;
 
     const searchResults: CurrentSearchResults = {
-      sliceIds: [],
-      tsStarts: [],
-      utids: [],
+      sliceIds: new Float64Array(numRows),
+      tsStarts: new Float64Array(numRows),
+      utids: new Float64Array(numRows),
       trackIds: [],
       sources: [],
       totalResults: +numRows,
@@ -290,9 +250,9 @@ export class SearchController extends Controller<'main'> {
 
       searchResults.trackIds.push(trackId);
       searchResults.sources.push(source);
-      searchResults.sliceIds.push(+columns[0].longValues![row]);
-      searchResults.tsStarts.push(+columns[1].longValues![row]);
-      searchResults.utids.push(+columns[4].longValues![row]);
+      searchResults.sliceIds[row] = +columns[0].longValues![row];
+      searchResults.tsStarts[row] = +columns[1].longValues![row];
+      searchResults.utids[row] = +columns[4].longValues![row];
     }
     return searchResults;
   }

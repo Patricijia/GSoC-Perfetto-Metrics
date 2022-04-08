@@ -97,7 +97,8 @@ export class PanAndZoomHandler {
   private onSelection:
       (dragStartX: number, dragStartY: number, prevX: number, currentX: number,
        currentY: number, editing: boolean) => void;
-  private endSelection: (edit: boolean) => void;
+  private selectingStarted: () => void;
+  private selectingEnded: () => void;
 
   constructor({
     element,
@@ -106,7 +107,8 @@ export class PanAndZoomHandler {
     onZoomed,
     editSelection,
     onSelection,
-    endSelection
+    selectingStarted,
+    selectingEnded
   }: {
     element: HTMLElement,
     contentOffsetX: number,
@@ -116,7 +118,8 @@ export class PanAndZoomHandler {
     onSelection:
         (dragStartX: number, dragStartY: number, prevX: number,
          currentX: number, currentY: number, editing: boolean) => void,
-    endSelection: (edit: boolean) => void,
+    selectingStarted: () => void,
+    selectingEnded: () => void,
   }) {
     this.element = element;
     this.contentOffsetX = contentOffsetX;
@@ -124,7 +127,8 @@ export class PanAndZoomHandler {
     this.onZoomed = onZoomed;
     this.editSelection = editSelection;
     this.onSelection = onSelection;
-    this.endSelection = endSelection;
+    this.selectingStarted = selectingStarted;
+    this.selectingEnded = selectingEnded;
 
     document.body.addEventListener('keydown', this.boundOnKeyDown);
     document.body.addEventListener('keyup', this.boundOnKeyUp);
@@ -155,6 +159,7 @@ export class PanAndZoomHandler {
           if (edit) {
             this.element.style.cursor = EDITING_RANGE_CURSOR;
           } else if (!this.shiftDown) {
+            this.selectingStarted();
             this.element.style.cursor = DRAG_CURSOR;
           }
         },
@@ -163,7 +168,7 @@ export class PanAndZoomHandler {
           this.element.style.cursor = this.shiftDown ? PAN_CURSOR : DRAG_CURSOR;
           dragStartX = -1;
           dragStartY = -1;
-          this.endSelection(edit);
+          this.selectingEnded();
         });
   }
 
@@ -279,7 +284,7 @@ export class PanAndZoomHandler {
     handleKey(e, false);
   }
 
-  // TODO(hjd): Move this shift handling into the viewer page.
+  // TODO(taylori): Move this shift handling into the viewer page.
   private updateShift(down: boolean) {
     if (down === this.shiftDown) return;
     this.shiftDown = down;

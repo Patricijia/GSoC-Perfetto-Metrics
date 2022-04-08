@@ -18,105 +18,80 @@
 #define SRC_PROFILING_SYMBOLIZER_LOCAL_SYMBOLIZER_H_
 
 #include <map>
-#include <memory>
 #include <string>
 #include <vector>
 
 #include "perfetto/ext/base/optional.h"
-#include "perfetto/ext/base/scoped_file.h"
-#include "src/profiling/symbolizer/subprocess.h"
+#include "perfetto/ext/base/pipe.h"
 #include "src/profiling/symbolizer/symbolizer.h"
 
 namespace perfetto {
 namespace profiling {
 
-bool ParseLlvmSymbolizerLine(const std::string& line,
-                             std::string* file_name,
-                             uint32_t* line_no);
-std::vector<std::string> GetLines(
-    std::function<int64_t(char*, size_t)> fn_read);
-
-struct FoundBinary {
-  std::string file_name;
-  uint64_t load_bias;
-};
-
-class BinaryFinder {
+class LocalBinaryFinder {
  public:
-  virtual ~BinaryFinder();
-  virtual base::Optional<FoundBinary> FindBinary(
-      const std::string& abspath,
-      const std::string& build_id) = 0;
-};
+  LocalBinaryFinder(std::vector<std::string> roots)
+      : roots_(std::move(roots)) {}
 
-class LocalBinaryIndexer : public BinaryFinder {
- public:
-  explicit LocalBinaryIndexer(std::vector<std::string> roots);
-
-  base::Optional<FoundBinary> FindBinary(const std::string& abspath,
-                                         const std::string& build_id) override;
-  ~LocalBinaryIndexer() override;
+  base::Optional<std::string> FindBinary(const std::string& abspath,
+                                         const std::string& build_id);
 
  private:
-  std::map<std::string, FoundBinary> buildid_to_file_;
-};
+  bool IsCorrectFile(const std::string& symbol_file,
+                     const std::string& build_id);
 
-class LocalBinaryFinder : public BinaryFinder {
- public:
-  explicit LocalBinaryFinder(std::vector<std::string> roots);
-
-  base::Optional<FoundBinary> FindBinary(const std::string& abspath,
-                                         const std::string& build_id) override;
-
-  ~LocalBinaryFinder() override;
-
- private:
-  base::Optional<FoundBinary> IsCorrectFile(const std::string& symbol_file,
-                                            const std::string& build_id);
-
-  base::Optional<FoundBinary> FindBinaryInRoot(const std::string& root_str,
+  base::Optional<std::string> FindBinaryInRoot(const std::string& root_str,
                                                const std::string& abspath,
                                                const std::string& build_id);
 
  private:
   std::vector<std::string> roots_;
-  std::map<std::string, base::Optional<FoundBinary>> cache_;
+  std::map<std::string, base::Optional<std::string>> cache_;
+};
+
+class Subprocess {
+ public:
+  Subprocess(const std::string& file, std::vector<std::string> args);
+
+  ~Subprocess();
+
+  int read_fd() { return output_pipe_.rd.get(); }
+  int write_fd() { return input_pipe_.wr.get(); }
+
+ private:
+  base::Pipe input_pipe_;
+  base::Pipe output_pipe_;
+
+  pid_t pid_ = -1;
 };
 
 class LLVMSymbolizerProcess {
  public:
-  explicit LLVMSymbolizerProcess(const std::string& symbolizer_path);
+  LLVMSymbolizerProcess();
 
   std::vector<SymbolizedFrame> Symbolize(const std::string& binary,
                                          uint64_t address);
 
  private:
   Subprocess subprocess_;
+  FILE* read_file_;
 };
 
 class LocalSymbolizer : public Symbolizer {
  public:
-  LocalSymbolizer(const std::string& symbolizer_path,
-                  std::unique_ptr<BinaryFinder> finder);
-
-  explicit LocalSymbolizer(std::unique_ptr<BinaryFinder> finder);
+  LocalSymbolizer(std::vector<std::string> roots) : finder_(std::move(roots)) {}
 
   std::vector<std::vector<SymbolizedFrame>> Symbolize(
       const std::string& mapping_name,
       const std::string& build_id,
-      uint64_t load_bias,
       const std::vector<uint64_t>& address) override;
 
   ~LocalSymbolizer() override;
 
  private:
   LLVMSymbolizerProcess llvm_symbolizer_;
-  std::unique_ptr<BinaryFinder> finder_;
+  LocalBinaryFinder finder_;
 };
-
-std::unique_ptr<Symbolizer> LocalSymbolizerOrDie(
-    std::vector<std::string> binary_path,
-    const char* mode);
 
 }  // namespace profiling
 }  // namespace perfetto

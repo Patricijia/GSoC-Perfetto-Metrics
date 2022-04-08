@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # Copyright (C) 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -18,7 +18,6 @@ from __future__ import print_function
 import os
 import shutil
 import subprocess
-import sys
 
 from compat import quote
 from platform import system
@@ -43,7 +42,7 @@ def call(cmd, *args):
   try:
     return subprocess.check_output(command, cwd=ROOT_DIR).decode()
   except subprocess.CalledProcessError as e:
-    assert False, 'Command: %s failed: %s' % (' '.join(command), e)
+    assert False, 'Command: %s failed: %s'.format(' '.join(command))
 
 
 def check_amalgamated_output():
@@ -59,14 +58,7 @@ def check_amalgamated_build():
   ]
   if system().lower() == 'linux':
     args += ['-lpthread', '-lrt']
-
-  if sys.platform.startswith('linux'):
-    llvm_script = os.path.join(ROOT_DIR, 'gn', 'standalone', 'toolchain',
-                               'linux_find_llvm.py')
-    cxx = subprocess.check_output([llvm_script]).splitlines()[2].decode()
-  else:
-    cxx = 'clang++'
-  call(cxx, *args)
+  call('clang++', *args)
 
 
 def check_amalgamated_dependencies():

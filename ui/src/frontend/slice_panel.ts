@@ -58,7 +58,6 @@ export class SliceDetailsPanel extends Panel {
                   m('i.material-icons.grey',
                     {onclick: () => this.goToThread(), title: 'Go to thread'},
                     'call_made'))),
-              m('tr', m('th', `Cmdline`), m('td', threadInfo.cmdline)),
               m('tr',
                 m('th', `Start time`),
                 m('td', `${timeToCode(sliceInfo.ts)}`)),
@@ -68,7 +67,7 @@ export class SliceDetailsPanel extends Panel {
               m('tr', m('th', `Prio`), m('td', `${sliceInfo.priority}`)),
               m('tr',
                 m('th', `End State`),
-                m('td', translateState(sliceInfo.endState)))
+                m('td', `${translateState(sliceInfo.endState)}`))
             ]),
       );
     }
@@ -93,9 +92,13 @@ export class SliceDetailsPanel extends Panel {
       }
     }
 
-    if (trackId && sliceInfo.threadStateId) {
+    if (trackId) {
       globals.makeSelection(Actions.selectThreadState({
-        id: sliceInfo.threadStateId,
+        utid: threadInfo.utid,
+        ts: sliceInfo.ts + globals.state.traceTime.startSec,
+        dur: sliceInfo.dur,
+        state: 'Running',
+        cpu: sliceInfo.cpu,
         trackId: trackId.toString(),
       }));
 

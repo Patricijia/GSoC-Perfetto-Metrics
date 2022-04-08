@@ -15,22 +15,24 @@
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
+import {translateState} from '../common/thread_state';
 import {timeToCode, toNs} from '../common/time';
 
 import {globals} from './globals';
 import {Panel, PanelSize} from './panel';
 import {scrollToTrackAndTs} from './scroll_helper';
 
+interface ThreadStateDetailsAttr {
+  utid: number;
+  ts: number;
+  dur: number;
+  state: string;
+  cpu: number;
+}
 
-export class ThreadStatePanel extends Panel {
-  view() {
-    const threadState = globals.threadStateDetails;
-    if (threadState === undefined || threadState.utid === undefined ||
-        threadState.ts === undefined || threadState.dur === undefined ||
-        threadState.state === undefined) {
-      return m('.details-panel');
-    }
-    const threadInfo = globals.threads.get(threadState.utid);
+export class ThreadStatePanel extends Panel<ThreadStateDetailsAttr> {
+  view({attrs}: m.CVnode<ThreadStateDetailsAttr>) {
+    const threadInfo = globals.threads.get(attrs.utid);
     if (threadInfo) {
       return m(
           '.details-panel',
@@ -38,48 +40,44 @@ export class ThreadStatePanel extends Panel {
           m('.details-table', [m('table.half-width', [
               m('tr',
                 m('th', `Start time`),
-                m('td', `${timeToCode(threadState.ts)}`)),
+                m('td',
+                  `${
+                      timeToCode(
+                          attrs.ts - globals.state.traceTime.startSec)}`)),
               m('tr',
                 m('th', `Duration`),
                 m(
                     'td',
-                    `${timeToCode(threadState.dur)} `,
+                    `${timeToCode(attrs.dur)} `,
                     )),
               m('tr',
                 m('th', `State`),
-                m('td',
-                  this.getStateContent(
-                      threadState.state,
-                      threadState.cpu,
-                      threadState.sliceId,
-                      threadState.ts))),
+                m('td', this.getStateContent(attrs.state, attrs.cpu))),
               m('tr',
                 m('th', `Process`),
                 m('td', `${threadInfo.procName} [${threadInfo.pid}]`)),
-              this.getBlockedFunctionContent(threadState.blockedFunction),
             ])]));
+    } else {
+      return m('.details-panel');
     }
-    return m('.details-panel');
   }
 
   renderCanvas(_ctx: CanvasRenderingContext2D, _size: PanelSize) {}
 
   // If it is the running state, we want to show which CPU and a button to
   // go to the sched slice. Otherwise, just show the state.
-  getStateContent(
-      state: string, cpu: number|undefined, sliceId: number|undefined,
-      ts: number) {
-    if (sliceId === undefined || cpu === undefined) {
-      return [state];
+  getStateContent(state: string, cpu: number) {
+    if (state !== 'Running') {
+      return [translateState(state)];
     }
 
     return [
-      `${state} on CPU ${cpu}`,
-      m(
-          'i.material-icons.grey',
-          {
-            onclick: () => {
-              // TODO(hjd): Use trackId from TP.
+      `${translateState(state)} on CPU ${cpu}`,
+      m('i.material-icons.grey',
+        {
+          onclick: () => {
+            if (globals.sliceDetails.id && globals.sliceDetails.ts) {
+              // TODO(taylori): Use trackId from TP.
               let trackId;
               for (const track of Object.values(globals.state.tracks)) {
                 if (track.kind === 'CpuSliceTrack' &&
@@ -88,22 +86,19 @@ export class ThreadStatePanel extends Panel {
                 }
               }
               if (trackId) {
-                globals.makeSelection(
-                    Actions.selectSlice({id: sliceId, trackId}));
+                globals.makeSelection(Actions.selectSlice(
+                    {id: globals.sliceDetails.id, trackId}));
                 scrollToTrackAndTs(
-                    trackId, toNs(ts + globals.state.traceTime.startSec));
+                    trackId,
+                    toNs(
+                        globals.sliceDetails.ts +
+                        globals.state.traceTime.startSec));
               }
-            },
-            title: 'Go to CPU slice'
+            }
           },
-          'call_made')
+          title: 'Go to CPU slice'
+        },
+        'call_made')
     ];
-  }
-
-  getBlockedFunctionContent(blockedFunction: string|undefined) {
-    if (blockedFunction === undefined) {
-      return null;
-    }
-    return m('tr', m('th', `Blocked Function`), m('td', blockedFunction));
   }
 }

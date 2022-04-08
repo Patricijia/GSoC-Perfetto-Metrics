@@ -33,7 +33,7 @@ class JsonTracker : public Destructible {
   JsonTracker(const JsonTracker&) = delete;
   JsonTracker& operator=(const JsonTracker&) = delete;
   explicit JsonTracker(TraceProcessorContext*);
-  ~JsonTracker() override;
+  virtual ~JsonTracker();
 
   static JsonTracker* GetOrCreate(TraceProcessorContext* context) {
     if (!context->json_tracker) {

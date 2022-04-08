@@ -28,56 +28,12 @@ import {trackRegistry} from '../../frontend/track_registry';
 import {
   Config,
   COUNTER_TRACK_KIND,
-  CounterScaleOptions,
   Data,
 } from './common';
 
 // 0.5 Makes the horizontal lines sharp.
 const MARGIN_TOP = 3.5;
 const RECT_HEIGHT = 24.5;
-
-interface CounterScaleAttribute {
-  follower: CounterScaleOptions;
-  tooltip: string;
-  icon: string;
-}
-
-function scaleTooltip(scale?: CounterScaleOptions): string {
-  const description: CounterScaleAttribute = getCounterScaleAttribute(scale);
-  const source: string = description.tooltip;
-  const destination: string =
-      getCounterScaleAttribute(description.follower).tooltip;
-  return `Toggle scale from ${source} to ${destination}`;
-}
-
-function scaleIcon(scale?: CounterScaleOptions): string {
-  return getCounterScaleAttribute(scale).icon;
-}
-
-function nextScale(scale?: CounterScaleOptions): CounterScaleOptions {
-  return getCounterScaleAttribute(scale).follower;
-}
-
-function getCounterScaleAttribute(scale?: CounterScaleOptions):
-    CounterScaleAttribute {
-  switch (scale) {
-    case 'MIN_MAX':
-      return {
-        follower: 'DELTA_FROM_PREVIOUS',
-        tooltip: 'min/max',
-        icon: 'show_chart'
-      };
-    case 'DELTA_FROM_PREVIOUS':
-      return {follower: 'ZERO_BASED', tooltip: 'delta', icon: 'bar_chart'};
-    case 'ZERO_BASED':
-    default:
-      return {
-        follower: 'MIN_MAX',
-        tooltip: 'zero based',
-        icon: 'waterfall_chart'
-      };
-  }
-}
 
 class CounterTrack extends Track<Config, Data> {
   static readonly kind = COUNTER_TRACK_KIND;
@@ -102,14 +58,19 @@ class CounterTrack extends Track<Config, Data> {
     const buttons: Array<m.Vnode<TrackButtonAttrs>> = [];
     buttons.push(m(TrackButton, {
       action: () => {
-        this.config.scale = nextScale(this.config.scale);
+        if (this.config.scale === 'RELATIVE') {
+          this.config.scale = 'DEFAULT';
+        } else {
+          this.config.scale = 'RELATIVE';
+        }
         Actions.updateTrackConfig(
             {id: this.trackState.id, config: this.config});
         globals.rafScheduler.scheduleFullRedraw();
       },
-      i: scaleIcon(this.config.scale),
-      tooltip: scaleTooltip(this.config.scale),
-      showButton: !!this.config.scale && this.config.scale !== 'ZERO_BASED',
+      i: 'show_chart',
+      tooltip: (this.config.scale === 'RELATIVE') ? 'Use zero-based scale' :
+                                                    'Use relative scale',
+      showButton: this.config.scale === 'RELATIVE',
     }));
     return buttons;
   }
@@ -119,38 +80,20 @@ class CounterTrack extends Track<Config, Data> {
     const {timeScale, visibleWindowTime} = globals.frontendLocalState;
     const data = this.data();
 
-    // Can't possibly draw anything.
-    if (data === undefined || data.timestamps.length === 0) {
-      return;
-    }
+    if (data === undefined) return;  // Can't possibly draw anything.
 
-    assertTrue(data.timestamps.length === data.minValues.length);
-    assertTrue(data.timestamps.length === data.maxValues.length);
-    assertTrue(data.timestamps.length === data.lastValues.length);
-    assertTrue(data.timestamps.length === data.totalDeltas.length);
-
-    const scale: CounterScaleOptions = this.config.scale || 'ZERO_BASED';
-
-    let minValues = data.minValues;
-    let maxValues = data.maxValues;
-    let lastValues = data.lastValues;
-    let maximumValue = data.maximumValue;
-    let minimumValue = data.minimumValue;
-    if (scale === 'DELTA_FROM_PREVIOUS') {
-      lastValues = data.totalDeltas;
-      minValues = data.totalDeltas;
-      maxValues = data.totalDeltas;
-      maximumValue = data.maximumDelta;
-      minimumValue = data.minimumDelta;
-    }
+    assertTrue(data.timestamps.length === data.values.length);
 
     const endPx = Math.floor(timeScale.timeToPx(visibleWindowTime.end));
-    const zeroY = MARGIN_TOP + RECT_HEIGHT / (minimumValue < 0 ? 2 : 1);
+    const zeroY = MARGIN_TOP + RECT_HEIGHT / (data.minimumValue < 0 ? 2 : 1);
+
+    let lastX = Math.floor(timeScale.timeToPx(data.timestamps[0]));
+    let lastY = zeroY;
 
     // Quantize the Y axis to quarters of powers of tens (7.5K, 10K, 12.5K).
-    const maxValue = Math.max(maximumValue, 0);
+    const maxValue = Math.max(data.maximumValue, 0);
 
-    let yMax = Math.max(Math.abs(minimumValue), maxValue);
+    let yMax = Math.max(Math.abs(data.minimumValue), maxValue);
     const kUnits = ['', 'K', 'M', 'G', 'T', 'E'];
     const exp = Math.ceil(Math.log10(Math.max(yMax, 1)));
     const pow10 = Math.pow(10, exp);
@@ -159,17 +102,14 @@ class CounterTrack extends Track<Config, Data> {
     const unitGroup = Math.floor(exp / 3);
     let yMin = 0;
     let yLabel = '';
-    if (scale === 'MIN_MAX') {
-      yRange = maximumValue - minimumValue;
-      yMin = minimumValue;
+    if (this.config.scale === 'RELATIVE') {
+      yRange = data.maximumValue - data.minimumValue;
+      yMin = data.minimumValue;
       yLabel = 'min - max';
     } else {
-      yRange = minimumValue < 0 ? yMax * 2 : yMax;
-      yMin = minimumValue < 0 ? -yMax : 0;
+      yRange = data.minimumValue < 0 ? yMax * 2 : yMax;
+      yMin = data.minimumValue < 0 ? -yMax : 0;
       yLabel = `${yMax / Math.pow(10, unitGroup * 3)} ${kUnits[unitGroup]}`;
-      if (scale === 'DELTA_FROM_PREVIOUS') {
-        yLabel += '\u0394';
-      }
     }
 
     // There are 360deg of hue. We want a scale that starts at green with
@@ -185,36 +125,20 @@ class CounterTrack extends Track<Config, Data> {
 
     ctx.fillStyle = `hsl(${hue}, 45%, 75%)`;
     ctx.strokeStyle = `hsl(${hue}, 45%, 45%)`;
-
-    const calculateX = (ts: number) => {
-      return Math.floor(timeScale.timeToPx(ts));
-    };
-    const calculateY = (value: number) => {
-      return MARGIN_TOP + RECT_HEIGHT -
-          Math.round(((value - yMin) / yRange) * RECT_HEIGHT);
-    };
-
     ctx.beginPath();
-    ctx.moveTo(calculateX(data.timestamps[0]), zeroY);
-    let lastDrawnY = zeroY;
-    for (let i = 0; i < data.timestamps.length; i++) {
-      const x = calculateX(data.timestamps[i]);
-      const minY = calculateY(minValues[i]);
-      const maxY = calculateY(maxValues[i]);
-      const lastY = calculateY(lastValues[i]);
+    ctx.moveTo(lastX, lastY);
+    for (let i = 0; i < data.values.length; i++) {
+      const value = data.values[i];
+      const startTime = data.timestamps[i];
+      const nextY = zeroY - Math.round(((value - yMin) / yRange) * RECT_HEIGHT);
+      if (nextY === lastY) continue;
 
-      ctx.lineTo(x, lastDrawnY);
-      if (minY === maxY) {
-        assertTrue(lastY === minY);
-        ctx.lineTo(x, lastY);
-      } else {
-        ctx.lineTo(x, minY);
-        ctx.lineTo(x, maxY);
-        ctx.lineTo(x, lastY);
-      }
-      lastDrawnY = lastY;
+      lastX = Math.floor(timeScale.timeToPx(startTime));
+      ctx.lineTo(lastX, lastY);
+      ctx.lineTo(lastX, nextY);
+      lastY = nextY;
     }
-    ctx.lineTo(endPx, lastDrawnY);
+    ctx.lineTo(endPx, lastY);
     ctx.lineTo(endPx, zeroY);
     ctx.closePath();
     ctx.fill();
@@ -234,7 +158,7 @@ class CounterTrack extends Track<Config, Data> {
 
     if (this.hoveredValue !== undefined && this.hoveredTs !== undefined) {
       // TODO(hjd): Add units.
-      let text = scale === 'DELTA_FROM_PREVIOUS' ? 'delta: ' : 'value: ';
+      let text = (data.isQuantized) ? 'max value: ' : 'value: ';
       text += `${this.hoveredValue.toLocaleString()}`;
 
       ctx.fillStyle = `hsl(${hue}, 45%, 75%)`;
@@ -244,7 +168,7 @@ class CounterTrack extends Track<Config, Data> {
       const xEnd = this.hoveredTsEnd === undefined ?
           endPx :
           Math.floor(timeScale.timeToPx(this.hoveredTsEnd));
-      const y = MARGIN_TOP + RECT_HEIGHT -
+      const y = zeroY -
           Math.round(((this.hoveredValue - yMin) / yRange) * RECT_HEIGHT);
 
       // Highlight line.
@@ -304,13 +228,10 @@ class CounterTrack extends Track<Config, Data> {
     const {timeScale} = globals.frontendLocalState;
     const time = timeScale.pxToTime(x);
 
-    const values = this.config.scale === 'DELTA_FROM_PREVIOUS' ?
-        data.totalDeltas :
-        data.lastValues;
     const [left, right] = searchSegment(data.timestamps, time);
     this.hoveredTs = left === -1 ? undefined : data.timestamps[left];
     this.hoveredTsEnd = right === -1 ? undefined : data.timestamps[right];
-    this.hoveredValue = left === -1 ? undefined : values[left];
+    this.hoveredValue = left === -1 ? undefined : data.values[left];
   }
 
   onMouseOut() {
@@ -327,7 +248,7 @@ class CounterTrack extends Track<Config, Data> {
     if (left === -1) {
       return false;
     } else {
-      const counterId = data.lastIds[left];
+      const counterId = data.ids[left];
       if (counterId === -1) return true;
       globals.makeSelection(Actions.selectCounter({
         leftTs: toNs(data.timestamps[left]),

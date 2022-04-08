@@ -40,7 +40,6 @@ namespace perfetto {
 class FtraceConfigMuxer;
 class FtraceDataSource;
 class FtraceProcfs;
-class LazyKernelSymbolizer;
 class ProtoTranslationTable;
 struct FtraceStats;
 
@@ -50,6 +49,7 @@ void HardResetFtraceState();
 // Utility class for controlling ftrace.
 class FtraceController {
  public:
+  static const char* const kTracingPaths[];
 
   class Observer {
    public:
@@ -114,7 +114,6 @@ class FtraceController {
   base::TaskRunner* const task_runner_;
   Observer* const observer_;
   base::PagedMemory parsing_mem_;
-  std::unique_ptr<LazyKernelSymbolizer> symbolizer_;
   std::unique_ptr<FtraceProcfs> ftrace_procfs_;
   std::unique_ptr<ProtoTranslationTable> table_;
   std::unique_ptr<FtraceConfigMuxer> ftrace_config_muxer_;

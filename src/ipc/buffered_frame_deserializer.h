@@ -22,6 +22,8 @@
 #include <list>
 #include <memory>
 
+#include <sys/mman.h>
+
 #include "perfetto/ext/base/paged_memory.h"
 #include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/ipc/basic_types.h"

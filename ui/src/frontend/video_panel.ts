@@ -14,10 +14,9 @@
 
 import * as m from 'mithril';
 
-import {Actions} from '../common/actions';
-import {randomColor} from '../common/colorizer';
-
 import {globals} from './globals';
+import {Actions} from '../common/actions';
+import {randomColor} from './colorizer';
 
 export class VideoPanel implements m.ClassComponent {
   view() {

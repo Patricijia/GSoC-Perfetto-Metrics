@@ -17,10 +17,10 @@ import {Track} from '../../frontend/track';
 import {trackRegistry} from '../../frontend/track_registry';
 import {ChromeSliceTrack} from '../chrome_slices/frontend';
 
-import {ASYNC_SLICE_TRACK_KIND} from './common';
+import {SLICE_TRACK_KIND} from './common';
 
 export class AsyncSliceTrack extends ChromeSliceTrack {
-  static readonly kind = ASYNC_SLICE_TRACK_KIND;
+  static readonly kind = SLICE_TRACK_KIND;
   static create(trackState: TrackState): Track {
     return new AsyncSliceTrack(trackState);
   }

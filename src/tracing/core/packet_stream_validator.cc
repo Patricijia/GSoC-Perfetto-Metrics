@@ -72,11 +72,8 @@ class ProtoFieldParserFSM {
     varint_ |= static_cast<uint64_t>(octet & 0x7F) << varint_shift_;
     if (octet & 0x80) {
       varint_shift_ += 7;
-      if (varint_shift_ >= 64) {
-        // Do not invoke UB on next call.
-        varint_shift_ = 0;
+      if (varint_shift_ >= 64)
         state_ = kInvalidVarInt;
-      }
       return 0;
     }
     uint64_t varint = varint_;

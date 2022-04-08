@@ -15,7 +15,7 @@ Dependencies:
 First, check out the latest Perfetto release:
 
 ```bash
-git clone https://android.googlesource.com/platform/external/perfetto -b v14.0
+git clone https://android.googlesource.com/platform/external/perfetto -b v4.1
 ```
 
 Then, build using CMake:
@@ -35,7 +35,7 @@ events. Run it with:
 build/example
 ```
 
-The program will create a trace file in `example.perfetto-trace`, which can be
+The program will create a trace file in `example.pftrace`, which can be
 directly opened in the [Perfetto UI](https://ui.perfetto.dev). The result
 should look like this:
 
@@ -75,18 +75,17 @@ adb push build_android/example_system_wide ../system_wide_trace_cfg.pbtxt \
          /data/local/tmp/
 adb shell "\
     cd /data/local/tmp; \
-    rm -f /data/misc/perfetto-traces/example_system_wide.perfetto-trace; \
+    rm -f /data/misc/perfetto-traces/example_system_wide.pftrace; \
     cat system_wide_trace_cfg.pbtxt | \
         perfetto --config - --txt --background \
-                 -o
-                 /data/misc/perfetto-traces/example_system_wide.perfetto-trace; \
+                 -o /data/misc/perfetto-traces/example_system_wide.pftrace; \
     ./example_system_wide"
 ```
 
 Finally, retrieve the resulting trace:
 
 ```bash
-adb pull /data/misc/perfetto-traces/example_system_wide.perfetto-trace
+adb pull /data/misc/perfetto-traces/example_system_wide.pftrace
 ```
 
 When opened in the Perfetto UI, the trace now shows additional contextual
@@ -110,12 +109,12 @@ trace. Run it with:
 build/example_custom_data_source
 ```
 
-The program generates a trace file in `example_custom_data_source.perfetto-trace`,
+The program generates a trace file in `example_custom_data_source.pftrace`,
 which we can examine using Perfetto's `trace_to_text` tool to show the trace
 packet written by the custom data source:
 
 ```bash
-trace_to_text text example_custom_data_source.perfetto-trace
+trace_to_text text example_custom_data_source.pftrace
 ...
 packet {
   trusted_uid: 0

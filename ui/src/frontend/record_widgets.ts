@@ -27,31 +27,13 @@ declare type Setter<T> = (draft: Draft<RecordConfig>, val: T) => void;
 declare type Getter<T> = (cfg: RecordConfig) => T;
 
 // +---------------------------------------------------------------------------+
-// | Docs link with 'i' in circle icon.                                        |
-// +---------------------------------------------------------------------------+
-
-interface DocsChipAttrs {
-  href: string;
-}
-
-class DocsChip implements m.ClassComponent<DocsChipAttrs> {
-  view({attrs}: m.CVnode<DocsChipAttrs>) {
-    return m(
-        'a.inline-chip',
-        {href: attrs.href, title: 'Open docs in new tab', target: '_blank'},
-        m('i.material-icons', 'info'),
-        ' Docs');
-  }
-}
-
-// +---------------------------------------------------------------------------+
 // | Probe: the rectangular box on the right-hand-side with a toggle box.      |
 // +---------------------------------------------------------------------------+
 
 export interface ProbeAttrs {
   title: string;
   img: string|null;
-  descr: m.Children;
+  descr: string;
   isEnabled: Getter<boolean>;
   setEnabled: Setter<boolean>;
 }
@@ -70,55 +52,14 @@ export class Probe implements m.ClassComponent<ProbeAttrs> {
     return m(
         `.probe${enabled ? '.enabled' : ''}`,
         attrs.img && m('img', {
-          src: `${globals.root}assets/${attrs.img}`,
+          src: `assets/${attrs.img}`,
           onclick: () => onToggle(!enabled),
         }),
         m('label',
-          m(`input[type=checkbox]`, {
-            checked: enabled,
-            oninput: (e: InputEvent) => {
-              onToggle((e.target as HTMLInputElement).checked);
-            },
-          }),
+          m(`input[type=checkbox]`,
+            {checked: enabled, oninput: m.withAttr('checked', onToggle)}),
           m('span', attrs.title)),
         m('div', m('div', attrs.descr), m('.probe-config', children)));
-  }
-}
-
-// +-------------------------------------------------------------+
-// | Toggle: an on/off switch.
-// +-------------------------------------------------------------+
-
-export interface ToggleAttrs {
-  title: string;
-  descr: string;
-  cssClass?: string;
-  isEnabled: Getter<boolean>;
-  setEnabled: Setter<boolean>;
-}
-
-export class Toggle implements m.ClassComponent<ToggleAttrs> {
-  view({attrs}: m.CVnode<ToggleAttrs>) {
-    const onToggle = (enabled: boolean) => {
-      const traceCfg = produce(globals.state.recordConfig, draft => {
-        attrs.setEnabled(draft, enabled);
-      });
-      globals.dispatch(Actions.setRecordConfig({config: traceCfg}));
-    };
-
-    const enabled = attrs.isEnabled(globals.state.recordConfig);
-
-    return m(
-        `.toggle${enabled ? '.enabled' : ''}${attrs.cssClass || ''}`,
-        m('label',
-          m(`input[type=checkbox]`, {
-            checked: enabled,
-            oninput: (e: InputEvent) => {
-              onToggle((e.target as HTMLInputElement).checked);
-            },
-          }),
-          m('span', attrs.title)),
-        m('.descr', attrs.descr));
   }
 }
 
@@ -181,17 +122,13 @@ export class Slider implements m.ClassComponent<SliderAttrs> {
         type: 'text',
         pattern: '(0[0-9]|1[0-9]|2[0-3])(:[0-5][0-9]){2}',  // hh:mm:ss
         value: new Date(val).toISOString().substr(11, 8),
-        oninput: (e: InputEvent) => {
-          this.onTimeValueChange(attrs, (e.target as HTMLInputElement).value);
-        },
+        oninput: m.withAttr('value', v => this.onTimeValueChange(attrs, v))
       };
     } else {
       spinnerCfg = {
         type: 'number',
         value: val,
-        oninput: (e: InputEvent) => {
-          this.onTimeValueChange(attrs, (e.target as HTMLInputElement).value);
-        },
+        oninput: m.withAttr('value', v => this.onValueChange(attrs, v))
       };
     }
     return m(
@@ -201,11 +138,7 @@ export class Slider implements m.ClassComponent<SliderAttrs> {
         attrs.icon !== undefined ? m('i.material-icons', attrs.icon) : [],
         m(`input[id="${id}"][type=range][min=0][max=${maxIdx}][value=${idx}]
         ${disabled ? '[disabled]' : ''}`,
-          {
-            oninput: (e: InputEvent) => {
-              this.onSliderChange(attrs, +(e.target as HTMLInputElement).value);
-            },
-          }),
+          {oninput: m.withAttr('value', v => this.onSliderChange(attrs, v))}),
         m(`input.spinner[min=${min !== undefined ? min : 1}][for=${id}]`,
           spinnerCfg),
         m('.unit', attrs.unit));
@@ -251,9 +184,7 @@ export class Dropdown implements m.ClassComponent<DropdownAttrs> {
     const options: m.Children = [];
     const selItems = attrs.get(globals.state.recordConfig);
     let numSelected = 0;
-    const entries = [...attrs.options.entries()];
-    entries.sort((a, b) => a[1].localeCompare(b[1]));
-    for (const [key, label] of entries) {
+    for (const [key, label] of attrs.options) {
       const opts = {value: key, selected: false};
       if (selItems.includes(key)) {
         opts.selected = true;
@@ -282,7 +213,6 @@ export class Dropdown implements m.ClassComponent<DropdownAttrs> {
 
 export interface TextareaAttrs {
   placeholder: string;
-  docsLink?: string;
   cssClass?: string;
   get: Getter<string>;
   set: Setter<string>;
@@ -300,9 +230,7 @@ export class Textarea implements m.ClassComponent<TextareaAttrs> {
   view({attrs}: m.CVnode<TextareaAttrs>) {
     return m(
         '.textarea-holder',
-        m('header',
-          attrs.title,
-          attrs.docsLink && [' ', m(DocsChip, {href: attrs.docsLink})]),
+        m('header', attrs.title),
         m(`textarea.extra-input${attrs.cssClass || ''}`, {
           onchange: (e: Event) =>
               this.onChange(attrs, e.target as HTMLTextAreaElement),

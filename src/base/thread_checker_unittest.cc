@@ -16,9 +16,10 @@
 
 #include "perfetto/ext/base/thread_checker.h"
 
+#include <pthread.h>
+
 #include <functional>
 #include <memory>
-#include <thread>
 
 #include "test/gtest_and_gmock.h"
 
@@ -26,29 +27,39 @@ namespace perfetto {
 namespace base {
 namespace {
 
-bool RunOnThread(std::function<bool(void)> closure) {
-  bool res = false;
-  std::thread thread([&res, &closure] { res = closure(); });
-  thread.join();
-  return res;
+// We just need two distinct pointers to return to pthread_join().
+void* const kTrue = reinterpret_cast<void*>(1);
+void* const kFalse = nullptr;
+
+void* RunOnThread(std::function<void*(void)> closure) {
+  pthread_t thread;
+  auto thread_main = [](void* arg) -> void* {
+    pthread_exit((*reinterpret_cast<std::function<void*(void)>*>(arg))());
+  };
+  EXPECT_EQ(0, pthread_create(&thread, nullptr, thread_main, &closure));
+  void* retval = nullptr;
+  EXPECT_EQ(0, pthread_join(thread, &retval));
+  return retval;
 }
 
 TEST(ThreadCheckerTest, Basic) {
   ThreadChecker thread_checker;
   ASSERT_TRUE(thread_checker.CalledOnValidThread());
-  bool res = RunOnThread(
-      [&thread_checker] { return thread_checker.CalledOnValidThread(); });
+  void* res = RunOnThread([&thread_checker]() -> void* {
+    return thread_checker.CalledOnValidThread() ? kTrue : kFalse;
+  });
   ASSERT_TRUE(thread_checker.CalledOnValidThread());
-  ASSERT_FALSE(res);
+  ASSERT_EQ(kFalse, res);
 }
 
 TEST(ThreadCheckerTest, Detach) {
   ThreadChecker thread_checker;
   ASSERT_TRUE(thread_checker.CalledOnValidThread());
   thread_checker.DetachFromThread();
-  bool res = RunOnThread(
-      [&thread_checker] { return thread_checker.CalledOnValidThread(); });
-  ASSERT_TRUE(res);
+  void* res = RunOnThread([&thread_checker]() -> void* {
+    return thread_checker.CalledOnValidThread() ? kTrue : kFalse;
+  });
+  ASSERT_EQ(kTrue, res);
   ASSERT_FALSE(thread_checker.CalledOnValidThread());
 }
 
@@ -57,17 +68,19 @@ TEST(ThreadCheckerTest, CopyConstructor) {
   ThreadChecker copied_thread_checker = thread_checker;
   ASSERT_TRUE(thread_checker.CalledOnValidThread());
   ASSERT_TRUE(copied_thread_checker.CalledOnValidThread());
-  bool res = RunOnThread([&copied_thread_checker] {
-    return copied_thread_checker.CalledOnValidThread();
+  void* res = RunOnThread([&copied_thread_checker]() -> void* {
+    return copied_thread_checker.CalledOnValidThread() ? kTrue : kFalse;
   });
-  ASSERT_FALSE(res);
+  ASSERT_EQ(kFalse, res);
 
   copied_thread_checker.DetachFromThread();
-  res = RunOnThread([&thread_checker, &copied_thread_checker] {
-    return copied_thread_checker.CalledOnValidThread() &&
-           !thread_checker.CalledOnValidThread();
+  res = RunOnThread([&thread_checker, &copied_thread_checker]() -> void* {
+    return (copied_thread_checker.CalledOnValidThread() &&
+            !thread_checker.CalledOnValidThread())
+               ? kTrue
+               : kFalse;
   });
-  ASSERT_TRUE(res);
+  ASSERT_EQ(kTrue, res);
 }
 
 }  // namespace

@@ -1,3 +1,4 @@
+#!/usr/bin/env python
 # Copyright (C) 2019 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -22,7 +23,6 @@ import os
 import sys
 import subprocess
 import tempfile
-import uuid
 
 from codecs import open
 
@@ -35,19 +35,14 @@ def main():
   args, remaining = parser.parse_known_args()
 
   if args.dependency_out and args.descriptor_set_out:
-    tmp_path = os.path.join(tempfile.gettempdir(), str(uuid.uuid4()))
-    custom = [
-        '--descriptor_set_out', args.descriptor_set_out, '--dependency_out',
-        tmp_path
-    ]
-    try:
-      cmd = [args.protoc] + custom + remaining
-      subprocess.check_call(cmd)
-      with open(tmp_path, 'rb') as tmp_rd:
-        dependency_data = tmp_rd.read().decode('utf-8')
-    finally:
-      if os.path.exists(tmp_path):
-        os.unlink(tmp_path)
+    with tempfile.NamedTemporaryFile() as t:
+      custom = [
+          '--descriptor_set_out', args.descriptor_set_out, '--dependency_out',
+          t.name
+      ]
+      subprocess.check_call([args.protoc] + custom + remaining)
+
+      dependency_data = t.read().decode('utf-8')
 
     with open(args.dependency_out, 'w', encoding='utf-8') as f:
       f.write(args.descriptor_set_out + ":")

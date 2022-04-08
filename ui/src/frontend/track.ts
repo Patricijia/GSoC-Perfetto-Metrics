@@ -35,34 +35,19 @@ export interface TrackCreator {
   create(TrackState: TrackState): Track;
 }
 
-export interface SliceRect {
-  left: number;
-  width: number;
-  top: number;
-  height: number;
-  visible: boolean;
-}
-
 /**
  * The abstract class that needs to be implemented by all tracks.
  */
 export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
-  private trackId: string;
-  constructor(trackState: TrackState) {
-    this.trackId = trackState.id;
-  }
+  constructor(protected trackState: TrackState) {}
   protected abstract renderCanvas(ctx: CanvasRenderingContext2D): void;
 
-  protected get trackState(): TrackState {
-    return globals.state.tracks[this.trackId];
-  }
-
   get config(): Config {
-    return globals.state.tracks[this.trackId].config as Config;
+    return this.trackState.config as Config;
   }
 
   data(): Data|undefined {
-    return globals.trackDataStore.get(this.trackId) as Data;
+    return globals.trackDataStore.get(this.trackState.id) as Data;
   }
 
   getHeight(): number {
@@ -130,16 +115,5 @@ export abstract class Track<Config = {}, Data extends TrackData = TrackData> {
     if (text2 !== undefined) {
       ctx.fillText(text2, xPos + 8, this.getHeight() / 2 + 6);
     }
-  }
-
-  /**
-   * Returns a place where a given slice should be drawn. Should be implemented
-   * only for track types that support slices e.g. chrome_slice, async_slices
-   * tStart - slice start time in seconds, tEnd - slice end time in seconds,
-   * depth - slice depth
-   */
-  getSliceRect(_tStart: number, _tEnd: number, _depth: number): SliceRect
-      |undefined {
-    return undefined;
   }
 }

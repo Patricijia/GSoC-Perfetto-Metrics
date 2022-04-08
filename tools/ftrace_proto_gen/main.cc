@@ -14,6 +14,7 @@
  * limitations under the License.
  */
 
+#include <getopt.h>
 #include <sys/stat.h>
 #include <fstream>
 #include <map>
@@ -28,8 +29,7 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/file_utils.h"
-#include "perfetto/ext/base/getopt.h"
-#include "src/traced/probes/ftrace/format_parser/format_parser.h"
+#include "src/traced/probes/ftrace/format_parser.h"
 #include "tools/ftrace_proto_gen/ftrace_descriptor_gen.h"
 #include "tools/ftrace_proto_gen/ftrace_proto_gen.h"
 
@@ -45,24 +45,25 @@ inline std::unique_ptr<std::ostream> MakeVerifyStream(
 
 void PrintUsage(const char* bin_name) {
   fprintf(stderr,
-          "Usage: %s -w event_list_path -o output_dir -d proto_descriptor "
+          "Usage: %s -w whitelist_dir -o output_dir -d proto_descriptor "
           "[--check_only] input_dir...\n",
           bin_name);
 }
 }  // namespace
 
 int main(int argc, char** argv) {
-  static option long_options[] = {
-      {"event_list", required_argument, nullptr, 'w'},
+  static struct option long_options[] = {
+      {"whitelist_path", required_argument, nullptr, 'w'},
       {"output_dir", required_argument, nullptr, 'o'},
       {"proto_descriptor", required_argument, nullptr, 'd'},
       {"update_build_files", no_argument, nullptr, 'b'},
       {"check_only", no_argument, nullptr, 'c'},
       {nullptr, 0, nullptr, 0}};
 
+  int option_index;
   int c;
 
-  std::string event_list_path;
+  std::string whitelist_path;
   std::string output_dir;
   std::string proto_descriptor;
   bool update_build_files = false;
@@ -70,10 +71,10 @@ int main(int argc, char** argv) {
   std::unique_ptr<std::ostream> (*ostream_factory)(const std::string&) =
       &MakeOFStream;
 
-  while ((c = getopt_long(argc, argv, "", long_options, nullptr)) != -1) {
+  while ((c = getopt_long(argc, argv, "", long_options, &option_index)) != -1) {
     switch (c) {
       case 'w':
-        event_list_path = optarg;
+        whitelist_path = optarg;
         break;
       case 'o':
         output_dir = optarg;
@@ -99,12 +100,12 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  PERFETTO_CHECK(!event_list_path.empty());
+  PERFETTO_CHECK(!whitelist_path.empty());
   PERFETTO_CHECK(!output_dir.empty());
   PERFETTO_CHECK(!proto_descriptor.empty());
 
-  std::vector<perfetto::FtraceEventName> event_list =
-      perfetto::ReadAllowList(event_list_path);
+  std::vector<perfetto::FtraceEventName> whitelist =
+      perfetto::ReadWhitelist(whitelist_path);
   std::vector<std::string> events_info;
 
   google::protobuf::DescriptorPool descriptor_pool;
@@ -126,7 +127,7 @@ int main(int argc, char** argv) {
   std::set<std::string> groups;
   std::multimap<std::string, const perfetto::FtraceEventName*> group_to_event;
   std::set<std::string> new_events;
-  for (const auto& event : event_list) {
+  for (const auto& event : whitelist) {
     if (!event.valid())
       continue;
     groups.emplace(event.group());
@@ -142,7 +143,7 @@ int main(int argc, char** argv) {
   {
     std::unique_ptr<std::ostream> out =
         ostream_factory(output_dir + "/ftrace_event.proto");
-    perfetto::GenerateFtraceEventProto(event_list, groups, out.get());
+    perfetto::GenerateFtraceEventProto(whitelist, groups, out.get());
   }
 
   for (const std::string& group : groups) {
@@ -199,7 +200,7 @@ int main(int argc, char** argv) {
       }
 
       uint32_t i = 0;
-      for (; it->second != &event_list[i]; i++)
+      for (; it->second != &whitelist[i]; i++)
         ;
 
       // The first id used for events in FtraceEvent proto is 3.

@@ -14,8 +14,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import os
 import sys
 
+import numpy as np
 import scipy as sp
 import seaborn as sns
 
@@ -44,11 +46,11 @@ def main(argv):
 
   # Map from key to list of bytes allocated, one for each iteration.
   flat_distributions = {
-      key: list(value.values()) for key, value in distributions.items()
+      key: value.values() for key, value in distributions.iteritems()
   }
 
-  for key, value in flat_distributions.items():
-    print(key, "ground truth %d " % ground_truth[key], sp.stats.describe(value))
+  for key, value in flat_distributions.iteritems():
+    print key, "ground truth %d " % ground_truth[key], sp.stats.describe(value)
     sns.distplot(value)
     plt.show()
 

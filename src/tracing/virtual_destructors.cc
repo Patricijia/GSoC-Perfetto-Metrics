@@ -26,10 +26,7 @@
 namespace perfetto {
 namespace internal {
 
-TracingTLS::~TracingTLS() {
-  // Avoid entering trace points while the thread is being torn down.
-  is_in_trace_point = true;
-}
+TracingTLS::~TracingTLS() = default;
 
 }  // namespace internal
 

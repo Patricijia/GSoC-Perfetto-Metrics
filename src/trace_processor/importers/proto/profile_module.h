@@ -27,7 +27,8 @@ namespace perfetto {
 namespace trace_processor {
 
 // Importer module for heap and CPU sampling profile data.
-// TODO(eseckler): consider moving heap profiles here as well.
+// TODO(eseckler): Currently handles only StreamingProfilePackets. Also move
+// other profiling data import functionality into this module.
 class ProfileModule : public ProtoImporterModule {
  public:
   explicit ProfileModule(TraceProcessorContext* context);
@@ -53,10 +54,6 @@ class ProfileModule : public ProtoImporterModule {
       int64_t timestamp,
       PacketSequenceStateGeneration*,
       protozero::ConstBytes streaming_profile_packet);
-
-  void ParsePerfSample(int64_t ts,
-                       PacketSequenceStateGeneration* sequence_state,
-                       const protos::pbzero::TracePacket::Decoder& decoder);
 
   TraceProcessorContext* context_;
 };

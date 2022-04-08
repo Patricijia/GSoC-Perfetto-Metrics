@@ -54,7 +54,7 @@ using PlatformThreadId = zx_handle_t;
 inline PlatformThreadId GetThreadId() {
   return zx_thread_self();
 }
-#elif PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+#elif PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
 using PlatformThreadId = uint64_t;
 inline PlatformThreadId GetThreadId() {
   uint64_t tid;

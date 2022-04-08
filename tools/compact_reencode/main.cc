@@ -15,7 +15,6 @@
  */
 
 #include <stdint.h>
-#include <stdio.h>
 #include <string>
 #include <vector>
 
@@ -45,7 +44,7 @@ namespace compact_reencode {
 namespace {
 
 void WriteToFile(const std::string& out, const char* path) {
-  PERFETTO_CHECK(!remove(path) || errno == ENOENT);
+  PERFETTO_CHECK(!unlink(path) || errno == ENOENT);
   auto out_fd = base::OpenFile(path, O_RDWR | O_CREAT, 0666);
   if (!out_fd || base::WriteAll(out_fd.get(), out.data(), out.size()) !=
                      static_cast<ssize_t>(out.size())) {

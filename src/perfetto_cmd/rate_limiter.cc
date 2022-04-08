@@ -16,10 +16,10 @@
 
 #include "src/perfetto_cmd/rate_limiter.h"
 
-#include <fcntl.h>
 #include <inttypes.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include <algorithm>
 
@@ -48,13 +48,13 @@ using PerSessionState = gen::PerfettoCmdState::PerSessionState;
 RateLimiter::RateLimiter() = default;
 RateLimiter::~RateLimiter() = default;
 
-RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
+bool RateLimiter::ShouldTrace(const Args& args) {
   uint64_t now_in_s = static_cast<uint64_t>(args.current_time.count());
 
-  // Not uploading?
+  // Not storing in Dropbox?
   // -> We can just trace.
-  if (!args.is_uploading)
-    return ShouldTraceResponse::kOkToTrace;
+  if (!args.is_dropbox)
+    return true;
 
   // If we're tracing a user build we should only trace if the override in
   // the config is set:
@@ -62,7 +62,7 @@ RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
     PERFETTO_ELOG(
         "Guardrail: allow_user_build_tracing must be set to trace on user "
         "builds");
-    return ShouldTraceResponse::kNotAllowedOnUserBuild;
+    return false;
   }
 
   // The state file is gone.
@@ -74,7 +74,7 @@ RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
     // -> Give up.
     if (!ClearState()) {
       PERFETTO_ELOG("Guardrail: failed to initialize guardrail state.");
-      return ShouldTraceResponse::kFailedToInitState;
+      return false;
     }
   }
 
@@ -90,7 +90,7 @@ RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
     ClearState();
     PERFETTO_ELOG("Guardrail: state invalid, clearing it.");
     if (!args.ignore_guardrails)
-      return ShouldTraceResponse::kInvalidState;
+      return false;
   }
 
   // First trace was more than 24h ago? Reset state.
@@ -99,7 +99,7 @@ RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
     state_.set_first_trace_timestamp(0);
     state_.set_last_trace_timestamp(0);
     state_.set_total_bytes_uploaded(0);
-    return ShouldTraceResponse::kOkToTrace;
+    return true;
   }
 
   uint64_t max_upload_guardrail = kMaxUploadInBytes;
@@ -129,10 +129,10 @@ RateLimiter::ShouldTraceResponse RateLimiter::ShouldTrace(const Args& args) {
                   " in the last 24h. Limit is %" PRIu64 ".",
                   uploaded_so_far, max_upload_guardrail);
     if (!args.ignore_guardrails)
-      return ShouldTraceResponse::kHitUploadLimit;
+      return false;
   }
 
-  return ShouldTraceResponse::kOkToTrace;
+  return true;
 }
 
 bool RateLimiter::OnTraceDone(const Args& args, bool success, uint64_t bytes) {
@@ -142,7 +142,7 @@ bool RateLimiter::OnTraceDone(const Args& args, bool success, uint64_t bytes) {
   if (!success)
     return false;
 
-  if (!args.is_uploading)
+  if (!args.is_dropbox)
     return true;
 
   // If the first trace timestamp is 0 (either because this is the
@@ -207,7 +207,7 @@ bool RateLimiter::LoadState(gen::PerfettoCmdState* state) {
     return false;
   std::string s;
   base::ReadFileDescriptor(in_fd.get(), &s);
-  if (s.empty())
+  if (s.size() == 0)
     return false;
   return state->ParseFromString(s);
 }

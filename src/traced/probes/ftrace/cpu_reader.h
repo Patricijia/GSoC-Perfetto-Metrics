@@ -42,7 +42,6 @@
 namespace perfetto {
 
 class FtraceDataSource;
-class LazyKernelSymbolizer;
 class ProtoTranslationTable;
 struct FtraceDataSourceConfig;
 
@@ -66,7 +65,6 @@ class CpuReader {
 
   CpuReader(size_t cpu,
             const ProtoTranslationTable* table,
-            LazyKernelSymbolizer* symbolizer,
             base::ScopedFile trace_fd);
   ~CpuReader();
 
@@ -119,22 +117,6 @@ class CpuReader {
     BlockDeviceID dev_id = TranslateBlockDeviceIDToUserspace<T>(t);
     out->AppendVarInt<BlockDeviceID>(field_id, dev_id);
     metadata->AddDevice(dev_id);
-  }
-
-  template <typename T>
-  static void ReadSymbolAddr(const uint8_t* start,
-                             uint32_t field_id,
-                             protozero::Message* out,
-                             FtraceMetadata* metadata) {
-    // ReadSymbolAddr is a bit special. In order to not disclose KASLR layout
-    // via traces, we put in the trace only a mangled address (which really is
-    // the insertion order into metadata.kernel_addrs). We don't care about the
-    // actual symbol addesses. We just need to match that against the symbol
-    // name in the names in the FtraceEventBundle.KernelSymbols.
-    T full_addr;
-    memcpy(&full_addr, reinterpret_cast<const void*>(start), sizeof(T));
-    uint32_t interned_index = metadata->AddSymbolAddr(full_addr);
-    out->AppendVarInt(field_id, interned_index);
   }
 
   static void ReadPid(const uint8_t* start,
@@ -208,7 +190,6 @@ class CpuReader {
   static bool ParseField(const Field& field,
                          const uint8_t* start,
                          const uint8_t* end,
-                         const ProtoTranslationTable* table,
                          protozero::Message* message,
                          FtraceMetadata* metadata);
 
@@ -238,8 +219,7 @@ class CpuReader {
                                         const FtraceDataSourceConfig* ds_config,
                                         const uint8_t* parsing_buf,
                                         const size_t pages_read,
-                                        const ProtoTranslationTable* table,
-                                        LazyKernelSymbolizer* symbolizer);
+                                        const ProtoTranslationTable* table);
 
  private:
   CpuReader(const CpuReader&) = delete;
@@ -257,7 +237,6 @@ class CpuReader {
 
   const size_t cpu_;
   const ProtoTranslationTable* const table_;
-  LazyKernelSymbolizer* const symbolizer_;
   base::ScopedFile trace_fd_;
 };
 

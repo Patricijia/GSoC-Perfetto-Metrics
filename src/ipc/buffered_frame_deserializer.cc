@@ -38,8 +38,8 @@ constexpr size_t kHeaderSize = sizeof(uint32_t);
 
 BufferedFrameDeserializer::BufferedFrameDeserializer(size_t max_capacity)
     : capacity_(max_capacity) {
-  PERFETTO_CHECK(max_capacity % base::GetSysPageSize() == 0);
-  PERFETTO_CHECK(max_capacity >= base::GetSysPageSize());
+  PERFETTO_CHECK(max_capacity % base::kPageSize == 0);
+  PERFETTO_CHECK(max_capacity > base::kPageSize);
 }
 
 BufferedFrameDeserializer::~BufferedFrameDeserializer() = default;
@@ -56,8 +56,7 @@ BufferedFrameDeserializer::BeginReceive() {
 
     // Surely we are going to use at least the first page, but we may not need
     // the rest for a bit.
-    const auto page_size = base::GetSysPageSize();
-    buf_.AdviseDontNeed(buf() + page_size, capacity_ - page_size);
+    buf_.AdviseDontNeed(buf() + base::kPageSize, capacity_ - base::kPageSize);
   }
 
   PERFETTO_CHECK(capacity_ > size_);
@@ -65,7 +64,6 @@ BufferedFrameDeserializer::BeginReceive() {
 }
 
 bool BufferedFrameDeserializer::EndReceive(size_t recv_size) {
-  const auto page_size = base::GetSysPageSize();
   PERFETTO_CHECK(recv_size + size_ <= capacity_);
   size_ += recv_size;
 
@@ -141,8 +139,8 @@ bool BufferedFrameDeserializer::EndReceive(size_t recv_size) {
     // If we just finished decoding a large frame that used more than one page,
     // release the extra memory in the buffer. Large frames should be quite
     // rare.
-    if (consumed_size > page_size) {
-      size_t size_rounded_up = (size_ / page_size + 1) * page_size;
+    if (consumed_size > base::kPageSize) {
+      size_t size_rounded_up = (size_ / base::kPageSize + 1) * base::kPageSize;
       if (size_rounded_up < capacity_) {
         char* madvise_begin = buf() + size_rounded_up;
         const size_t madvise_size = capacity_ - size_rounded_up;

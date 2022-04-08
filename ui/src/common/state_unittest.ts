@@ -12,12 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {
-  createEmptyState,
-  getContainingTrackId,
-  State,
-  TrackKindPriority
-} from './state';
+import {createEmptyState, getContainingTrackId, State} from './state';
 
 test('createEmptyState', () => {
   const state: State = createEmptyState();
@@ -31,7 +26,6 @@ test('getContainingTrackId', () => {
     engineId: 'engine',
     kind: 'Foo',
     name: 'a track',
-    trackKindPriority: TrackKindPriority.ORDINARY,
     config: {},
   };
 
@@ -40,7 +34,6 @@ test('getContainingTrackId', () => {
     engineId: 'engine',
     kind: 'Foo',
     name: 'b track',
-    trackKindPriority: TrackKindPriority.ORDINARY,
     config: {},
     trackGroup: 'containsB',
   };

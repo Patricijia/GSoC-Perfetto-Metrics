@@ -65,9 +65,6 @@ android_cpu {
 
 ### Case for upstreaming
 
-NOTE: Googlers: for internal usage of metrics in Google3 (i.e. metrics which are
-confidential), please see [this internal page](https://goto.google.com/viecd).
-
 Authors are strongly encouraged to add all metrics derived on Perfetto traces to
 the Perfetto repo unless there is a clear usecase (e.g. confidentiality) why
 these metrics should not be publicly available.
@@ -88,7 +85,7 @@ identify the problem.
 
 ## Walkthrough: prototyping a metric
 
-TIP: To see how to add a new metric to trace processor, see the checklist
+TIP: To see how to add to add a new metric to trace processor, see the checklist
 [here](/docs/contributing/common-tasks.md#new-metric)
 
 This walkthrough will outline how to prototype a metric locally without needing
@@ -100,7 +97,7 @@ NOTE: See this [GitHub gist][gist] to see how the code should look at the end of
       the walkthrough. The prerequisites and Step 4 below give instructions on
       how to get trace processor and run the metrics code.
 
-[gist]: https://gist.github.com/LalitMaganti/c221cf0cae17e298dfa82b118edf9080
+[gist]: https://gist.github.com/tilal6991/c221cf0cae17e298dfa82b118edf9080
 
 ### Prerequisites
 
@@ -135,7 +132,7 @@ Finally, define an extension to the root proto for all metrics (the [TraceMetric
 
 ```protobuf
 extend TraceMetrics {
-  optional TopProcesses top_five_processes = 450;
+  optional TopProcesses top_processes = 450;
 }
 ```
 
@@ -167,7 +164,7 @@ message TopProcesses {
 }
 
 extend TraceMetrics {
-  optional TopProcesses top_five_processes = 450;
+  optional TopProcesses top_processes = 450;
 }
 ```
 
@@ -177,11 +174,11 @@ Next, write the SQL to generate the table of the top 5 processes ordered by the
 sum of the CPU time they ran for and the number of threads which were associated
 with the process.
 
-The following SQL should be added to a file called `top_five_processes.sql` in
-the workspace:
+The following SQL should added to a file called `top_five_processes.sql` in the
+workspace:
 
 ```sql
-CREATE VIEW top_five_processes_by_cpu AS
+CREATE VIEW top_five_processes_by_cpu
 SELECT
   process.name as process_name,
   CAST(SUM(sched.dur) / 1e6 as INT64) as cpu_time_ms,
@@ -224,7 +221,7 @@ protos using SQL functions; something which is used extensively in this step.
 Let's look at how it works for our table above.
 
 ```sql
-CREATE VIEW top_five_processes_output AS
+CREATE VIEW top_processes_output AS
 SELECT TopProcesses(
   'process_info', (
     SELECT RepeatedField(
@@ -296,7 +293,7 @@ GROUP BY process.name
 ORDER BY cpu_time_ms DESC
 LIMIT 5;
 
-CREATE top_five_processes_output AS
+CREATE top_processes_output AS
 SELECT TopProcesses(
   'process_info', (
     SELECT RepeatedField(
@@ -330,7 +327,7 @@ By passing the SQL file for the metric to be computed, trace processor uses the 
 
 _Notes:_
 
-- If something doesn't work as intended, check that the workspace looks the same as the contents of this [GitHub gist](https://gist.github.com/LalitMaganti/c221cf0cae17e298dfa82b118edf9080).
+- If something doesn't work as intended, check that the workspace looks the same as the contents of this [GitHub gist](https://gist.github.com/tilal6991/c221cf0cae17e298dfa82b118edf9080).
 - A good example trace for this metric is the Android example trace used by the Perfetto UI found [here](https://storage.googleapis.com/perfetto-misc/example_android_trace_30s_1).
 - stderr is redirected to remove any noise from parsing the trace that trace processor generates.
 

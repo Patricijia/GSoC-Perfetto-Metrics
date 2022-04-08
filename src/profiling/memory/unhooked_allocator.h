@@ -49,8 +49,7 @@ class UnhookedAllocator {
       : unhooked_malloc_(unhooked_malloc), unhooked_free_(unhooked_free) {}
 
   template <typename U>
-  constexpr explicit UnhookedAllocator(
-      const UnhookedAllocator<U>& other) noexcept
+  constexpr UnhookedAllocator(const UnhookedAllocator<U>& other) noexcept
       : unhooked_malloc_(other.unhooked_malloc_),
         unhooked_free_(other.unhooked_free_) {}
 

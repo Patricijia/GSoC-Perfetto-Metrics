@@ -17,13 +17,11 @@
 #ifndef SRC_PROFILING_COMMON_CALLSTACK_TRIE_H_
 #define SRC_PROFILING_COMMON_CALLSTACK_TRIE_H_
 
-#include <set>
 #include <string>
 #include <typeindex>
 #include <vector>
 
-#include <unwindstack/Unwinder.h>
-
+#include "perfetto/ext/base/lookup_set.h"
 #include "src/profiling/common/interner.h"
 #include "src/profiling/common/unwind_support.h"
 
@@ -31,7 +29,7 @@ namespace perfetto {
 namespace profiling {
 
 struct Mapping {
-  explicit Mapping(Interned<std::string> b) : build_id(std::move(b)) {}
+  Mapping(Interned<std::string> b) : build_id(std::move(b)) {}
 
   Interned<std::string> build_id;
   uint64_t exact_offset = 0;
@@ -105,11 +103,8 @@ class GlobalCallstackTrie {
     // This is opaque except to GlobalCallstackTrie.
     friend class GlobalCallstackTrie;
 
-    // Allow building a node out of a frame for GetChild.
-    explicit Node(Interned<Frame> frame) : Node(frame, 0, nullptr) {}
-    Node(const Node&) = default;
-    Node(Node&&) = default;
-
+    // Allow building a node out of a frame for base::LookupSet.
+    Node(Interned<Frame> frame) : Node(frame, 0, nullptr) {}
     Node(Interned<Frame> frame, uint64_t id)
         : Node(std::move(frame), id, nullptr) {}
     Node(Interned<Frame> frame, uint64_t id, Node* parent)
@@ -122,26 +117,13 @@ class GlobalCallstackTrie {
    private:
     Node* GetOrCreateChild(const Interned<Frame>& loc);
     // Deletes all descendant nodes, regardless of |ref_count_|.
-    void DeleteChildren() { children_.clear(); }
+    void DeleteChildren() { children_.Clear(); }
 
     uint64_t ref_count_ = 0;
     uint64_t id_;
     Node* const parent_;
     const Interned<Frame> location_;
-
-    class NodeComparator {
-     public:
-      bool operator()(const Node& one, const Node& other) const {
-        return one.location_ < other.location_;
-      }
-    };
-    Node* AddChild(const Interned<Frame>& loc,
-                   uint64_t next_callstack_id_,
-                   Node* parent);
-    void RemoveChild(Node* node);
-    Node* GetChild(const Interned<Frame>& loc);
-
-    std::set<Node, NodeComparator> children_;
+    base::LookupSet<Node, const Interned<Frame>, &Node::location_> children_;
   };
 
   GlobalCallstackTrie() = default;
@@ -153,11 +135,9 @@ class GlobalCallstackTrie {
   GlobalCallstackTrie(GlobalCallstackTrie&&) = delete;
   GlobalCallstackTrie& operator=(GlobalCallstackTrie&&) = delete;
 
-  Interned<Frame> InternCodeLocation(const unwindstack::FrameData& loc,
-                                     const std::string& build_id);
+  Interned<Frame> InternCodeLocation(const FrameData& loc);
 
-  Node* CreateCallsite(const std::vector<unwindstack::FrameData>& callstack,
-                       const std::vector<std::string>& build_ids);
+  Node* CreateCallsite(const std::vector<FrameData>& callstack);
   Node* CreateCallsite(const std::vector<Interned<Frame>>& callstack);
 
   static void IncrementNode(Node* node);

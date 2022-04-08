@@ -24,16 +24,15 @@
 
 #include "protos/perfetto/trace/interned_data/interned_data.pbzero.h"
 #include "protos/perfetto/trace/profiling/profile_common.pbzero.h"
-#include "protos/perfetto/trace/profiling/profile_packet.pbzero.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 class ProfilePacketUtils {
  public:
-  static SequenceStackProfileTracker::SourceMapping MakeSourceMapping(
+  static StackProfileTracker::SourceMapping MakeSourceMapping(
       const protos::pbzero::Mapping::Decoder& entry) {
-    SequenceStackProfileTracker::SourceMapping src_mapping{};
+    StackProfileTracker::SourceMapping src_mapping{};
     src_mapping.build_id = entry.build_id();
     src_mapping.exact_offset = entry.exact_offset();
     src_mapping.start_offset = entry.start_offset();
@@ -47,100 +46,46 @@ class ProfilePacketUtils {
     return src_mapping;
   }
 
-  static SequenceStackProfileTracker::SourceFrame MakeSourceFrame(
+  static StackProfileTracker::SourceFrame MakeSourceFrame(
       const protos::pbzero::Frame::Decoder& entry) {
-    SequenceStackProfileTracker::SourceFrame src_frame;
+    StackProfileTracker::SourceFrame src_frame;
     src_frame.name_id = entry.function_name_id();
     src_frame.mapping_id = entry.mapping_id();
     src_frame.rel_pc = entry.rel_pc();
     return src_frame;
   }
 
-  static SequenceStackProfileTracker::SourceCallstack MakeSourceCallstack(
+  static StackProfileTracker::SourceCallstack MakeSourceCallstack(
       const protos::pbzero::Callstack::Decoder& entry) {
-    SequenceStackProfileTracker::SourceCallstack src_callstack;
+    StackProfileTracker::SourceCallstack src_callstack;
     for (auto frame_it = entry.frame_ids(); frame_it; ++frame_it)
       src_callstack.emplace_back(*frame_it);
     return src_callstack;
   }
-
-  static const char* StringifyCpuMode(
-      protos::pbzero::Profiling::CpuMode cpu_mode) {
-    using protos::pbzero::Profiling;
-    switch (cpu_mode) {
-      case Profiling::MODE_UNKNOWN:
-        return "unknown";
-      case Profiling::MODE_KERNEL:
-        return "kernel";
-      case Profiling::MODE_USER:
-        return "user";
-      case Profiling::MODE_HYPERVISOR:
-        return "hypervisor";
-      case Profiling::MODE_GUEST_KERNEL:
-        return "guest_kernel";
-      case Profiling::MODE_GUEST_USER:
-        return "guest_user";
-    }
-    return "unknown";  // switch should be complete, but gcc needs a hint
-  }
-
-  static const char* StringifyStackUnwindError(
-      protos::pbzero::Profiling::StackUnwindError unwind_error) {
-    using protos::pbzero::Profiling;
-    switch (unwind_error) {
-      case Profiling::UNWIND_ERROR_UNKNOWN:
-        return "unknown";
-      case Profiling::UNWIND_ERROR_NONE:
-        return "none";  // should never see this serialized by traced_perf, the
-                        // field should be unset instead
-      case Profiling::UNWIND_ERROR_MEMORY_INVALID:
-        return "memory_invalid";
-      case Profiling::UNWIND_ERROR_UNWIND_INFO:
-        return "unwind_info";
-      case Profiling::UNWIND_ERROR_UNSUPPORTED:
-        return "unsupported";
-      case Profiling::UNWIND_ERROR_INVALID_MAP:
-        return "invalid_map";
-      case Profiling::UNWIND_ERROR_MAX_FRAMES_EXCEEDED:
-        return "max_frames_exceeded";
-      case Profiling::UNWIND_ERROR_REPEATED_FRAME:
-        return "repeated_frame";
-      case Profiling::UNWIND_ERROR_INVALID_ELF:
-        return "invalid_elf";
-      case Profiling::UNWIND_ERROR_SYSTEM_CALL:
-        return "system_call";
-      case Profiling::UNWIND_ERROR_THREAD_TIMEOUT:
-        return "thread_timeout";
-      case Profiling::UNWIND_ERROR_THREAD_DOES_NOT_EXIST:
-        return "thread_does_not_exist";
-    }
-    return "unknown";  // switch should be complete, but gcc needs a hint
-  }
 };
 
-class ProfilePacketInternLookup
-    : public SequenceStackProfileTracker::InternLookup {
+class ProfilePacketInternLookup : public StackProfileTracker::InternLookup {
  public:
   explicit ProfilePacketInternLookup(PacketSequenceStateGeneration* seq_state)
       : seq_state_(seq_state) {}
   ~ProfilePacketInternLookup() override;
 
   base::Optional<base::StringView> GetString(
-      SequenceStackProfileTracker::SourceStringId iid,
-      SequenceStackProfileTracker::InternedStringType type) const override {
+      StackProfileTracker::SourceStringId iid,
+      StackProfileTracker::InternedStringType type) const override {
     protos::pbzero::InternedString::Decoder* decoder = nullptr;
     switch (type) {
-      case SequenceStackProfileTracker::InternedStringType::kBuildId:
+      case StackProfileTracker::InternedStringType::kBuildId:
         decoder = seq_state_->LookupInternedMessage<
             protos::pbzero::InternedData::kBuildIdsFieldNumber,
             protos::pbzero::InternedString>(iid);
         break;
-      case SequenceStackProfileTracker::InternedStringType::kFunctionName:
+      case StackProfileTracker::InternedStringType::kFunctionName:
         decoder = seq_state_->LookupInternedMessage<
             protos::pbzero::InternedData::kFunctionNamesFieldNumber,
             protos::pbzero::InternedString>(iid);
         break;
-      case SequenceStackProfileTracker::InternedStringType::kMappingPath:
+      case StackProfileTracker::InternedStringType::kMappingPath:
         decoder = seq_state_->LookupInternedMessage<
             protos::pbzero::InternedData::kMappingPathsFieldNumber,
             protos::pbzero::InternedString>(iid);
@@ -152,8 +97,8 @@ class ProfilePacketInternLookup
                             decoder->str().size);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceMapping> GetMapping(
-      SequenceStackProfileTracker::SourceMappingId iid) const override {
+  base::Optional<StackProfileTracker::SourceMapping> GetMapping(
+      StackProfileTracker::SourceMappingId iid) const override {
     auto* decoder = seq_state_->LookupInternedMessage<
         protos::pbzero::InternedData::kMappingsFieldNumber,
         protos::pbzero::Mapping>(iid);
@@ -162,8 +107,8 @@ class ProfilePacketInternLookup
     return ProfilePacketUtils::MakeSourceMapping(*decoder);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceFrame> GetFrame(
-      SequenceStackProfileTracker::SourceFrameId iid) const override {
+  base::Optional<StackProfileTracker::SourceFrame> GetFrame(
+      StackProfileTracker::SourceFrameId iid) const override {
     auto* decoder = seq_state_->LookupInternedMessage<
         protos::pbzero::InternedData::kFramesFieldNumber,
         protos::pbzero::Frame>(iid);
@@ -172,16 +117,14 @@ class ProfilePacketInternLookup
     return ProfilePacketUtils::MakeSourceFrame(*decoder);
   }
 
-  base::Optional<SequenceStackProfileTracker::SourceCallstack> GetCallstack(
-      SequenceStackProfileTracker::SourceCallstackId iid) const override {
-    auto* interned_message_view = seq_state_->GetInternedMessageView(
-        protos::pbzero::InternedData::kCallstacksFieldNumber, iid);
-    if (!interned_message_view)
+  base::Optional<StackProfileTracker::SourceCallstack> GetCallstack(
+      StackProfileTracker::SourceCallstackId iid) const override {
+    auto* decoder = seq_state_->LookupInternedMessage<
+        protos::pbzero::InternedData::kCallstacksFieldNumber,
+        protos::pbzero::Callstack>(iid);
+    if (!decoder)
       return base::nullopt;
-    protos::pbzero::Callstack::Decoder decoder(
-        interned_message_view->message().data(),
-        interned_message_view->message().length());
-    return ProfilePacketUtils::MakeSourceCallstack(std::move(decoder));
+    return ProfilePacketUtils::MakeSourceCallstack(*decoder);
   }
 
  private:

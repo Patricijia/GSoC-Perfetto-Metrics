@@ -23,7 +23,10 @@
 
 #include "src/profiling/symbolizer/symbolize_database.h"
 #include "src/profiling/symbolizer/symbolizer.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
 #include "src/profiling/symbolizer/local_symbolizer.h"
+#endif
 
 #include "protos/perfetto/trace/trace.pbzero.h"
 #include "protos/perfetto/trace/trace_packet.pbzero.h"
@@ -35,9 +38,15 @@ namespace trace_to_text {
 // Ingest profile, and emit a symbolization table for each sequence. This can
 // be prepended to the profile to attach the symbol information.
 int SymbolizeProfile(std::istream* input, std::ostream* output) {
-  std::unique_ptr<profiling::Symbolizer> symbolizer =
-      profiling::LocalSymbolizerOrDie(profiling::GetPerfettoBinaryPath(),
-                                      getenv("PERFETTO_SYMBOLIZER_MODE"));
+  std::unique_ptr<profiling::Symbolizer> symbolizer;
+  auto binary_path = profiling::GetPerfettoBinaryPath();
+  if (!binary_path.empty()) {
+#if PERFETTO_BUILDFLAG(PERFETTO_LOCAL_SYMBOLIZER)
+    symbolizer.reset(new profiling::LocalSymbolizer(std::move(binary_path)));
+#else
+    PERFETTO_FATAL("This build does not support local symbolization.");
+#endif
+  }
 
   if (!symbolizer)
     PERFETTO_FATAL("No symbolizer selected");

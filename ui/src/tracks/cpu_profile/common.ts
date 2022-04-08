@@ -19,7 +19,6 @@ export const CPU_PROFILE_TRACK_KIND = 'CpuProfileTrack';
 export interface Data extends TrackData {
   ids: Float64Array;
   tsStarts: Float64Array;
-  callsiteId: Uint32Array;
 }
 
 export interface Config {

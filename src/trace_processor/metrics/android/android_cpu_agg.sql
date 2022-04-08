@@ -16,7 +16,6 @@
 
 -- Create all the views used to aggregate CPU data.
 -- View with start and end ts for each cpu frequency, per cpu.
-DROP VIEW IF EXISTS cpu_freq_view;
 CREATE VIEW cpu_freq_view AS
 SELECT
   cpu,
@@ -29,6 +28,5 @@ JOIN cpu_counter_track on counter.track_id = cpu_counter_track.id
 WHERE name = 'cpufreq';
 
 -- View that joins the cpufreq table with the slice table.
-DROP TABLE IF EXISTS cpu_freq_sched_per_thread;
 CREATE VIRTUAL TABLE cpu_freq_sched_per_thread
 USING SPAN_LEFT_JOIN(sched PARTITIONED cpu, cpu_freq_view PARTITIONED cpu);

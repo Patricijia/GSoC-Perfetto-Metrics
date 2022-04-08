@@ -3,8 +3,6 @@
 ## Prerequisites
 
 * A host running macOS or Linux.
-* [ADB](https://developer.android.com/studio/command-line/adb) installed and
-  in PATH.
 * A device running Android 11+.
 
 If you are profiling your own app and are not running a userdebug build of
@@ -321,7 +319,7 @@ to particular function callstacks, supporting a mix of both native and Java
 code. The profile *will only show allocations done while it was running*, any
 allocations done before will not be shown.
 
-### {#capture-profile-native} Capturing the profile
+### Capturing the profile
 
 Use the `tools/heap_profile` script to profile a process. If you are having
 trouble make sure you are using the [latest version](
@@ -388,7 +386,7 @@ NOTE: For detailed instructions about the Java heap profiler and
       troubleshooting see the [Data sources > Java heap profiler](
       /docs/data-sources/java-heap-profiler.md) page.
 
-### {#capture-profile-java} Capturing the profile
+### Capturing the profile
 We can get a snapshot of the graph of all the Java objects that constitute the
 Java heap. We use the `tools/java_heap_dump` script. If you are having trouble
 make sure you are using the [latest version](

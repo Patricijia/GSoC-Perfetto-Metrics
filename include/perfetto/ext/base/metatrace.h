@@ -26,6 +26,7 @@
 #include "perfetto/base/thread_utils.h"
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/metatrace_events.h"
+#include "perfetto/ext/base/thread_annotations.h"
 #include "perfetto/ext/base/utils.h"
 
 // A facility to trace execution of the perfetto codebase itself.
@@ -88,7 +89,10 @@ inline uint64_t TraceTimeNowNs() {
 // Useful for skipping unnecessary argument computation if metatracing is off.
 inline bool IsEnabled(uint32_t tag) {
   auto enabled_tags = g_enabled_tags.load(std::memory_order_relaxed);
-  return PERFETTO_UNLIKELY((enabled_tags & tag) != 0);
+  if (PERFETTO_LIKELY((enabled_tags & tag) == 0))
+    return false;
+  else
+    return true;
 }
 
 // Holds the data for a metatrace event or counter.
@@ -139,7 +143,7 @@ struct Record {
     // Only one of the two elements can be zero initialized, clang complains
     // about "initializing multiple members of union" otherwise.
     uint32_t duration_ns = 0;  // If type == event.
-    int32_t counter_value;     // If type == counter.
+    int32_t counter_value;  // If type == counter.
   };
 };
 

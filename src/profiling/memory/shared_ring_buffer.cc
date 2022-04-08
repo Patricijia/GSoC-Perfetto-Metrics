@@ -20,7 +20,6 @@
 #include <type_traits>
 
 #include <errno.h>
-#include <fcntl.h>
 #include <inttypes.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
@@ -175,7 +174,7 @@ void SharedRingBuffer::Initialize(base::ScopedFile mem_fd) {
     munmap(region, outer_size);
     return;
   }
-  set_size(size);
+  size_ = size;
   meta_ = reinterpret_cast<MetadataPage*>(region);
   mem_ = region + kMetaPageSize;
   mem_fd_ = std::move(mem_fd);
@@ -214,7 +213,6 @@ SharedRingBuffer::Buffer SharedRingBuffer::BeginWrite(
 
   result.size = size;
   result.data = wr_ptr + kHeaderSize;
-  result.bytes_free = write_avail(pos);
   meta_->stats.bytes_written += size;
   meta_->stats.num_writes_succeeded++;
 
@@ -285,7 +283,7 @@ SharedRingBuffer::Buffer SharedRingBuffer::BeginRead() {
 
   rd_ptr += kHeaderSize;
   PERFETTO_DCHECK(reinterpret_cast<uintptr_t>(rd_ptr) % kAlignment == 0);
-  return Buffer(rd_ptr, size, write_avail(pos));
+  return Buffer(rd_ptr, size);
 }
 
 void SharedRingBuffer::EndRead(Buffer buf) {
@@ -311,13 +309,11 @@ SharedRingBuffer::SharedRingBuffer(SharedRingBuffer&& other) noexcept {
   *this = std::move(other);
 }
 
-SharedRingBuffer& SharedRingBuffer::operator=(
-    SharedRingBuffer&& other) noexcept {
+SharedRingBuffer& SharedRingBuffer::operator=(SharedRingBuffer&& other) {
   mem_fd_ = std::move(other.mem_fd_);
-  std::tie(meta_, mem_, size_, size_mask_) =
-      std::tie(other.meta_, other.mem_, other.size_, other.size_mask_);
-  std::tie(other.meta_, other.mem_, other.size_, other.size_mask_) =
-      std::make_tuple(nullptr, nullptr, 0, 0);
+  std::tie(meta_, mem_, size_) = std::tie(other.meta_, other.mem_, other.size_);
+  std::tie(other.meta_, other.mem_, other.size_) =
+      std::make_tuple(nullptr, nullptr, 0);
   return *this;
 }
 

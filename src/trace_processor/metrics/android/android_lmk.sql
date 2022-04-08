@@ -17,8 +17,7 @@
 SELECT RUN_METRIC('android/process_oom_score.sql');
 
 -- All LMK events ordered by timestamp
-DROP TABLE IF EXISTS lmk_events;
-CREATE TABLE lmk_events AS
+CREATE TABLE IF NOT EXISTS lmk_events AS
 WITH raw_events AS (
   SELECT ref AS upid, MIN(ts) AS ts
   FROM instants
@@ -36,8 +35,7 @@ LEFT JOIN oom_score_span oom_scores
       raw_events.ts < oom_scores.ts + oom_scores.dur)
 ORDER BY 1;
 
-DROP VIEW IF EXISTS android_lmk_event;
-CREATE VIEW android_lmk_event AS
+CREATE VIEW IF NOT EXISTS android_lmk_annotations AS
 WITH raw_events AS (
   SELECT
     ts,
@@ -69,8 +67,7 @@ SELECT
   END AS slice_name
 FROM lmks_with_proc_name as lmk;
 
-DROP VIEW IF EXISTS android_lmk_output;
-CREATE VIEW android_lmk_output AS
+CREATE VIEW IF NOT EXISTS android_lmk_output AS
 WITH lmk_counts AS (
   SELECT score, COUNT(1) AS count
   FROM lmk_events

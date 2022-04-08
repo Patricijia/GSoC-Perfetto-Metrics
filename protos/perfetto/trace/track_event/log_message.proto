@@ -19,10 +19,8 @@ syntax = "proto2";
 package perfetto.protos;
 
 message LogMessage {
-  // interned SourceLocation.
-  optional uint64 source_location_iid = 1;
-  // interned LogMessageBody.
-  optional uint64 body_iid = 2;
+  optional uint64 source_location_iid = 1;  // interned SourceLocation.
+  optional uint64 body_iid = 2;             // interned LogMessageBody.
 }
 
 // --------------------

@@ -16,19 +16,13 @@ import {TrackData} from '../../common/track_data';
 
 export const COUNTER_TRACK_KIND = 'CounterTrack';
 
-export type CounterScaleOptions = 'ZERO_BASED'|'MIN_MAX'|'DELTA_FROM_PREVIOUS';
-
 export interface Data extends TrackData {
+  isQuantized: boolean;
   maximumValue: number;
   minimumValue: number;
-  maximumDelta: number;
-  minimumDelta: number;
   timestamps: Float64Array;
-  lastIds: Float64Array;
-  minValues: Float64Array;
-  maxValues: Float64Array;
-  lastValues: Float64Array;
-  totalDeltas: Float64Array;
+  values: Float64Array;
+  ids: Float64Array;
 }
 
 export interface Config {
@@ -39,5 +33,5 @@ export interface Config {
   endTs?: number;
   namespace: string;
   trackId: number;
-  scale?: CounterScaleOptions;
+  scale?: 'DEFAULT'|'RELATIVE';
 }

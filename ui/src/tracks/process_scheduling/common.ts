@@ -16,7 +16,14 @@ import {TrackData} from '../../common/track_data';
 
 export const PROCESS_SCHEDULING_TRACK_KIND = 'ProcessSchedulingTrack';
 
-export interface Data extends TrackData {
+export interface SummaryData extends TrackData {
+  kind: 'summary';
+
+  bucketSizeSeconds: number;
+  utilizations: Float64Array;
+}
+
+export interface SliceData extends TrackData {
   kind: 'slice';
   maxCpu: number;
 
@@ -26,6 +33,8 @@ export interface Data extends TrackData {
   utids: Uint32Array;
   cpus: Uint32Array;
 }
+
+export type Data = SummaryData | SliceData;
 
 export interface Config {
   pidForColor: number;

@@ -73,8 +73,7 @@ void InitialDisplayStateDataSource::Tick() {
     auto weak_this = GetWeakPtr();
 
     uint32_t delay_ms =
-        poll_period_ms_ -
-        static_cast<uint32_t>(base::GetWallTimeMs().count() % poll_period_ms_);
+        poll_period_ms_ - (base::GetWallTimeMs().count() % poll_period_ms_);
     task_runner_->PostDelayedTask(
         [weak_this]() -> void {
           if (weak_this) {

@@ -19,7 +19,6 @@
 #include <stdlib.h>
 
 #include "perfetto/base/logging.h"
-#include "perfetto/ext/base/string_utils.h"
 #include "perfetto/tracing/core/data_source_config.h"
 #include "perfetto/tracing/core/trace_config.h"
 
@@ -32,7 +31,7 @@ using UnitMultipler = std::pair<const char*, uint64_t>;
 
 bool SplitValueAndUnit(const std::string& arg, ValueUnit* out) {
   char* end;
-  if (arg.empty())
+  if (!arg.size())
     return false;
   out->first = strtoull(arg.c_str(), &end, 10);
   if (end == arg.data())
@@ -46,11 +45,6 @@ bool ConvertValue(const std::string& arg,
                   std::vector<UnitMultipler> units,
                   uint64_t* out) {
   if (arg.empty()) {
-    *out = 0;
-    return true;
-  }
-
-  if (arg == "0") {
     *out = 0;
     return true;
   }
@@ -117,18 +111,10 @@ bool CreateConfigFromOptions(const ConfigOptions& options,
   std::vector<std::string> atrace_apps = options.atrace_apps;
 
   for (const auto& category : options.categories) {
-    if (base::Contains(category, '/')) {
-      ftrace_events.push_back(category);
-    } else {
+    if (category.find("/") == std::string::npos) {
       atrace_categories.push_back(category);
-    }
-
-    // For the gfx category, also add the frame timeline data source
-    // as it's very useful for debugging gfx issues.
-    if (category == "gfx") {
-      auto* frame_timeline = config->add_data_sources();
-      frame_timeline->mutable_config()->set_name(
-          "android.surfaceflinger.frametimeline");
+    } else {
+      ftrace_events.push_back(category);
     }
   }
 

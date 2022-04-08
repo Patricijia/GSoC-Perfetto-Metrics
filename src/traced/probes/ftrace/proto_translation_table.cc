@@ -239,7 +239,6 @@ void SetProtoType(FtraceFieldType ftrace_type,
     case kFtraceUint64:
     case kFtraceInode32:
     case kFtraceInode64:
-    case kFtraceSymAddr64:
       *proto_type = ProtoSchemaType::kUint64;
       *proto_field_id = GenericFtraceEvent::Field::kUintValueFieldNumber;
       break;
@@ -285,15 +284,6 @@ bool InferFtraceType(const std::string& type_and_name,
   }
   if (Contains(type_and_name, "char * ")) {
     *out = kFtraceStringPtr;
-    return true;
-  }
-
-  // Kernel addresses that need symbolization via kallsyms. Only 64-bit kernels
-  // are supported for now. 32-bit kernels seems to be going away.
-  if ((base::StartsWith(type_and_name, "void*") ||
-       base::StartsWith(type_and_name, "void *")) &&
-      size == 8) {
-    *out = kFtraceSymAddr64;
     return true;
   }
 
@@ -424,7 +414,7 @@ std::unique_ptr<ProtoTranslationTable> ProtoTranslationTable::Create(
     if (contents.empty() || !ParseFtraceEvent(contents, &ftrace_event)) {
       if (!strcmp(event.group, "ftrace") && !strcmp(event.name, "print")) {
         // On some "user" builds of Android <P the ftrace/print event is not
-        // selinux-allowed. Thankfully this event is an always-on built-in
+        // selinux-whitelisted. Thankfully this event is an always-on built-in
         // so we don't need to write to its 'enable' file. However we need to
         // know its binary layout to decode it, so we hardcode it.
         ftrace_event.id = 5;  // Seems quite stable across kernels.
@@ -463,12 +453,9 @@ std::unique_ptr<ProtoTranslationTable> ProtoTranslationTable::Create(
   // about their format hold for this kernel.
   CompactSchedEventFormat compact_sched = ValidateFormatForCompactSched(events);
 
-  std::string text = ftrace_procfs->ReadPrintkFormats();
-  PrintkMap printk_formats = ParsePrintkFormats(text);
-
-  auto table = std::unique_ptr<ProtoTranslationTable>(new ProtoTranslationTable(
-      ftrace_procfs, events, std::move(common_fields), header_spec,
-      compact_sched, std::move(printk_formats)));
+  auto table = std::unique_ptr<ProtoTranslationTable>(
+      new ProtoTranslationTable(ftrace_procfs, events, std::move(common_fields),
+                                header_spec, compact_sched));
   return table;
 }
 
@@ -477,15 +464,13 @@ ProtoTranslationTable::ProtoTranslationTable(
     const std::vector<Event>& events,
     std::vector<Field> common_fields,
     FtracePageHeaderSpec ftrace_page_header_spec,
-    CompactSchedEventFormat compact_sched_format,
-    PrintkMap printk_formats)
+    CompactSchedEventFormat compact_sched_format)
     : ftrace_procfs_(ftrace_procfs),
       events_(BuildEventsDeque(events)),
       largest_id_(events_.size() - 1),
       common_fields_(std::move(common_fields)),
       ftrace_page_header_spec_(ftrace_page_header_spec),
-      compact_sched_format_(compact_sched_format),
-      printk_formats_(printk_formats) {
+      compact_sched_format_(compact_sched_format) {
   for (const Event& event : events) {
     group_and_name_to_event_[GroupAndName(event.group, event.name)] =
         &events_.at(event.ftrace_event_id);

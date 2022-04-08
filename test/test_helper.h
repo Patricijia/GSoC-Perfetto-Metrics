@@ -17,13 +17,8 @@
 #ifndef TEST_TEST_HELPER_H_
 #define TEST_TEST_HELPER_H_
 
-#include <stdio.h>
-#include <stdlib.h>
-
-#include "perfetto/ext/base/optional.h"
 #include "perfetto/ext/base/scoped_file.h"
 #include "perfetto/ext/base/thread_task_runner.h"
-#include "perfetto/ext/base/utils.h"
 #include "perfetto/ext/tracing/core/consumer.h"
 #include "perfetto/ext/tracing/core/shared_memory_arbiter.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
@@ -31,24 +26,13 @@
 #include "perfetto/ext/tracing/ipc/service_ipc_host.h"
 #include "perfetto/tracing/core/trace_config.h"
 #include "src/base/test/test_task_runner.h"
-#include "test/fake_producer.h"
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-// TODO(primiano): uncomment in next CL.
-// #include "src/tracing/ipc/shared_memory_windows.h"
-#else
 #include "src/traced/probes/probes_producer.h"
 #include "src/tracing/ipc/posix_shared_memory.h"
-#endif
+#include "test/fake_producer.h"
 
 #include "protos/perfetto/trace/trace_packet.gen.h"
 
 namespace perfetto {
-
-// This value has been bumped to 10s in Oct 2020 because the x86 cuttlefish
-// emulator is sensibly slower (up to 10x) than real hw and caused flakes.
-// See bugs duped against b/171771440.
-constexpr uint32_t kDefaultTestTimeoutMs = 10000;
 
 // This is used only in daemon starting integrations tests.
 class ServiceThread {
@@ -67,22 +51,12 @@ class ServiceThread {
     runner_ = base::ThreadTaskRunner::CreateAndStart("perfetto.svc");
     runner_->PostTaskAndWaitForTesting([this]() {
       svc_ = ServiceIPCHost::CreateInstance(runner_->get());
-      if (remove(producer_socket_.c_str()) == -1) {
-        if (errno != ENOENT)
-          PERFETTO_FATAL("Failed to remove %s", producer_socket_.c_str());
-      }
-      if (remove(consumer_socket_.c_str()) == -1) {
-        if (errno != ENOENT)
-          PERFETTO_FATAL("Failed to remove %s", consumer_socket_.c_str());
-      }
-      base::SetEnv("PERFETTO_PRODUCER_SOCK_NAME", producer_socket_);
-      base::SetEnv("PERFETTO_CONSUMER_SOCK_NAME", consumer_socket_);
+      unlink(producer_socket_.c_str());
+      unlink(consumer_socket_.c_str());
+
       bool res =
           svc_->Start(producer_socket_.c_str(), consumer_socket_.c_str());
-      if (!res) {
-        PERFETTO_FATAL("Failed to start service listening on %s and %s",
-                       producer_socket_.c_str(), consumer_socket_.c_str());
-      }
+      PERFETTO_CHECK(res);
     });
   }
 
@@ -97,15 +71,6 @@ class ServiceThread {
 };
 
 // This is used only in daemon starting integrations tests.
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-// On Windows we don't have any traced_probes, make this a no-op to avoid
-// propagating #ifdefs to the outer test.
-class ProbesProducerThread {
- public:
-  ProbesProducerThread(const std::string& /*producer_socket*/) {}
-  void Connect() {}
-};
-#else
 class ProbesProducerThread {
  public:
   ProbesProducerThread(const std::string& producer_socket)
@@ -131,7 +96,6 @@ class ProbesProducerThread {
   std::string producer_socket_;
   std::unique_ptr<ProbesProducer> producer_;
 };
-#endif  // !OS_WIN
 
 class FakeProducerThread {
  public:
@@ -167,13 +131,10 @@ class FakeProducerThread {
   FakeProducer* producer() { return producer_.get(); }
 
   void CreateProducerProvidedSmb() {
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-    // TODO(primiano): in next CLs introduce SharedMemoryWindows.
-#else
     PosixSharedMemory::Factory factory;
     shm_ = factory.CreateSharedMemory(1024 * 1024);
-    shm_arbiter_ = SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), 4096);
-#endif
+    shm_arbiter_ =
+        SharedMemoryArbiter::CreateUnboundInstance(shm_.get(), base::kPageSize);
   }
 
   void ProduceStartupEventBatch(const protos::gen::TestConfig& config,
@@ -196,32 +157,21 @@ class FakeProducerThread {
 
 class TestHelper : public Consumer {
  public:
-  enum class Mode {
-    kStartDaemons,
-    kUseSystemService,
-  };
-  static Mode kDefaultMode;
+  static const char* GetConsumerSocketName();
+  static const char* GetProducerSocketName();
 
-  static const char* GetDefaultModeConsumerSocketName();
-  static const char* GetDefaultModeProducerSocketName();
-
-  explicit TestHelper(base::TestTaskRunner* task_runner)
-      : TestHelper(task_runner, kDefaultMode) {}
-
-  explicit TestHelper(base::TestTaskRunner* task_runner, Mode mode);
+  explicit TestHelper(base::TestTaskRunner* task_runner);
 
   // Consumer implementation.
   void OnConnect() override;
   void OnDisconnect() override;
-  void OnTracingDisabled(const std::string& error) override;
-  virtual void ReadTraceData(std::vector<TracePacket> packets);
+  void OnTracingDisabled() override;
   void OnTraceData(std::vector<TracePacket> packets, bool has_more) override;
   void OnDetach(bool) override;
   void OnAttach(bool, const TraceConfig&) override;
   void OnTraceStats(bool, const TraceStats&) override;
   void OnObservableEvents(const ObservableEvents&) override;
 
-  // Starts the tracing service if in kStartDaemons mode.
   void StartServiceIfRequired();
 
   // Connects the producer and waits that the service has seen the
@@ -234,10 +184,8 @@ class TestHelper : public Consumer {
   void DisableTracing();
   void FlushAndWait(uint32_t timeout_ms);
   void ReadData(uint32_t read_count = 0);
-  void FreeBuffers();
   void DetachConsumer(const std::string& key);
   bool AttachConsumer(const std::string& key);
-  bool SaveTraceForBugreportAndWait();
   void CreateProducerProvidedSmb();
   bool IsShmemProvidedByProducer();
   void ProduceStartupEventBatch(const protos::gen::TestConfig& config);
@@ -245,9 +193,8 @@ class TestHelper : public Consumer {
   void WaitForConsumerConnect();
   void WaitForProducerSetup();
   void WaitForProducerEnabled();
-  void WaitForTracingDisabled(uint32_t timeout_ms = kDefaultTestTimeoutMs);
-  void WaitForReadData(uint32_t read_count = 0,
-                       uint32_t timeout_ms = kDefaultTestTimeoutMs);
+  void WaitForTracingDisabled(uint32_t timeout_ms = 5000);
+  void WaitForReadData(uint32_t read_count = 0, uint32_t timeout_ms = 5000);
   void SyncAndWaitProducer();
   TracingServiceState QueryServiceStateAndWait();
 
@@ -260,7 +207,7 @@ class TestHelper : public Consumer {
   }
 
   void RunUntilCheckpoint(const std::string& checkpoint,
-                          uint32_t timeout_ms = kDefaultTestTimeoutMs) {
+                          uint32_t timeout_ms = 5000) {
     return task_runner_->RunUntilCheckpoint(AddID(checkpoint), timeout_ms);
   }
 
@@ -270,9 +217,6 @@ class TestHelper : public Consumer {
   base::ThreadTaskRunner* producer_thread() {
     return fake_producer_thread_.runner();
   }
-  const std::vector<protos::gen::TracePacket>& full_trace() {
-    return full_trace_;
-  }
   const std::vector<protos::gen::TracePacket>& trace() { return trace_; }
 
  private:
@@ -280,7 +224,6 @@ class TestHelper : public Consumer {
   uint64_t instance_num_;
   base::TestTaskRunner* task_runner_ = nullptr;
   int cur_consumer_num_ = 0;
-  uint64_t trace_count_ = 0;
 
   std::function<void()> on_connect_callback_;
   std::function<void()> on_packets_finished_callback_;
@@ -288,12 +231,8 @@ class TestHelper : public Consumer {
   std::function<void()> on_detach_callback_;
   std::function<void(bool)> on_attach_callback_;
 
-  std::vector<protos::gen::TracePacket> full_trace_;
   std::vector<protos::gen::TracePacket> trace_;
 
-  Mode mode_;
-  const char* producer_socket_;
-  const char* consumer_socket_;
   ServiceThread service_thread_;
   FakeProducerThread fake_producer_thread_;
 

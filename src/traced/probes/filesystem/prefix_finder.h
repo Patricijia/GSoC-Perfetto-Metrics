@@ -25,6 +25,7 @@
 #include <vector>
 
 #include "perfetto/base/logging.h"
+#include "perfetto/ext/base/lookup_set.h"
 
 namespace perfetto {
 
@@ -69,17 +70,10 @@ class PrefixFinder {
 
     const std::string name_;
     const Node* parent_;
-    class NodeComparator {
-     public:
-      bool operator()(const Node& one, const Node& other) const {
-        return one.name_ < other.name_;
-      }
-    };
-
-    std::set<Node, NodeComparator> children_;
+    base::LookupSet<Node, const std::string, &Node::name_> children_;
   };
 
-  explicit PrefixFinder(size_t limit);
+  PrefixFinder(size_t limit);
 
   // Add path to prefix mapping.
   // Must be called in DFS order.

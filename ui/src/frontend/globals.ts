@@ -15,12 +15,8 @@
 import {assertExists} from '../base/logging';
 import {DeferredAction} from '../common/actions';
 import {AggregateData} from '../common/aggregation_data';
-import {Args, ArgsTree} from '../common/arg_types';
-import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
 import {CallsiteInfo, createEmptyState, State} from '../common/state';
-import {fromNs, toNs} from '../common/time';
-import {Analytics, initAnalytics} from '../frontend/analytics';
 
 import {FrontendLocalState} from './frontend_local_state';
 import {RafScheduler} from './raf_scheduler';
@@ -31,6 +27,8 @@ type TrackDataStore = Map<string, {}>;
 type QueryResultsStore = Map<string, {}>;
 type AggregateDataStore = Map<string, AggregateData>;
 type Description = Map<string, string>;
+export type Arg = string|{kind: 'SLICE', trackId: string, sliceId: number};
+export type Args = Map<string, Arg>;
 export interface SliceDetails {
   ts?: number;
   dur?: number;
@@ -38,7 +36,6 @@ export interface SliceDetails {
   endState?: string;
   cpu?: number;
   id?: number;
-  threadStateId?: number;
   utid?: number;
   wakeupTs?: number;
   wakerUtid?: number;
@@ -46,30 +43,7 @@ export interface SliceDetails {
   category?: string;
   name?: string;
   args?: Args;
-  argsTree?: ArgsTree;
   description?: Description;
-}
-
-export interface FlowPoint {
-  trackId: number;
-
-  sliceName: string;
-  sliceCategory: string;
-  sliceId: number;
-  sliceStartTs: number;
-  sliceEndTs: number;
-
-  depth: number;
-}
-
-export interface Flow {
-  id: number;
-
-  begin: FlowPoint;
-  end: FlowPoint;
-
-  category?: string;
-  name?: string;
 }
 
 export interface CounterDetails {
@@ -77,16 +51,6 @@ export interface CounterDetails {
   value?: number;
   delta?: number;
   duration?: number;
-}
-
-export interface ThreadStateDetails {
-  ts?: number;
-  dur?: number;
-  state?: string;
-  utid?: number;
-  cpu?: number;
-  sliceId?: number;
-  blockedFunction?: string;
 }
 
 export interface HeapProfileDetails {
@@ -122,33 +86,19 @@ export interface ThreadDesc {
   threadName: string;
   pid?: number;
   procName?: string;
-  cmdline?: string;
 }
 type ThreadMap = Map<number, ThreadDesc>;
-
-function getRoot() {
-  // Works out the root directory where the content should be served from
-  // e.g. `http://origin/v1.2.3/`.
-  let root = (document.currentScript as HTMLScriptElement).src;
-  root = root.substr(0, root.lastIndexOf('/') + 1);
-  return root;
-}
 
 /**
  * Global accessors for state/dispatch in the frontend.
  */
 class Globals {
-  readonly root = getRoot();
-
   private _dispatch?: Dispatch = undefined;
   private _controllerWorker?: Worker = undefined;
   private _state?: State = undefined;
   private _frontendLocalState?: FrontendLocalState = undefined;
   private _rafScheduler?: RafScheduler = undefined;
   private _serviceWorkerController?: ServiceWorkerController = undefined;
-  private _logging?: Analytics = undefined;
-  private _isInternalUser: boolean|undefined = undefined;
-  private _channel: string|undefined = undefined;
 
   // TODO(hjd): Unify trackDataStore, queryResults, overviewStore, threads.
   private _trackDataStore?: TrackDataStore = undefined;
@@ -157,24 +107,17 @@ class Globals {
   private _aggregateDataStore?: AggregateDataStore = undefined;
   private _threadMap?: ThreadMap = undefined;
   private _sliceDetails?: SliceDetails = undefined;
-  private _threadStateDetails?: ThreadStateDetails = undefined;
-  private _connectedFlows?: Flow[] = undefined;
-  private _selectedFlows?: Flow[] = undefined;
-  private _visibleFlowCategories?: Map<string, boolean> = undefined;
   private _counterDetails?: CounterDetails = undefined;
   private _heapProfileDetails?: HeapProfileDetails = undefined;
   private _cpuProfileDetails?: CpuProfileDetails = undefined;
   private _numQueriesQueued = 0;
   private _bufferUsage?: number = undefined;
   private _recordingLog?: string = undefined;
-  private _traceErrors?: number = undefined;
-  private _metricError?: string = undefined;
-  private _metricResult?: MetricResult = undefined;
 
   private _currentSearchResults: CurrentSearchResults = {
-    sliceIds: [],
-    tsStarts: [],
-    utids: [],
+    sliceIds: new Float64Array(0),
+    tsStarts: new Float64Array(0),
+    utids: new Float64Array(0),
     trackIds: [],
     sources: [],
     totalResults: 0,
@@ -185,6 +128,11 @@ class Globals {
     count: new Uint8Array(0),
   };
 
+  // This variable is set by the is_internal_user.js script if the user is a
+  // googler. This is used to avoid exposing features that are not ready yet
+  // for public consumption. The gated features themselves are not secret.
+  isInternalUser = false;
+
   initialize(dispatch: Dispatch, controllerWorker: Worker) {
     this._dispatch = dispatch;
     this._controllerWorker = controllerWorker;
@@ -192,7 +140,6 @@ class Globals {
     this._frontendLocalState = new FrontendLocalState();
     this._rafScheduler = new RafScheduler();
     this._serviceWorkerController = new ServiceWorkerController();
-    this._logging = initAnalytics();
 
     // TODO(hjd): Unify trackDataStore, queryResults, overviewStore, threads.
     this._trackDataStore = new Map<string, {}>();
@@ -201,11 +148,7 @@ class Globals {
     this._aggregateDataStore = new Map<string, AggregateData>();
     this._threadMap = new Map<number, ThreadDesc>();
     this._sliceDetails = {};
-    this._connectedFlows = [];
-    this._selectedFlows = [];
-    this._visibleFlowCategories = new Map<string, boolean>();
     this._counterDetails = {};
-    this._threadStateDetails = {};
     this._heapProfileDetails = {};
     this._cpuProfileDetails = {};
   }
@@ -228,10 +171,6 @@ class Globals {
 
   get rafScheduler() {
     return assertExists(this._rafScheduler);
-  }
-
-  get logging() {
-    return assertExists(this._logging);
   }
 
   get serviceWorkerController() {
@@ -263,38 +202,6 @@ class Globals {
     this._sliceDetails = assertExists(click);
   }
 
-  get threadStateDetails() {
-    return assertExists(this._threadStateDetails);
-  }
-
-  set threadStateDetails(click: ThreadStateDetails) {
-    this._threadStateDetails = assertExists(click);
-  }
-
-  get connectedFlows() {
-    return assertExists(this._connectedFlows);
-  }
-
-  set connectedFlows(connectedFlows: Flow[]) {
-    this._connectedFlows = assertExists(connectedFlows);
-  }
-
-  get selectedFlows() {
-    return assertExists(this._selectedFlows);
-  }
-
-  set selectedFlows(selectedFlows: Flow[]) {
-    this._selectedFlows = assertExists(selectedFlows);
-  }
-
-  get visibleFlowCategories() {
-    return assertExists(this._visibleFlowCategories);
-  }
-
-  set visibleFlowCategories(visibleFlowCategories: Map<string, boolean>) {
-    this._visibleFlowCategories = assertExists(visibleFlowCategories);
-  }
-
   get counterDetails() {
     return assertExists(this._counterDetails);
   }
@@ -313,30 +220,6 @@ class Globals {
 
   set heapProfileDetails(click: HeapProfileDetails) {
     this._heapProfileDetails = assertExists(click);
-  }
-
-  get traceErrors() {
-    return this._traceErrors;
-  }
-
-  setTraceErrors(arg: number) {
-    this._traceErrors = arg;
-  }
-
-  get metricError() {
-    return this._metricError;
-  }
-
-  setMetricError(arg: string) {
-    this._metricError = arg;
-  }
-
-  get metricResult() {
-    return this._metricResult;
-  }
-
-  setMetricResult(result: MetricResult) {
-    this._metricResult = result;
   }
 
   get cpuProfileDetails() {
@@ -388,41 +271,17 @@ class Globals {
   }
 
   getCurResolution() {
-    // Truncate the resolution to the closest power of 2 (in nanosecond space).
-    // We choose to work in ns space because resolution is consumed be track
-    // controllers for quantization and they rely on resolution to be a power
-    // of 2 in nanosecond form. This is property does not hold if we work in
-    // second space.
-    //
-    // This effectively means the resolution changes approximately every 6 zoom
-    // levels. Logic: each zoom level represents a delta of 0.1 * (visible
-    // window span). Therefore, zooming out by six levels is 1.1^6 ~= 2.
-    // Similarily, zooming in six levels is 0.9^6 ~= 0.5.
-    const pxToSec = this.frontendLocalState.timeScale.deltaPxToDuration(1);
-    // TODO(b/186265930): Remove once fixed:
-    if (!isFinite(pxToSec)) {
-      // Resolution is in pixels per second so 1000 means 1px = 1ms.
-      console.error(`b/186265930: Bad pxToSec suppressed ${pxToSec}`);
-      return fromNs(Math.pow(2, Math.floor(Math.log2(toNs(1000)))));
-    }
-    const pxToNs = Math.max(toNs(pxToSec), 1);
-    const resolution = fromNs(Math.pow(2, Math.floor(Math.log2(pxToNs))));
-    const log2 = Math.log2(toNs(resolution));
-    if (log2 % 1 !== 0) {
-      throw new Error(`Resolution should be a power of two.
-        pxToSec: ${pxToSec},
-        pxToNs: ${pxToNs},
-        resolution: ${resolution},
-        log2: ${Math.log2(toNs(resolution))}`);
-    }
-    return resolution;
+    // Truncate the resolution to the closest power of 2.
+    // This effectively means the resolution changes every 6 zoom levels.
+    const resolution = this.frontendLocalState.timeScale.deltaPxToDuration(1);
+    return Math.pow(2, Math.floor(Math.log2(resolution)));
   }
 
-  makeSelection(action: DeferredAction<{}>, tabToOpen = 'current_selection') {
+  makeSelection(action: DeferredAction<{}>) {
     // A new selection should cancel the current search selection.
     globals.frontendLocalState.searchIndex = -1;
     globals.frontendLocalState.currentTab =
-        action.type === 'deselect' ? undefined : tabToOpen;
+        action.type === 'deselect' ? undefined : 'current_selection';
     globals.dispatch(action);
   }
 
@@ -439,43 +298,16 @@ class Globals {
     this._overviewStore = undefined;
     this._threadMap = undefined;
     this._sliceDetails = undefined;
-    this._threadStateDetails = undefined;
     this._aggregateDataStore = undefined;
     this._numQueriesQueued = 0;
-    this._metricResult = undefined;
     this._currentSearchResults = {
-      sliceIds: [],
-      tsStarts: [],
-      utids: [],
+      sliceIds: new Float64Array(0),
+      tsStarts: new Float64Array(0),
+      utids: new Float64Array(0),
       trackIds: [],
       sources: [],
       totalResults: 0,
     };
-  }
-
-  // This variable is set by the is_internal_user.js script if the user is a
-  // googler. This is used to avoid exposing features that are not ready yet
-  // for public consumption. The gated features themselves are not secret.
-  // If a user has been detected as a Googler once, make that sticky in
-  // localStorage, so that we keep treating them as such when they connect over
-  // public networks.
-  get isInternalUser() {
-    if (this._isInternalUser === undefined) {
-      this._isInternalUser = localStorage.getItem('isInternalUser') === '1';
-    }
-    return this._isInternalUser;
-  }
-
-  set isInternalUser(value: boolean) {
-    localStorage.setItem('isInternalUser', value ? '1' : '0');
-    this._isInternalUser = value;
-  }
-
-  get channel() {
-    if (this._channel === undefined) {
-      this._channel = localStorage.getItem('perfettoUiChannel') || 'stable';
-    }
-    return this._channel;
   }
 
   // Used when switching to the legacy TraceViewer UI.

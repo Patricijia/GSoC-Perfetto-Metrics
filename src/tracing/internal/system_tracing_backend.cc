@@ -19,7 +19,6 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/base/task_runner.h"
 #include "perfetto/ext/tracing/core/tracing_service.h"
-#include "perfetto/ext/tracing/ipc/consumer_ipc_client.h"
 #include "perfetto/ext/tracing/ipc/default_socket.h"
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 
@@ -41,18 +40,17 @@ std::unique_ptr<ProducerEndpoint> SystemTracingBackend::ConnectProducer(
   auto endpoint = ProducerIPCClient::Connect(
       GetProducerSocket(), args.producer, args.producer_name, args.task_runner,
       TracingService::ProducerSMBScrapingMode::kEnabled,
-      args.shmem_size_hint_bytes, args.shmem_page_size_hint_bytes, nullptr,
-      nullptr, ProducerIPCClient::ConnectionFlags::kRetryIfUnreachable);
+      args.shmem_size_hint_bytes, args.shmem_page_size_hint_bytes);
   PERFETTO_CHECK(endpoint);
   return endpoint;
 }
 
 std::unique_ptr<ConsumerEndpoint> SystemTracingBackend::ConnectConsumer(
-    const ConnectConsumerArgs& args) {
-  auto endpoint = ConsumerIPCClient::Connect(GetConsumerSocket(), args.consumer,
-                                             args.task_runner);
-  PERFETTO_CHECK(endpoint);
-  return endpoint;
+    const ConnectConsumerArgs&) {
+  PERFETTO_FATAL(
+      "Trace session creation is not supported yet when using the system "
+      "tracing backend. Use the perfetto cmdline client instead to start "
+      "system-wide tracing sessions");
 }
 
 }  // namespace internal

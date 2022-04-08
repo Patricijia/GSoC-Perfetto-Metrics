@@ -16,12 +16,7 @@ import {Protocol} from 'devtools-protocol';
 import {ProtocolProxyApi} from 'devtools-protocol/types/protocol-proxy-api';
 import * as rpc from 'noice-json-rpc';
 
-import {base64Encode} from '../base/string_utils';
-import {
-  browserSupportsPerfettoConfig,
-  extractTraceConfig,
-  hasSystemDataSourceConfig
-} from '../base/trace_config_utils';
+import {extractTraceConfig} from '../base/extract_utils';
 import {TraceConfig} from '../common/protos';
 import {
   ConsumerPortResponse,
@@ -33,6 +28,8 @@ import {perfetto} from '../gen/protos';
 
 import {DevToolsSocket} from './devtools_socket';
 
+// The chunk size should be large enough to support reasonable batching of data,
+// but small enough not to cause stack overflows in uint8ArrayToString().
 const CHUNK_SIZE: number = 1024 * 1024 * 16;  // 16Mb
 
 export class ChromeTracingController extends RpcConsumerPort {
@@ -96,8 +93,9 @@ export class ChromeTracingController extends RpcConsumerPort {
       this.sendErrorMessage('Invalid trace config');
       return;
     }
-
-    this.handleStartTracing(traceConfigProto);
+    const traceConfig = TraceConfig.decode(traceConfigProto);
+    const chromeConfig = this.extractChromeConfig(traceConfig);
+    this.handleStartTracing(chromeConfig);
   }
 
   toCamelCase(key: string, separator: string): string {
@@ -237,7 +235,7 @@ export class ChromeTracingController extends RpcConsumerPort {
     this.lastBufferUsageEvent = params;
   }
 
-  handleStartTracing(traceConfigProto: Uint8Array) {
+  handleStartTracing(traceConfig: Protocol.Tracing.TraceConfig) {
     this.devtoolsSocket.attachToBrowser(async (error?: string) => {
       if (error) {
         this.sendErrorMessage(
@@ -245,35 +243,13 @@ export class ChromeTracingController extends RpcConsumerPort {
             `(req. Chrome >= M81): ${error}`);
         return;
       }
-
-      const requestParams: Protocol.Tracing.StartRequest = {
+      await this.api.Tracing.start({
+        traceConfig,
         streamFormat: 'proto',
         transferMode: 'ReturnAsStream',
         streamCompression: 'gzip',
         bufferUsageReportingInterval: 200
-      };
-
-      if (browserSupportsPerfettoConfig()) {
-        const configEncoded = base64Encode(traceConfigProto);
-        await this.api.Tracing.start(
-            {perfettoConfig: configEncoded, ...requestParams});
-      } else {
-        console.log(
-            'Used Chrome version is too old to support ' +
-            'perfettoConfig parameter. Using chrome config only instead.');
-
-        const traceConfig = TraceConfig.decode(traceConfigProto);
-        if (hasSystemDataSourceConfig(traceConfig)) {
-          this.sendErrorMessage(
-              'System tracing is not supported by this Chrome version. Choose' +
-              ' the \'Chrome\' target instead to record a Chrome-only trace.');
-          return;
-        }
-
-        const chromeConfig = this.extractChromeConfig(traceConfig);
-        await this.api.Tracing.start(
-            {traceConfig: chromeConfig, ...requestParams});
-      }
+      });
     });
   }
 }

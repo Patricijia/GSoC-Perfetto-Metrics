@@ -16,12 +16,24 @@ import {TrackData} from '../../common/track_data';
 
 export const CPU_SLICE_TRACK_KIND = 'CpuSliceTrack';
 
-export interface Data extends TrackData {
+export interface SummaryData extends TrackData {
+  kind: 'summary';
+
+  bucketSizeSeconds: number;
+  utilizations: Float64Array;
+}
+
+export interface SliceData extends TrackData {
+  kind: 'slice';
+
   // Slices are stored in a columnar fashion. All fields have the same length.
   ids: Float64Array;
   starts: Float64Array;
   ends: Float64Array;
   utids: Uint32Array;
 }
+
+export type Data = SummaryData | SliceData;
+
 
 export interface Config { cpu: number; }

@@ -23,14 +23,10 @@
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+    PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
 #include <pthread.h>
 #include <string.h>
 #include <algorithm>
-#endif
-
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-#include <sys/prctl.h>
 #endif
 
 // Internal implementation utils that aren't as widely useful/supported as
@@ -41,7 +37,7 @@ namespace base {
 
 #if PERFETTO_BUILDFLAG(PERFETTO_OS_LINUX) ||   \
     PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID) || \
-    PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+    PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
 // Sets the "comm" of the calling thread to the first 15 chars of the given
 // string.
 inline bool MaybeSetThreadName(const std::string& name) {
@@ -49,33 +45,14 @@ inline bool MaybeSetThreadName(const std::string& name) {
   size_t sz = std::min(name.size(), static_cast<size_t>(15));
   strncpy(buf, name.c_str(), sz);
 
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_APPLE)
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_MACOSX)
   return pthread_setname_np(buf) == 0;
 #else
   return pthread_setname_np(pthread_self(), buf) == 0;
 #endif
 }
-
-inline bool GetThreadName(std::string& out_result) {
-  char buf[16] = {};
-#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
-  if (prctl(PR_GET_NAME, buf) != 0)
-    return false;
 #else
-  if (pthread_getname_np(pthread_self(), buf, sizeof(buf)) != 0)
-    return false;
-#endif
-  out_result = std::string(buf);
-  return true;
-}
-
-#else
-inline bool MaybeSetThreadName(const std::string&) {
-  return false;
-}
-inline bool GetThreadName(std::string&) {
-  return false;
-}
+inline void MaybeSetThreadName(const std::string&) {}
 #endif
 
 }  // namespace base

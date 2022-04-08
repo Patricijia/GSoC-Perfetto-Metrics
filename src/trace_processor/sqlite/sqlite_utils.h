@@ -26,7 +26,6 @@
 
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
-#include "perfetto/ext/base/string_utils.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/sqlite_table.h"
 
@@ -66,6 +65,27 @@ inline bool IsOpLe(int op) {
 
 inline bool IsOpLt(int op) {
   return op == SQLITE_INDEX_CONSTRAINT_LT;
+}
+
+inline std::string OpToString(int op) {
+  switch (op) {
+    case SQLITE_INDEX_CONSTRAINT_EQ:
+      return "=";
+    case SQLITE_INDEX_CONSTRAINT_NE:
+      return "!=";
+    case SQLITE_INDEX_CONSTRAINT_GE:
+      return ">=";
+    case SQLITE_INDEX_CONSTRAINT_GT:
+      return ">";
+    case SQLITE_INDEX_CONSTRAINT_LE:
+      return "<=";
+    case SQLITE_INDEX_CONSTRAINT_LT:
+      return "<";
+    case SQLITE_INDEX_CONSTRAINT_LIKE:
+      return "like";
+    default:
+      PERFETTO_FATAL("Operator to string conversion not impemented for %d", op);
+  }
 }
 
 inline bool IsOpIsNull(int op) {
@@ -360,11 +380,25 @@ inline void ReportSqliteResult(sqlite3_context* ctx, double value) {
   sqlite3_result_double(ctx, value);
 }
 
-inline util::Status GetColumnsForTable(
+inline std::string SqliteValueAsString(sqlite3_value* value) {
+  switch (sqlite3_value_type(value)) {
+    case SQLITE_INTEGER:
+      return std::to_string(sqlite3_value_int64(value));
+    case SQLITE_FLOAT:
+      return std::to_string(sqlite3_value_double(value));
+    case SQLITE_TEXT: {
+      const char* str =
+          reinterpret_cast<const char*>(sqlite3_value_text(value));
+      return "'" + std::string(str) + "'";
+    }
+    default:
+      PERFETTO_FATAL("Unknown value type %d", sqlite3_value_type(value));
+  }
+}
+
+inline std::vector<SqliteTable::Column> GetColumnsForTable(
     sqlite3* db,
-    const std::string& raw_table_name,
-    std::vector<SqliteTable::Column>& columns) {
-  PERFETTO_DCHECK(columns.empty());
+    const std::string& raw_table_name) {
   char sql[1024];
   const char kRawSql[] = "SELECT name, type from pragma_table_info(\"%s\")";
 
@@ -376,18 +410,21 @@ inline util::Status GetColumnsForTable(
   sqlite3_stmt* raw_stmt = nullptr;
   int err = sqlite3_prepare_v2(db, sql, n, &raw_stmt, nullptr);
   if (err != SQLITE_OK) {
-    return util::ErrStatus("Preparing database failed");
+    PERFETTO_ELOG("Preparing database failed");
+    return {};
   }
   ScopedStmt stmt(raw_stmt);
   PERFETTO_DCHECK(sqlite3_column_count(*stmt) == 2);
 
+  std::vector<SqliteTable::Column> columns;
   for (;;) {
     err = sqlite3_step(raw_stmt);
     if (err == SQLITE_DONE)
       break;
     if (err != SQLITE_ROW) {
-      return util::ErrStatus("Querying schema of table %s failed",
-                             raw_table_name.c_str());
+      PERFETTO_ELOG("Querying schema of table %s failed",
+                    raw_table_name.c_str());
+      return {};
     }
 
     const char* name =
@@ -395,32 +432,31 @@ inline util::Status GetColumnsForTable(
     const char* raw_type =
         reinterpret_cast<const char*>(sqlite3_column_text(*stmt, 1));
     if (!name || !raw_type || !*name) {
-      return util::ErrStatus("Schema for %s has invalid column values",
-                             raw_table_name.c_str());
+      PERFETTO_FATAL("Schema for %s has invalid column values",
+                     raw_table_name.c_str());
     }
 
     SqlValue::Type type;
-    if (base::CaseInsensitiveEqual(raw_type, "STRING") ||
-        base::CaseInsensitiveEqual(raw_type, "TEXT")) {
+    if (strcmp(raw_type, "STRING") == 0) {
       type = SqlValue::Type::kString;
-    } else if (base::CaseInsensitiveEqual(raw_type, "DOUBLE")) {
+    } else if (strcmp(raw_type, "DOUBLE") == 0) {
       type = SqlValue::Type::kDouble;
-    } else if (base::CaseInsensitiveEqual(raw_type, "BIG INT") ||
-               base::CaseInsensitiveEqual(raw_type, "UNSIGNED INT") ||
-               base::CaseInsensitiveEqual(raw_type, "INT") ||
-               base::CaseInsensitiveEqual(raw_type, "BOOLEAN")) {
+    } else if (strcmp(raw_type, "BIG INT") == 0 ||
+               strcmp(raw_type, "UNSIGNED INT") == 0 ||
+               strcmp(raw_type, "INT") == 0 ||
+               strcmp(raw_type, "BOOLEAN") == 0) {
       type = SqlValue::Type::kLong;
     } else if (!*raw_type) {
       PERFETTO_DLOG("Unknown column type for %s %s", raw_table_name.c_str(),
                     name);
       type = SqlValue::Type::kNull;
     } else {
-      return util::ErrStatus("Unknown column type '%s' on table %s", raw_type,
-                             raw_table_name.c_str());
+      PERFETTO_FATAL("Unknown column type '%s' on table %s", raw_type,
+                     raw_table_name.c_str());
     }
     columns.emplace_back(columns.size(), name, type);
   }
-  return util::OkStatus();
+  return columns;
 }
 
 template <typename T>

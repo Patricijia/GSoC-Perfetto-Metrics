@@ -24,8 +24,6 @@
 namespace perfetto {
 namespace base {
 
-std::string GetSysTempDir();
-
 class TempFile {
  public:
   static TempFile CreateUnlinked();

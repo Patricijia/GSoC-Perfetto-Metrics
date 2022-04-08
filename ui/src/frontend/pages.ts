@@ -15,8 +15,6 @@
 import * as m from 'mithril';
 
 import {Actions} from '../common/actions';
-
-import {CookieConsent} from './cookie_consent';
 import {globals} from './globals';
 import {Sidebar} from './sidebar';
 import {Topbar} from './topbar';
@@ -25,14 +23,13 @@ function renderPermalink(): m.Children {
   const permalink = globals.state.permalink;
   if (!permalink.requestId || !permalink.hash) return null;
   const url = `${self.location.origin}/#!/?s=${permalink.hash}`;
-
   return m('.alert-permalink', [
     m('div', 'Permalink: ', m(`a[href=${url}]`, url)),
     m('button',
       {
         onclick: () => globals.dispatch(Actions.clearPermalink({})),
       },
-      m('i.material-icons.disallow-selection', 'close')),
+      m('i.material-icons', 'close')),
   ]);
 }
 
@@ -53,7 +50,6 @@ export function createPage(component: m.Component): m.Component {
         m(Topbar),
         m(Alerts),
         m(component),
-        m(CookieConsent),
       ];
       if (globals.frontendLocalState.perfDebug) {
         children.push(m('.perf-stats'));

@@ -17,6 +17,7 @@
 #include "src/base/test/test_task_runner.h"
 
 #include <stdio.h>
+#include <unistd.h>
 
 #include <chrono>
 
@@ -54,8 +55,9 @@ void TestTaskRunner::RunUntilCheckpoint(const std::string& checkpoint,
                                         uint32_t timeout_ms) {
   PERFETTO_DCHECK_THREAD(thread_checker_);
   if (checkpoints_.count(checkpoint) == 0) {
-    PERFETTO_FATAL("[TestTaskRunner] Checkpoint \"%s\" does not exist.\n",
-                   checkpoint.c_str());
+    fprintf(stderr, "[TestTaskRunner] Checkpoint \"%s\" does not exist.\n",
+            checkpoint.c_str());
+    abort();
   }
   if (checkpoints_[checkpoint])
     return;
@@ -64,8 +66,9 @@ void TestTaskRunner::RunUntilCheckpoint(const std::string& checkpoint,
       [this, checkpoint] {
         if (checkpoints_[checkpoint])
           return;
-        PERFETTO_FATAL("[TestTaskRunner] Failed to reach checkpoint \"%s\"\n",
-                       checkpoint.c_str());
+        fprintf(stderr, "[TestTaskRunner] Failed to reach checkpoint \"%s\"\n",
+                checkpoint.c_str());
+        abort();
       },
       timeout_ms);
 
@@ -98,12 +101,12 @@ void TestTaskRunner::PostDelayedTask(std::function<void()> closure,
   task_runner_.PostDelayedTask(std::move(closure), delay_ms);
 }
 
-void TestTaskRunner::AddFileDescriptorWatch(PlatformHandle fd,
+void TestTaskRunner::AddFileDescriptorWatch(int fd,
                                             std::function<void()> callback) {
   task_runner_.AddFileDescriptorWatch(fd, std::move(callback));
 }
 
-void TestTaskRunner::RemoveFileDescriptorWatch(PlatformHandle fd) {
+void TestTaskRunner::RemoveFileDescriptorWatch(int fd) {
   task_runner_.RemoveFileDescriptorWatch(fd);
 }
 

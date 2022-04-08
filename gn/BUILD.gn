@@ -53,13 +53,18 @@ action("gen_buildflags") {
     perfetto_watchdog = "0"
   }
   if (enable_perfetto_tools) {
-    perfetto_local_symbolizer =
-        "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX() || " +
-        "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_MAC() ||" +
-        "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_WIN()"
+    perfetto_local_symbolizer = "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX()"
   } else {
     perfetto_local_symbolizer = "0"
   }
+  if (enable_perfetto_trace_processor_httpd) {
+    perfetto_tp_httpd = "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_ANDROID() || " +
+                        "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_LINUX() || " +
+                        "PERFETTO_BUILDFLAG_DEFINE_PERFETTO_OS_MACOSX()"
+  } else {
+    perfetto_tp_httpd = "0"
+  }
+
   response_file_contents = [
     "--flags",  # Keep this marker first.
     "PERFETTO_ANDROID_BUILD=$perfetto_build_with_android",
@@ -75,7 +80,7 @@ action("gen_buildflags") {
     "PERFETTO_VERSION_GEN=$enable_perfetto_version_gen",
     "PERFETTO_TP_PERCENTILE=$enable_perfetto_trace_processor_percentile",
     "PERFETTO_TP_LINENOISE=$enable_perfetto_trace_processor_linenoise",
-    "PERFETTO_TP_HTTPD=$enable_perfetto_trace_processor_httpd",
+    "PERFETTO_TP_HTTPD=$perfetto_tp_httpd",
     "PERFETTO_TP_JSON=$enable_perfetto_trace_processor_json",
     "PERFETTO_LOCAL_SYMBOLIZER=$perfetto_local_symbolizer",
     "PERFETTO_ZLIB=$enable_perfetto_zlib",
@@ -95,7 +100,6 @@ action("gen_buildflags") {
 # All targets should depend on this target to inherit the right flags and
 # include directories.
 group("default_deps") {
-  visibility = [ "../*" ]  # Prevent chromium targets from depending on this (breaks component).
   public_configs = [ ":default_config" ]
   deps = [ ":gen_buildflags" ]
   if (perfetto_build_standalone) {
@@ -115,13 +119,9 @@ group("default_deps") {
 # embedders that depend on perfetto (e.g. chrome). :public_config (see below) is
 # used for that.
 config("default_config") {
-  visibility = [ "../*" ]  # Prevent chromium targets from depending on this (breaks component).
   configs = [ ":public_config" ]
   defines = [ "PERFETTO_IMPLEMENTATION" ]
-  include_dirs = [
-    "..",
-    "../src/profiling/memory/include",
-  ]
+  include_dirs = [ ".." ]
 
   if (build_with_chromium && is_android) {
     # Included for __android_log_print
@@ -192,12 +192,10 @@ group("gtest_main") {
 
 # Full protobuf is just for host tools .No binary shipped on device should
 # depend on this.
-protobuf_full_deps_allowlist = [
+whitelisted_protobuf_full_deps = [
   "../src/ipc/protoc_plugin:*",
   "../src/protozero/protoc_plugin:*",
-  "../src/protozero/filtering:filter_util",
   "../src/trace_processor:trace_processor_shell",
-  "../src/protozero/filtering:filter_util",
   "../tools/*",
 ]
 
@@ -213,9 +211,10 @@ config("system_protobuf") {
   libs = [ "protobuf" ]  # This will link against libprotobuf.so
 }
 
-# protoc compiler library, it's used for building protoc plugins.
+# protoc compiler library, it's used for building protoc plugins and by
+# trace_processor_shell to dynamically load .proto files for metrics.
 group("protoc_lib") {
-  visibility = protobuf_full_deps_allowlist
+  visibility = whitelisted_protobuf_full_deps
   if (current_toolchain == host_toolchain) {
     if (perfetto_use_system_protobuf) {
       public_configs = [
@@ -230,11 +229,13 @@ group("protoc_lib") {
 }
 
 group("protobuf_full") {
-  visibility = protobuf_full_deps_allowlist
-  if (perfetto_use_system_protobuf) {
-    public_configs = [ ":system_protobuf" ]
-  } else {
-    public_deps = [ "${perfetto_protobuf_target_prefix}:protobuf_full" ]
+  visibility = whitelisted_protobuf_full_deps
+  if (current_toolchain == host_toolchain) {
+    if (perfetto_use_system_protobuf) {
+      public_configs = [ ":system_protobuf" ]
+    } else {
+      public_deps = [ "${perfetto_protobuf_target_prefix}:protobuf_full" ]
+    }
   }
 }
 
@@ -259,33 +260,19 @@ config("protobuf_gen_config") {
     "GOOGLE_PROTOBUF_NO_RTTI",
     "GOOGLE_PROTOBUF_NO_STATIC_INITIALIZER",
   ]
-  cflags = []
-  if (is_clang || !is_win) {
-    cflags += [
-      "-Wno-unknown-warning-option",
-      "-Wno-deprecated",
-      "-Wno-undef",
-      "-Wno-zero-as-null-pointer-constant",
-    ]
-  }
-  if (is_clang && is_win) {
-    cflags += [
-      "-Wno-reserved-id-macro",
-      "-Wno-language-extension-token",
-      "-Wno-sign-conversion",
-      "-Wno-suggest-destructor-override",
-      "-Wno-undefined-reinterpret-cast",
-      "-Wno-inconsistent-missing-destructor-override",
-      "-Wno-unused-parameter",
-    ]
-  }
+  cflags = [
+    "-Wno-unknown-warning-option",
+    "-Wno-deprecated",
+    "-Wno-undef",
+    "-Wno-zero-as-null-pointer-constant",
+  ]
 
   if (!perfetto_use_system_protobuf) {
     cflags += [
       # Using -isystem instead of include_dirs (-I), so we don't need to
       # suppress warnings coming from libprotobuf headers. Doing so would mask
       # warnings in our own code.
-      perfetto_isystem_cflag,
+      "-isystem",
       rebase_path("../buildtools/protobuf/src", root_build_dir),
     ]
   }
@@ -365,16 +352,10 @@ if (enable_perfetto_traced_perf) {
   }
 }
 
-config("system_zlib_config") {
-  libs = [ "z" ]
-}
-
 # Zlib is used both by trace_processor and by perfetto_cmd.
 if (enable_perfetto_zlib) {
   group("zlib") {
-    if (perfetto_use_system_zlib) {
-      public_configs = [ "//gn:system_zlib_config" ]
-    } else if (perfetto_root_path == "//") {
+    if (perfetto_root_path == "//") {
       public_configs = [ "//buildtools:zlib_config" ]
       public_deps = [ "//buildtools:zlib" ]
     } else {

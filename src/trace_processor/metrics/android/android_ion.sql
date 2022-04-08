@@ -14,8 +14,7 @@
 -- limitations under the License.
 --
 
-DROP VIEW IF EXISTS ion_timeline;
-CREATE VIEW ion_timeline AS
+CREATE VIEW IF NOT EXISTS ion_timeline AS
 SELECT
   ts,
   LEAD(ts, 1, (SELECT end_ts FROM trace_bounds))
@@ -30,8 +29,7 @@ FROM counter JOIN counter_track
   ON counter.track_id = counter_track.id
 WHERE (name LIKE 'mem.ion.%' OR name = 'mem.ion');
 
-DROP VIEW IF EXISTS ion_heap_stats;
-CREATE VIEW ion_heap_stats AS
+CREATE VIEW IF NOT EXISTS ion_heap_stats AS
 SELECT
   heap_name,
   SUM(value * dur) / SUM(dur) AS avg_size,
@@ -40,8 +38,7 @@ SELECT
 FROM ion_timeline
 GROUP BY 1;
 
-DROP VIEW IF EXISTS ion_raw_allocs;
-CREATE VIEW ion_raw_allocs AS
+CREATE VIEW IF NOT EXISTS ion_raw_allocs AS
 SELECT
   CASE name
     WHEN 'mem.ion_change' THEN 'all'
@@ -57,8 +54,7 @@ WINDOW win AS (
   ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
 );
 
-DROP VIEW IF EXISTS ion_alloc_stats;
-CREATE VIEW ion_alloc_stats AS
+CREATE VIEW IF NOT EXISTS ion_alloc_stats AS
 SELECT
   heap_name,
   SUM(instant_value) AS total_alloc_size_bytes
@@ -69,8 +65,7 @@ GROUP BY 1;
 -- different processes occurring at the same timestamp. We take the
 -- max as this will take both allocations into account at that
 -- timestamp.
-DROP VIEW IF EXISTS android_ion_event;
-CREATE VIEW android_ion_event AS
+CREATE VIEW IF NOT EXISTS android_ion_annotations AS
 SELECT
   'counter' AS track_type,
   printf('ION allocations (heap: %s)', heap_name) AS track_name,
@@ -79,8 +74,7 @@ SELECT
 FROM ion_raw_allocs
 GROUP BY 1, 2, 3;
 
-DROP VIEW IF EXISTS android_ion_output;
-CREATE VIEW android_ion_output AS
+CREATE VIEW IF NOT EXISTS android_ion_output AS
 SELECT AndroidIonMetric(
   'buffer', RepeatedField(
     AndroidIonMetric_Buffer(

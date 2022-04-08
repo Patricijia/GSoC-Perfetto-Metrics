@@ -29,10 +29,6 @@ namespace profiling {
 
 constexpr uint64_t kSamplerSeed = 1;
 
-uint64_t GetPassthroughThreshold(uint64_t interval);
-
-std::default_random_engine& GetGlobalRandomEngineLocked();
-
 // Poisson sampler for memory allocations. We apply sampling individually to
 // each byte. The whole allocation gets accounted as often as the number of
 // sampled bytes it contains.
@@ -44,7 +40,11 @@ std::default_random_engine& GetGlobalRandomEngineLocked();
 // NB: not thread-safe, requires external synchronization.
 class Sampler {
  public:
-  void SetSamplingInterval(uint64_t sampling_interval);
+  Sampler(uint64_t sampling_interval)
+      : sampling_interval_(sampling_interval),
+        sampling_rate_(1.0 / static_cast<double>(sampling_interval)),
+        random_engine_(kSamplerSeed),
+        interval_to_next_sample_(NextSampleInterval()) {}
 
   // Returns number of bytes that should be be attributed to the sample.
   // If returned size is 0, the allocation should not be sampled.
@@ -52,21 +52,17 @@ class Sampler {
   // Due to how the poission sampling works, some samples should be accounted
   // multiple times.
   size_t SampleSize(size_t alloc_sz) {
-    if (PERFETTO_UNLIKELY(alloc_sz >= passthrough_threshold_))
+    if (PERFETTO_UNLIKELY(alloc_sz >= sampling_interval_))
       return alloc_sz;
     return static_cast<size_t>(sampling_interval_ * NumberOfSamples(alloc_sz));
   }
 
-  uint64_t sampling_interval() const { return sampling_interval_; }
-
  private:
   int64_t NextSampleInterval() {
     std::exponential_distribution<double> dist(sampling_rate_);
-    int64_t next = static_cast<int64_t>(dist(GetGlobalRandomEngineLocked()));
-    // We approximate the geometric distribution using an exponential
-    // distribution.
-    // We need to add 1 because that gives us the number of failures before
-    // the next success, while our interval includes the next success.
+    int64_t next = static_cast<int64_t>(dist(random_engine_));
+    // The +1 corrects the distribution of the first value in the interval.
+    // TODO(fmayer): Figure out why.
     return next + 1;
   }
 
@@ -83,8 +79,8 @@ class Sampler {
   }
 
   uint64_t sampling_interval_;
-  uint64_t passthrough_threshold_;
   double sampling_rate_;
+  std::default_random_engine random_engine_;
   int64_t interval_to_next_sample_;
 };
 

@@ -85,9 +85,7 @@ class EventReader {
   base::Optional<ParsedSample> ReadUntilSample(
       std::function<void(uint64_t)> lost_events_callback);
 
-  void EnableEvents();
-  // Pauses the event counting, without invalidating existing samples.
-  void DisableEvents();
+  void PauseEvents();
 
   uint32_t cpu() const { return cpu_; }
 
@@ -95,8 +93,8 @@ class EventReader {
 
   // move-only
   EventReader(const EventReader&) = delete;
-  EventReader& operator=(const EventReader&) = delete;
-  EventReader(EventReader&&) noexcept = default;
+  EventReader& operator=(const EventReader) = delete;
+  EventReader(EventReader&&) noexcept;
   EventReader& operator=(EventReader&&) noexcept;
 
  private:

@@ -12,7 +12,6 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-
 type Numbers = Float64Array|Uint32Array|number[];
 type Range = [number, number];
 

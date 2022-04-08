@@ -71,13 +71,7 @@ class StringWriter {
   template <char padchar, uint64_t padding>
   void AppendPaddedInt(int64_t sign_value) {
     const bool negate = std::signbit(static_cast<double>(sign_value));
-    uint64_t absolute_value;
-    if (sign_value == std::numeric_limits<int64_t>::min()) {
-      absolute_value =
-          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) + 1;
-    } else {
-      absolute_value = static_cast<uint64_t>(std::abs(sign_value));
-    }
+    uint64_t absolute_value = static_cast<uint64_t>(std::abs(sign_value));
     AppendPaddedInt<padchar, padding>(absolute_value, negate);
   }
 
@@ -160,9 +154,7 @@ class StringWriter {
 
     if (padding > 0) {
       size_t num_digits = kSizeNeeded - 1 - idx;
-      // std::max() needed to work around GCC not being able to tell that
-      // padding > 0.
-      for (size_t i = num_digits; i < std::max(uint64_t{1u}, padding); i++) {
+      for (size_t i = num_digits; i < padding; i++) {
         data[idx--] = padchar;
       }
     }

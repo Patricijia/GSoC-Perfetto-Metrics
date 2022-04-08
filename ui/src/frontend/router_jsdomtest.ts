@@ -16,7 +16,6 @@ import {dingus} from 'dingusjs';
 
 import {Actions, DeferredAction} from '../common/actions';
 
-import {NullAnalytics} from './analytics';
 import {Router} from './router';
 
 const mockComponent = {
@@ -25,29 +24,23 @@ const mockComponent = {
 
 const fakeDispatch = () => {};
 
-const mockLogging = new NullAnalytics();
-
 beforeEach(() => {
   window.onhashchange = null;
   window.location.hash = '';
 });
 
 test('Default route must be defined', () => {
-  expect(
-      () => new Router('/a', {'/b': mockComponent}, fakeDispatch, mockLogging))
-      .toThrow();
+  expect(() => new Router('/a', {'/b': mockComponent}, fakeDispatch)).toThrow();
 });
 
 test('Resolves empty route to default component', () => {
-  const router =
-      new Router('/a', {'/a': mockComponent}, fakeDispatch, mockLogging);
+  const router = new Router('/a', {'/a': mockComponent}, fakeDispatch);
   expect(router.resolve('')).toBe(mockComponent);
   expect(router.resolve(null)).toBe(mockComponent);
 });
 
 test('Parse route from hash', () => {
-  const router =
-      new Router('/', {'/': mockComponent}, fakeDispatch, mockLogging);
+  const router = new Router('/', {'/': mockComponent}, fakeDispatch);
   window.location.hash = '#!/foobar?s=42';
   expect(router.getRouteFromHash()).toBe('/foobar');
 
@@ -63,8 +56,7 @@ test('Set valid route on hash', () => {
         '/': mockComponent,
         '/a': mockComponent,
       },
-      dispatch,
-      mockLogging);
+      dispatch);
   const prevHistoryLength = window.history.length;
 
   router.setRouteOnHash('/a');
@@ -78,7 +70,7 @@ test('Redirects to default for invalid route in setRouteOnHash ', () => {
   const dispatch = dingus<(a: DeferredAction) => void>();
   // const dispatch = () => {console.log("action received")};
 
-  const router = new Router('/', {'/': mockComponent}, dispatch, mockLogging);
+  const router = new Router('/', {'/': mockComponent}, dispatch);
   router.setRouteOnHash('foo');
   expect(dispatch.calls.length).toBe(1);
   expect(dispatch.calls[0][1].length).toBeGreaterThanOrEqual(1);
@@ -96,8 +88,7 @@ test('Navigate on hash change', done => {
         '/': mockComponent,
         '/viewer': mockComponent,
       },
-      mockDispatch,
-      mockLogging);
+      mockDispatch);
   window.location.hash = '#!/viewer';
 });
 
@@ -113,8 +104,7 @@ test('Redirects to default when invalid route set in window location', done => {
         '/': mockComponent,
         '/viewer': mockComponent,
       },
-      mockDispatch,
-      mockLogging);
+      mockDispatch);
 
   window.location.hash = '#invalid';
 });
@@ -122,8 +112,8 @@ test('Redirects to default when invalid route set in window location', done => {
 test('navigateToCurrentHash with valid current route', () => {
   const dispatch = dingus<(a: DeferredAction) => void>();
   window.location.hash = '#!/b';
-  const router = new Router(
-      '/', {'/': mockComponent, '/b': mockComponent}, dispatch, mockLogging);
+  const router =
+      new Router('/', {'/': mockComponent, '/b': mockComponent}, dispatch);
   router.navigateToCurrentHash();
   expect(dispatch.calls[0][1][0]).toEqual(Actions.navigate({route: '/b'}));
 });
@@ -131,7 +121,7 @@ test('navigateToCurrentHash with valid current route', () => {
 test('navigateToCurrentHash with invalid current route', () => {
   const dispatch = dingus<(a: DeferredAction) => void>();
   window.location.hash = '#!/invalid';
-  const router = new Router('/', {'/': mockComponent}, dispatch, mockLogging);
+  const router = new Router('/', {'/': mockComponent}, dispatch);
   router.navigateToCurrentHash();
   expect(dispatch.calls[0][1][0]).toEqual(Actions.navigate({route: '/'}));
 });

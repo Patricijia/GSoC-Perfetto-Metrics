@@ -23,9 +23,7 @@ import {ControllerAny} from './controller';
 type PublishKinds = 'OverviewData'|'TrackData'|'Threads'|'QueryResult'|
     'LegacyTrace'|'SliceDetails'|'CounterDetails'|'HeapProfileDetails'|
     'HeapProfileFlamegraph'|'FileDownload'|'Loading'|'Search'|'BufferUsage'|
-    'RecordingLog'|'SearchResult'|'AggregateData'|'CpuProfileDetails'|
-    'TraceErrors'|'UpdateChromeCategories'|'ConnectedFlows'|'SelectedFlows'|
-    'ThreadStateDetails'|'MetricError'|'MetricResult';
+    'RecordingLog'|'SearchResult'|'AggregateData'|'CpuProfileDetails';
 
 export interface App {
   state: State;

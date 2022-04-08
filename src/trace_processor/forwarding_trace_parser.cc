@@ -21,7 +21,7 @@
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/ninja/ninja_log_parser.h"
 #include "src/trace_processor/importers/proto/proto_trace_parser.h"
-#include "src/trace_processor/importers/proto/proto_trace_reader.h"
+#include "src/trace_processor/importers/proto/proto_trace_tokenizer.h"
 #include "src/trace_processor/trace_sorter.h"
 
 namespace perfetto {
@@ -81,7 +81,7 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
         PERFETTO_DLOG("Proto trace detected");
         // This will be reduced once we read the trace config and we see flush
         // period being set.
-        reader_.reset(new ProtoTraceReader(context_));
+        reader_.reset(new ProtoTraceTokenizer(context_));
         context_->sorter.reset(new TraceSorter(
             std::unique_ptr<TraceParser>(new ProtoTraceParser(context_)),
             kMaxWindowSize));
@@ -130,9 +130,7 @@ util::Status ForwardingTraceParser::Parse(std::unique_ptr<uint8_t[]> data,
           return util::ErrStatus(kNoZlibErr);
         }
       case kUnknownTraceType:
-        // If renaming this error message don't remove the "(ERR:fmt)" part.
-        // The UI's error_dialog.ts uses it to make the dialog more graceful.
-        return util::ErrStatus("Unknown trace type provided (ERR:fmt)");
+        return util::ErrStatus("Unknown trace type provided");
     }
   }
 
@@ -161,7 +159,7 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
     return kJsonTraceType;
 
   // Systrace with header but no leading HTML.
-  if (base::Contains(start, "# tracer"))
+  if (base::StartsWith(start, "# tracer"))
     return kSystraceTraceType;
 
   // Systrace with leading HTML.
@@ -170,7 +168,7 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
     return kSystraceTraceType;
 
   // Ctrace is deflate'ed systrace.
-  if (base::Contains(start, "TRACE:"))
+  if (start.find("TRACE:") != std::string::npos)
     return kCtraceTraceType;
 
   // Ninja's buils log (.ninja_log).
@@ -185,10 +183,7 @@ TraceType GuessTraceType(const uint8_t* data, size_t size) {
   if (base::StartsWith(start, "\x1f\x8b"))
     return kGzipTraceType;
 
-  if (base::StartsWith(start, "\x0a"))
-    return kProtoTraceType;
-
-  return kUnknownTraceType;
+  return kProtoTraceType;
 }
 
 }  // namespace trace_processor

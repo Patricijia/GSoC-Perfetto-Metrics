@@ -25,32 +25,20 @@ namespace profiling {
 namespace {
 
 TEST(SamplerTest, TestLarge) {
-  GetGlobalRandomEngineLocked().seed(1);
-  Sampler sampler;
-  sampler.SetSamplingInterval(32768);
-  EXPECT_EQ(sampler.SampleSize(160000u), 160000u);
+  Sampler sampler(512);
+  EXPECT_EQ(sampler.SampleSize(1024), 1024u);
 }
 
 TEST(SamplerTest, TestSmall) {
-  GetGlobalRandomEngineLocked().seed(1);
-  Sampler sampler;
-  sampler.SetSamplingInterval(512);
+  Sampler sampler(512);
   EXPECT_EQ(sampler.SampleSize(511), 512u);
 }
 
 TEST(SamplerTest, TestSequence) {
-  GetGlobalRandomEngineLocked().seed(1);
-  Sampler sampler;
-  sampler.SetSamplingInterval(1);
+  Sampler sampler(1);
   EXPECT_EQ(sampler.SampleSize(3), 3u);
   EXPECT_EQ(sampler.SampleSize(7), 7u);
   EXPECT_EQ(sampler.SampleSize(5), 5u);
-}
-
-TEST(SamplerTest, TestGetPassthroughThreshold) {
-  EXPECT_EQ(GetPassthroughThreshold(32768u), 150900u);
-  EXPECT_EQ(GetPassthroughThreshold(1u), 1u);
-  EXPECT_EQ(GetPassthroughThreshold(2u), 7u);
 }
 
 }  // namespace

@@ -16,7 +16,6 @@
 
 #include <stddef.h>
 #include <stdint.h>
-#include <unistd.h>
 
 #include "perfetto/ext/base/file_utils.h"
 #include "perfetto/ext/base/temp_file.h"
@@ -64,8 +63,7 @@ int FuzzRingBuffer(const uint8_t* data, size_t size) {
   // defaults to indefinite blocking mode).
   SharedRingBuffer::MetadataPage header = {};
   memcpy(&header, data, sizeof(header));
-  header.spinlock.locked = false;
-  header.spinlock.poisoned = false;
+  header.spinlock = 0;
 
   PERFETTO_CHECK(ftruncate(*fd, static_cast<off_t>(total_size_pages *
                                                    base::kPageSize)) == 0);
