@@ -77,6 +77,12 @@ export interface FlowPoint {
   sliceId: number;
   sliceStartTs: number;
   sliceEndTs: number;
+  // Thread and process info. Only set in sliceSelected not in areaSelected as
+  // the latter doesn't display per-flow info and it'd be a waste to join
+  // additional tables for undisplayed info in that case. Nothing precludes
+  // adding this in a future iteration however.
+  threadName: string;
+  processName: string;
 
   depth: number;
 }
@@ -124,6 +130,9 @@ export interface FlamegraphDetails {
   // isInAreaSelection is true if a flamegraph is part of the current area
   // selection.
   isInAreaSelection?: boolean;
+  // When heap_graph_non_finalized_graph has a count >0, we mark the graph
+  // as incomplete.
+  graphIncomplete?: boolean;
 }
 
 export interface CpuProfileDetails {
