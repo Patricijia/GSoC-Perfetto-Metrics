@@ -643,13 +643,18 @@ message AndroidProcessMetadata {
 // Begin of protos/perfetto/metrics/android/java_heap_histogram.proto
 
 message JavaHeapHistogram {
-  // Next id: 5
+  // Next id: 9
   message TypeCount {
     optional string type_name = 1;
     optional string category = 4;
 
     optional uint32 obj_count = 2;
     optional uint32 reachable_obj_count = 3;
+
+    optional uint32 size_kb = 5;
+    optional uint32 reachable_size_kb = 6;
+    optional uint32 native_size_kb = 7;
+    optional uint32 reachable_native_size_kb = 8;
   }
 
   message Sample {
@@ -800,6 +805,10 @@ message AndroidMemoryMetric {
     optional double min = 1;
     optional double max = 2;
     optional double avg = 3;
+
+    // Memory growth observed in the counter sequence. In case of multiple
+    // processes with the same name, break ties using max.
+    optional double delta = 4;
   }
 
   // Process metrics, grouped by process name
@@ -902,13 +911,16 @@ message AndroidNetworkMetric {
 
     // Per core packets statistic.
     repeated CorePacketStatistic core = 2;
+
+    // GRO aggregation ratio.
+    optional string gro_aggregation_ratio = 3;
   }
 
   message Tx {
-    // Total packets statistic
+    // Total packets statistic.
     optional PacketStatistic total = 1;
 
-    // Per core packets statistic
+    // Per core packets statistic.
     repeated CorePacketStatistic core = 2;
   }
 
@@ -962,9 +974,26 @@ message AndroidNetworkMetric {
 
   // SoftIrq NET_RX action metrics.
   optional NetRxAction net_rx_action = 2;
+
+  // Packet retransmission rate.
+  optional double retransmission_rate = 3;
+
+  // Kfree Skb rate (i.e. kfree_skb count divided by the packet count from all
+  // net devices).
+  optional double kfree_skb_rate = 4;
 }
 
 // End of protos/perfetto/metrics/android/network_metric.proto
+
+// Begin of protos/perfetto/metrics/android/other_traces.proto
+
+message AndroidOtherTracesMetric {
+  // Uuids of other traces being finalized while the current trace was being
+  // recorded.
+  repeated string finalized_traces_uuid = 1;
+}
+
+// End of protos/perfetto/metrics/android/other_traces.proto
 
 // Begin of protos/perfetto/metrics/android/package_list.proto
 
@@ -1413,6 +1442,13 @@ message UnsymbolizedFrames {
     optional string module = 1;
     optional string build_id = 2;
     optional int64 address = 3;
+
+    // In some cases (Chrome/Webview) the ID that should be used to query
+    // symbols in Google's internal tera-scale symbolization service is !=
+    // `build_id` and requires some mangling.
+    // This field is == 'build_id` for non-chromium cases, and is the breakpad
+    // module ID (with lowercase hex digics) for chromium cases.
+    optional string google_lookup_id = 4;
   }
 
   repeated Frame frames = 1;
@@ -1466,7 +1502,7 @@ message TraceAnalysisStats {
 
 // Root message for all Perfetto-based metrics.
 //
-// Next id: 45
+// Next id: 46
 message TraceMetrics {
   reserved 4, 10, 13, 14, 16, 19;
 
@@ -1584,6 +1620,9 @@ message TraceMetrics {
 
   // Metrics for the Trusty team.
   optional AndroidTrustyWorkqueues android_trusty_workqueues = 44;
+
+  // Summary of other concurrent trace recording.
+  optional AndroidOtherTracesMetric android_other_traces = 45;
 
   // Demo extensions.
   extensions 450 to 499;

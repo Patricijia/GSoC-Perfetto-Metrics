@@ -17,6 +17,7 @@
 #include "src/perfetto_cmd/perfetto_cmd.h"
 
 #include "perfetto/base/build_config.h"
+#include "perfetto/base/proc_utils.h"
 #include "perfetto/ext/base/scoped_file.h"
 
 #include <fcntl.h>
@@ -32,10 +33,13 @@
 #include <unistd.h>
 #endif
 
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <iterator>
+#include <random>
 #include <sstream>
+#include <thread>
 
 #include "perfetto/base/compiler.h"
 #include "perfetto/base/logging.h"
@@ -64,6 +68,7 @@
 #include "src/perfetto_cmd/pbtxt_to_pb.h"
 #include "src/perfetto_cmd/trigger_producer.h"
 
+#include "protos/perfetto/common/ftrace_descriptor.gen.h"
 #include "protos/perfetto/common/tracing_service_state.gen.h"
 #include "protos/perfetto/common/track_event_descriptor.gen.h"
 
@@ -161,6 +166,30 @@ base::Optional<PerfettoStatsdAtom> ConvertRateLimiterResponseToAtom(
   }
   PERFETTO_FATAL("For GCC");
 }
+
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+// Reports trace with `uuid` being finalized to the trace marker.
+//
+// This reimplements parts of android libcutils, because:
+// * libcutils is not exposed to the NDK and cannot be used from standalone
+//   perfetto
+// * libcutils atrace uses properties to enable tags, which are not required in
+//   this case.
+void ReportFinalizeTraceUuidToAtrace(const base::Uuid& uuid) {
+  base::ScopedFile file =
+      base::OpenFile("/sys/kernel/tracing/trace_marker", O_WRONLY);
+  if (!file) {
+    file = base::OpenFile("/sys/kernel/debug/tracing/trace_marker", O_WRONLY);
+    if (!file) {
+      return;
+    }
+  }
+  base::StackString<100> uuid_slice("N|%d|OtherTraces|finalize-uuid-%s",
+                                    base::GetProcessId(),
+                                    uuid.ToPrettyString().c_str());
+  PERFETTO_EINTR(write(file.get(), uuid_slice.c_str(), uuid_slice.len()));
+}
+#endif  // PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
 
 }  // namespace
 
@@ -568,6 +597,12 @@ base::Optional<int> PerfettoCmd::ParseCmdlineAndMaybeDaemonize(int argc,
     uuid_ = uuid.ToString();
   }
 
+  const auto& delay = trace_config_->cmd_trace_start_delay();
+  if (delay.has_max_delay_ms() != delay.has_min_delay_ms()) {
+    PERFETTO_ELOG("cmd_trace_start_delay field is only partially specified.");
+    return 1;
+  }
+
   bool has_incidentd_package =
       !trace_config_->incident_report_config().destination_package().empty();
   if (has_incidentd_package && !upload_flag_) {
@@ -879,6 +914,16 @@ int PerfettoCmd::ConnectToServiceAndRun() {
     expected_duration_ms_ = timeout_ms + max_stop_delay_ms;
   }
 
+  const auto& delay = trace_config_->cmd_trace_start_delay();
+  if (delay.has_min_delay_ms()) {
+    PERFETTO_DCHECK(delay.has_max_delay_ms());
+    std::random_device r;
+    std::minstd_rand minstd(r());
+    std::uniform_int_distribution<uint32_t> dist(delay.min_delay_ms(),
+                                                 delay.max_delay_ms());
+    std::this_thread::sleep_for(std::chrono::milliseconds(dist(minstd)));
+  }
+
   if (trace_config_->trigger_config().trigger_timeout_ms() == 0) {
     LogUploadEvent(PerfettoStatsdAtom::kTraceBegin);
   } else {
@@ -1083,6 +1128,12 @@ void PerfettoCmd::FinalizeTraceAndExit() {
     }
   }
 
+#if PERFETTO_BUILDFLAG(PERFETTO_OS_ANDROID)
+  // When multiple traces are being recorded at the same time, this is used to
+  // correlate one trace with another.
+  ReportFinalizeTraceUuidToAtrace(base::Uuid(uuid_));
+#endif
+
   update_guardrail_state_ = true;
   task_runner_.Quit();
 }
@@ -1224,10 +1275,18 @@ NAME                                     PRODUCER                     DETAILS
            producer_id_and_name);
     // Print the category names for clients using the track event SDK.
     if (!ds.ds_descriptor().track_event_descriptor_raw().empty()) {
-      auto raw = ds.ds_descriptor().track_event_descriptor_raw();
-      perfetto::protos::gen::TrackEventDescriptor desc;
+      const std::string& raw = ds.ds_descriptor().track_event_descriptor_raw();
+      protos::gen::TrackEventDescriptor desc;
       if (desc.ParseFromArray(raw.data(), raw.size())) {
         for (const auto& cat : desc.available_categories()) {
+          printf("%s,", cat.name().c_str());
+        }
+      }
+    } else if (!ds.ds_descriptor().ftrace_descriptor_raw().empty()) {
+      const std::string& raw = ds.ds_descriptor().ftrace_descriptor_raw();
+      protos::gen::FtraceDescriptor desc;
+      if (desc.ParseFromArray(raw.data(), raw.size())) {
+        for (const auto& cat : desc.atrace_categories()) {
           printf("%s,", cat.name().c_str());
         }
       }
@@ -1240,8 +1299,8 @@ NAME                                     PRODUCER                     DETAILS
 
 TRACING SESSIONS:
 
-ID      UID     STATE      NAME         BUF (#) KB   DUR (s)   #DS  STARTED
-===     ===     =====      ====         ==========   =======   ===  =======
+ID      UID     STATE      BUF (#) KB   DUR (s)   #DS  STARTED  NAME
+===     ===     =====      ==========   =======   ===  =======  ====
 )");
     for (const auto& sess : svc_state.tracing_sessions()) {
       uint32_t buf_tot_kb = 0;
@@ -1252,14 +1311,23 @@ ID      UID     STATE      NAME         BUF (#) KB   DUR (s)   #DS  STARTED
       int h = sec / 3600;
       int m = (sec - (h * 3600)) / 60;
       int s = (sec - h * 3600 - m * 60);
-      printf("%-7" PRIu64
-             " %-7d %-10s %-12s (%d) %-8u %-9u %-4u %02d:%02d:%02d\n",
+      printf("%-7" PRIu64 " %-7d %-10s (%d) %-8u %-9u %-4u %02d:%02d:%02d %s\n",
              sess.id(), sess.consumer_uid(), sess.state().c_str(),
-             sess.unique_session_name().c_str(), sess.buffer_size_kb_size(),
-             buf_tot_kb, sess.duration_ms() / 1000, sess.num_data_sources(), h,
-             m, s);
+             sess.buffer_size_kb_size(), buf_tot_kb, sess.duration_ms() / 1000,
+             sess.num_data_sources(), h, m, s,
+             sess.unique_session_name().c_str());
     }  // for tracing_sessions()
-  }    // if (supports_tracing_sessions)
+
+    int sessions_listed = static_cast<int>(svc_state.tracing_sessions().size());
+    if (sessions_listed != svc_state.num_sessions() &&
+        base::GetCurrentUserId() != 0) {
+      printf(
+          "\n"
+          "NOTE: Some tracing sessions are not reported in the list above.\n"
+          "This is likely because they are owned by a different UID.\n"
+          "If you want to list all session, run again this command as root.\n");
+    }
+  }  // if (supports_tracing_sessions)
 }
 
 void PerfettoCmd::OnObservableEvents(
