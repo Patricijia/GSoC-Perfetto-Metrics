@@ -226,7 +226,12 @@ def main():
     if api_level < 24:
       # adb shell does not redirect stdin. Push the config on a temporary file
       # on the device.
-      mktmp = adb('shell', 'mktemp', '--tmpdir', '/data/local/tmp', stdout=subprocess.PIPE)
+      mktmp = adb(
+          'shell',
+          'mktemp',
+          '--tmpdir',
+          '/data/local/tmp',
+          stdout=subprocess.PIPE)
       on_device_config = mktmp.communicate()[0].decode().strip().strip()
       if mktmp.returncode != 0:
         prt('Failed to create config on device', ANSI.RED)
@@ -399,7 +404,7 @@ def check_hash(file_name, sha_value):
 
 
 # BEGIN_SECTION_GENERATED_BY(roll-prebuilts)
-# Revision: v23.0
+# Revision: v25.0
 PERFETTO_PREBUILT_MANIFEST = [{
     'tool':
         'tracebox',
@@ -408,11 +413,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'tracebox',
     'file_size':
-        1038732,
+        1067004,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/android-arm/tracebox',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/android-arm/tracebox',
     'sha256':
-        'b37507c28e8eade93fa9f0da86d6b9779f69aadea9d7e33cd3b85866c7b755fc'
+        '6fff40fc02d154b187187fe70069cc93bde00d3be5b3582ba6120b0cfa83d379'
 }, {
     'tool':
         'tracebox',
@@ -421,11 +426,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'tracebox',
     'file_size':
-        1572032,
+        1620704,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/android-arm64/tracebox',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/android-arm64/tracebox',
     'sha256':
-        '83306c567da4f1b3eb910a0407abf88fcc099d22a191ceb096837381b2ebff79'
+        'd482c86eccd7dc0ff4f57bd5d841d90e97ca5e31b881fcea442d4ad03ecfd4f4'
 }, {
     'tool':
         'tracebox',
@@ -434,11 +439,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'tracebox',
     'file_size':
-        1595748,
+        1644500,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/android-x86/tracebox',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/android-x86/tracebox',
     'sha256':
-        '527c2ff54350fe73197b5164e6f7ed21f3d10c38a667e57781222d679dca4707'
+        '48de1d10959b6130d2d6d68ae3ba0d8bb3f3aa6fe526d77ea9abad058a631d8f'
 }, {
     'tool':
         'tracebox',
@@ -447,11 +452,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'tracebox',
     'file_size':
-        1821888,
+        1870560,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/android-x64/tracebox',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/android-x64/tracebox',
     'sha256':
-        '99cfbb37e7c3ae4ea70fc51811601c409fcd81589d4311a4b805a67f4760203b'
+        '333c17912a143300ca6afa3b27d93497821615028e612e5d6132889427c10599'
 }]
 
 
