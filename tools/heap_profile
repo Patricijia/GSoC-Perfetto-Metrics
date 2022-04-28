@@ -576,7 +576,7 @@ def main(argv):
 
 
 # BEGIN_SECTION_GENERATED_BY(roll-prebuilts)
-# Revision: v23.0
+# Revision: v25.0
 PERFETTO_PREBUILT_MANIFEST = [{
     'tool':
         'trace_to_text',
@@ -585,14 +585,30 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'trace_to_text',
     'file_size':
-        6939864,
+        6525752,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/mac-amd64/trace_to_text',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/mac-amd64/trace_to_text',
     'sha256':
-        '1626880d1fbec8efc9702583b6c22d617079a08226df414d65888a6b3c7572c8',
+        '64ccf6bac87825145691c6533412e514891f82300d68ff7ce69e8d2ca69aaf62',
     'platform':
         'darwin',
     'machine': ['x86_64']
+}, {
+    'tool':
+        'trace_to_text',
+    'arch':
+        'mac-arm64',
+    'file_name':
+        'trace_to_text',
+    'file_size':
+        5661424,
+    'url':
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/mac-arm64/trace_to_text',
+    'sha256':
+        'fbb6d256c96cdc296f2faec2965d16a1527c4900e66a33aca979ff1c336a9f2f',
+    'platform':
+        'darwin',
+    'machine': ['arm64']
 }, {
     'tool':
         'trace_to_text',
@@ -601,11 +617,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'trace_to_text.exe',
     'file_size':
-        6658560,
+        5925888,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/windows-amd64/trace_to_text.exe',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/windows-amd64/trace_to_text.exe',
     'sha256':
-        '14334fc93ecb0498201bf2ad72ebe69938c43cb6641cf94cfd7ad646603039ed',
+        '29e50ec4d8e28c7c322ba13273afcce80c63fe7d9f182b83af0e2077b4d2b952',
     'platform':
         'win32',
     'machine': ['amd64']
@@ -617,11 +633,11 @@ PERFETTO_PREBUILT_MANIFEST = [{
     'file_name':
         'trace_to_text',
     'file_size':
-        7513024,
+        6939560,
     'url':
-        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v23.0/linux-amd64/trace_to_text',
+        'https://commondatastorage.googleapis.com/perfetto-luci-artifacts/v25.0/linux-amd64/trace_to_text',
     'sha256':
-        'e19163f152717d9922e1926489b64c50b30ea772ebb0f21f6abb6e8cd25615b3',
+        '109f4ff3bbd47633b0c08a338f1230e69d529ddf1584656ed45d8a59acaaabeb',
     'platform':
         'linux',
     'machine': ['x86_64']
