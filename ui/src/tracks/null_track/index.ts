@@ -1,4 +1,4 @@
-// Copyright (C) 2018 The Android Open Source Project
+// Copyright (C) 2022 The Android Open Source Project
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -12,18 +12,26 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {TrackData} from '../../common/track_data';
+import {NewTrackArgs, Track} from '../../frontend/track';
+import {trackRegistry} from '../../frontend/track_registry';
 
-export const CPU_SLICE_TRACK_KIND = 'CpuSliceTrack';
 
-export interface Data extends TrackData {
-  // Slices are stored in a columnar fashion. All fields have the same length.
-  ids: Float64Array;
-  starts: Float64Array;
-  ends: Float64Array;
-  utids: Uint32Array;
-  isIncomplete: Uint8Array;
-  lastRowId: number;
+export class NullTrack extends Track {
+  static readonly kind = 'NullTrack';
+  constructor(args: NewTrackArgs) {
+    super(args);
+    this.frontendOnly = true;
+  }
+
+  static create(args: NewTrackArgs): NullTrack {
+    return new NullTrack(args);
+  }
+
+  getHeight(): number {
+    return 30;
+  }
+
+  renderCanvas(_: CanvasRenderingContext2D): void {}
 }
 
-export interface Config { cpu: number; }
+trackRegistry.register(NullTrack);
