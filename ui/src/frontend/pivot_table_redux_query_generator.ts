@@ -1,8 +1,29 @@
-import {Area, PivotTableReduxQuery} from '../common/state';
+/*
+ * Copyright (C) 2022 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+import {
+  Area,
+  PivotTableReduxQuery,
+  PivotTableReduxState
+} from '../common/state';
 import {toNs} from '../common/time';
 import {
   getSelectedTrackIds
 } from '../controller/aggregation/slice_aggregation_controller';
+import {globals} from './globals';
 
 export interface Table {
   name: string;
@@ -47,37 +68,6 @@ export const tables: Table[] = [
 
 // Pair of table name and column name.
 export type TableColumn = [string, string];
-
-// ES6 Set does not allow to reasonably store compound objects; this class
-// rectifies the problem by providing a domain-specific set of pairs of strings.
-export class ColumnSet {
-  // Should've been Set<TableColumn>, but JavaScript Set does not support custom
-  // hashing/equality predicates, so TableColumn is keyed by a string generated
-  // by columnKey method.
-  backingMap = new Map<string, TableColumn>();
-
-  private static columnKey(column: TableColumn): string {
-    // None of table and column names used in Perfetto tables contain periods,
-    // so this function should not lead to collisions.
-    return `${column[0]}.${column[1]}`;
-  }
-
-  has(column: TableColumn): boolean {
-    return this.backingMap.has(ColumnSet.columnKey(column));
-  }
-
-  add(column: TableColumn) {
-    this.backingMap.set(ColumnSet.columnKey(column), column);
-  }
-
-  delete(column: TableColumn) {
-    this.backingMap.delete(ColumnSet.columnKey(column));
-  }
-
-  values(): Iterable<[string, string]> {
-    return this.backingMap.values();
-  }
-}
 
 // Exception thrown by query generator in case incoming parameters are not
 // suitable in order to build a correct query; these are caught by the UI and
@@ -124,10 +114,11 @@ function generateInnerQuery(
   `;
 }
 
-function computeSliceTableAggregations(selectedAggregations: ColumnSet):
+function computeSliceTableAggregations(
+    selectedAggregations: Map<string, TableColumn>):
     {tableName: string, flatAggregations: string[]} {
   let hasThreadSliceColumn = false;
-  const allColumns = [];
+  const allColumns: string[] = [];
   for (const [table, column] of selectedAggregations.values()) {
     if (table === 'thread_slice') {
       hasThreadSliceColumn = true;
@@ -153,9 +144,22 @@ export function aggregationIndex(
       (pivotColumns - depth);
 }
 
+export function generateQueryFromState(
+    state: PivotTableReduxState,
+    ): PivotTableReduxQuery {
+  if (state.selectionArea === null) {
+    throw new QueryGeneratorError('Should not be called without area');
+  }
+  return generateQuery(
+      state.selectedPivotsMap,
+      state.selectedAggregations,
+      globals.state.areas[state.selectionArea.areaId],
+      state.constrainToArea);
+}
+
 export function generateQuery(
-    selectedPivots: ColumnSet,
-    selectedAggregations: ColumnSet,
+    selectedPivots: Map<string, TableColumn>,
+    selectedAggregations: Map<string, TableColumn>,
     area: Area,
     constrainToArea: boolean): PivotTableReduxQuery {
   const sliceTableAggregations =

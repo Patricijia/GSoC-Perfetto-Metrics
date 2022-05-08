@@ -1,10 +1,26 @@
-import * as m from 'mithril';
+/*
+ * Copyright (C) 2022 The Android Open Source Project
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
 
+import * as m from 'mithril';
 import {sqliteString} from '../base/string_utils';
-import {Actions} from '../common/actions';
+import {Actions, DeferredAction} from '../common/actions';
 import {ColumnType} from '../common/query_result';
 import {
   Area,
+  PivotTableReduxAreaState,
   PivotTableReduxQuery,
   PivotTableReduxResult
 } from '../common/state';
@@ -15,7 +31,6 @@ import {Panel} from './panel';
 import {
   aggregationIndex,
   areaFilter,
-  ColumnSet,
   generateQuery,
   QueryGeneratorError,
   sliceAggregationColumns,
@@ -25,14 +40,28 @@ import {
   threadSliceAggregationColumns
 } from './pivot_table_redux_query_generator';
 
-interface ColumnSetCheckboxAttrs {
-  set: ColumnSet;
-  setKey: TableColumn;
-}
-
 interface PathItem {
   tree: PivotTree;
   nextKey: ColumnType;
+}
+
+// Used to convert TableColumn to a string in order to store it in a Map, as
+// ES6 does not support compound Set/Map keys.
+export function columnKey(tableColumn: TableColumn): string {
+  return `${tableColumn[0]}.${tableColumn[1]}`;
+}
+
+// Arguments to an action to toggle a table column in a particular part of
+// application's state.
+interface ColumnSetArgs {
+  column: TableColumn;
+  selected: boolean;
+}
+
+interface ColumnSetCheckboxAttrs {
+  set: (args: ColumnSetArgs) => DeferredAction<ColumnSetArgs>;
+  get: Map<string, TableColumn>;
+  setKey: TableColumn;
 }
 
 // Helper component that controls whether a particular key is present in a
@@ -42,20 +71,18 @@ class ColumnSetCheckbox implements m.ClassComponent<ColumnSetCheckboxAttrs> {
     return m('input[type=checkbox]', {
       onclick: (e: InputEvent) => {
         const target = e.target as HTMLInputElement;
-        if (target.checked) {
-          attrs.set.add(attrs.setKey);
-        } else {
-          attrs.set.delete(attrs.setKey);
-        }
+
+        globals.dispatch(
+            attrs.set({column: attrs.setKey, selected: target.checked}));
         globals.rafScheduler.scheduleFullRedraw();
       },
-      checked: attrs.set.has(attrs.setKey)
+      checked: attrs.get.has(columnKey(attrs.setKey))
     });
   }
 }
 
 interface PivotTableReduxAttrs {
-  selectionArea: Area;
+  selectionArea: PivotTableReduxAreaState;
 }
 
 interface DrillFilter {
@@ -74,10 +101,18 @@ function renderDrillFilter(filter: DrillFilter): string {
 }
 
 export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
-  selectedPivotsMap = new ColumnSet();
-  selectedAggregations = new ColumnSet();
-  constrainToArea = true;
-  editMode = true;
+  get selectedPivotsMap() {
+    return globals.state.nonSerializableState.pivotTableRedux.selectedPivotsMap;
+  }
+
+  get selectedAggregations() {
+    return globals.state.nonSerializableState.pivotTableRedux
+        .selectedAggregations;
+  }
+
+  get constrainToArea() {
+    return globals.state.nonSerializableState.pivotTableRedux.constrainToArea;
+  }
 
   renderCanvas(): void {}
 
@@ -85,25 +120,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
     return generateQuery(
         this.selectedPivotsMap,
         this.selectedAggregations,
-        attrs.selectionArea,
+        globals.state.areas[attrs.selectionArea.areaId],
         this.constrainToArea);
-  }
-
-  runQuery(attrs: PivotTableReduxAttrs) {
-    try {
-      const query = this.generateQuery(attrs);
-      const lastPivotTableState = globals.state.pivotTableRedux;
-      globals.dispatch(Actions.setPivotStateReduxState({
-        pivotTableState: {
-          query,
-          queryId: lastPivotTableState.queryId + 1,
-          selectionArea: lastPivotTableState.selectionArea,
-          queryResult: null
-        }
-      }));
-    } catch (e) {
-      console.log(e);
-    }
   }
 
   renderTablePivotColumns(t: Table) {
@@ -115,7 +133,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
               col =>
                   m('li',
                     m(ColumnSetCheckbox, {
-                      set: this.selectedPivotsMap,
+                      get: this.selectedPivotsMap,
+                      set: Actions.setPivotTablePivotSelected,
                       setKey: [t.name, col],
                     }),
                     col))));
@@ -127,7 +146,7 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
         m('button.mode-button',
           {
             onclick: () => {
-              this.editMode = true;
+              globals.dispatch(Actions.setPivotTableEditMode({editMode: true}));
               globals.rafScheduler.scheduleFullRedraw();
             }
           },
@@ -154,7 +173,6 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
               // TODO(ddrone): the UI of running query as if it was a canned or
               // custom query is a temporary one, replace with a proper UI.
               globals.dispatch(Actions.executeQuery({
-                engineId: '0',
                 queryId: 'command',
                 query,
               }));
@@ -265,8 +283,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
   }
 
   renderResultsTable(attrs: PivotTableReduxAttrs) {
-    const state = globals.state.pivotTableRedux;
-    if (state.query !== null || state.queryResult === null) {
+    const state = globals.state.nonSerializableState.pivotTableRedux;
+    if (state.queryResult === null) {
       return m('div', 'Loading...');
     }
 
@@ -279,7 +297,11 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
     }
 
     this.renderTree(
-        attrs.selectionArea, [], tree, state.queryResult, renderedRows);
+        globals.state.areas[attrs.selectionArea.areaId],
+        [],
+        tree,
+        state.queryResult,
+        renderedRows);
 
     const allColumns = state.queryResult.metadata.pivotColumns.concat(
         state.queryResult.metadata.aggregationColumns);
@@ -291,16 +313,15 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
 
   renderQuery(attrs: PivotTableReduxAttrs): m.Vnode {
     // Prepare a button to switch to results mode.
-    let innerElement =
-        m('button.mode-button',
-          {
-            onclick: () => {
-              this.editMode = false;
-              this.runQuery(attrs);
-              globals.rafScheduler.scheduleFullRedraw();
-            }
-          },
-          'Execute');
+    let innerElement = m(
+        'button.mode-button',
+        {
+          onclick: () => {
+            globals.dispatch(Actions.setPivotTableEditMode({editMode: false}));
+            globals.rafScheduler.scheduleFullRedraw();
+          }
+        },
+        'Execute');
     try {
       this.generateQuery(attrs);
     } catch (e) {
@@ -321,7 +342,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
             checked: this.constrainToArea,
             onclick: (e: InputEvent) => {
               const checkbox = e.target as HTMLInputElement;
-              this.constrainToArea = checkbox.checked;
+              globals.dispatch(Actions.setPivotTableReduxConstrainToArea(
+                  {constrain: checkbox.checked}));
             }
           }),
           m('label',
@@ -333,8 +355,9 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
   }
 
   view({attrs}: m.Vnode<PivotTableReduxAttrs>) {
-    return this.editMode ? this.renderEditView(attrs) :
-                           this.renderResultsView(attrs);
+    return globals.state.nonSerializableState.pivotTableRedux.editMode ?
+        this.renderEditView(attrs) :
+        this.renderResultsView(attrs);
   }
 
   renderEditView(attrs: PivotTableReduxAttrs) {
@@ -353,7 +376,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
                 t =>
                     m('li',
                       m(ColumnSetCheckbox, {
-                        set: this.selectedAggregations,
+                        get: this.selectedAggregations,
+                        set: Actions.setPivotTableAggregationSelected,
                         setKey: ['slice', t],
                       }),
                       t)),
@@ -361,7 +385,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
                 t =>
                     m('li',
                       m(ColumnSetCheckbox, {
-                        set: this.selectedAggregations,
+                        get: this.selectedAggregations,
+                        set: Actions.setPivotTableAggregationSelected,
                         setKey: ['thread_slice', t],
                       }),
                       `thread_slice.${t}`)))),

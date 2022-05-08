@@ -24,7 +24,7 @@ import {createEmptyState} from '../common/empty_state';
 import {Engine} from '../common/engine';
 import {MetricResult} from '../common/metric_data';
 import {CurrentSearchResults, SearchSummary} from '../common/search_data';
-import {CallsiteInfo, State} from '../common/state';
+import {CallsiteInfo, EngineConfig, State} from '../common/state';
 import {fromNs, toNs} from '../common/time';
 
 import {Analytics, initAnalytics} from './analytics';
@@ -44,10 +44,10 @@ type Description = Map<string, string>;
 export interface SliceDetails {
   ts?: number;
   dur?: number;
-  thread_ts?: number;
-  thread_dur?: number;
+  threadTs?: number;
+  threadDur?: number;
   priority?: number;
-  endState?: string;
+  endState?: string|null;
   cpu?: number;
   id?: number;
   threadStateId?: number;
@@ -57,6 +57,13 @@ export interface SliceDetails {
   wakerCpu?: number;
   category?: string;
   name?: string;
+  tid?: number;
+  threadName?: string;
+  pid?: number;
+  processName?: string;
+  uid?: number;
+  packageName?: string;
+  versionCode?: number;
   args?: Args;
   argsTree?: ArgsTree;
   description?: Description;
@@ -70,6 +77,12 @@ export interface FlowPoint {
   sliceId: number;
   sliceStartTs: number;
   sliceEndTs: number;
+  // Thread and process info. Only set in sliceSelected not in areaSelected as
+  // the latter doesn't display per-flow info and it'd be a waste to join
+  // additional tables for undisplayed info in that case. Nothing precludes
+  // adding this in a future iteration however.
+  threadName: string;
+  processName: string;
 
   depth: number;
 }
@@ -79,6 +92,7 @@ export interface Flow {
 
   begin: FlowPoint;
   end: FlowPoint;
+  dur: number;
 
   category?: string;
   name?: string;
@@ -116,6 +130,9 @@ export interface FlamegraphDetails {
   // isInAreaSelection is true if a flamegraph is part of the current area
   // selection.
   isInAreaSelection?: boolean;
+  // When heap_graph_non_finalized_graph has a count >0, we mark the graph
+  // as incomplete.
+  graphIncomplete?: boolean;
 }
 
 export interface CpuProfileDetails {
@@ -495,6 +512,13 @@ class Globals {
         log2: ${Math.log2(toNs(resolution))}`);
     }
     return resolution;
+  }
+
+  getCurrentEngine(): EngineConfig|undefined {
+    if (!this.state.currentEngineId) {
+      return undefined;
+    }
+    return this.state.engines[this.state.currentEngineId];
   }
 
   makeSelection(action: DeferredAction<{}>, tabToOpen = 'current_selection') {

@@ -330,6 +330,10 @@ the same table in the same partition *cannot* overlap. For performance
 reasons, span join does not attempt to detect and error out in this situation;
 instead, incorrect rows will silently be produced.
 
+WARNING: Partitions mush be integers. Importantly, string partitions are *not*
+supported; note that strings *can* be converted to integers by
+applying the `HASH` function to the string column.
+
 Left and outer span joins are also supported; both function analogously to
 the left and outer joins from SQL.
 ```sql
@@ -600,7 +604,7 @@ NOTE: The TraceProcessor can be initialized in a combination of ways including:
 
 The `trace_processor.api` module contains the `TraceProcessor` class which provides various
 functions that can be called on the loaded trace. For more information on how to use
-these functions, see this [`example`](/src/trace_processor/python/example.py).
+these functions, see this [`example`](/python/example.py).
 
 #### Query
 The query() function takes an SQL query as input and returns an iterator through the rows

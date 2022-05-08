@@ -22,7 +22,6 @@
 #include "perfetto/base/logging.h"
 #include "perfetto/ext/base/optional.h"
 #include "perfetto/trace_processor/basic_types.h"
-#include "src/trace_processor/containers/null_term_string_view.h"
 #include "src/trace_processor/containers/nullable_vector.h"
 #include "src/trace_processor/containers/row_map.h"
 #include "src/trace_processor/containers/string_pool.h"
@@ -55,7 +54,6 @@ enum class FilterOp {
   kLe,
   kIsNull,
   kIsNotNull,
-  kGlob,
 };
 
 // Represents a constraint on a column.
@@ -175,12 +173,13 @@ class Column {
                storage,
                nullptr) {}
 
-  // Create a Column has the same name and is backed by the same data as
-  // |column| but is associated to a different table.
+  // Create a Column backed by the same data as |column| but is associated to a
+  // different table and, optionally, having a different name.
   Column(const Column& column,
          Table* table,
          uint32_t col_idx_in_table,
-         uint32_t row_map_idx);
+         uint32_t row_map_idx,
+         const char* name = nullptr);
 
   // Columns are movable but not copyable.
   Column(Column&&) noexcept = default;
@@ -348,6 +347,9 @@ class Column {
   // Returns true if this column is a dense column.
   bool IsDense() const { return (flags_ & Flag::kDense) != 0; }
 
+  // Returns true if this column is a hidden column.
+  bool IsHidden() const { return (flags_ & Flag::kHidden) != 0; }
+
   // Returns the backing RowMap for this Column.
   // This function is defined out of line because of a circular dependency
   // between |Table| and |Column|.
@@ -392,10 +394,6 @@ class Column {
   }
   Constraint is_null() const {
     return Constraint{col_idx_in_table_, FilterOp::kIsNull, SqlValue()};
-  }
-  Constraint glob(const char* value) const {
-    return Constraint{col_idx_in_table_, FilterOp::kGlob,
-                      SqlValue::String(value)};
   }
 
   // Returns an Order for each Order type for this Column.
@@ -539,10 +537,9 @@ class Column {
       case FilterOp::kNe:
       case FilterOp::kIsNull:
       case FilterOp::kIsNotNull:
-      case FilterOp::kGlob:
-        return false;
+        break;
     }
-    PERFETTO_FATAL("For GCC");
+    return false;
   }
 
   // Slow path filter method which will perform a full table scan.

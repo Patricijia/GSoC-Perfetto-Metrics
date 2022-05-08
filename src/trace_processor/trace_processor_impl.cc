@@ -24,6 +24,7 @@
 #include "perfetto/base/time.h"
 #include "perfetto/ext/base/string_splitter.h"
 #include "perfetto/ext/base/string_utils.h"
+#include "perfetto/ext/trace_processor/demangle.h"
 #include "src/trace_processor/dynamic/ancestor_generator.h"
 #include "src/trace_processor/dynamic/connected_flow_generator.h"
 #include "src/trace_processor/dynamic/descendant_generator.h"
@@ -47,6 +48,7 @@
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/iterator_impl.h"
 #include "src/trace_processor/sqlite/create_function.h"
+#include "src/trace_processor/sqlite/create_view_function.h"
 #include "src/trace_processor/sqlite/register_function.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
@@ -71,9 +73,6 @@
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql/amalgamated_sql_metrics.h"
 
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-#include <cxxabi.h>
-#endif
 
 // In Android and Chromium tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -110,11 +109,6 @@ void InitializeSqlite(sqlite3* db) {
   if (error) {
     PERFETTO_FATAL("Error setting pragma temp_store: %s", error);
   }
-  sqlite3_exec(db, "PRAGMA case_sensitive_like = 1", 0, 0, &error);
-  if (error) {
-    PERFETTO_FATAL("Error setting pragma case_sensitive_like: %s", error);
-  }
-
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -195,6 +189,13 @@ void CreateBuiltinTables(sqlite3* db) {
   BuildBoundsTable(db, std::make_pair(0, 0));
 }
 
+void MaybeRegisterError(char* error) {
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+}
+
 void CreateBuiltinViews(sqlite3* db) {
   char* error = nullptr;
   sqlite3_exec(db,
@@ -204,10 +205,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "  id AS counter_id "
                "FROM counter_track",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW counter_values AS "
@@ -216,10 +214,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "  track_id as counter_id "
                "FROM counter",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW counters AS "
@@ -229,10 +224,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "ON v.track_id = t.id "
                "ORDER BY ts;",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW slice AS "
@@ -242,23 +234,16 @@ void CreateBuiltinViews(sqlite3* db) {
                "  id AS slice_id "
                "FROM internal_slice;",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
-               "CREATE VIEW instants AS "
+               "CREATE VIEW instant AS "
                "SELECT "
-               "*, "
-               "0.0 as value "
-               "FROM instant;",
+               "ts, track_id, name, arg_set_id "
+               "FROM slice "
+               "WHERE dur = 0;",
                0, 0, &error);
-
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW sched AS "
@@ -267,11 +252,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "ts + dur as ts_end "
                "FROM sched_slice;",
                0, 0, &error);
-
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   // Legacy view for "slice" table with a deprecated table name.
   // TODO(eseckler): Remove this view when all users have switched to "slice".
@@ -279,10 +260,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "CREATE VIEW slices AS "
                "SELECT * FROM slice;",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW thread AS "
@@ -291,10 +269,7 @@ void CreateBuiltinViews(sqlite3* db) {
                "* "
                "FROM internal_thread;",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW process AS "
@@ -303,10 +278,27 @@ void CreateBuiltinViews(sqlite3* db) {
                "* "
                "FROM internal_process;",
                0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+  MaybeRegisterError(error);
+
+  // This should be kept in sync with GlobalArgsTracker::AddArgSet.
+  sqlite3_exec(db,
+               "CREATE VIEW args AS "
+               "SELECT "
+               "*, "
+               "CASE value_type "
+               "  WHEN 'int' THEN CAST(int_value AS text) "
+               "  WHEN 'uint' THEN CAST(int_value AS text) "
+               "  WHEN 'string' THEN string_value "
+               "  WHEN 'real' THEN CAST(real_value AS text) "
+               "  WHEN 'pointer' THEN printf('0x%x', int_value) "
+               "  WHEN 'bool' THEN ( "
+               "    CASE WHEN int_value <> 0 THEN 'true' "
+               "    ELSE 'false' END) "
+               "  WHEN 'json' THEN string_value "
+               "ELSE NULL END AS display_value "
+               "FROM internal_args;",
+               0, 0, &error);
+  MaybeRegisterError(error);
 }
 
 struct ExportJson : public SqlFunction {
@@ -399,20 +391,16 @@ base::Status Demangle::Run(void*,
   if (sqlite3_value_type(value) != SQLITE_TEXT)
     return base::ErrStatus("Unsupported type of arg passed to DEMANGLE");
 
-  const char* ptr = reinterpret_cast<const char*>(sqlite3_value_text(value));
-#if !PERFETTO_BUILDFLAG(PERFETTO_OS_WIN)
-  int ignored = 0;
-  // This memory was allocated by malloc and will be passed to SQLite to free.
-  char* demangled_name = abi::__cxa_demangle(ptr, nullptr, nullptr, &ignored);
-  if (!demangled_name)
+  const char* mangled =
+      reinterpret_cast<const char*>(sqlite3_value_text(value));
+
+  std::unique_ptr<char, base::FreeDeleter> demangled =
+      demangle::Demangle(mangled);
+  if (!demangled)
     return base::OkStatus();
 
   destructors.string_destructor = free;
-  out = SqlValue::String(demangled_name);
-#else
-  destructors.string_destructor = sqlite_utils::kSqliteTransient;
-  out = SqlValue::String(ptr);
-#endif
+  out = SqlValue::String(demangled.release());
   return base::OkStatus();
 }
 
@@ -509,6 +497,7 @@ void ValueAtMaxTsStep(sqlite3_context* ctx, int, sqlite3_value** argv) {
       return;
     }
 
+    fn_ctx->max_ts = std::numeric_limits<int64_t>::min();
     fn_ctx->initialized = true;
   }
 
@@ -527,7 +516,7 @@ void ValueAtMaxTsStep(sqlite3_context* ctx, int, sqlite3_value** argv) {
 #endif
 
   int64_t ts_int = sqlite3_value_int64(ts);
-  if (PERFETTO_LIKELY(fn_ctx->max_ts < ts_int)) {
+  if (PERFETTO_LIKELY(fn_ctx->max_ts <= ts_int)) {
     fn_ctx->max_ts = ts_int;
 
     if (fn_ctx->value_type == SQLITE_INTEGER) {
@@ -877,6 +866,10 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
       db, "CREATE_FUNCTION", 3,
       std::unique_ptr<CreateFunction::Context>(
           new CreateFunction::Context{db_.get(), &create_function_state_}));
+  RegisterFunction<CreateViewFunction>(
+      db, "CREATE_VIEW_FUNCTION", 3,
+      std::unique_ptr<CreateViewFunction::Context>(
+          new CreateViewFunction::Context{db_.get()}));
 
   // Old style function registration.
   // TODO(lalitm): migrate this over to using RegisterFunction once aggregate
@@ -897,6 +890,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   // Operator tables.
   SpanJoinOperatorTable::RegisterTable(*db_, storage);
   WindowOperatorTable::RegisterTable(*db_, storage);
+  CreateViewFunction::RegisterTable(*db_, &create_view_function_state_);
 
   // New style tables but with some custom logic.
   SqliteRawTable::RegisterTable(*db_, query_cache_.get(), &context_);
@@ -952,7 +946,6 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->flow_table());
   RegisterDbTable(storage->thread_slice_table());
   RegisterDbTable(storage->sched_slice_table());
-  RegisterDbTable(storage->instant_table());
   RegisterDbTable(storage->gpu_slice_table());
 
   RegisterDbTable(storage->track_table());
@@ -1030,7 +1023,6 @@ void TraceProcessorImpl::NotifyEndOfFile() {
 
   TraceProcessorStorageImpl::NotifyEndOfFile();
 
-  SchedEventTracker::GetOrCreate(&context_)->FlushPendingEvents();
   context_.metadata_tracker->SetMetadata(
       metadata::trace_size_bytes,
       Variadic::Integer(static_cast<int64_t>(bytes_parsed_)));
@@ -1189,15 +1181,16 @@ base::Status TraceProcessorImpl::ExtendMetricsProto(
   if (!status.ok())
     return status;
 
-  for (const auto& desc : pool_.descriptors()) {
+  for (uint32_t i = 0; i < pool_.descriptors().size(); ++i) {
     // Convert the full name (e.g. .perfetto.protos.TraceMetrics.SubMetric)
     // into a function name of the form (TraceMetrics_SubMetric).
+    const auto& desc = pool_.descriptors()[i];
     auto fn_name = desc.full_name().substr(desc.package_name().size() + 1);
     std::replace(fn_name.begin(), fn_name.end(), '.', '_');
     RegisterFunction<metrics::BuildProto>(
         db_.get(), fn_name.c_str(), -1,
         std::unique_ptr<metrics::BuildProto::Context>(
-            new metrics::BuildProto::Context{this, &pool_, &desc}));
+            new metrics::BuildProto::Context{this, &pool_, i}));
   }
   return base::OkStatus();
 }

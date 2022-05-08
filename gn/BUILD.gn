@@ -80,7 +80,6 @@ action("gen_buildflags") {
     "PERFETTO_VERSION_GEN=$enable_perfetto_version_gen",
     "PERFETTO_TP_PERCENTILE=$enable_perfetto_trace_processor_percentile",
     "PERFETTO_TP_LINENOISE=$enable_perfetto_trace_processor_linenoise",
-    "PERFETTO_TP_SQLITE=$enable_perfetto_trace_processor_sqlite",
     "PERFETTO_TP_HTTPD=$enable_perfetto_trace_processor_httpd",
     "PERFETTO_TP_JSON=$enable_perfetto_trace_processor_json",
     "PERFETTO_LOCAL_SYMBOLIZER=$perfetto_local_symbolizer",
@@ -89,6 +88,7 @@ action("gen_buildflags") {
     "PERFETTO_HEAPPROFD=$enable_perfetto_heapprofd",
     "PERFETTO_STDERR_CRASH_DUMP=$enable_perfetto_stderr_crash_dump",
     "PERFETTO_X64_CPU_OPT=$enable_perfetto_x64_cpu_opt",
+    "PERFETTO_LLVM_DEMANGLE=$enable_perfetto_llvm_demangle",
   ]
 
   rel_out_path = rebase_path(gen_header_path, "$root_build_dir")
@@ -393,6 +393,12 @@ if (enable_perfetto_zlib) {
       public_configs = [ "//third_party/zlib:zlib_config" ]
       public_deps = [ "//third_party/zlib" ]
     }
+  }
+}
+
+if (enable_perfetto_llvm_demangle) {
+  group("llvm_demangle") {
+    public_deps = [ "//buildtools:llvm_demangle" ]
   }
 }
 

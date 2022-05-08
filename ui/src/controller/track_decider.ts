@@ -50,6 +50,13 @@ import {
 import {PROCESS_SUMMARY_TRACK} from '../tracks/process_summary/common';
 import {THREAD_STATE_TRACK_KIND} from '../tracks/thread_state/common';
 
+const NULL_TRACKS_FLAG = featureFlags.register({
+  id: 'nullTracks',
+  name: 'Null tracks',
+  description: 'Display some empty tracks.',
+  defaultValue: false,
+});
+
 const TRACKS_V2_FLAG = featureFlags.register({
   id: 'tracksV2',
   name: 'Tracks V2',
@@ -137,6 +144,26 @@ class TrackDecider {
       return `Unnamed ${kind}`;
     }
     return 'Unknown';
+  }
+
+  addNullTracks(): void {
+    this.tracksToAdd.push({
+      engineId: this.engineId,
+      kind: 'NullTrack',
+      trackKindPriority: TrackKindPriority.ORDINARY,
+      name: `Null track foo`,
+      trackGroup: SCROLLING_TRACK_GROUP,
+      config: {},
+    });
+
+    this.tracksToAdd.push({
+      engineId: this.engineId,
+      kind: 'NullTrack',
+      trackKindPriority: TrackKindPriority.ORDINARY,
+      name: `Null track bar`,
+      trackGroup: SCROLLING_TRACK_GROUP,
+      config: {},
+    });
   }
 
   async addCpuSchedulingTracks(): Promise<void> {
@@ -643,7 +670,7 @@ class TrackDecider {
     from thread_counter_track
     join thread using(utid)
     left join process using(upid)
-    where thread_counter_track.name not in ('time_in_state', 'thread_time')
+    where thread_counter_track.name != 'thread_time'
   `);
 
     const it = result.iter({
@@ -1053,6 +1080,7 @@ class TrackDecider {
     //    by upid
     //    or (if upid is null) by utid
     // the groups should be sorted by:
+    //  Chrome-based process rank based on process names (e.g. Browser)
     //  has a heap profile or not
     //  total cpu time *for the whole parent process*
     //  upid
@@ -1067,7 +1095,13 @@ class TrackDecider {
       thread.tid as tid,
       process.name as processName,
       thread.name as threadName,
-      process.arg_set_id as argSetId
+      process.arg_set_id as argSetId,
+      (case process.name
+         when 'Browser' then 3
+         when 'Gpu' then 2
+         when 'Renderer' then 1
+         else 0
+      end) as chromeProcessRank
     from (
       select upid, 0 as utid from process_track
       union
@@ -1095,10 +1129,6 @@ class TrackDecider {
       from sched join thread using(utid)
       group by upid
     ) using(upid)
-    left join (select upid, max(value) as total_cycles
-      from android_thread_time_in_state_event
-      group by upid
-    ) using(upid)
     left join (
       select
         distinct(upid) as upid,
@@ -1113,9 +1143,9 @@ class TrackDecider {
     left join thread using(utid)
     left join process using(upid)
     order by
+      chromeProcessRank desc,
       hasHeapProfiles desc,
       total_dur desc,
-      total_cycles desc,
       the_tracks.upid,
       the_tracks.utid;
   `);
@@ -1198,6 +1228,9 @@ class TrackDecider {
 
   async decideTracks(): Promise<DeferredAction[]> {
     // Add first the global tracks that don't require per-process track groups.
+    if (NULL_TRACKS_FLAG.get()) {
+      await this.addNullTracks();
+    }
     await this.addCpuSchedulingTracks();
     await this.addCpuFreqTracks();
     await this.addGlobalAsyncTracks();
@@ -1240,6 +1273,24 @@ class TrackDecider {
     }
     if (threadName === undefined || threadName === null) {
       return TrackKindPriority.ORDINARY;
+    }
+
+    // Chrome main threads should always come first within their process.
+    if (threadName === 'CrBrowserMain' || threadName === 'CrRendererMain' ||
+        threadName === 'CrGpuMain') {
+      return TrackKindPriority.MAIN_THREAD;
+    }
+
+    // Chrome IO threads should always come immediately after the main thread.
+    if (threadName === 'Chrome_ChildIOThread' ||
+        threadName === 'Chrome_IOThread') {
+      return TrackKindPriority.CHROME_IO_THREAD;
+    }
+
+    // A Chrome process can have only one compositor thread, so we want to put
+    // it next to other named processes.
+    if (threadName === 'Compositor' || threadName === 'VizCompositorThread') {
+      return TrackKindPriority.CHROME_COMPOSITOR;
     }
 
     switch (true) {
