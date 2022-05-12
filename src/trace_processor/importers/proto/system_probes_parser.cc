@@ -40,10 +40,6 @@ namespace perfetto {
 namespace trace_processor {
 
 namespace {
-// kthreadd is the parent process for all kernel threads and always has
-// pid == 2 on Linux and Android.
-const uint32_t kKthreaddPid = 2;
-const char kKthreaddName[] = "kthreadd";
 
 base::Optional<int> VersionStringToSdkVersion(const std::string& version) {
   // TODO(lalitm): remove this when the SDK version polling saturates
@@ -309,40 +305,31 @@ void SystemProbesParser::ParseProcessTree(ConstBytes blob) {
       context_->process_tracker->UpdateNamespacedProcess(pid, std::move(nspid));
     }
 
-    // If the parent pid is kthreadd's pid, even though this pid is of a
-    // "process", we want to treat it as being a child thread of
-    // kthreadd.
-    if (ppid == kKthreaddPid) {
-      context_->process_tracker->SetProcessMetadata(
-          kKthreaddPid, base::nullopt, kKthreaddName, base::StringView());
-      context_->process_tracker->UpdateThread(pid, kKthreaddPid);
-    } else {
-      auto raw_cmdline = proc.cmdline();
-      base::StringView argv0 = raw_cmdline ? *raw_cmdline : base::StringView();
-      // Chrome child process overwrites /proc/self/cmdline and replaces all
-      // '\0' with ' '. This makes argv0 contain the full command line. Extract
-      // the actual argv0 if it's Chrome.
-      static const char kChromeBinary[] = "/chrome ";
-      auto pos = argv0.find(kChromeBinary);
-      if (pos != base::StringView::npos) {
-        argv0 = argv0.substr(0, pos + strlen(kChromeBinary) - 1);
-      }
+    auto raw_cmdline = proc.cmdline();
+    base::StringView argv0 = raw_cmdline ? *raw_cmdline : base::StringView();
+    // Chrome child process overwrites /proc/self/cmdline and replaces all
+    // '\0' with ' '. This makes argv0 contain the full command line. Extract
+    // the actual argv0 if it's Chrome.
+    static const char kChromeBinary[] = "/chrome ";
+    auto pos = argv0.find(kChromeBinary);
+    if (pos != base::StringView::npos) {
+      argv0 = argv0.substr(0, pos + strlen(kChromeBinary) - 1);
+    }
 
-      std::string cmdline_str;
-      for (auto cmdline_it = raw_cmdline; cmdline_it;) {
-        auto cmdline_part = *cmdline_it;
-        cmdline_str.append(cmdline_part.data, cmdline_part.size);
+    std::string cmdline_str;
+    for (auto cmdline_it = raw_cmdline; cmdline_it;) {
+      auto cmdline_part = *cmdline_it;
+      cmdline_str.append(cmdline_part.data, cmdline_part.size);
 
-        if (++cmdline_it)
-          cmdline_str.append(" ");
-      }
-      base::StringView cmdline = base::StringView(cmdline_str);
-      UniquePid upid = context_->process_tracker->SetProcessMetadata(
-          pid, ppid, argv0, cmdline);
-      if (proc.has_uid()) {
-        context_->process_tracker->SetProcessUid(
-            upid, static_cast<uint32_t>(proc.uid()));
-      }
+      if (++cmdline_it)
+        cmdline_str.append(" ");
+    }
+    base::StringView cmdline = base::StringView(cmdline_str);
+    UniquePid upid = context_->process_tracker->SetProcessMetadata(
+        pid, ppid, argv0, cmdline);
+    if (proc.has_uid()) {
+      context_->process_tracker->SetProcessUid(
+          upid, static_cast<uint32_t>(proc.uid()));
     }
   }
 
@@ -518,8 +505,7 @@ void SystemProbesParser::ParseCpuInfo(ConstBytes blob) {
   protos::pbzero::CpuInfo::Decoder packet(blob.data, blob.size);
   uint32_t cluster_id = 0;
   std::vector<uint32_t> last_cpu_freqs;
-  uint32_t cpu_index = 0;
-  for (auto it = packet.cpus(); it; it++, cpu_index++) {
+  for (auto it = packet.cpus(); it; it++) {
     protos::pbzero::CpuInfo::Cpu::Decoder cpu(*it);
     tables::CpuTable::Row cpu_row;
     if (cpu.has_processor()) {
@@ -531,11 +517,11 @@ void SystemProbesParser::ParseCpuInfo(ConstBytes blob) {
     }
 
     // Here we assume that cluster of CPUs are 'next' to each other.
-    if (freqs != last_cpu_freqs) {
-      cluster_id = cpu_index;
+    if (freqs != last_cpu_freqs && !last_cpu_freqs.empty()) {
+      cluster_id++;
     }
     cpu_row.cluster_id = cluster_id;
-    cpu_row.time_in_state_cpu_id = cluster_id;
+
     last_cpu_freqs = freqs;
     tables::CpuTable::Id cpu_row_id =
         context_->storage->mutable_cpu_table()->Insert(cpu_row).id;

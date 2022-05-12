@@ -19,14 +19,13 @@
 
 #include <set>
 
-#include "src/trace_processor/sqlite/db_sqlite_table.h"
+#include "src/trace_processor/dynamic/dynamic_table_generator.h"
 #include "src/trace_processor/storage/trace_storage.h"
 
 namespace perfetto {
 namespace trace_processor {
 
-class ExperimentalSliceLayoutGenerator
-    : public DbSqliteTable::DynamicTableGenerator {
+class ExperimentalSliceLayoutGenerator : public DynamicTableGenerator {
  public:
   static constexpr uint32_t kFilterTrackIdsColumnIndex =
       static_cast<uint32_t>(tables::SliceTable::ColumnIndex::arg_set_id) + 2;
@@ -45,7 +44,9 @@ class ExperimentalSliceLayoutGenerator
                             std::unique_ptr<Table>& table_return) override;
 
  private:
-  Table ComputeLayoutTable(const Table& table, StringPool::Id filter_id);
+  std::unique_ptr<Table> ComputeLayoutTable(
+      std::vector<tables::SliceTable::RowNumber> rows,
+      StringPool::Id filter_id);
   tables::SliceTable::Id InsertSlice(
       std::map<tables::SliceTable::Id, tables::SliceTable::Id>& id_map,
       tables::SliceTable::Id id,
@@ -53,7 +54,7 @@ class ExperimentalSliceLayoutGenerator
 
   // TODO(lalitm): remove this cache and move to having explicitly scoped
   // lifetimes of dynamic tables.
-  std::unordered_map<StringId, Table> layout_table_cache_;
+  std::unordered_map<StringId, std::unique_ptr<Table>> layout_table_cache_;
 
   StringPool* string_pool_;
   const tables::SliceTable* slice_table_;
