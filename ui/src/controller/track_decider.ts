@@ -12,7 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import * as uuidv4 from 'uuid/v4';
+import {v4 as uuidv4} from 'uuid';
 
 import {assertExists} from '../base/logging';
 import {
@@ -1153,7 +1153,9 @@ class TrackDecider {
     //  Chrome-based process rank based on process names (e.g. Browser)
     //  has a heap profile or not
     //  total cpu time *for the whole parent process*
+    //  process name
     //  upid
+    //  thread name
     //  utid
     const result = await this.engine.query(`
     select
@@ -1217,7 +1219,9 @@ class TrackDecider {
       chromeProcessRank desc,
       hasHeapProfiles desc,
       total_dur desc,
+      processName,
       the_tracks.upid,
+      threadName,
       the_tracks.utid;
   `);
 

@@ -1,4 +1,5 @@
-# Copyright (C) 2019 The Android Open Source Project
+#!/bin/bash
+# Copyright (C) 2022 The Android Open Source Project
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
@@ -12,6 +13,13 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-source_set("public") {
-  sources = [ "consumer_api.h" ]
-}
+set -e -u
+ROOT_DIR="$(dirname $(cd -P ${BASH_SOURCE[0]%/*}; pwd))"
+ESLINT_PATH="$ROOT_DIR/ui/node_modules/.bin/eslint"
+
+if [[ ! -x "$ESLINT_PATH" ]]; then
+  echo "eslint not found ($ESLINT_PATH). Run '$ROOT_DIR/tools/install-build-deps --ui'"
+  exit 1
+fi
+
+exec "$ESLINT_PATH" "$@"
