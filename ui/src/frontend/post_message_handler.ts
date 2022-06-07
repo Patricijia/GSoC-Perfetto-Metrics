@@ -124,8 +124,8 @@ export function postMessageHandler(messageEvent: MessageEvent) {
           m('div', `${messageEvent.origin} is trying to open a trace file.`),
           m('div', 'Do you trust the origin and want to proceed?')),
     buttons: [
-      {text: 'NO', primary: true, id: 'pm_reject_trace', action: () => {}},
-      {text: 'YES', primary: false, id: 'pm_open_trace', action: openTrace},
+      {text: 'NO', primary: true},
+      {text: 'YES', primary: false, action: openTrace},
     ],
   });
 }
@@ -133,7 +133,7 @@ export function postMessageHandler(messageEvent: MessageEvent) {
 function sanitizePostedTrace(postedTrace: PostedTrace): PostedTrace {
   const result: PostedTrace = {
     title: sanitizeString(postedTrace.title),
-    buffer: postedTrace.buffer
+    buffer: postedTrace.buffer,
   };
   if (postedTrace.url !== undefined) {
     result.url = sanitizeString(postedTrace.url);
