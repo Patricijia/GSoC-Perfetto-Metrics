@@ -13,7 +13,6 @@
 // limitations under the License.
 
 
-import {assertExists} from '../../base/logging';
 import {base64Encode} from '../../base/string_utils';
 import {RecordConfig} from '../../controller/record_config_types';
 import {
@@ -125,7 +124,7 @@ export function genTraceConfig(
     procThreadAssociationFtrace = true;
     uiCfg.ftrace = true;
     if (targetInfo.targetType === 'ANDROID' &&
-        assertExists(targetInfo.osVersion) >= 'S') {
+        targetInfo.androidApiLevel >= 31) {
       uiCfg.symbolizeKsyms = true;
     }
     ftraceEvents.add('sched/sched_switch');
@@ -431,6 +430,8 @@ export function genTraceConfig(
     traceDs.config = new DataSourceConfig();
     traceDs.config.name = 'org.chromium.trace_event';
     traceDs.config.chromeConfig = new ChromeConfig();
+    traceDs.config.chromeConfig.clientPriority =
+        ChromeConfig.ClientPriority.USER_INITIATED;
     traceDs.config.chromeConfig.traceConfig = traceConfigJson;
     protoCfg.dataSources.push(traceDs);
 
@@ -439,6 +440,8 @@ export function genTraceConfig(
     metadataDs.config = new DataSourceConfig();
     metadataDs.config.name = 'org.chromium.trace_metadata';
     metadataDs.config.chromeConfig = new ChromeConfig();
+    metadataDs.config.chromeConfig.clientPriority =
+        ChromeConfig.ClientPriority.USER_INITIATED;
     metadataDs.config.chromeConfig.traceConfig = traceConfigJson;
     protoCfg.dataSources.push(metadataDs);
 
@@ -447,6 +450,8 @@ export function genTraceConfig(
       memoryDs.config = new DataSourceConfig();
       memoryDs.config.name = 'org.chromium.memory_instrumentation';
       memoryDs.config.chromeConfig = new ChromeConfig();
+      memoryDs.config.chromeConfig.clientPriority =
+          ChromeConfig.ClientPriority.USER_INITIATED;
       memoryDs.config.chromeConfig.traceConfig = traceConfigJson;
       protoCfg.dataSources.push(memoryDs);
 
@@ -454,6 +459,8 @@ export function genTraceConfig(
       HeapProfDs.config = new DataSourceConfig();
       HeapProfDs.config.name = 'org.chromium.native_heap_profiler';
       HeapProfDs.config.chromeConfig = new ChromeConfig();
+      HeapProfDs.config.chromeConfig.clientPriority =
+          ChromeConfig.ClientPriority.USER_INITIATED;
       HeapProfDs.config.chromeConfig.traceConfig = traceConfigJson;
       protoCfg.dataSources.push(HeapProfDs);
     }
@@ -464,6 +471,8 @@ export function genTraceConfig(
       dataSource.config = new DataSourceConfig();
       dataSource.config.name = 'org.chromium.sampler_profiler';
       dataSource.config.chromeConfig = new ChromeConfig();
+      dataSource.config.chromeConfig.clientPriority =
+          ChromeConfig.ClientPriority.USER_INITIATED;
       dataSource.config.chromeConfig.traceConfig = traceConfigJson;
       protoCfg.dataSources.push(dataSource);
     }
@@ -538,7 +547,7 @@ export function genTraceConfig(
 
     let ftraceEventsArray: string[] = [];
     if (targetInfo.targetType === 'ANDROID' &&
-        assertExists(targetInfo.osVersion) === 'P') {
+        targetInfo.androidApiLevel === 28) {
       for (const ftraceEvent of ftraceEvents) {
         // On P, we don't support groups so strip all group names from ftrace
         // events.
@@ -563,7 +572,7 @@ export function genTraceConfig(
     ds.config.ftraceConfig.atraceApps = Array.from(atraceApps);
 
     if (targetInfo.targetType === 'ANDROID' &&
-        assertExists(targetInfo.osVersion) >= 'S') {
+        targetInfo.androidApiLevel >= 31) {
       const compact = new FtraceConfig.CompactSchedConfig();
       compact.enabled = true;
       ds.config.ftraceConfig.compactSched = compact;

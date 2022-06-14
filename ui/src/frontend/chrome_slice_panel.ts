@@ -14,21 +14,31 @@
 
 import * as m from 'mithril';
 
+import {sqliteString} from '../base/string_utils';
 import {Actions} from '../common/actions';
 import {Arg, ArgsTree, isArgTreeArray, isArgTreeMap} from '../common/arg_types';
 import {timeToCode} from '../common/time';
 
 import {globals, SliceDetails} from './globals';
 import {PanelSize} from './panel';
+import {PopupMenuButton, PopupMenuItem} from './popup_menu';
 import {verticalScrollToTrack} from './scroll_helper';
 import {SlicePanel} from './slice_panel';
 
 // Table row contents is one of two things:
 // 1. Key-value pair
-interface KVPair {
-  kind: 'KVPair';
+interface TableRow {
+  kind: 'TableRow';
   key: string;
   value: Arg;
+
+  // Whether it's an argument (from the `args` table) or whether it's a property
+  // of the slice (i.e. `dur`, coming from `slice` table). Args have additional
+  // actions associated with them.
+  isArg: boolean;
+
+  // A full key for the arguments displayed in a tree.
+  full_key?: string;
 }
 
 // 2. Common prefix for values in an array
@@ -37,7 +47,7 @@ interface TableHeader {
   header: string;
 }
 
-type RowContents = KVPair|TableHeader;
+type RowContents = TableRow|TableHeader;
 
 function isTableHeader(contents: RowContents): contents is TableHeader {
   return contents.kind === 'TableHeader';
@@ -81,7 +91,7 @@ class TableBuilder {
     this.rows.push({
       indentLevel: 0,
       extraCell: 'none',
-      contents: {kind: 'KVPair', key, value},
+      contents: {kind: 'TableRow', key, value, isArg: false},
     });
   }
 
@@ -162,7 +172,13 @@ class TableBuilder {
       this.rows.push({
         indentLevel: row[0],
         extraCell: row[1],
-        contents: {kind: 'KVPair', key: prefix, value: record},
+        contents: {
+          kind: 'TableRow',
+          key: prefix,
+          value: record,
+          full_key: completePrefix,
+          isArg: true,
+        },
         tooltip: completePrefix,
       });
     }
@@ -174,18 +190,18 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
     const sliceInfo = globals.sliceDetails;
     if (sliceInfo.ts !== undefined && sliceInfo.dur !== undefined &&
         sliceInfo.name !== undefined) {
-      const builder = new TableBuilder();
-      builder.add('Name', sliceInfo.name);
-      builder.add(
+      const defaultBuilder = new TableBuilder();
+      defaultBuilder.add('Name', sliceInfo.name);
+      defaultBuilder.add(
           'Category',
           !sliceInfo.category || sliceInfo.category === '[NULL]' ?
               'N/A' :
               sliceInfo.category);
-      builder.add('Start time', timeToCode(sliceInfo.ts));
+      defaultBuilder.add('Start time', timeToCode(sliceInfo.ts));
       if (sliceInfo.absTime !== undefined) {
-        builder.add('Absolute Time', sliceInfo.absTime);
+        defaultBuilder.add('Absolute Time', sliceInfo.absTime);
       }
-      builder.add(
+      defaultBuilder.add(
           'Duration', this.computeDuration(sliceInfo.ts, sliceInfo.dur));
       if (sliceInfo.threadTs !== undefined &&
           sliceInfo.threadDur !== undefined) {
@@ -194,7 +210,7 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
         const threadDurFractionSuffix = sliceInfo.threadDur === -1 ?
             '' :
             ` (${(sliceInfo.threadDur / sliceInfo.dur * 100).toFixed(2)}%)`;
-        builder.add(
+        defaultBuilder.add(
             'Thread duration',
             this.computeDuration(sliceInfo.threadTs, sliceInfo.threadDur) +
                 threadDurFractionSuffix);
@@ -202,22 +218,26 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
 
       for (const [key, value] of this.getProcessThreadDetails(sliceInfo)) {
         if (value !== undefined) {
-          builder.add(key, value);
+          defaultBuilder.add(key, value);
         }
       }
 
-      builder.add(
+      defaultBuilder.add(
           'Slice ID', sliceInfo.id ? sliceInfo.id.toString() : 'Unknown');
       if (sliceInfo.description) {
         for (const [key, value] of sliceInfo.description) {
-          builder.add(key, value);
+          defaultBuilder.add(key, value);
         }
       }
-      this.fillArgs(sliceInfo, builder);
+      const argsBuilder = new TableBuilder();
+      this.fillArgs(sliceInfo, argsBuilder);
       return m(
           '.details-panel',
           m('.details-panel-heading', m('h2', `Slice Details`)),
-          m('.details-table', this.renderTable(builder)));
+          m('.details-table-multicolumn', [
+            m('table', this.renderTable(defaultBuilder)),
+            m('table', [m('h3', 'Arguments'), this.renderTable(argsBuilder)]),
+          ]));
     } else {
       return m(
           '.details-panel',
@@ -250,6 +270,37 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
     }
   }
 
+  private getArgumentContextMenuItems(argument: TableRow): PopupMenuItem[] {
+    if (argument.full_key === undefined) return [];
+    if (typeof argument.value !== 'string') return [];
+    const argValue: string = argument.value;
+
+    const fullKey = argument.full_key;
+    return [
+      {
+        text: 'Copy full key',
+        callback: () => {
+          navigator.clipboard.writeText(fullKey);
+        },
+      },
+      {
+        text: 'Find slices with the same arg value',
+        callback: () => {
+          globals.dispatch(Actions.executeQuery({
+            queryId: `slices_with_arg_value_${fullKey}=${argValue}`,
+            query: `
+              select slice.* 
+              from slice
+              join args using (arg_set_id)
+              where key=${sqliteString(fullKey)} and display_value=${
+                sqliteString(argValue)}
+          `,
+          }));
+        },
+      },
+    ];
+  }
+
   renderTable(builder: TableBuilder): m.Vnode {
     const rows: m.Vnode[] = [];
     const keyColumnCount = builder.maxIndent + 1;
@@ -276,10 +327,18 @@ export class ChromeSliceDetailsPanel extends SlicePanel {
             {colspan: keyColumnCount + 1 - row.indentLevel, title: row.tooltip},
             row.contents.header));
       } else {
+        const contents: any[] = [row.contents.key];
+        if (row.contents.isArg) {
+          contents.push(m(PopupMenuButton, {
+            icon: 'arrow_drop_down',
+            items: this.getArgumentContextMenuItems(row.contents),
+          }));
+        }
+
         renderedRow.push(
             m('th',
               {colspan: keyColumnCount - row.indentLevel, title: row.tooltip},
-              row.contents.key));
+              contents));
         const value = row.contents.value;
         if (typeof value === 'string') {
           renderedRow.push(m('td.value', value));

@@ -13,8 +13,8 @@
 // limitations under the License.
 
 import {assertExists} from '../../../base/logging';
-
 import {AdbConnectionOverWebusb} from '../adb_connection_over_webusb';
+import {AdbKeyManager} from '../auth/adb_key_manager';
 import {
   RecordingTargetV2,
   TargetInfo,
@@ -26,15 +26,15 @@ import {TracedTracingSession} from '../traced_tracing_session';
 export class AndroidWebusbTarget implements RecordingTargetV2 {
   private adbConnection: AdbConnectionOverWebusb;
 
-  constructor(private device: USBDevice) {
-    this.adbConnection = new AdbConnectionOverWebusb(device);
+  constructor(private device: USBDevice, keyManager: AdbKeyManager) {
+    this.adbConnection = new AdbConnectionOverWebusb(device, keyManager);
   }
 
   getInfo(): TargetInfo {
     const name = assertExists(this.device.productName) + ' ' +
         assertExists(this.device.serialNumber) + ' WebUsb';
     // TODO(octaviant): fetch the OS from the adb connection
-    return {targetType: 'ANDROID', osVersion: 'Q', name};
+    return {targetType: 'ANDROID', androidApiLevel: 31, name};
   }
 
   // This is called when a usb USBConnectionEvent of type 'disconnect' event is

@@ -17,8 +17,11 @@ import {Draft} from 'immer';
 import {assertExists, assertTrue} from '../base/logging';
 import {RecordConfig} from '../controller/record_config_types';
 import {globals} from '../frontend/globals';
-import {columnKey} from '../frontend/pivot_table_redux';
-import {TableColumn} from '../frontend/pivot_table_redux_query_generator';
+import {aggregationKey, columnKey} from '../frontend/pivot_table_redux';
+import {
+  Aggregation,
+  TableColumn,
+} from '../frontend/pivot_table_redux_query_generator';
 import {ACTUAL_FRAMES_SLICE_TRACK_KIND} from '../tracks/actual_frames/common';
 import {ASYNC_SLICE_TRACK_KIND} from '../tracks/async_slices/common';
 import {COUNTER_TRACK_KIND} from '../tracks/counter/common';
@@ -190,16 +193,29 @@ export const StateActions = {
 
   fillUiTrackIdByTraceTrackId(
       state: StateDraft, trackState: TrackState, uiTrackId: string) {
+    const namespace = (trackState.config as {namespace?: string}).namespace;
+    if (namespace !== undefined) return;
+
+    const setUiTrackId = (trackId: number, uiTrackId: string) => {
+      if (state.uiTrackIdByTraceTrackId[trackId] !== undefined &&
+          state.uiTrackIdByTraceTrackId[trackId] !== uiTrackId) {
+        throw new Error(`Trying to map track id ${trackId} to UI track ${
+            uiTrackId}, already mapped to ${
+            state.uiTrackIdByTraceTrackId[trackId]}`);
+      }
+      state.uiTrackIdByTraceTrackId[trackId] = uiTrackId;
+    };
+
     const config = trackState.config as {trackId: number};
     if (config.trackId !== undefined) {
-      state.uiTrackIdByTraceTrackId[config.trackId] = uiTrackId;
+      setUiTrackId(config.trackId, uiTrackId);
       return;
     }
 
     const multiple = trackState.config as {trackIds: number[]};
     if (multiple.trackIds !== undefined) {
       for (const trackId of multiple.trackIds) {
-        state.uiTrackIdByTraceTrackId[trackId] = uiTrackId;
+        setUiTrackId(trackId, uiTrackId);
       }
     }
   },
@@ -985,13 +1001,13 @@ export const StateActions = {
   },
 
   setPivotTableAggregationSelected(
-      state: StateDraft, args: {column: TableColumn, selected: boolean}) {
+      state: StateDraft, args: {column: Aggregation, selected: boolean}) {
     if (args.selected) {
       state.nonSerializableState.pivotTableRedux.selectedAggregations.set(
-          columnKey(args.column), args.column);
+          aggregationKey(args.column), args.column);
     } else {
       state.nonSerializableState.pivotTableRedux.selectedAggregations.delete(
-          columnKey(args.column));
+          aggregationKey(args.column));
     }
   },
 
