@@ -10,7 +10,7 @@
     <img src="https://upload.wikimedia.org/wikipedia/commons/thumb/f/fe/Chromium_Material_Icon.svg/640px-Chromium_Material_Icon.svg.png" alt="Logo" width="80" height="80">
 
 
-  <h3 align="center">Google Summer of Code</strong></h3>
+  <h3 align="center">Google Summer of Code · Chromium</strong></h3>
 
   <p align="center">
     Make Perfetto Perfect: Animation Smoothness Alerts
