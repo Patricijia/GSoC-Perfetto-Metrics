@@ -16,7 +16,13 @@
 
 #include "src/trace_processor/containers/bit_vector.h"
 
+#include <limits>
+
 #include "src/trace_processor/containers/bit_vector_iterators.h"
+
+#if PERFETTO_BUILDFLAG(PERFETTO_X64_CPU_OPT)
+#include <immintrin.h>
+#endif
 
 namespace perfetto {
 namespace trace_processor {
@@ -41,6 +47,16 @@ uint64_t PdepSlow(uint64_t word, uint64_t mask) {
     mask &= mask - 1;
   }
   return result;
+}
+
+// See |PdepSlow| for information on PDEP.
+uint64_t Pdep(uint64_t word, uint64_t mask) {
+#if PERFETTO_BUILDFLAG(PERFETTO_X64_CPU_OPT)
+  base::ignore_result(PdepSlow);
+  return _pdep_u64(word, mask);
+#else
+  return PdepSlow(word, mask);
+#endif
 }
 
 }  // namespace
@@ -86,12 +102,12 @@ void BitVector::UpdateSetBits(const BitVector& update) {
   // Get the start and end ptrs for the current bitvector.
   // Safe because of the static_assert above.
   auto* ptr = reinterpret_cast<uint64_t*>(blocks_.data());
-  const uint64_t* ptr_end = ptr + WordCeil(size() - 1);
+  const uint64_t* ptr_end = ptr + WordCeil(size());
 
   // Get the start and end ptrs for the current bitvector.
   // Safe because of the static_assert above.
   auto* update_ptr = reinterpret_cast<const uint64_t*>(update.blocks_.data());
-  const uint64_t* update_ptr_end = update_ptr + WordCeil(update.size() - 1);
+  const uint64_t* update_ptr_end = update_ptr + WordCeil(update.size());
 
   // |update_unused_bits| contains |unused_bits_count| bits at the bottom
   // which indicates the how the next |unused_bits_count| set bits in |this|
@@ -150,8 +166,7 @@ void BitVector::UpdateSetBits(const BitVector& update) {
 
     // PDEP precisely captures the notion of "updating set bits" for a single
     // word.
-    // TODO(lalitm): update this to use the x64 intrinsic where available.
-    *ptr = PdepSlow(update_for_current, current);
+    *ptr = Pdep(update_for_current, current);
   }
 
   // We shouldn't have any non-zero unused bits and we should have consumed the
