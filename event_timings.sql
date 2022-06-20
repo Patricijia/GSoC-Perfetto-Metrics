@@ -50,6 +50,9 @@ CREATE VIEW chrome_event_timings_event AS
     FROM event_timings_with_process_info
     GROUP BY interaction_id;
 
+-- Display the derived event track on the timeline as a debug_slice
+INSERT INTO debug_slices
+    SELECT interaction_id, interaction_type, ts, dur, 0 FROM chrome_event_timings_event;
 ------------------------------
 /*
 DROP VIEW IF EXISTS chrome_event_timings_output;
