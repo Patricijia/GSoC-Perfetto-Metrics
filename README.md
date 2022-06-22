@@ -33,10 +33,18 @@
 
 
 
-On Perfetto, users can get brilliant insights into the performance of applications through trace visualizations and metrics. Recently, core web vitals shaped a different view of a smooth website by bringing INP metric to the light. Therefore, there is a need to update the Perfetto with the latest revolutionary metrics to provide better and faster insights to the developers of their web applications. The goal of this project is to improve the Perfetto tracing tool and visualize the core web vital metrics in a consistent manner. 
+On Perfetto, users can get brilliant insights into the performance of applications through trace visualizations and metrics. Recently, core web vitals shaped a different view of a smooth website by bringing [Interaction to Next Paint](https://web.dev/inp/) metric to the light. Therefore, there is a need to update the Perfetto with the latest revolutionary metrics to provide better and faster insights to the developers of their web applications. The goal of this project is to improve the Perfetto tracing tool and visualize the core web vital metrics and INP in a consistent manner.
 <br />
 <br />
 ![INP](https://s3.amazonaws.com/images.seroundtable.com/googd-poor-responsiveness-1652707271.gif)
+
+###INP
+To begin with, the Interaction to Next Paint (INP) is an experimental field metric that assesses responsiveness. It consists of 3 main ingredients: input delay, processing time and presentation delay. They all together describe duration of an event from the point at which the user interacted with the page until the next frame is presented after all associated event handlers have executed.
+
+The very first step in 
+
+
+
 
 
 <!-- ROADMAP -->
