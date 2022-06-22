@@ -36,7 +36,7 @@
 On Perfetto, users can get brilliant insights into the performance of applications through trace visualizations and metrics. Recently, core web vitals shaped a different view of a smooth website by bringing [Interaction to Next Paint](https://web.dev/inp/) metric to the light. Therefore, there is a need to update the Perfetto with the latest revolutionary metrics to provide better and faster insights to the developers of their web applications. The goal of this project is to improve the Perfetto tracing tool and visualize the core web vital metrics and INP in a consistent manner.
 <br />
 <br />
-![INP](https://s3.amazonaws.com/images.seroundtable.com/googd-poor-responsiveness-1652707271.gif)
+![INP](https://uploads-ssl.webflow.com/60e7ccafe29b4a10a36c0407/628d68347acd2d55e97c5065_inp-interaction-example.jpg)
 
 #### Interaction to Next Paint Definition on Perfetto
 To begin with, the Interaction to Next Paint (INP) is an experimental field metric that assesses responsiveness. It consists of 3 main ingredients: input delay, processing time and presentation delay. They all together describe the duration of an event from the point at which the user interacted with the page until the next frame is presented after all associated event handlers have executed. To provide the best insight into the responsiveness of Perfetto we will be looking at the longest interaction durations *per frame*.
@@ -45,7 +45,8 @@ The very first step in obtaining the INP metric on Perfetto is analysing the Eve
 
 To dive deeper into the EventTiming measurement and metrics construction we use [SQL Tables](https://perfetto.dev/docs/analysis/sql-tables). The information on EventTiming can be obtained from the tables "slice" and"args" using SELECT, WHERE clauses, and [Helper Functions](https://perfetto.dev/docs/analysis/trace-processor). The longest interaction per frame of each browser is derived by using the MAX() function on the duration value "dur" and grouping the output by the interaction id. https://github.com/Patricijia/GSoC-Perfetto-Metrics/blob/main/event_timings.sql.
 
-
+<a href="https://perfetto.dev/">
+<img src="https://user-images.githubusercontent.com/64141509/175050934-20135eab-431a-46dd-b924-374812943347.svg" alt="Logo">
 
 <!-- ROADMAP -->
 ## Roadmap
