@@ -38,12 +38,12 @@ On Perfetto, users can get brilliant insights into the performance of applicatio
 <br />
 ![INP](https://s3.amazonaws.com/images.seroundtable.com/googd-poor-responsiveness-1652707271.gif)
 
-###INP
-To begin with, the Interaction to Next Paint (INP) is an experimental field metric that assesses responsiveness. It consists of 3 main ingredients: input delay, processing time and presentation delay. They all together describe duration of an event from the point at which the user interacted with the page until the next frame is presented after all associated event handlers have executed.
+#### Interaction to Next Paint Definition on Perfetto
+To begin with, the Interaction to Next Paint (INP) is an experimental field metric that assesses responsiveness. It consists of 3 main ingredients: input delay, processing time and presentation delay. They all together describe the duration of an event from the point at which the user interacted with the page until the next frame is presented after all associated event handlers have executed. To provide the best insight into the responsiveness of Perfetto we will be looking at the longest interaction durations *per frame*.
 
-The very first step in 
+The very first step in obtaining the INP metric on Perfetto is analysing the EventTiming timeline. The EvenTiming track can be accessed by including the "devtools.timeline" checkmark in Additional Categories (recording configurations) when tracing any web app. Each renderer process has its own Event Timing timeline that can be found below EventLatency displaying some key statistics such as name, category, start time, duration, interactionId, etc. The interactions are determined to be the events of the EventTiming that have positive interactionId.
 
-
+To dive deeper into the EventTiming measurement and metrics construction we use [SQL Tables](https://perfetto.dev/docs/analysis/sql-tables). The information on EventTiming can be obtained from the tables "slice" and"args" using SELECT, WHERE clauses, and [Helper Functions](https://perfetto.dev/docs/analysis/trace-processor). The longest interaction per frame of each browser is derived by using the MAX() function on the duration value "dur" and grouping the output by the interaction id. https://github.com/Patricijia/GSoC-Perfetto-Metrics/blob/main/event_timings.sql.
 
 
 
