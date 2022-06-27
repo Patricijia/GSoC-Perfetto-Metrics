@@ -19,8 +19,9 @@ import {
   findInterfaceAndEndpoint,
 } from '../adb_over_webusb_utils';
 import {AdbKeyManager} from '../auth/adb_key_manager';
+import {RecordingError} from '../recording_error_handling';
 import {
-  OnTargetChangedCallback,
+  OnTargetChangeCallback,
   RecordingTargetV2,
   TargetFactory,
 } from '../recording_interfaces_v2';
@@ -43,7 +44,7 @@ function createDeviceErrorMessage(device: USBDevice, issue: string): string {
 
 export class AndroidWebusbTargetFactory implements TargetFactory {
   readonly kind = ANDROID_WEBUSB_TARGET_FACTORY;
-  onDevicesChanged?: OnTargetChangedCallback;
+  onTargetChange?: OnTargetChangeCallback;
   private recordingProblems: string[] = [];
   private targets: Map<string, AndroidWebusbTarget> =
       new Map<string, AndroidWebusbTarget>();
@@ -72,10 +73,11 @@ export class AndroidWebusbTargetFactory implements TargetFactory {
         await this.usb.requestDevice({filters: [ADB_DEVICE_FILTER]});
     const deviceValid = this.checkDeviceValidity(device);
     if (!deviceValid.isValid) {
-      return Promise.reject(new Error(deviceValid.issues.join('\n')));
+      throw new RecordingError(deviceValid.issues.join('\n'));
     }
 
-    const androidTarget = new AndroidWebusbTarget(device, this.keyManager);
+    const androidTarget =
+        new AndroidWebusbTarget(this, device, this.keyManager);
     this.targets.set(assertExists(device.serialNumber), androidTarget);
     return androidTarget;
   }
@@ -85,7 +87,7 @@ export class AndroidWebusbTargetFactory implements TargetFactory {
       if (this.checkDeviceValidity(device).isValid) {
         this.targets.set(
             assertExists(device.serialNumber),
-            new AndroidWebusbTarget(device, this.keyManager));
+            new AndroidWebusbTarget(this, device, this.keyManager));
       }
     }
 
@@ -93,9 +95,9 @@ export class AndroidWebusbTargetFactory implements TargetFactory {
       if (this.checkDeviceValidity(ev.device).isValid) {
         this.targets.set(
             assertExists(ev.device.serialNumber),
-            new AndroidWebusbTarget(ev.device, this.keyManager));
-        if (this.onDevicesChanged) {
-          this.onDevicesChanged();
+            new AndroidWebusbTarget(this, ev.device, this.keyManager));
+        if (this.onTargetChange) {
+          this.onTargetChange();
         }
       }
     });
@@ -107,8 +109,8 @@ export class AndroidWebusbTargetFactory implements TargetFactory {
       await assertExists(this.targets.get(serialNumber))
           .disconnect(`Device with serial ${serialNumber} was disconnected.`);
       this.targets.delete(serialNumber);
-      if (this.onDevicesChanged) {
-        this.onDevicesChanged();
+      if (this.onTargetChange) {
+        this.onTargetChange();
       }
     });
   }
