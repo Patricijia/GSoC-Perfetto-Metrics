@@ -7,13 +7,12 @@
  *
  *      http://www.apache.org/licenses/LICENSE-2.0
  *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an "AS
+ * IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either
+ * express or implied. See the License for the specific language
+ * governing permissions and limitations under the License.
  */
-
 #include "src/traced/probes/probes_producer.h"
 
 #include <stdio.h>
@@ -28,6 +27,7 @@
 #include "perfetto/ext/base/watchdog.h"
 #include "perfetto/ext/base/weak_ptr.h"
 #include "perfetto/ext/traced/traced.h"
+#include "perfetto/ext/tracing/core/basic_types.h"
 #include "perfetto/ext/tracing/core/trace_packet.h"
 #include "perfetto/ext/tracing/ipc/producer_ipc_client.h"
 #include "perfetto/tracing/core/data_source_config.h"
@@ -35,6 +35,7 @@
 #include "perfetto/tracing/core/forward_decls.h"
 #include "perfetto/tracing/core/trace_config.h"
 #include "src/android_stats/statsd_logging_helper.h"
+#include "src/traced/probes/android_game_intervention_list/android_game_intervention_list_data_source.h"
 #include "src/traced/probes/android_log/android_log_data_source.h"
 #include "src/traced/probes/common/cpu_freq_info.h"
 #include "src/traced/probes/filesystem/inode_file_data_source.h"
@@ -221,6 +222,17 @@ ProbesProducer::CreateDSInstance<PackagesListDataSource>(
 
 template <>
 std::unique_ptr<ProbesDataSource>
+ProbesProducer::CreateDSInstance<AndroidGameInterventionListDataSource>(
+    TracingSessionID session_id,
+    const DataSourceConfig& config) {
+  auto buffer_id = static_cast<BufferID>(config.target_buffer());
+  return std::unique_ptr<ProbesDataSource>(
+      new AndroidGameInterventionListDataSource(
+          config, session_id, endpoint_->CreateTraceWriter(buffer_id)));
+}
+
+template <>
+std::unique_ptr<ProbesDataSource>
 ProbesProducer::CreateDSInstance<SysStatsDataSource>(
     TracingSessionID session_id,
     const DataSourceConfig& config) {
@@ -281,11 +293,17 @@ constexpr DataSourceTraits Ds() {
 }
 
 const DataSourceTraits kAllDataSources[] = {
-    Ds<AndroidLogDataSource>(),   Ds<AndroidPowerDataSource>(),
-    Ds<FtraceDataSource>(),       Ds<InitialDisplayStateDataSource>(),
-    Ds<InodeFileDataSource>(),    Ds<LinuxPowerSysfsDataSource>(),
-    Ds<MetatraceDataSource>(),    Ds<PackagesListDataSource>(),
-    Ds<ProcessStatsDataSource>(), Ds<SysStatsDataSource>(),
+    Ds<AndroidLogDataSource>(),
+    Ds<AndroidPowerDataSource>(),
+    Ds<FtraceDataSource>(),
+    Ds<AndroidGameInterventionListDataSource>(),
+    Ds<InitialDisplayStateDataSource>(),
+    Ds<InodeFileDataSource>(),
+    Ds<LinuxPowerSysfsDataSource>(),
+    Ds<MetatraceDataSource>(),
+    Ds<PackagesListDataSource>(),
+    Ds<ProcessStatsDataSource>(),
+    Ds<SysStatsDataSource>(),
     Ds<SystemInfoDataSource>(),
 };
 
@@ -382,7 +400,12 @@ void ProbesProducer::StartDataSource(DataSourceInstanceID instance_id,
   if (data_source->started)
     return;
   if (config.trace_duration_ms() != 0) {
-    uint32_t timeout = 5000 + 2 * config.trace_duration_ms();
+    // We need to ensure this timeout is worse than the worst case
+    // time from us starting to traced managing to disable us.
+    // See b/236814186#comment8 for context
+    uint32_t timeout =
+        2 * (kDefaultFlushTimeoutMs + config.trace_duration_ms() +
+             config.stop_timeout_ms());
     watchdogs_.emplace(
         instance_id, base::Watchdog::GetInstance()->CreateFatalTimer(
                          timeout, base::WatchdogCrashReason::kTraceDidntStop));

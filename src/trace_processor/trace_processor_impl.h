@@ -102,14 +102,16 @@ class TraceProcessorImpl : public TraceProcessor,
   template <typename Table>
   void RegisterDbTable(const Table& table) {
     DbSqliteTable::RegisterTable(*db_, query_cache_.get(), Table::Schema(),
-                                 &table, table.table_name());
+                                 &table, Table::Name());
   }
 
-  void RegisterDynamicTable(
-      std::unique_ptr<DbSqliteTable::DynamicTableGenerator> generator) {
+  void RegisterDynamicTable(std::unique_ptr<DynamicTableGenerator> generator) {
     DbSqliteTable::RegisterTable(*db_, query_cache_.get(),
                                  std::move(generator));
   }
+
+  template <typename View>
+  void RegisterView(const View& view);
 
   bool IsRootMetricField(const std::string& metric_name);
 
@@ -120,11 +122,6 @@ class TraceProcessorImpl : public TraceProcessor,
   // State necessary for CREATE_FUNCTION invocations. We store this here as we
   // need to finalize any prepared statements *before* we destroy the database.
   CreateFunction::State create_function_state_;
-
-  // State necessary for CREATE_VIEW_FUNCTION invocations. We store this here as
-  // we need to finalize any prepared statements *before* we destroy the
-  // database.
-  CreateViewFunction::State create_view_function_state_;
 
   std::unique_ptr<QueryCache> query_cache_;
 

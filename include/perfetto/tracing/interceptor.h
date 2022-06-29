@@ -254,14 +254,21 @@ class PERFETTO_EXPORT_COMPONENT Interceptor : public InterceptorBase {
    public:
     ~ThreadLocalStateArgs() = default;
 
+    ThreadLocalStateArgs(const ThreadLocalStateArgs&) = delete;
+    ThreadLocalStateArgs& operator=(const ThreadLocalStateArgs&) = delete;
+
+    ThreadLocalStateArgs(ThreadLocalStateArgs&&) noexcept = default;
+    ThreadLocalStateArgs& operator=(ThreadLocalStateArgs&&) noexcept = default;
+
     // Return a locked reference to the interceptor session. The session object
     // will remain valid as long as the returned handle is in scope.
     LockedHandle<InterceptorType> GetInterceptorLocked() {
       auto* internal_state = static_state_->TryGet(data_source_instance_index_);
       if (!internal_state)
         return LockedHandle<InterceptorType>();
+      std::unique_lock<std::recursive_mutex> lock(internal_state->lock);
       return LockedHandle<InterceptorType>(
-          &internal_state->lock,
+          std::move(lock),
           static_cast<InterceptorType*>(internal_state->interceptor.get()));
     }
 

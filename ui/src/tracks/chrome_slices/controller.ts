@@ -24,8 +24,8 @@ import {Config, Data, SLICE_TRACK_KIND} from './common';
 // the lowest bucketNs gets is 2, but add some room in case of fp error
 const MIN_QUANT_NS = 3;
 
-class ChromeSliceTrackController extends TrackController<Config, Data> {
-  static readonly kind = SLICE_TRACK_KIND;
+export class ChromeSliceTrackController extends TrackController<Config, Data> {
+  static kind = SLICE_TRACK_KIND;
   private maxDurNs = 0;
 
   async onBoundsChange(start: number, end: number, resolution: number):
@@ -94,7 +94,7 @@ class ChromeSliceTrackController extends TrackController<Config, Data> {
       titles: new Uint16Array(numRows),
       isInstant: new Uint16Array(numRows),
       isIncomplete: new Uint16Array(numRows),
-      cpuTimeRatio: new Float64Array(numRows)
+      cpuTimeRatio: new Float64Array(numRows),
     };
 
     const stringIndexes = new Map<string, number>();
@@ -116,7 +116,7 @@ class ChromeSliceTrackController extends TrackController<Config, Data> {
       name: STR,
       isInstant: NUM,
       isIncomplete: NUM,
-      threadDur: NUM
+      threadDur: NUM,
     });
     for (let row = 0; it.valid(); it.next(), row++) {
       const startNsQ = it.tsq;

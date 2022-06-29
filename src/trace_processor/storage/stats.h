@@ -130,6 +130,12 @@ namespace stats {
   F(traced_tracing_sessions,            kSingle,  kInfo,     kTrace,    ""),   \
   F(track_event_parser_errors,          kSingle,  kInfo,     kAnalysis, ""),   \
   F(track_event_tokenizer_errors,       kSingle,  kInfo,     kAnalysis, ""),   \
+  F(track_event_thread_invalid_end,     kSingle,  kError,    kTrace,           \
+      "The end event for a thread track does not match a track event "         \
+      "begin event. This can happen on mixed atrace/track_event traces "       \
+      "and is usually caused by data loss or bugs when the events are "        \
+      "emitted. The outcome of this is that slices can appear to be closed "   \
+      "before they were closed in reality"),                                   \
   F(tokenizer_skipped_packets,          kSingle,  kInfo,     kAnalysis, ""),   \
   F(vmstat_unknown_keys,                kSingle,  kError,    kAnalysis, ""),   \
   F(vulkan_allocations_invalid_string_id,                                      \
@@ -182,6 +188,12 @@ namespace stats {
   F(metatrace_overruns,                 kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_parse_errors,     kSingle,  kError,    kTrace,    ""),   \
   F(packages_list_has_read_errors,      kSingle,  kError,    kTrace,    ""),   \
+  F(game_intervention_has_parse_errors, kSingle,  kError,    kTrace,           \
+       "One or more parsing errors occurred. This could result from "          \
+       "unknown game more or intervention added to the file to be parsed."),   \
+  F(game_intervention_has_read_errors,  kSingle,  kError,    kTrace,           \
+       "The file to be parsed can't be opened. This can happend when "         \
+       "the file name is not found or no permission to access the file"),      \
   F(compact_sched_has_parse_errors,     kSingle,  kError,    kTrace,    ""),   \
   F(misplaced_end_event,                kSingle,  kDataLoss, kAnalysis, ""),   \
   F(sched_waking_out_of_order,          kSingle,  kError,    kAnalysis, ""),   \

@@ -12,17 +12,12 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-import {assertTrue} from '../base/logging';
 import {PivotTree} from '../controller/pivot_table_redux_controller';
 import {RecordConfig} from '../controller/record_config_types';
-import {TableColumn} from '../frontend/pivot_table_redux_query_generator';
-
 import {
-  AggregationAttrs,
-  PivotAttrs,
-  SubQueryAttrs,
-  TableAttrs
-} from './pivot_table_common';
+  Aggregation,
+  TableColumn,
+} from '../frontend/pivot_table_redux_query_generator';
 
 /**
  * A plain js object, holding objects of type |Class| keyed by string id.
@@ -85,7 +80,9 @@ export const MAX_TIME = 180;
 // - add currentEngineId to track the id of the current engine
 // - remove nextNoteId, nextAreaId and use nextId as a unique counter for all
 //   indexing except the indexing of the engines
-export const STATE_VERSION = 17;
+// 18: areaSelection change see b/235869542
+// 19: Added visualisedArgs state.
+export const STATE_VERSION = 19;
 
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
@@ -94,12 +91,12 @@ export type EngineMode = 'WASM'|'HTTP_RPC';
 export type NewEngineMode = 'USE_HTTP_RPC_IF_AVAILABLE'|'FORCE_BUILTIN_WASM';
 
 export enum TrackKindPriority {
-  'MAIN_THREAD' = 0,
-  'RENDER_THREAD' = 1,
-  'GPU_COMPLETION' = 2,
-  'CHROME_IO_THREAD' = 3,
-  'CHROME_COMPOSITOR' = 4,
-  'ORDINARY' = 5
+  MAIN_THREAD = 0,
+  RENDER_THREAD = 1,
+  GPU_COMPLETION = 2,
+  CHROME_IO_THREAD = 3,
+  CHROME_COMPOSITOR = 4,
+  ORDINARY = 5
 }
 
 export type FlamegraphStateViewingOption =
@@ -325,30 +322,13 @@ export interface MetricsState {
   requestedMetric?: string;  // Unset after metric request is handled.
 }
 
-export interface PivotTableConfig {
-  availableColumns?: TableAttrs[];   // Undefined until list is loaded.
-  availableAggregations?: string[];  // Undefined until list is loaded.
-}
-
-export interface PivotTableState {
-  id: string;
-  name: string;
-  selectedPivots: PivotAttrs[];
-  selectedAggregations: AggregationAttrs[];
-  requestedAction?:  // Unset after pivot table column request is handled.
-      {action: string, attrs?: SubQueryAttrs};
-  isLoadingQuery: boolean;
-  traceTime?: TraceTime;
-  selectedTrackIds?: number[];
-}
-
 // Auxiliary metadata needed to parse the query result, as well as to render it
 // correctly. Generated together with the text of query and passed without the
 // change to the query response.
 export interface PivotTableReduxQueryMetadata {
   tableName: string;
-  pivotColumns: string[];
-  aggregationColumns: string[];
+  pivotColumns: TableColumn[];
+  aggregationColumns: Aggregation[];
 }
 
 // Everything that's necessary to run the query for pivot table
@@ -372,23 +352,37 @@ export interface PivotTableReduxAreaState {
   tracks: string[];
 }
 
+export type SortDirection = 'DESC'|'ASC';
+
 export interface PivotTableReduxState {
   // Currently selected area, if null, pivot table is not going to be visible.
   selectionArea: PivotTableReduxAreaState|null;
+
   // Query response
   queryResult: PivotTableReduxResult|null;
+
   // Whether the panel is in edit mode
   editMode: boolean;
+
   // Selected pivots. Map instead of Set because ES6 Set can't have
   // non-primitive keys; here keys are concatenated values.
   selectedPivotsMap: Map<string, TableColumn>;
+
   // Selected aggregation columns. Stored same way as pivots.
-  selectedAggregations: Map<string, TableColumn>;
+  selectedAggregations: Map<string, Aggregation>;
+
+  // Present if the result should be sorted, and in which direction.
+  sortCriteria?: {column: TableColumn, order: SortDirection};
+
   // Whether the pivot table results should be constrained to the selected area.
   constrainToArea: boolean;
+
   // Set to true by frontend to request controller to perform the query to
   // acquire the necessary data from the engine.
   queryRequested: boolean;
+
+  // Argument names in the current trace, used for autocompletion purposes.
+  argumentNames: string[];
 }
 
 export interface LoadedConfigNone {
@@ -449,8 +443,7 @@ export interface State {
   currentFlamegraphState: FlamegraphState|null;
   logsPagination: LogsPagination;
   traceConversionInProgress: boolean;
-  pivotTableConfig: PivotTableConfig;
-  pivotTable: ObjectById<PivotTableState>;
+  visualisedArgs: string[];
 
   /**
    * This state is updated on the frontend at 60Hz and eventually syncronised to
@@ -512,11 +505,6 @@ export declare type RecordMode =
 // 'Q','P','O' for Android, 'L' for Linux, 'C' for Chrome.
 export declare type TargetOs = 'S' | 'R' | 'Q' | 'P' | 'O' | 'C' | 'L' | 'CrOS';
 
-export function isTargetOsAtLeast(target: RecordingTarget, osVersion: string) {
-  assertTrue(osVersion.length === 1);
-  return target.os >= osVersion;
-}
-
 export function isAndroidP(target: RecordingTarget) {
   return target.os === 'P';
 }
@@ -565,7 +553,7 @@ export function getDefaultRecordingTargets(): RecordingTarget[] {
     {os: 'O', name: 'Android O-'},
     {os: 'C', name: 'Chrome'},
     {os: 'CrOS', name: 'Chrome OS (system trace)'},
-    {os: 'L', name: 'Linux desktop'}
+    {os: 'L', name: 'Linux desktop'},
   ];
 }
 
