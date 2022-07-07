@@ -1,5 +1,7 @@
 <div id="top"></div>
 
+[![Open In Colab](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/drive/1tmzDTi4Bq7I3_BDWIyBamzT6nwP1YfZ3?usp=sharing)
+
 <!-- PROJECT LOGO -->
 <br />
 <div align="center">
