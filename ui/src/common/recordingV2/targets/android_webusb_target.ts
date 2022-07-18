@@ -16,7 +16,6 @@ import {assertExists} from '../../../base/logging';
 import {AdbConnectionOverWebusb} from '../adb_connection_over_webusb';
 import {AdbKeyManager} from '../auth/adb_key_manager';
 import {
-  DynamicTargetInfo,
   RecordingTargetV2,
   TargetInfo,
   TracingSession,
@@ -29,7 +28,7 @@ import {TracedTracingSession} from '../traced_tracing_session';
 
 export class AndroidWebusbTarget implements RecordingTargetV2 {
   private adbConnection: AdbConnectionOverWebusb;
-  private dynamicTargetInfo?: DynamicTargetInfo;
+  private androidApiLevel?: number;
 
   constructor(
       private factory: AndroidWebusbTargetFactory, private device: USBDevice,
@@ -43,7 +42,8 @@ export class AndroidWebusbTarget implements RecordingTargetV2 {
     return {
       targetType: 'ANDROID',
       // The method 'fetchInfo' will populate this after ADB authorization.
-      dynamicTargetInfo: this.dynamicTargetInfo,
+      androidApiLevel: this.androidApiLevel,
+      dataSources: [],
       name,
     };
   }
@@ -55,6 +55,15 @@ export class AndroidWebusbTarget implements RecordingTargetV2 {
     await this.adbConnection.disconnect(disconnectMessage);
   }
 
+  // Starts a tracing session in order to fetch information such as apiLevel
+  // and dataSources from the device. Then, it cancels the session.
+  async fetchTargetInfo(tracingSessionListener: TracingSessionListener):
+      Promise<void> {
+    const tracingSession =
+        await this.createTracingSession(tracingSessionListener);
+    tracingSession.cancel();
+  }
+
   async createTracingSession(tracingSessionListener: TracingSessionListener):
       Promise<TracingSession> {
     this.adbConnection.onStatus = tracingSessionListener.onStatus;
@@ -62,10 +71,10 @@ export class AndroidWebusbTarget implements RecordingTargetV2 {
     const adbStream =
         await this.adbConnection.connectSocket('/dev/socket/traced_consumer');
 
-    if (!this.dynamicTargetInfo) {
+    if (!this.androidApiLevel) {
       const version = await this.adbConnection.shellAndGetOutput(
           'getprop ro.build.version.sdk');
-      this.dynamicTargetInfo = {androidApiLevel: Number(version)};
+      this.androidApiLevel = Number(version);
       if (this.factory.onTargetChange) {
         this.factory.onTargetChange();
       }
@@ -75,5 +84,9 @@ export class AndroidWebusbTarget implements RecordingTargetV2 {
         new TracedTracingSession(adbStream, tracingSessionListener);
     await tracingSession.initConnection();
     return tracingSession;
+  }
+
+  canConnectWithoutContention(): Promise<boolean> {
+    return this.adbConnection.canConnectWithoutContention();
   }
 }

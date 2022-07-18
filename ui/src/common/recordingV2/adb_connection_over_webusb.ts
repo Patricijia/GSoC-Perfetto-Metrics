@@ -22,6 +22,7 @@ import {ArrayBufferBuilder} from '../array_buffer_builder';
 import {findInterfaceAndEndpoint} from './adb_over_webusb_utils';
 import {AdbKeyManager, maybeStoreKey} from './auth/adb_key_manager';
 import {
+  ALLOW_USB_DEBUGGING,
   RecordingError,
   wrapRecordingError,
 } from './recording_error_handling';
@@ -40,8 +41,6 @@ const textDecoder = new _TextDecoder();
 export const VERSION_WITH_CHECKSUM = 0x01000000;
 export const VERSION_NO_CHECKSUM = 0x01000001;
 export const DEFAULT_MAX_PAYLOAD_BYTES = 256 * 1024;
-
-export const ALLOW_USB_DEBUGGING = 'Please allow USB debugging on device.';
 
 export enum AdbState {
   DISCONNECTED = 0,
@@ -132,6 +131,18 @@ export class AdbConnectionOverWebusb implements AdbConnection {
     return this.openStream('localfilesystem:' + path);
   }
 
+  async canConnectWithoutContention(): Promise<boolean> {
+    await this.device.open();
+    const usbInterfaceNumber = await this.setupUsbInterface();
+    try {
+      await this.device.claimInterface(usbInterfaceNumber);
+      await this.device.releaseInterface(usbInterfaceNumber);
+      return true;
+    } catch (e) {
+      return false;
+    }
+  }
+
   private async openStream(destination: string): Promise<AdbOverWebusbStream> {
     const streamId = ++this.lastStreamId;
     const connectingStream = defer<AdbOverWebusbStream>();
@@ -149,18 +160,10 @@ export class AdbConnectionOverWebusb implements AdbConnection {
     }
 
     if (this.state === AdbState.DISCONNECTED) {
-      await this.wrapUsb(this.device.open());
-      // Setup USB endpoint.
-      const interfaceAndEndpoint = findInterfaceAndEndpoint(this.device);
-      const {configurationValue, usbInterfaceNumber, endpoints} =
-          assertExists(interfaceAndEndpoint);
-      this.usbInterfaceNumber = usbInterfaceNumber;
-      this.usbReadEndpoint = this.findEndpointNumber(endpoints, 'in');
-      this.usbWriteEpEndpoint = this.findEndpointNumber(endpoints, 'out');
-      assertTrue(this.usbReadEndpoint >= 0 && this.usbWriteEpEndpoint >= 0);
-
-      await this.wrapUsb(this.device.selectConfiguration(configurationValue));
-      await this.wrapUsb(this.device.claimInterface(usbInterfaceNumber));
+      await this.device.open();
+      await this.device.reset();
+      const usbInterfaceNumber = await this.setupUsbInterface();
+      await this.device.claimInterface(usbInterfaceNumber);
     }
 
     await this.startAdbAuth();
@@ -170,6 +173,22 @@ export class AdbConnectionOverWebusb implements AdbConnection {
     const connPromise = defer<void>();
     this.pendingConnPromises.push(connPromise);
     await connPromise;
+  }
+
+  private async setupUsbInterface(): Promise<number> {
+    const interfaceAndEndpoint = findInterfaceAndEndpoint(this.device);
+    // `findInterfaceAndEndpoint` will always return a non-null value because
+    // we check for this in 'android_webusb_target_factory'. If no interface and
+    // endpoints are found, we do not create a target, so we can not connect to
+    // it, so we will never reach this logic.
+    const {configurationValue, usbInterfaceNumber, endpoints} =
+        assertExists(interfaceAndEndpoint);
+    this.usbInterfaceNumber = usbInterfaceNumber;
+    this.usbReadEndpoint = this.findEndpointNumber(endpoints, 'in');
+    this.usbWriteEpEndpoint = this.findEndpointNumber(endpoints, 'out');
+    assertTrue(this.usbReadEndpoint >= 0 && this.usbWriteEpEndpoint >= 0);
+    await this.device.selectConfiguration(configurationValue);
+    return usbInterfaceNumber;
   }
 
   async streamClose(stream: AdbOverWebusbStream): Promise<void> {
@@ -211,8 +230,8 @@ export class AdbConnectionOverWebusb implements AdbConnection {
   // browser holding onto the USB interface after having finished a trace
   // recording, which would make it impossible to use "adb shell" from the same
   // machine until the browser is closed.
-  // 2. When we get a USB disconnect event.
-  // This happens for instance when the device is unplugged.
+  // 2. When we get a USB disconnect event. This happens for instance when the
+  // device is unplugged.
   async disconnect(disconnectMessage?: string): Promise<void> {
     if (this.state === AdbState.DISCONNECTED) {
       return;
@@ -471,6 +490,7 @@ export class AdbOverWebusbStream implements ByteStream {
 
   close(): void {
     this.adbConnection.streamClose(this);
+    this.onStreamClose();
     this._isOpen = false;
   }
 

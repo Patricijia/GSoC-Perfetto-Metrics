@@ -15,11 +15,15 @@
 import {
   showAllowUSBDebugging,
   showConnectionLostError,
+  showIssueParsingTheTracedResponse,
   showNoDeviceSelected,
+  showWebsocketConnectionIssue,
   showWebUSBErrorV2,
 } from '../../frontend/error_dialog';
 
-import {ALLOW_USB_DEBUGGING} from './adb_connection_over_webusb';
+import {
+  WEBSOCKET_UNABLE_TO_CONNECT,
+} from './adb_connection_over_websocket';
 import {OnMessageCallback} from './recording_interfaces_v2';
 import {
   PARSING_UNABLE_TO_DECODE_METHOD,
@@ -27,6 +31,9 @@ import {
   PARSING_UNRECOGNIZED_MESSAGE,
   PARSING_UNRECOGNIZED_PORT,
 } from './traced_tracing_session';
+
+export const ALLOW_USB_DEBUGGING =
+    'Please allow USB debugging on device and try again.';
 
 // The pattern for handling recording error can have the following nesting in
 // case of errors:
@@ -66,21 +73,24 @@ export function showRecordingModal(message: string): void {
         'Unable to claim interface.',
         'The specified endpoint is not part of a claimed and selected ' +
             'alternate interface.',
-      ].includes(message)) {
+      ].some((partOfMessage) => message.includes(partOfMessage))) {
     showWebUSBErrorV2();
   } else if (
       [
         'A transfer error has occurred.',
         'The device was disconnected.',
         'The transfer was cancelled.',
-      ].includes(message) ||
+      ].some((partOfMessage) => message.includes(partOfMessage)) ||
       isDeviceDisconnectedError(message)) {
     showConnectionLostError();
   } else if (message === ALLOW_USB_DEBUGGING) {
     showAllowUSBDebugging();
   } else if (message === 'No device selected.') {
     showNoDeviceSelected();
+  } else if (WEBSOCKET_UNABLE_TO_CONNECT === message) {
+    showWebsocketConnectionIssue(message);
   } else if (isParsingError(message)) {
+    showIssueParsingTheTracedResponse(message);
   } else {
     throw new Error(`${message}`);
   }

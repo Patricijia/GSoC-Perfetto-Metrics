@@ -13,13 +13,16 @@
 // limitations under the License.
 
 import {createEmptyRecordConfig} from '../controller/record_config_types';
-import {aggregationKey, columnKey} from '../frontend/pivot_table_redux';
-import {Aggregation} from '../frontend/pivot_table_redux_query_generator';
 import {
   autosaveConfigStore,
   recordTargetStore,
 } from '../frontend/record_config';
 
+import {
+  Aggregation,
+  aggregationKey,
+  columnKey,
+} from './../frontend/pivot_table_redux_types';
 import {featureFlags} from './feature_flags';
 import {
   defaultTraceTime,
@@ -59,13 +62,15 @@ export function createEmptyNonSerializableState(): NonSerializableState {
     pivotTableRedux: {
       selectionArea: null,
       queryResult: null,
-      editMode: true,
+      editMode: false,
       selectedPivotsMap: keyedMap(
-          columnKey,
-          {kind: 'regular', table: 'slice', column: 'category'},
-          {kind: 'regular', table: 'slice', column: 'name'}),
+          columnKey, {kind: 'regular', table: 'slice', column: 'name'}),
       selectedAggregations: keyedMap(
           aggregationKey,
+          {
+            aggregationFunction: 'SUM',
+            column: {kind: 'regular', table: 'slice', column: 'dur'},
+          },
           {
             aggregationFunction: 'SUM',
             column:
@@ -75,6 +80,10 @@ export function createEmptyNonSerializableState(): NonSerializableState {
       constrainToArea: true,
       queryRequested: false,
       argumentNames: [],
+      sortCriteria: {
+        column: {kind: 'regular', table: 'slice', column: 'dur'},
+        order: 'DESC',
+      },
     },
   };
 }
@@ -89,6 +98,7 @@ export function createEmptyState(): State {
     traceTime: {...defaultTraceTime},
     tracks: {},
     uiTrackIdByTraceTrackId: {},
+    utidToThreadSortKey: {},
     aggregatePreferences: {},
     trackGroups: {},
     visibleTracks: [],
@@ -99,6 +109,7 @@ export function createEmptyState(): State {
     metrics: {},
     permalink: {},
     notes: {},
+    visualisedArgs: [],
 
     recordConfig: AUTOLOAD_STARTED_CONFIG_FLAG.get() ?
         autosaveConfigStore.get() :

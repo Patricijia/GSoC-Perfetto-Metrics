@@ -125,9 +125,83 @@ trace.add_thread(
 trace.add_thread(
     tid=JITID, tgid=PID, cmdline="Jit thread pool", name="Jit thread pool")
 trace.add_ftrace_packet(cpu=0)
+trace.add_atrace_async_begin(ts=5, tid=PID, pid=PID, buf="J<SHOULD_BE_IGNORED>")
 trace.add_atrace_async_begin(ts=10, tid=PID, pid=PID, buf="J<SHADE_ROW_EXPAND>")
 trace.add_atrace_async_end(
+    ts=100_000_000, tid=PID, pid=PID, buf="J<SHOULD_BE_IGNORED>")
+trace.add_atrace_async_begin(
+    ts=100_100_000, tid=PID, pid=PID, buf="J<CANCELED>")
+trace.add_atrace_async_end(
     ts=901_000_010, tid=PID, pid=PID, buf="J<SHADE_ROW_EXPAND>")
+trace.add_atrace_async_end(ts=999_000_000, tid=PID, pid=PID, buf="J<CANCELED>")
+
+trace.add_atrace_counter(
+    ts=150_000_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHOULD_BE_IGNORED>#totalFrames",
+    cnt=6)
+trace.add_atrace_counter(
+    ts=150_100_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHOULD_BE_IGNORED>#missedFrames",
+    cnt=5)
+trace.add_atrace_counter(
+    ts=150_200_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHOULD_BE_IGNORED>#missedAppFrames",
+    cnt=5)
+trace.add_atrace_counter(
+    ts=150_300_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHOULD_BE_IGNORED>#missedSfFrames",
+    cnt=1)
+trace.add_atrace_counter(
+    ts=150_400_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHOULD_BE_IGNORED>#maxFrameTimeMillis",
+    cnt=40)
+
+trace.add_atrace_counter(
+    ts=950_000_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#totalFrames",
+    cnt=12)
+trace.add_atrace_counter(
+    ts=950_100_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#missedFrames",
+    cnt=8)
+trace.add_atrace_counter(
+    ts=950_200_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#missedAppFrames",
+    cnt=7)
+trace.add_atrace_counter(
+    ts=950_300_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#missedSfFrames",
+    cnt=2)
+trace.add_atrace_counter(
+    ts=950_300_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#maxSuccessiveMissedFrames",
+    cnt=5)
+trace.add_atrace_counter(
+    ts=950_400_000,
+    tid=PID,
+    pid=PID,
+    buf="J<SHADE_ROW_EXPAND>#maxFrameTimeMillis",
+    cnt=62)
 
 add_frame(
     trace,
@@ -142,7 +216,6 @@ add_main_thread_atrace(
     trace, ts=1_500_000, ts_end=2_000_000, buf="binder transaction")
 add_render_thread_atrace(
     trace, ts=4_500_000, ts_end=4_800_000, buf="flush layers")
-
 
 add_frame(
     trace,
@@ -339,16 +412,42 @@ add_frame(
     ts_gpu=None,
     ts_end_gpu=None)
 
+# Actual timeline slice starts 0.5ms after doFrame
+add_frame(
+    trace,
+    vsync=150,
+    ts_do_frame=700_000_000,
+    ts_end_do_frame=702_000_000,
+    ts_draw_frame=701_200_000,
+    ts_end_draw_frame=715_000_000,
+    ts_gpu=None,
+    ts_end_gpu=None)
+
+# Frame without a matching actual timeline slice
+# Skipped in `android_jank_cuj.sql` since we assume the process did not draw anything.
+add_frame(
+    trace,
+    vsync=160,
+    ts_do_frame=800_000_000,
+    ts_end_do_frame=802_000_000,
+    ts_draw_frame=801_000_000,
+    ts_end_draw_frame=802_000_000,
+    ts_gpu=None,
+    ts_end_gpu=None)
+
 # One more frame after the CUJ is finished
 add_frame(
     trace,
-    vsync=140,
+    vsync=1000,
     ts_do_frame=1_100_000_000,
     ts_end_do_frame=1_200_000_000,
     ts_draw_frame=1_150_000_000,
     ts_end_draw_frame=1_300_000_000,
     ts_gpu=1_400_000_000,
     ts_end_gpu=1_500_000_000)
+
+add_main_thread_atrace(
+    trace, ts=990_000_000, ts_end=995_000_000, buf="J<CANCELED>#FT#cancel#0")
 
 add_expected_frame_events(ts=0, dur=16_000_000, token_start=10)
 add_actual_frame_events(ts=0, dur=16_000_000, token_start=10)
@@ -395,6 +494,12 @@ add_actual_frame_events(
 add_expected_frame_events(ts=600_000_000, dur=20_000_000, token_start=140)
 add_actual_frame_events(
     ts=608_600_000, dur=17_000_000, token_start=140, jank=64)
+
+add_expected_frame_events(ts=700_000_000, dur=20_000_000, token_start=150)
+add_actual_frame_events(ts=700_500_000, dur=14_500_000, token_start=150)
+
+# No matching actual timeline
+add_expected_frame_events(ts=800_000_000, dur=20_000_000, token_start=160)
 
 add_expected_frame_events(ts=1_100_000_000, dur=20_000_000, token_start=1000)
 add_actual_frame_events(

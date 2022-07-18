@@ -30,14 +30,14 @@ import {
 import {fromNs, timeToCode} from '../common/time';
 import {
   PivotTableReduxController,
-  PivotTree,
 } from '../controller/pivot_table_redux_controller';
 
 import {globals} from './globals';
+import {fullscreenModalContainer, ModalDefinition} from './modal';
 import {Panel} from './panel';
+import {AnyAttrsVnode} from './panel_container';
+import {ArgumentPopup} from './pivot_table_redux_argument_popup';
 import {
-  Aggregation,
-  AggregationFunction,
   aggregationIndex,
   areaFilter,
   expression,
@@ -45,38 +45,24 @@ import {
   QueryGeneratorError,
   sliceAggregationColumns,
   Table,
-  TableColumn,
   tableColumnEquals,
   tables,
   threadSliceAggregationColumns,
 } from './pivot_table_redux_query_generator';
+import {
+  Aggregation,
+  AggregationFunction,
+  aggregationKey,
+  columnKey,
+  PivotTree,
+  TableColumn,
+} from './pivot_table_redux_types';
 import {PopupMenuButton, PopupMenuItem} from './popup_menu';
+
 
 interface PathItem {
   tree: PivotTree;
   nextKey: ColumnType;
-}
-
-// Used to convert TableColumn to a string in order to store it in a Map, as
-// ES6 does not support compound Set/Map keys. This function should only be used
-// for interning keys, and does not have any requirements beyond different
-// TableColumn objects mapping to different strings.
-export function columnKey(tableColumn: TableColumn): string {
-  switch (tableColumn.kind) {
-    case 'argument': {
-      return `argument:${tableColumn.argument}`;
-    }
-    case 'regular': {
-      return `${tableColumn.table}.${tableColumn.column}`;
-    }
-    default: {
-      throw new Error(`malformed table column ${tableColumn}`);
-    }
-  }
-}
-
-export function aggregationKey(aggregation: Aggregation): string {
-  return `${aggregation.aggregationFunction}:${columnKey(aggregation.column)}`;
 }
 
 // Arguments to an action to toggle a table column in a particular part of
@@ -200,14 +186,6 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
   renderResultsView(attrs: PivotTableReduxAttrs) {
     return m(
         '.pivot-table-redux',
-        m('button.mode-button',
-          {
-            onclick: () => {
-              globals.dispatch(Actions.setPivotTableEditMode({editMode: true}));
-              globals.rafScheduler.scheduleFullRedraw();
-            },
-          },
-          'Edit'),
         this.renderResultsTable(attrs));
   }
 
@@ -385,6 +363,7 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
     const column = aggregation.column;
     const popupItems: PopupMenuItem[] = [];
     const state = globals.state.nonSerializableState.pivotTableRedux;
+    let icon = 'more_horiz';
     if (state.sortCriteria === undefined ||
         !tableColumnEquals(column, state.sortCriteria.column)) {
       popupItems.push(
@@ -394,6 +373,8 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
       // opposite direction.
       popupItems.push(this.sortingItem(
           column, state.sortCriteria.order === 'DESC' ? 'ASC' : 'DESC'));
+      icon = state.sortCriteria.order === 'DESC' ? 'arrow_drop_down' :
+                                                   'arrow_drop_up';
     }
     const otherAggs: AggregationFunction[] = ['SUM', 'MAX', 'MIN'];
     if (aggregation.aggregationFunction !== 'COUNT') {
@@ -421,9 +402,38 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
 
     return m(
         'td', this.readableAggregationName(aggregation), m(PopupMenuButton, {
-          icon: 'arrow_drop_down',
+          icon,
           items: popupItems,
         }));
+  }
+
+  showModal = false;
+  typedArgument = '';
+
+  renderModal(): ModalDefinition {
+    return {
+      title: 'Enter argument name',
+      content: m(ArgumentPopup, {
+                 knownArguments: globals.state.nonSerializableState
+                                     .pivotTableRedux.argumentNames,
+                 onArgumentChange: (arg) => {
+                   this.typedArgument = arg;
+                 },
+               }) as AnyAttrsVnode,
+      buttons: [
+        {
+          text: 'Add',
+          action: () => {
+            globals.dispatch(Actions.setPivotTablePivotSelected({
+              column: {kind: 'argument', argument: this.typedArgument},
+              selected: true,
+            }));
+            globals.dispatch(
+                Actions.setPivotTableQueryRequested({queryRequested: true}));
+          },
+        },
+      ],
+    };
   }
 
   renderResultsTable(attrs: PivotTableReduxAttrs) {
@@ -452,15 +462,9 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
       const items = [{
         text: 'Add argument pivot',
         callback: () => {
-          // TODO(ddrone): Replace this with modal using argument name
-          // completion after the modal mithrilization CL is landed.
-          const argument = prompt('Enter argument name');
-          if (argument !== null) {
-            globals.dispatch(Actions.setPivotTablePivotSelected(
-                {column: {kind: 'argument', argument}, selected: true}));
-            globals.dispatch(
-                Actions.setPivotTableQueryRequested({queryRequested: true}));
-          }
+          this.showModal = true;
+          this.typedArgument = '';
+          fullscreenModalContainer.createNew(this.renderModal());
         },
       }];
       if (state.queryResult.metadata.pivotColumns.length > 1) {
@@ -477,7 +481,7 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
       pivotTableHeaders.push(
           m('td',
             readableColumnName(pivot),
-            m(PopupMenuButton, {icon: 'arrow_drop_down', items})));
+            m(PopupMenuButton, {icon: 'more_horiz', items})));
     }
 
     const aggregationTableHeaders =
@@ -491,7 +495,19 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
           // columns, as well as popup menus to modify the columns. Last cell
           // is empty because of an extra column with "drill down" button for
           // each pivot table row.
-          m('tr', pivotTableHeaders, aggregationTableHeaders, m('td'))),
+          m('tr',
+            pivotTableHeaders,
+            aggregationTableHeaders,
+            m('td.menu', m(PopupMenuButton, {
+                icon: 'menu',
+                items: [{
+                  text: 'Edit mode',
+                  callback: () => {
+                    globals.dispatch(
+                        Actions.setPivotTableEditMode({editMode: true}));
+                  },
+                }],
+              })))),
         m('tbody', this.renderTotalsRow(state.queryResult), renderedRows));
   }
 
@@ -540,6 +556,10 @@ export class PivotTableRedux extends Panel<PivotTableReduxAttrs> {
   }
 
   view({attrs}: m.Vnode<PivotTableReduxAttrs>): m.Children {
+    if (this.showModal) {
+      fullscreenModalContainer.updateVdom(this.renderModal());
+    }
+
     return globals.state.nonSerializableState.pivotTableRedux.editMode ?
         this.renderEditView(attrs) :
         this.renderResultsView(attrs);
