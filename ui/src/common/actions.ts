@@ -687,18 +687,22 @@ export const StateActions = {
 
   selectPerfSamples(
       state: StateDraft,
-      args: {id: number, upid: number, ts: number, type: ProfileType}): void {
+      args: {
+        id: number, upid: number, leftTs: number, rightTs: number,
+        type: ProfileType
+      }): void {
     state.currentSelection = {
       kind: 'PERF_SAMPLES',
       id: args.id,
       upid: args.upid,
-      ts: args.ts,
+      leftTs: args.leftTs,
+      rightTs: args.rightTs,
       type: args.type,
     };
     this.openFlamegraph(state, {
       type: args.type,
-      startNs: toNs(state.traceTime.startSec),
-      endNs: args.ts,
+      startNs: args.leftTs,
+      endNs: args.rightTs,
       upids: [args.upid],
       viewingOption: PERF_SAMPLES_KEY,
     });
@@ -980,7 +984,7 @@ export const StateActions = {
   togglePivotTableRedux(state: StateDraft, args: {areaId: string|null}) {
     state.nonSerializableState.pivotTableRedux.selectionArea =
         args.areaId === null ?
-        null :
+        undefined :
         {areaId: args.areaId, tracks: globals.state.areas[args.areaId].tracks};
     if (args.areaId !==
         state.nonSerializableState.pivotTableRedux.selectionArea?.areaId) {
@@ -1000,14 +1004,6 @@ export const StateActions = {
 
   dismissFlamegraphModal(state: StateDraft, _: {}) {
     state.flamegraphModalDismissed = true;
-  },
-
-  setPivotTableEditMode(state: StateDraft, args: {editMode: boolean}) {
-    state.nonSerializableState.pivotTableRedux.editMode = args.editMode;
-    if (!args.editMode) {
-      // Switching from edit mode to view mode, need to request query
-      state.nonSerializableState.pivotTableRedux.queryRequested = true;
-    }
   },
 
   setPivotTableQueryRequested(

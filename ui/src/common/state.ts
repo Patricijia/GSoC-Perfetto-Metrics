@@ -83,7 +83,8 @@ export const MAX_TIME = 180;
 // 18: areaSelection change see b/235869542
 // 19: Added visualisedArgs state.
 // 20: Refactored thread sorting order.
-export const STATE_VERSION = 20;
+// 21: Updated perf sample selection to include a ts range instead of single ts
+export const STATE_VERSION = 21;
 
 export const SCROLLING_TRACK_GROUP = 'ScrollingTracks';
 
@@ -310,7 +311,8 @@ export interface PerfSamplesSelection {
   kind: 'PERF_SAMPLES';
   id: number;
   upid: number;
-  ts: number;
+  leftTs: number;
+  rightTs: number;
   type: ProfileType;
 }
 
@@ -413,13 +415,10 @@ export type SortDirection = 'DESC'|'ASC';
 
 export interface PivotTableReduxState {
   // Currently selected area, if null, pivot table is not going to be visible.
-  selectionArea: PivotTableReduxAreaState|null;
+  selectionArea?: PivotTableReduxAreaState;
 
   // Query response
   queryResult: PivotTableReduxResult|null;
-
-  // Whether the panel is in edit mode
-  editMode: boolean;
 
   // Selected pivots. Map instead of Set because ES6 Set can't have
   // non-primitive keys; here keys are concatenated values.

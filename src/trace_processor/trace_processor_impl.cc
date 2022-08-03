@@ -38,6 +38,7 @@
 #include "src/trace_processor/dynamic/view_generator.h"
 #include "src/trace_processor/export_json.h"
 #include "src/trace_processor/importers/additional_modules.h"
+#include "src/trace_processor/importers/android_bugreport/android_bugreport_parser.h"
 #include "src/trace_processor/importers/common/clock_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.h"
@@ -50,6 +51,7 @@
 #include "src/trace_processor/iterator_impl.h"
 #include "src/trace_processor/sqlite/create_function.h"
 #include "src/trace_processor/sqlite/create_view_function.h"
+#include "src/trace_processor/sqlite/pprof_function.h"
 #include "src/trace_processor/sqlite/register_function.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
@@ -897,8 +899,11 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
 
-  if (util::IsGzipSupported())
+  if (util::IsGzipSupported()) {
     context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
+    context_.android_bugreport_parser.reset(
+        new AndroidBugreportParser(&context_));
+  }
 
   if (json::IsJsonSupported()) {
     context_.json_trace_tokenizer.reset(new JsonTraceTokenizer(&context_));
@@ -939,6 +944,12 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   // functions are supported.
   RegisterLastNonNullFunction(db);
   RegisterValueAtMaxTsFunction(db);
+  {
+    base::Status status = PprofFunction::Register(db, this);
+    if (!status.ok()) {
+      PERFETTO_ELOG("%s", status.c_message());
+    }
+  }
 
   SetupMetrics(this, *db_, &sql_metrics_, cfg.skip_builtin_metric_paths);
 
@@ -1100,7 +1111,7 @@ void TraceProcessorImpl::NotifyEndOfFile() {
     PERFETTO_ELOG(
         "NotifyEndOfFile should only be called once. Try calling Flush instead "
         "if trying to commit the contents of the trace to tables.");
-    PERFETTO_DCHECK(!notify_eof_called_);
+    return;
   }
   notify_eof_called_ = true;
 
@@ -1124,6 +1135,15 @@ void TraceProcessorImpl::NotifyEndOfFile() {
   }
 
   context_.storage->ShrinkToFitTables();
+
+  // Rebuild the bounds table once everything has been completed: we do this
+  // so that if any data was added to tables in
+  // TraceProcessorStorageImpl::NotifyEndOfFile, this will be counted in
+  // trace bounds: this is important for parsers like ninja which wait until
+  // the end to flush all their data.
+  BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
+
+  TraceProcessorStorageImpl::DestroyContext();
 }
 
 size_t TraceProcessorImpl::RestoreInitialTables() {

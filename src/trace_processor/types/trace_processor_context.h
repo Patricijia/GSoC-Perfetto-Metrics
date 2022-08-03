@@ -57,6 +57,9 @@ class TraceProcessorContext {
   TraceProcessorContext();
   ~TraceProcessorContext();
 
+  TraceProcessorContext(TraceProcessorContext&&) = default;
+  TraceProcessorContext& operator=(TraceProcessorContext&&) = default;
+
   Config config;
 
   std::unique_ptr<TraceStorage> storage;
@@ -104,6 +107,7 @@ class TraceProcessorContext {
   // are only available in the storage_full target.
   std::unique_ptr<ChunkedTraceReader> json_trace_tokenizer;
   std::unique_ptr<ChunkedTraceReader> fuchsia_trace_tokenizer;
+  std::unique_ptr<ChunkedTraceReader> android_bugreport_parser;
   std::unique_ptr<ChunkedTraceReader> systrace_trace_parser;
   std::unique_ptr<ChunkedTraceReader> gzip_trace_parser;
 

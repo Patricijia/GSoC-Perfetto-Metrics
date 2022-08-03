@@ -678,6 +678,7 @@ message AndroidIrqRuntimeMetric {
 message AndroidJankCujMetric {
   repeated Cuj cuj = 1;
 
+  // Next id: 11
   message Cuj {
     // ID of the CUJ that is unique within the trace.
     optional int32 id = 1;
@@ -698,6 +699,9 @@ message AndroidJankCujMetric {
     // Details about each of the frames within the CUJ.
     repeated Frame frame = 6;
 
+    // Details about each of the SF frames within the CUJ.
+    repeated Frame sf_frame = 10;
+
     // Metrics extracted from the counters output by FrameTracker
     // Does not contain the frame_dur percentile information.
     optional Metrics counter_metrics = 7;
@@ -709,6 +713,7 @@ message AndroidJankCujMetric {
     optional Metrics trace_metrics = 9;
   }
 
+  // Next id: 8
   message Frame {
     // Index of the frame within the single user journey.
     optional int64 frame_number = 1;
@@ -718,14 +723,17 @@ message AndroidJankCujMetric {
 
     optional int64 ts = 3;
     optional int64 dur = 4;
+    optional int64 dur_expected = 7;
 
     // Whether the app process missed the frame deadline.
+    // Only set for the App frames. Always left unset for SF frames.
     optional bool app_missed = 5;
 
     // Whether SF missed the frame deadline.
     optional bool sf_missed = 6;
   }
 
+  // Next id: 12
   message Metrics {
     // Overall number of frames within the CUJ.
     optional int64 total_frames = 1;
@@ -1494,10 +1502,13 @@ message AndroidStartupMetric {
     repeated string most_active_non_launch_processes = 5;
   }
 
-  // Next id: 16
+  // Next id: 17
   message Startup {
     // Random id uniquely identifying an app startup in this trace.
     optional uint32 startup_id = 1;
+
+    // Startup type (cold / warm / hot)
+    optional string startup_type = 16;
 
     // Name of the package launched
     optional string package_name = 2;

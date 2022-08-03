@@ -130,7 +130,10 @@ class TracingMuxerImpl : public TracingMuxer {
   std::unique_ptr<TracingSession> CreateTracingSession(BackendType);
   std::unique_ptr<StartupTracingSession> CreateStartupTracingSession(
       const TraceConfig& config,
-      const Tracing::SetupStartupTracingOpts&);
+      Tracing::SetupStartupTracingOpts);
+  std::unique_ptr<StartupTracingSession> CreateStartupTracingSessionBlocking(
+      const TraceConfig& config,
+      Tracing::SetupStartupTracingOpts);
 
   // Producer-side bookkeeping methods.
   void UpdateDataSourcesOnAllBackends();
@@ -202,6 +205,7 @@ class TracingMuxerImpl : public TracingMuxer {
     void OnConnect() override;
     void OnDisconnect() override;
     void OnTracingSetup() override;
+    void OnStartupTracingSetup() override;
     void SetupDataSource(DataSourceInstanceID,
                          const DataSourceConfig&) override;
     void StartDataSource(DataSourceInstanceID,
@@ -217,6 +221,7 @@ class TracingMuxerImpl : public TracingMuxer {
     TracingBackendId const backend_id_;
     bool connected_ = false;
     bool did_setup_tracing_ = false;
+    bool did_setup_startup_tracing_ = false;
     std::atomic<uint32_t> connection_id_{0};
     uint16_t last_startup_target_buffer_reservation_ = 0;
     bool is_producer_provided_smb_ = false;
@@ -382,6 +387,7 @@ class TracingMuxerImpl : public TracingMuxer {
                               BackendType);
     ~StartupTracingSessionImpl() override;
     void Abort() override;
+    void AbortBlocking() override;
 
    private:
     TracingMuxerImpl* const muxer_;

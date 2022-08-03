@@ -19,6 +19,8 @@ SELECT RUN_METRIC('android/jank/cujs.sql');
 
 -- Create tables to store each CUJs main, render, HWC release,
 -- and GPU completion threads.
+-- Also stores the (not CUJ-specific) threads of SF: main, render engine,
+-- and GPU completion threads.
 SELECT RUN_METRIC('android/jank/relevant_threads.sql');
 
 -- Create tables to store the main slices on each of the relevant threads
@@ -26,8 +28,12 @@ SELECT RUN_METRIC('android/jank/relevant_threads.sql');
 -- * `DrawFrames on the render` thread
 -- * `waiting for HWC release` on the HWC release thread
 -- * `Waiting for GPU completion` on the GPU completion thread
+-- * `commit` and `composite` on SF main thread.
+-- * `REThreaded::drawLayers` on SF RenderEngine thread.
 -- Also extracts vsync ids and GPU completion fence ids that allow us to match
 -- slices to concrete vsync IDs.
+-- Slices and vsyncs are matched between the app and SF processes by looking
+-- at the actual frame timeline data.
 -- We only store the slices that were produced for the vsyncs within the
 -- CUJ markers.
 SELECT RUN_METRIC('android/jank/relevant_slices.sql');
@@ -52,7 +58,12 @@ SELECT RUN_METRIC('android/jank/frames.sql');
 -- Creates tables with slices from various relevant threads that are within
 -- the CUJ boundaries. Used as data sources for further processing and
 -- jank cause analysis of traces.
-SELECT RUN_METRIC('android/jank/query_helpers.sql');
+SELECT RUN_METRIC('android/jank/slices.sql');
+
+-- Creates tables and functions to be used for manual investigations and
+-- jank cause analysis of traces.
+SELECT RUN_METRIC('android/jank/internal/query_base.sql');
+SELECT RUN_METRIC('android/jank/query_functions.sql');
 
 -- Creates a table that matches CUJ counters with the correct CUJs.
 -- After the CUJ ends FrameTracker emits counters with the number of total
@@ -124,11 +135,24 @@ SELECT
                 'vsync', f.vsync,
                 'ts', f.ts,
                 'dur', f.dur,
+                'dur_expected', f.dur_expected,
                 'app_missed', f.app_missed,
                 'sf_missed', f.sf_missed))
-          FROM android_jank_cuj_frame f
-          WHERE f.cuj_id = cuj.cuj_id
-          ORDER BY frame_number ASC)
+            FROM android_jank_cuj_frame f
+            WHERE f.cuj_id = cuj.cuj_id
+            ORDER BY frame_number ASC),
+          'sf_frame', (
+            SELECT RepeatedField(
+              AndroidJankCujMetric_Frame(
+                'frame_number', f.frame_number,
+                'vsync', f.vsync,
+                'ts', f.ts,
+                'dur', f.dur,
+                'dur_expected', f.dur_expected,
+                'sf_missed', f.sf_missed))
+            FROM android_jank_cuj_sf_frame f
+            WHERE f.cuj_id = cuj.cuj_id
+            ORDER BY frame_number ASC)
           ))
       FROM android_jank_cuj cuj
       JOIN android_jank_cuj_boundary boundary USING (cuj_id)
