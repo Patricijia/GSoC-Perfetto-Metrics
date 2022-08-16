@@ -21,7 +21,7 @@ import {Actions, DeferredAction, StateActions} from '../common/actions';
 import {createEmptyState} from '../common/empty_state';
 import {RECORDING_V2_FLAG} from '../common/feature_flags';
 import {initializeImmerJs} from '../common/immer_init';
-import {pluginRegistry} from '../common/plugins';
+import {PluginContextImpl, pluginRegistry} from '../common/plugins';
 import {State} from '../common/state';
 import {initWasm} from '../common/wasm_engine_proxy';
 import {ControllerWorkerInitMessage} from '../common/worker_messages';
@@ -107,7 +107,6 @@ class FrontendApi {
     this.state = produce(
         this.state,
         (draft) => {
-          // tslint:disable-next-line no-any
           (StateActions as any)[action.type](draft, action.args);
         },
         (morePatches, _) => {
@@ -264,7 +263,6 @@ function main() {
   if (extensionPort) {
     extensionPort.onDisconnect.addListener((_) => {
       setExtensionAvailability(false);
-      // tslint:disable-next-line: no-unused-expression
       void chrome.runtime.lastError;  // Needed to not receive an error log.
     });
     // This forwards the messages from the extension to the controller.
@@ -301,7 +299,8 @@ function main() {
 
   // Initialize all plugins:
   for (const plugin of pluginRegistry.values()) {
-    plugin.activate();
+    const context = new PluginContextImpl(plugin.pluginId);
+    plugin.activate(context);
   }
 }
 

@@ -34,7 +34,8 @@ export class AndroidWebsocketTarget implements RecordingTargetV2 {
       targetType: 'ANDROID',
       // TODO(octaviant): fetch the OS from the adb connection
       // once aosp/2127460 is in
-      dynamicTargetInfo: undefined,
+      androidApiLevel: undefined,
+      dataSources: [],
       name: this.serialNumber + ' WebSocket',
     };
   }
@@ -43,6 +44,16 @@ export class AndroidWebsocketTarget implements RecordingTargetV2 {
   // the targets connected to the old URL.
   disconnect(): void {
     this.adbConnection.disconnect();
+  }
+
+
+  // Starts a tracing session in order to fetch information such as apiLevel
+  // and dataSources from the device. Then, it cancels the session.
+  async fetchTargetInfo(tracingSessionListener: TracingSessionListener):
+      Promise<void> {
+    const tracingSession =
+        await this.createTracingSession(tracingSessionListener);
+    tracingSession.cancel();
   }
 
   async createTracingSession(tracingSessionListener: TracingSessionListener):
@@ -55,5 +66,9 @@ export class AndroidWebsocketTarget implements RecordingTargetV2 {
         new TracedTracingSession(adbStream, tracingSessionListener);
     await tracingSession.initConnection();
     return tracingSession;
+  }
+
+  canConnectWithoutContention(): Promise<boolean> {
+    return this.adbConnection.canConnectWithoutContention();
   }
 }

@@ -38,6 +38,7 @@
 #include "src/trace_processor/dynamic/view_generator.h"
 #include "src/trace_processor/export_json.h"
 #include "src/trace_processor/importers/additional_modules.h"
+#include "src/trace_processor/importers/android_bugreport/android_bugreport_parser.h"
 #include "src/trace_processor/importers/common/clock_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.h"
@@ -897,8 +898,11 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
 
-  if (util::IsGzipSupported())
+  if (util::IsGzipSupported()) {
     context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
+    context_.android_bugreport_parser.reset(
+        new AndroidBugreportParser(&context_));
+  }
 
   if (json::IsJsonSupported()) {
     context_.json_trace_tokenizer.reset(new JsonTraceTokenizer(&context_));
@@ -1086,20 +1090,35 @@ void TraceProcessorImpl::SetCurrentTraceName(const std::string& name) {
   current_trace_name_ = name;
 }
 
-void TraceProcessorImpl::NotifyEndOfFile() {
-  if (current_trace_name_.empty())
-    current_trace_name_ = "Unnamed trace";
-
-  TraceProcessorStorageImpl::NotifyEndOfFile();
+void TraceProcessorImpl::Flush() {
+  TraceProcessorStorageImpl::Flush();
 
   context_.metadata_tracker->SetMetadata(
       metadata::trace_size_bytes,
       Variadic::Integer(static_cast<int64_t>(bytes_parsed_)));
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
+}
 
-  // Create a snapshot of all tables and views created so far. This is so later
-  // we can drop all extra tables created by the UI and reset to the original
-  // state (see RestoreInitialTables).
+void TraceProcessorImpl::NotifyEndOfFile() {
+  if (notify_eof_called_) {
+    PERFETTO_ELOG(
+        "NotifyEndOfFile should only be called once. Try calling Flush instead "
+        "if trying to commit the contents of the trace to tables.");
+    return;
+  }
+  notify_eof_called_ = true;
+
+  if (current_trace_name_.empty())
+    current_trace_name_ = "Unnamed trace";
+
+  // Last opportunity to flush all pending data.
+  Flush();
+
+  TraceProcessorStorageImpl::NotifyEndOfFile();
+
+  // Create a snapshot list of all tables and views created so far. This is so
+  // later we can drop all extra tables created by the UI and reset to the
+  // original state (see RestoreInitialTables).
   initial_tables_.clear();
   auto it = ExecuteQuery(kAllTablesQuery);
   while (it.Next()) {
@@ -1109,6 +1128,15 @@ void TraceProcessorImpl::NotifyEndOfFile() {
   }
 
   context_.storage->ShrinkToFitTables();
+
+  // Rebuild the bounds table once everything has been completed: we do this
+  // so that if any data was added to tables in
+  // TraceProcessorStorageImpl::NotifyEndOfFile, this will be counted in
+  // trace bounds: this is important for parsers like ninja which wait until
+  // the end to flush all their data.
+  BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
+
+  TraceProcessorStorageImpl::DestroyContext();
 }
 
 size_t TraceProcessorImpl::RestoreInitialTables() {

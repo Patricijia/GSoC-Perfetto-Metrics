@@ -37,6 +37,7 @@
 #include "src/android_stats/statsd_logging_helper.h"
 #include "src/traced/probes/android_game_intervention_list/android_game_intervention_list_data_source.h"
 #include "src/traced/probes/android_log/android_log_data_source.h"
+#include "src/traced/probes/android_system_property/android_system_property_data_source.h"
 #include "src/traced/probes/common/cpu_freq_info.h"
 #include "src/traced/probes/filesystem/inode_file_data_source.h"
 #include "src/traced/probes/ftrace/ftrace_data_source.h"
@@ -47,6 +48,7 @@
 #include "src/traced/probes/power/linux_power_sysfs_data_source.h"
 #include "src/traced/probes/probes_data_source.h"
 #include "src/traced/probes/ps/process_stats_data_source.h"
+#include "src/traced/probes/statsd_client/statsd_data_source.h"
 #include "src/traced/probes/sys_stats/sys_stats_data_source.h"
 #include "src/traced/probes/system_info/system_info_data_source.h"
 
@@ -179,6 +181,17 @@ ProbesProducer::CreateDSInstance<ProcessStatsDataSource>(
 
 template <>
 std::unique_ptr<ProbesDataSource>
+ProbesProducer::CreateDSInstance<StatsdDataSource>(
+    TracingSessionID session_id,
+    const DataSourceConfig& config) {
+  auto buffer_id = static_cast<BufferID>(config.target_buffer());
+  return std::unique_ptr<StatsdDataSource>(
+      new StatsdDataSource(task_runner_, session_id,
+                           endpoint_->CreateTraceWriter(buffer_id), config));
+}
+
+template <>
+std::unique_ptr<ProbesDataSource>
 ProbesProducer::CreateDSInstance<AndroidPowerDataSource>(
     TracingSessionID session_id,
     const DataSourceConfig& config) {
@@ -274,6 +287,17 @@ ProbesProducer::CreateDSInstance<InitialDisplayStateDataSource>(
       endpoint_->CreateTraceWriter(buffer_id)));
 }
 
+template <>
+std::unique_ptr<ProbesDataSource>
+ProbesProducer::CreateDSInstance<AndroidSystemPropertyDataSource>(
+    TracingSessionID session_id,
+    const DataSourceConfig& config) {
+  auto buffer_id = static_cast<BufferID>(config.target_buffer());
+  return std::unique_ptr<ProbesDataSource>(new AndroidSystemPropertyDataSource(
+      task_runner_, config, session_id,
+      endpoint_->CreateTraceWriter(buffer_id)));
+}
+
 // Another anonymous namespace. This cannot be moved into the anonymous
 // namespace on top (it would fail to compile), because the CreateDSInstance
 // methods need to be fully declared before.
@@ -292,17 +316,19 @@ constexpr DataSourceTraits Ds() {
   return DataSourceTraits{&T::descriptor, &ProbesProducer::CreateDSInstance<T>};
 }
 
-const DataSourceTraits kAllDataSources[] = {
+constexpr const DataSourceTraits kAllDataSources[] = {
+    Ds<AndroidGameInterventionListDataSource>(),
     Ds<AndroidLogDataSource>(),
     Ds<AndroidPowerDataSource>(),
+    Ds<AndroidSystemPropertyDataSource>(),
     Ds<FtraceDataSource>(),
-    Ds<AndroidGameInterventionListDataSource>(),
     Ds<InitialDisplayStateDataSource>(),
     Ds<InodeFileDataSource>(),
     Ds<LinuxPowerSysfsDataSource>(),
     Ds<MetatraceDataSource>(),
     Ds<PackagesListDataSource>(),
     Ds<ProcessStatsDataSource>(),
+    Ds<StatsdDataSource>(),
     Ds<SysStatsDataSource>(),
     Ds<SystemInfoDataSource>(),
 };
@@ -321,6 +347,12 @@ void ProbesProducer::OnConnect() {
   for (size_t i = 0; i < proto_descs.size(); i++) {
     DataSourceDescriptor& proto_desc = proto_descs[i];
     const ProbesDataSource::Descriptor* desc = kAllDataSources[i].descriptor;
+    for (size_t j = i + 1; j < proto_descs.size(); j++) {
+      if (kAllDataSources[i].descriptor == kAllDataSources[j].descriptor) {
+        PERFETTO_FATAL("Duplicate descriptor name %s",
+                       kAllDataSources[i].descriptor->name);
+      }
+    }
 
     proto_desc.set_name(desc->name);
     proto_desc.set_will_notify_on_start(true);
