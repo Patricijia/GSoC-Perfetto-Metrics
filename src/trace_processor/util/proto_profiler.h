@@ -20,13 +20,10 @@
 #include <algorithm>
 #include <vector>
 
-#include <google/protobuf/compiler/importer.h>
-#include <google/protobuf/dynamic_message.h>
-#include <google/protobuf/io/zero_copy_stream_impl.h>
-
 #include "perfetto/ext/base/flat_hash_map.h"
 
 #include "perfetto/protozero/field.h"
+#include "src/trace_processor/util/descriptors.h"
 
 namespace perfetto {
 namespace trace_processor {
@@ -49,21 +46,27 @@ class SizeProfileComputer {
     }
   };
 
+  using PathToSamplesMap =
+      base::FlatHashMap<FieldPath, SizeSamples, FieldPathHasher>;
+
+  explicit SizeProfileComputer(DescriptorPool* pool);
+
   // Returns a list of samples (i.e. all encountered field sizes) for each
   // field path in trace proto.
   // TODO(kraskevich): consider switching to internal DescriptorPool.
-  base::FlatHashMap<FieldPath, SizeSamples, FieldPathHasher> Compute(
-      const uint8_t* ptr,
-      size_t size,
-      const google::protobuf::Descriptor* descriptor);
+
+  PathToSamplesMap Compute(const uint8_t* ptr,
+                           size_t size,
+                           const std::string& message_type);
 
  private:
   void ComputeInner(const uint8_t* ptr,
                     size_t size,
-                    const google::protobuf::Descriptor* descriptor);
+                    const std::string& message_type);
   void Sample(size_t size);
   size_t GetFieldSize(const protozero::Field& f);
 
+  DescriptorPool* pool_;
   // The current 'stack' we're considering as we parse the protobuf.
   // For example if we're currently looking at the varint field baz which is
   // nested inside message Bar which is in turn a field named bar on the message
@@ -74,7 +77,7 @@ class SizeProfileComputer {
   std::vector<std::string> stack_;
 
   // Information about each field path seen.
-  base::FlatHashMap<FieldPath, SizeSamples, FieldPathHasher> path_to_samples_;
+  PathToSamplesMap path_to_samples_;
 };
 
 }  // namespace util
