@@ -13,6 +13,9 @@
 -- See the License for the specific language governing permissions and
 -- limitations under the License.
 
+-- Define process metadata functions.
+SELECT RUN_METRIC('android/process_metadata.sql');
+
 -- The start of the launching event corresponds to the end of the AM handling
 -- the startActivity intent, whereas the end corresponds to the first frame drawn.
 -- Only successful app launches have a launching event.
@@ -26,38 +29,38 @@ SELECT
 FROM slice s
 JOIN process_track t ON s.track_id = t.id
 JOIN process USING(upid)
-WHERE s.name GLOB 'launching: *'
-AND (process.name IS NULL OR process.name = 'system_server');
+WHERE
+  s.name GLOB 'launching: *' AND
+  (process.name IS NULL OR process.name = 'system_server');
 
 SELECT CREATE_FUNCTION(
-  'ANDROID_SDK_LEVEL()',
-  'INT', "
-    SELECT int_value
-    FROM metadata
-    WHERE name = 'android_sdk_version'
-  ");
-
-SELECT CREATE_FUNCTION(
-  'METRICS_LOGGER_SLICE_COUNT()',
+  'SLICE_COUNT(slice_glob STRING)',
   'INT',
-  "SELECT COUNT(1) FROM slice WHERE name GLOB 'MetricsLogger:*'"
+  'SELECT COUNT(1) FROM slice WHERE name GLOB $slice_glob'
+);
+
+-- All activity launches in the trace, keyed by ID.
+-- Populated by different scripts depending on the platform version / contents.
+-- See android/startup/launches*.sql
+DROP TABLE IF EXISTS launches;
+CREATE TABLE launches(
+  id INTEGER PRIMARY KEY,
+  ts BIG INT,
+  ts_end BIG INT,
+  dur BIG INT,
+  package STRING
 );
 
 -- Note: on Q, we didn't have Android fingerprints but we *did*
 -- have ActivityMetricsLogger events so we will use this approach
 -- if we see any such events.
 SELECT CASE
-  WHEN (ANDROID_SDK_LEVEL() >= 29 OR METRICS_LOGGER_SLICE_COUNT() > 0)
-  THEN RUN_METRIC('android/startup/launches_minsdk29.sql')
+  WHEN SLICE_COUNT('launchingActivity#*:*') > 0
+    THEN RUN_METRIC('android/startup/launches_minsdk33.sql')
+  WHEN SLICE_COUNT('MetricsLogger:*') > 0
+    THEN RUN_METRIC('android/startup/launches_minsdk29.sql')
   ELSE RUN_METRIC('android/startup/launches_maxsdk28.sql')
 END;
-
--- Maps a launch to the corresponding set of processes that handled the
--- activity start. The vast majority of cases should be a single process.
--- However it is possible that the process dies during the activity launch
--- and is respawned.
-DROP TABLE IF EXISTS launch_processes;
-CREATE TABLE launch_processes(launch_id INT, upid BIG INT, launch_type STRING);
 
 SELECT CREATE_FUNCTION(
   'STARTUP_SLICE_COUNT(start_ts LONG, end_ts LONG, utid INT, name STRING)',
@@ -74,21 +77,61 @@ SELECT CREATE_FUNCTION(
   '
 );
 
+-- Maps a launch to the corresponding set of processes that handled the
+-- activity start. The vast majority of cases should be a single process.
+-- However it is possible that the process dies during the activity launch
+-- and is respawned.
+DROP TABLE IF EXISTS launch_processes;
+CREATE TABLE launch_processes(launch_id INT, upid BIG INT, launch_type STRING);
+
 INSERT INTO launch_processes(launch_id, upid, launch_type)
-SELECT
-  l.id AS launch_id,
-  p.upid,
-  CASE
-    WHEN STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'bindApplication') > 0
-      THEN 'cold'
-    WHEN STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'activityStart') > 0
-      THEN 'warm'
-    WHEN STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'activityResume') > 0
-      THEN 'hot'
-    ELSE NULL
-  END AS launch_type
-FROM launches l
-LEFT JOIN package_list ON (l.package = package_list.package_name)
-JOIN process p ON (l.package = p.name OR p.uid = package_list.uid)
-JOIN thread t ON (p.upid = t.upid AND t.is_main_thread)
+SELECT *
+FROM (
+  -- This is intentionally a nested subquery. For some reason, if we put
+  -- the `WHERE launch_type IS NOT NULL` constraint inside, we end up with a
+  -- query which is an order of magnitude slower than being outside :(
+  SELECT
+    launch_id,
+    upid,
+    CASE
+      WHEN bind_app > 0 AND a_start > 0 AND a_resume > 0 THEN 'cold'
+      WHEN a_start > 0 AND a_resume > 0 THEN 'warm'
+      WHEN a_resume > 0 THEN 'hot'
+      ELSE NULL
+    END AS launch_type
+  FROM (
+    SELECT
+      l.id AS launch_id,
+      p.upid,
+      STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'bindApplication') bind_app,
+      STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'activityStart') a_start,
+      STARTUP_SLICE_COUNT(l.ts, l.ts_end, t.utid, 'activityResume') a_resume
+    FROM launches l
+    JOIN process_metadata_table p ON (
+      l.package = p.package_name OR
+      -- If the package list data source was not enabled in the trace, nothing
+      -- will match the above constraint so also match any process whose name
+      -- is a prefix of the package name.
+      (
+        (SELECT COUNT(1) = 0 FROM package_list) AND
+        p.process_name GLOB l.package || '*'
+      )
+    )
+    JOIN thread t ON (p.upid = t.upid AND t.is_main_thread)
+  )
+)
 WHERE launch_type IS NOT NULL;
+
+-- Tracks all main process threads.
+DROP VIEW IF EXISTS launch_threads;
+CREATE VIEW launch_threads AS
+SELECT
+  launches.id AS launch_id,
+  launches.ts AS ts,
+  launches.dur AS dur,
+  thread.utid AS utid,
+  thread.name AS thread_name,
+  thread.is_main_thread AS is_main_thread
+FROM launches
+JOIN launch_processes ON (launches.id = launch_processes.launch_id)
+JOIN thread USING (upid);

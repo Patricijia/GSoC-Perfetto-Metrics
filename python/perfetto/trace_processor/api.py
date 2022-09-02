@@ -77,6 +77,8 @@ class TraceProcessor:
   # class, with the value corresponding to the column name and row in
   # the query results table.
   class Row(object):
+    # Required for pytype to correctly infer attributes from Row objects
+    _HAS_DYNAMIC_ATTRIBUTES = True
 
     def __str__(self):
       return str(self.__dict__)
@@ -255,7 +257,11 @@ class TraceProcessor:
     self.http = self._create_tp_http(addr)
 
     if trace or file_path:
-      self._parse_trace(trace if trace else file_path)
+      try:
+        self._parse_trace(trace if trace else file_path)
+      except TraceProcessorException as ex:
+        self.close()
+        raise ex
 
   def query(self, sql: str):
     """Executes passed in SQL query using class defined HTTP API, and returns
@@ -356,4 +362,5 @@ class TraceProcessor:
   def close(self):
     if hasattr(self, 'subprocess'):
       self.subprocess.kill()
+      self.subprocess.wait()
     self.http.conn.close()

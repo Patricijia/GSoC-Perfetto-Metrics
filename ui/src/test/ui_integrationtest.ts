@@ -22,12 +22,14 @@ import {
   compareScreenshots,
   failIfTraceProcessorHttpdIsActive,
   getTestTracePath,
-  waitForPerfettoIdle
+  waitForPerfettoIdle,
 } from './perfetto_ui_test_helper';
 
-declare var global: {__BROWSER__: puppeteer.Browser;};
+declare let global: {__BROWSER__: puppeteer.Browser;};
 const browser = assertExists(global.__BROWSER__);
 const expectedScreenshotPath = path.join('test', 'data', 'ui-screenshots');
+const tmpDir = path.resolve('./ui-test-artifacts');
+const reportPath = path.join(tmpDir, 'report.txt');
 
 async function getPage(): Promise<puppeteer.Page> {
   const pages = (await browser.pages());
@@ -41,6 +43,9 @@ beforeAll(async () => {
   jest.setTimeout(60000);
   const page = await getPage();
   await page.setViewport({width: 1920, height: 1080});
+
+  // Empty the file with collected screenshot diffs
+  fs.writeFileSync(reportPath, '');
 });
 
 // After each test (regardless of nesting) capture a screenshot named after the
@@ -51,10 +56,6 @@ afterEach(async () => {
   testName = testName.replace(/[^a-z0-9-]/gmi, '_').toLowerCase();
   const page = await getPage();
 
-  // cwd() is set to //out/ui when running tests, just create a subdir in there.
-  // The CI picks up this directory and uploads to GCS after every failed run.
-  const tmpDir = path.resolve('./ui-test-artifacts');
-  if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
   const screenshotName = `ui-${testName}.png`;
   const actualFilename = path.join(tmpDir, screenshotName);
   const expectedFilename = path.join(expectedScreenshotPath, screenshotName);
@@ -64,7 +65,7 @@ afterEach(async () => {
     console.log('Saving reference screenshot into', expectedFilename);
     fs.copyFileSync(actualFilename, expectedFilename);
   } else {
-    await compareScreenshots(actualFilename, expectedFilename);
+    await compareScreenshots(reportPath, actualFilename, expectedFilename);
   }
 });
 
@@ -104,7 +105,7 @@ describe('android_trace_30s', () => {
   //    await page.keyboard.type('\n');
   //  }
   //  await waitForPerfettoIdle(page);
-  //});
+  // });
 });
 
 describe('chrome_rendering_desktop', () => {
@@ -273,6 +274,42 @@ describe('routing', () => {
     await page.goto('about:blank');
     await page.goto(
         'http://localhost:10000/?testing=1#!/viewer?local_cache_key=invalid');
+    await waitForPerfettoIdle(page);
+  });
+});
+
+// Regression test for b/235335853.
+describe('modal_dialog', () => {
+  let page: puppeteer.Page;
+
+  beforeAll(async () => {
+    page = await getPage();
+    await page.goto('http://localhost:10000/?testing=1');
+    await waitForPerfettoIdle(page);
+  });
+
+  test('show_dialog_1', async () => {
+    await page.click('#keyboard_shortcuts');
+    await waitForPerfettoIdle(page);
+  });
+
+  test('dismiss_1', async () => {
+    await page.keyboard.press('Escape');
+    await waitForPerfettoIdle(page);
+  });
+
+  test('switch_page_no_dialog', async () => {
+    await page.click('#record_new_trace');
+    await waitForPerfettoIdle(page);
+  });
+
+  test('show_dialog_2', async () => {
+    await page.click('#keyboard_shortcuts');
+    await waitForPerfettoIdle(page);
+  });
+
+  test('dismiss_2', async () => {
+    await page.keyboard.press('Escape');
     await waitForPerfettoIdle(page);
   });
 });

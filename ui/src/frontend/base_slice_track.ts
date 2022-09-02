@@ -40,6 +40,89 @@ const DEFAULT_SLICE_COLOR = GRAY_COLOR;
 
 // TODO(hjd): Implement caching.
 
+// Exposed and standalone to allow for testing without making this
+// visible to subclasses.
+function filterVisibleSlices<S extends Slice>(
+    slices: S[], startS: number, endS: number): S[] {
+  // Here we aim to reduce the number of slices we have to draw
+  // by ignoring those that are not visible. A slice is visible iff:
+  //   slice.start + slice.duration >= start && slice.start <= end
+  // It's allowable to include slices which aren't visible but we
+  // must not exclude visible slices.
+  // We could filter this.slices using this condition but since most
+  // often we should have the case where there are:
+  // - First a bunch of non-visible slices to the left of the viewport
+  // - Then a bunch of visible slices within the viewport
+  // - Finally a second bunch of non-visible slices to the right of the
+  //   viewport.
+  // It seems more sensible to identify the left-most and right-most
+  // visible slices then 'slice' to select these slices and everything
+  // between.
+
+  // We do not need to handle non-ending slices (where dur = -1
+  // but the slice is drawn as 'infinite' length) as this is handled
+  // by a special code path.
+  // TODO(hjd): Implement special code path.
+
+  // While the slices are guaranteed to be ordered by timestamp we must
+  // consider async slices (which are not perfectly nested). This is to
+  // say if we see slice A then B it is guaranteed the A.start <= B.start
+  // but there is no guarantee that (A.end < B.start XOR A.end >= B.end).
+  // Due to this is not possible to use binary search to find the first
+  // visible slice. Consider the following situation:
+  //         start V            V end
+  //     AAA  CCC       DDD   EEEEEEE
+  //      BBBBBBBBBBBB            GGG
+  //                           FFFFFFF
+  // B is visible but A and C are not. In general there could be
+  // arbitrarily many slices between B and D which are not visible.
+
+  // You could binary search to find D (i.e. the first slice which
+  // starts after |start|) then work backwards to find B.
+  // The last visible slice is simpler, since the slices are sorted
+  // by timestamp you can binary search for the last slice such
+  // that slice.start <= end.
+
+  // One specific edge case that will come up often is when:
+  // For all slice in slices: slice.startS > endS (e.g. all slices are to the
+  // right). Since the slices are sorted by startS we can check this easily:
+  const maybeFirstSlice: S|undefined = slices[0];
+  if (maybeFirstSlice && maybeFirstSlice.startS > endS) {
+    return [];
+  }
+  // It's not possible to easily check the analogous edge case where all slices
+  // are to the left:
+  // For all slice in slices: slice.startS + slice.durationS < startS
+  // as the slices are not ordered by 'endS'.
+
+  // As described above you could do some clever binary search combined with
+  // iteration however that seems quite complicated and error prone so instead
+  // the idea of the code below is that we iterate forward though the
+  // array incrementing startIdx until we find the first visible slice
+  // then backwards through the array decrementing endIdx until we find the
+  // last visible slice. In the worst case we end up doing one full pass on
+  // the array. This code is robust to slices not being sorted.
+  let startIdx = 0;
+  let endIdx = slices.length;
+  for (; startIdx < endIdx; ++startIdx) {
+    const slice = slices[startIdx];
+    const sliceEndS = slice.startS + slice.durationS;
+    if (sliceEndS >= startS && slice.startS <= endS) {
+      break;
+    }
+  }
+  for (; startIdx < endIdx; --endIdx) {
+    const slice = slices[endIdx - 1];
+    const sliceEndS = slice.startS + slice.durationS;
+    if (sliceEndS >= startS && slice.startS <= endS) {
+      break;
+    }
+  }
+  return slices.slice(startIdx, endIdx);
+}
+
+export const filterVisibleSlicesForTesting = filterVisibleSlices;
+
 // The minimal set of columns that any table/view must expose to render tracks.
 // Note: this class assumes that, at the SQL level, slices are:
 // - Not temporally overlapping (unless they are nested at inner depth).
@@ -109,6 +192,12 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
   private computedSliceHeight = 0;
   private computedRowSpacing = 0;
 
+  // True if this track (and any views tables it might have created) has been
+  // destroyed. This is unfortunately error prone (since we must manually check
+  // this between each query).
+  // TODO(hjd): Replace once we have cancellable query sequences.
+  private isDestroyed = false;
+
   // TODO(hjd): Remove when updating selection.
   // We shouldn't know here about CHROME_SLICE. Maybe should be set by
   // whatever deals with that. Dunno the namespace of selection is weird. For
@@ -145,7 +234,7 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
     // we know about (ts, dur, ...).
     const allCols = Object.keys(this.getRowSpec());
     const baseCols = Object.keys(BASE_SLICE_ROW);
-    this.extraSqlColumns = allCols.filter(key => !baseCols.includes(key));
+    this.extraSqlColumns = allCols.filter((key) => !baseCols.includes(key));
   }
 
   setSliceLayout(sliceLayout: SliceLayout) {
@@ -357,6 +446,12 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
     }  // if (howSlice)
   }
 
+  onDestroy() {
+    super.onDestroy();
+    this.isDestroyed = true;
+    this.engine.query(`DROP VIEW IF EXISTS ${this.tableName}`);
+  }
+
   // This method figures out if the visible window is outside the bounds of
   // the cached data and if so issues new queries (i.e. sorta subsumes the
   // onBoundsChange).
@@ -366,16 +461,14 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
     if (this.sqlState === 'UNINITIALIZED') {
       this.sqlState = 'INITIALIZING';
 
-      // TODO(hjd): we need an onDestroy. Right now if you contract and expand a
-      // track group this will crash, because the 2nd time we create the track
-      // we end up re-issuing the CREATE VIEW table_name.
-      // Right now this DROP VIEW is a hack, because it: (1) assumes that
-      // tableName is a VIEW and not a TABLE; (2) assume the impl track didn't
-      // create any other TABLE/VIEW (which happens to be true right now but
-      // might now be in future).
-      await this.engine.query(`DROP VIEW IF EXISTS ${this.tableName}`);
+      if (this.isDestroyed) {
+        return;
+      }
       await this.initSqlTable(this.tableName);
 
+      if (this.isDestroyed) {
+        return;
+      }
       const queryRes = await this.engine.query(`select
           ifnull(max(dur), 0) as maxDur, count(1) as rowCount
           from ${this.tableName}`);
@@ -424,6 +517,9 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
     // - Materialize the unfinished slices one off.
     // - Avoid the union if we know we don't have any -1 slices.
     // - Maybe we don't need the union at all and can deal in TS?
+    if (this.isDestroyed) {
+      return;
+    }
     const queryRes = await this.engine.query(`
     with q1 as (
       select
@@ -590,29 +686,8 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
 
   private getVisibleSlicesInternal(startS: number, endS: number):
       Array<CastInternal<T['slice']>> {
-    return this.getVisibleSlices(startS, endS);
-  }
-
-  getVisibleSlices(startS: number, endS: number):
-      Array<CastInternal<T['slice']>> {
-    let startIdx = -1;
-    let endIdx = -1;
-    let i = 0;
-
-    // TODO(hjd): binary search.
-    for (const slice of this.slices) {
-      if (startIdx < 0 && slice.startS + slice.durationS >= startS) {
-        startIdx = i;
-      }
-      if (slice.startS <= endS) {
-        endIdx = i + 1;
-      } else if (slice.startS > endS) {
-        endIdx = i;
-        break;
-      }
-      i++;
-    }
-    return this.slices.slice(startIdx, endIdx);
+    return filterVisibleSlices<CastInternal<T['slice']>>(
+        this.slices, startS, endS);
   }
 
   private updateSliceAndTrackHeight() {
@@ -680,7 +755,7 @@ export abstract class BaseSliceTrack<T extends BaseSliceTrackTypes =
           c: slice.baseColor.c,
           h: slice.baseColor.h,
           s: slice.baseColor.s,
-          l: 30
+          l: 30,
         };
       } else {
         slice.color = slice.baseColor;

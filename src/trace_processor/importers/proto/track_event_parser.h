@@ -43,7 +43,7 @@ namespace trace_processor {
 // TODO(ddrone): replace with a predicate on field id to import new fields
 // automatically
 static constexpr uint16_t kReflectFields[] = {24, 25, 26, 27, 28, 29, 32, 33,
-                                              34, 35, 38, 39, 40, 41, 42, 43};
+                                              34, 35, 38, 39, 40, 41, 43};
 
 class PacketSequenceStateGeneration;
 class TraceProcessorContext;
@@ -53,13 +53,14 @@ class TrackEventParser {
  public:
   TrackEventParser(TraceProcessorContext*, TrackEventTracker*);
 
-  void ParseTrackDescriptor(protozero::ConstBytes);
+  void ParseTrackDescriptor(protozero::ConstBytes, uint32_t packet_sequence_id);
   UniquePid ParseProcessDescriptor(protozero::ConstBytes);
   UniqueTid ParseThreadDescriptor(protozero::ConstBytes);
 
   void ParseTrackEvent(int64_t ts,
-                       TrackEventData* event_data,
-                       protozero::ConstBytes);
+                       const TrackEventData* event_data,
+                       protozero::ConstBytes,
+                       uint32_t packet_sequence_id);
 
  private:
   class EventImporter;
@@ -110,6 +111,7 @@ class TrackEventParser {
   const StringId chrome_host_app_package_name_id_;
   const StringId chrome_crash_trace_id_name_id_;
   const StringId chrome_process_label_flat_key_id_;
+  const StringId chrome_process_type_id_;
 
   ChromeStringLookup chrome_string_lookup_;
   std::array<StringId, 4> counter_unit_ids_;

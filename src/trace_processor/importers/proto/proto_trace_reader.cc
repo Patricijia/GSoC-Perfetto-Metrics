@@ -85,6 +85,10 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
   const uint32_t seq_id = decoder.trusted_packet_sequence_id();
   auto* state = GetIncrementalStateForPacketSequence(seq_id);
 
+  if (decoder.first_packet_on_sequence()) {
+    HandleFirstPacketOnSequence(seq_id);
+  }
+
   uint32_t sequence_flags = decoder.sequence_flags();
 
   if (decoder.incremental_state_cleared() ||
@@ -135,16 +139,6 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
       context_->storage->IncrementStats(stats::tokenizer_skipped_packets);
       return util::OkStatus();
     }
-  }
-
-  // Workaround a bug in the frame timeline traces which is emitting packets
-  // with zero timestamp (b/179905685).
-  // TODO(primiano): around mid-2021 there should be no traces that have this
-  // bug and we should be able to remove this workaround.
-  if (decoder.has_frame_timeline_event() && decoder.timestamp() == 0) {
-    context_->storage->IncrementStats(
-        stats::frame_timeline_event_parser_errors);
-    return util::OkStatus();
   }
 
   protos::pbzero::TracePacketDefaults::Decoder* defaults =
@@ -208,6 +202,13 @@ util::Status ProtoTraceReader::ParsePacket(TraceBlobView packet) {
   auto& modules = context_->modules_by_field;
   for (uint32_t field_id = 1; field_id < modules.size(); ++field_id) {
     if (!modules[field_id].empty() && decoder.Get(field_id).valid()) {
+      for (ProtoImporterModule* global_module :
+           context_->modules_for_all_fields) {
+        ModuleResult res = global_module->TokenizePacket(
+            decoder, &packet, timestamp, state, field_id);
+        if (!res.ignored())
+          return res.ToStatus();
+      }
       for (ProtoImporterModule* module : modules[field_id]) {
         ModuleResult res = module->TokenizePacket(decoder, &packet, timestamp,
                                                   state, field_id);
@@ -234,7 +235,7 @@ void ProtoTraceReader::ParseTraceConfig(protozero::ConstBytes blob) {
     PERFETTO_ELOG(
         "It is strongly recommended to have flush_period_ms set when "
         "write_into_file is turned on. This trace will be loaded fully "
-        "into memory before sorting which increases the likliehoold of "
+        "into memory before sorting which increases the likelihood of "
         "OOMs.");
   }
 }
@@ -253,6 +254,13 @@ void ProtoTraceReader::HandleIncrementalStateCleared(
   for (auto& module : context_->modules) {
     module->OnIncrementalStateCleared(
         packet_decoder.trusted_packet_sequence_id());
+  }
+}
+
+void ProtoTraceReader::HandleFirstPacketOnSequence(
+    uint32_t packet_sequence_id) {
+  for (auto& module : context_->modules) {
+    module->OnFirstPacketOnSequence(packet_sequence_id);
   }
 }
 

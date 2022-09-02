@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+import {sqliteString} from '../base/string_utils';
 import {TRACE_MARGIN_TIME_S} from '../common/constants';
 import {Engine} from '../common/engine';
 import {NUM, STR} from '../common/query_result';
@@ -25,9 +26,10 @@ import {App} from './globals';
 export function escapeQuery(s: string): string {
   // See https://www.sqlite.org/lang_expr.html#:~:text=A%20string%20constant
   s = s.replace(/\'/g, '\'\'');
-  s = s.replace(/_/g, '^_');
-  s = s.replace(/%/g, '^%');
-  return `'%${s}%' escape '^'`;
+  s = s.replace(/\[/g, '[[]');
+  s = s.replace(/\?/g, '[?]');
+  s = s.replace(/\*/g, '[*]');
+  return `'*${s}*'`;
 }
 
 export interface SearchControllerArgs {
@@ -124,13 +126,13 @@ export class SearchController extends Controller<'main'> {
     }
 
     this.updateInProgress = true;
-    const computeSummary =
-        this.update(newSearch, startNs, endNs, newResolution).then(summary => {
-          publishSearch(summary);
-        });
+    const computeSummary = this.update(newSearch, startNs, endNs, newResolution)
+                               .then((summary) => {
+                                 publishSearch(summary);
+                               });
 
     const computeResults =
-        this.specificSearch(newSearch).then(searchResults => {
+        this.specificSearch(newSearch).then((searchResults) => {
           publishSearchResult(searchResults);
         });
 
@@ -160,8 +162,8 @@ export class SearchController extends Controller<'main'> {
       where rowid = 0;`);
 
     const utidRes = await this.query(`select utid from thread join process
-      using(upid) where thread.name like ${searchLiteral}
-      or process.name like ${searchLiteral}`);
+      using(upid) where thread.name glob ${searchLiteral}
+      or process.name glob ${searchLiteral}`);
 
     const utids = [];
     for (const it = utidRes.iter({utid: NUM}); it.valid(); it.next()) {
@@ -185,7 +187,7 @@ export class SearchController extends Controller<'main'> {
               select
               quantum_ts
               from search_summary_slice_span
-              where name like ${searchLiteral}
+              where name glob ${searchLiteral}
           )
           group by quantum_ts
           order by quantum_ts;`);
@@ -194,7 +196,7 @@ export class SearchController extends Controller<'main'> {
     const summary = {
       tsStarts: new Float64Array(numRows),
       tsEnds: new Float64Array(numRows),
-      count: new Uint8Array(numRows)
+      count: new Uint8Array(numRows),
     };
 
     const it = res.iter({tsStart: NUM, tsEnd: NUM, count: NUM});
@@ -211,29 +213,17 @@ export class SearchController extends Controller<'main'> {
     // TODO(hjd): we should avoid recomputing this every time. This will be
     // easier once the track table has entries for all the tracks.
     const cpuToTrackId = new Map();
-    const engineTrackIdToTrackId = new Map();
     for (const track of Object.values(this.app.state.tracks)) {
       if (track.kind === 'CpuSliceTrack') {
         cpuToTrackId.set((track.config as {cpu: number}).cpu, track.id);
-        continue;
-      }
-      const config = track.config || {};
-      if (config.trackId !== undefined) {
-        engineTrackIdToTrackId.set(config.trackId, track.id);
-        continue;
-      }
-      if (config.trackIds !== undefined) {
-        for (const trackId of config.trackIds) {
-          engineTrackIdToTrackId.set(trackId, track.id);
-        }
         continue;
       }
     }
 
     const utidRes = await this.query(`select utid from thread join process
     using(upid) where
-      thread.name like ${searchLiteral} or
-      process.name like ${searchLiteral}`);
+      thread.name glob ${searchLiteral} or
+      process.name glob ${searchLiteral}`);
     const utids = [];
     for (const it = utidRes.iter({utid: NUM}); it.valid(); it.next()) {
       utids.push(it.utid);
@@ -255,8 +245,11 @@ export class SearchController extends Controller<'main'> {
       track_id as sourceId,
       0 as utid
       from slice
-      where slice.name like ${searchLiteral}
-        ${isNaN(Number(search)) ? '' : `or sliceId = ${search}`}
+      where slice.name glob ${searchLiteral}
+        or (
+          0 != CAST(${(sqliteString(search))} AS INT) and
+          sliceId = CAST(${(sqliteString(search))} AS INT)
+        )
     union
     select
       slice_id as sliceId,
@@ -266,8 +259,18 @@ export class SearchController extends Controller<'main'> {
       0 as utid
       from slice
       join args using(arg_set_id)
-      where string_value like ${searchLiteral}
-    order by ts`);
+      where string_value glob ${searchLiteral}
+    union
+    select
+      id as sliceId,
+      ts,
+      'log' as source,
+      0 as sourceId,
+      utid
+    from android_logs where msg glob ${searchLiteral}
+    order by ts
+
+    `);
 
     const rows = queryRes.numRows();
     const searchResults: CurrentSearchResults = {
@@ -286,7 +289,13 @@ export class SearchController extends Controller<'main'> {
       if (it.source === 'cpu') {
         trackId = cpuToTrackId.get(it.sourceId);
       } else if (it.source === 'track') {
-        trackId = engineTrackIdToTrackId.get(it.sourceId);
+        trackId = this.app.state.uiTrackIdByTraceTrackId[it.sourceId];
+      } else if (it.source === 'log') {
+        const logTracks = Object.values(this.app.state.tracks)
+                              .filter((t) => t.kind === 'AndroidLogTrack');
+        if (logTracks.length > 0) {
+          trackId = logTracks[0].id;
+        }
       }
 
       // The .get() calls above could return undefined, this isn't just an else.

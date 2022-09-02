@@ -20,6 +20,7 @@ import {ProtoRingBuffer} from './proto_ring_buffer';
 import {
   ComputeMetricArgs,
   ComputeMetricResult,
+  DisableAndReadMetatraceResult,
   QueryArgs,
 } from './protos';
 import {NUM, NUM_NULL, STR} from './query_result';
@@ -52,19 +53,17 @@ interface QueryResultBypass {
   rawQueryResult: Uint8Array;
 }
 
-/**
- * Abstract interface of a trace proccessor.
- * This is the TypeScript equivalent of src/trace_processor/rpc.h.
- * There are two concrete implementations:
- *   1. WasmEngineProxy: creates a Wasm module and interacts over postMessage().
- *   2. HttpRpcEngine: connects to an external `trace_processor_shell --httpd`.
- *      and interacts via fetch().
- * In both cases, we have a byte-oriented pipe to interact with TraceProcessor.
- * The derived class is only expected to deal with these two functions:
- * 1. Implement the abstract rpcSendRequestBytes() function, sending the
- *    proto-encoded TraceProcessorRpc requests to the TraceProcessor instance.
- * 2. Call onRpcResponseBytes() when response data is received.
- */
+// Abstract interface of a trace proccessor.
+// This is the TypeScript equivalent of src/trace_processor/rpc.h.
+// There are two concrete implementations:
+//   1. WasmEngineProxy: creates a Wasm module and interacts over postMessage().
+//   2. HttpRpcEngine: connects to an external `trace_processor_shell --httpd`.
+//      and interacts via fetch().
+// In both cases, we have a byte-oriented pipe to interact with TraceProcessor.
+// The derived class is only expected to deal with these two functions:
+// 1. Implement the abstract rpcSendRequestBytes() function, sending the
+//    proto-encoded TraceProcessorRpc requests to the TraceProcessor instance.
+// 2. Call onRpcResponseBytes() when response data is received.
 export abstract class Engine {
   abstract readonly id: string;
   private _cpus?: number[];
@@ -78,22 +77,20 @@ export abstract class Engine {
   private pendingQueries = new Array<WritableQueryResult>();
   private pendingRestoreTables = new Array<Deferred<void>>();
   private pendingComputeMetrics = new Array<Deferred<ComputeMetricResult>>();
+  private pendingReadMetatrace?: Deferred<DisableAndReadMetatraceResult>;
+  private _isMetatracingEnabled = false;
 
   constructor(tracker?: LoadingTracker) {
     this.loadingTracker = tracker ? tracker : new NullLoadingTracker();
   }
 
-  /**
-   * Called to send data to the TraceProcessor instance. This turns into a
-   * postMessage() or a HTTP request, depending on the Engine implementation.
-   */
+  // Called to send data to the TraceProcessor instance. This turns into a
+  // postMessage() or a HTTP request, depending on the Engine implementation.
   abstract rpcSendRequestBytes(data: Uint8Array): void;
 
-  /**
-   * Called when an inbound message is received by the Engine implementation
-   * (e.g. onmessage for the Wasm case, on when HTTP replies are received for
-   * the HTTP+RPC case).
-   */
+  // Called when an inbound message is received by the Engine implementation
+  // (e.g. onmessage for the Wasm case, on when HTTP replies are received for
+  // the HTTP+RPC case).
   onRpcResponseBytes(dataWillBeRetained: Uint8Array) {
     // Note: when hitting the fastpath inside ProtoRingBuffer, the |data| buffer
     // is returned back by readMessage() (% subarray()-ing it) and held onto by
@@ -107,11 +104,9 @@ export abstract class Engine {
     }
   }
 
-  /*
-   * Parses a response message.
-   * |rpcMsgEncoded| is a sub-array to to the start of a TraceProcessorRpc
-   * proto-encoded message (without the proto preamble and varint size).
-   */
+  // Parses a response message.
+  // |rpcMsgEncoded| is a sub-array to to the start of a TraceProcessorRpc
+  // proto-encoded message (without the proto preamble and varint size).
   private onRpcResponseMessage(rpcMsgEncoded: Uint8Array) {
     // Here we override the protobufjs-generated code to skip the parsing of the
     // new streaming QueryResult and instead passing it through like a buffer.
@@ -190,12 +185,23 @@ export abstract class Engine {
         break;
       case TPM.TPM_COMPUTE_METRIC:
         const metricRes = assertExists(rpc.metricResult) as ComputeMetricResult;
+        const pendingComputeMetric =
+            assertExists(this.pendingComputeMetrics.shift());
         if (metricRes.error && metricRes.error.length > 0) {
-          throw new QueryError(`ComputeMetric() error: ${metricRes.error}`, {
-            query: 'COMPUTE_METRIC',
-          });
+          const error =
+              new QueryError(`ComputeMetric() error: ${metricRes.error}`, {
+                query: 'COMPUTE_METRIC',
+              });
+          pendingComputeMetric.reject(error);
+        } else {
+          pendingComputeMetric.resolve(metricRes);
         }
-        assertExists(this.pendingComputeMetrics.shift()).resolve(metricRes);
+        break;
+      case TPM.TPM_DISABLE_AND_READ_METATRACE:
+        const metatraceRes =
+            assertExists(rpc.metatrace) as DisableAndReadMetatraceResult;
+        assertExists(this.pendingReadMetatrace).resolve(metatraceRes);
+        this.pendingReadMetatrace = undefined;
         break;
       default:
         console.log(
@@ -208,17 +214,13 @@ export abstract class Engine {
     }
   }
 
-  /**
-   * TraceProcessor methods below this point.
-   * The methods below are called by the various controllers in the UI and
-   * deal with marshalling / unmarshaling requests to/from TraceProcessor.
-   */
+  // TraceProcessor methods below this point.
+  // The methods below are called by the various controllers in the UI and
+  // deal with marshalling / unmarshaling requests to/from TraceProcessor.
 
 
-  /**
-   * Push trace data into the engine. The engine is supposed to automatically
-   * figure out the type of the trace (JSON vs Protobuf).
-   */
+  // Push trace data into the engine. The engine is supposed to automatically
+  // figure out the type of the trace (JSON vs Protobuf).
   parse(data: Uint8Array): Promise<void> {
     const asyncRes = defer<void>();
     this.pendingParses.push(asyncRes);
@@ -229,10 +231,8 @@ export abstract class Engine {
     return asyncRes;  // Linearize with the worker.
   }
 
-  /**
-   * Notify the engine that we reached the end of the trace.
-   * Called after the last parse() call.
-   */
+  // Notify the engine that we reached the end of the trace.
+  // Called after the last parse() call.
   notifyEof(): Promise<void> {
     const asyncRes = defer<void>();
     this.pendingEOFs.push(asyncRes);
@@ -242,10 +242,8 @@ export abstract class Engine {
     return asyncRes;  // Linearize with the worker.
   }
 
-  /**
-   * Resets the trace processor state by destroying any table/views created by
-   * the UI after loading.
-   */
+  // Resets the trace processor state by destroying any table/views created by
+  // the UI after loading.
   restoreInitialTables(): Promise<void> {
     const asyncRes = defer<void>();
     this.pendingRestoreTables.push(asyncRes);
@@ -255,9 +253,7 @@ export abstract class Engine {
     return asyncRes;  // Linearize with the worker.
   }
 
-  /**
-   * Shorthand for sending a compute metrics request to the engine.
-   */
+  // Shorthand for sending a compute metrics request to the engine.
   async computeMetric(metrics: string[]): Promise<ComputeMetricResult> {
     const asyncRes = defer<ComputeMetricResult>();
     this.pendingComputeMetrics.push(asyncRes);
@@ -270,24 +266,22 @@ export abstract class Engine {
     return asyncRes;
   }
 
-  /*
-   * Issues a streaming query and retrieve results in batches.
-   * The returned QueryResult object will be populated over time with batches
-   * of rows (each batch conveys ~128KB of data and a variable number of rows).
-   * The caller can decide whether to wait that all batches have been received
-   * (by awaiting the returned object or calling result.waitAllRows()) or handle
-   * the rows incrementally.
-   *
-   * Example usage:
-   * const res = engine.query('SELECT foo, bar FROM table');
-   * console.log(res.numRows());  // Will print 0 because we didn't await.
-   * await(res.waitAllRows());
-   * console.log(res.numRows());  // Will print the total number of rows.
-   *
-   * for (const it = res.iter({foo: NUM, bar:STR}); it.valid(); it.next()) {
-   *   console.log(it.foo, it.bar);
-   * }
-   */
+  // Issues a streaming query and retrieve results in batches.
+  // The returned QueryResult object will be populated over time with batches
+  // of rows (each batch conveys ~128KB of data and a variable number of rows).
+  // The caller can decide whether to wait that all batches have been received
+  // (by awaiting the returned object or calling result.waitAllRows()) or handle
+  // the rows incrementally.
+  //
+  // Example usage:
+  // const res = engine.query('SELECT foo, bar FROM table');
+  // console.log(res.numRows());  // Will print 0 because we didn't await.
+  // await(res.waitAllRows());
+  // console.log(res.numRows());  // Will print the total number of rows.
+  //
+  // for (const it = res.iter({foo: NUM, bar:STR}); it.valid(); it.next()) {
+  //   console.log(it.foo, it.bar);
+  // }
   query(sqlQuery: string): Promise<QueryResult>&QueryResult {
     const rpc = TraceProcessorRpc.create();
     rpc.request = TPM.TPM_QUERY_STREAMING;
@@ -301,10 +295,35 @@ export abstract class Engine {
     return result;
   }
 
-  /**
-   * Marshals the TraceProcessorRpc request arguments and sends the request
-   * to the concrete Engine (Wasm or HTTP).
-   */
+  isMetatracingEnabled(): boolean {
+    return this._isMetatracingEnabled;
+  }
+
+  enableMetatrace() {
+    const rpc = TraceProcessorRpc.create();
+    rpc.request = TPM.TPM_ENABLE_METATRACE;
+    this._isMetatracingEnabled = true;
+    this.rpcSendRequest(rpc);
+  }
+
+  stopAndGetMetatrace(): Promise<DisableAndReadMetatraceResult> {
+    // If we are already finalising a metatrace, ignore the request.
+    if (this.pendingReadMetatrace) {
+      return Promise.reject(new Error('Already finalising a metatrace'));
+    }
+
+    const result = defer<DisableAndReadMetatraceResult>();
+
+    const rpc = TraceProcessorRpc.create();
+    rpc.request = TPM.TPM_DISABLE_AND_READ_METATRACE;
+    this._isMetatracingEnabled = false;
+    this.pendingReadMetatrace = result;
+    this.rpcSendRequest(rpc);
+    return result;
+  }
+
+  // Marshals the TraceProcessorRpc request arguments and sends the request
+  // to the concrete Engine (Wasm or HTTP).
   private rpcSendRequest(rpc: TraceProcessorRpc) {
     rpc.seq = this.txSeqId++;
     // Each message is wrapped in a TraceProcessorRpcStream to add the varint

@@ -74,10 +74,10 @@ TEST(ProtozeroToTextTest, TrackEventNestedMsg) {
 
   EXPECT_EQ(
       R"(track_uuid: 4
-cc_scheduler_state: {
+cc_scheduler_state {
   deadline_us: 7
-  state_machine: {
-    minor_state: {
+  state_machine {
+    minor_state {
       commit_count: 8
     }
   }
@@ -89,8 +89,8 @@ timestamp_delta_us: 3)",
           protozero::ConstBytes{binary_proto.data(), binary_proto.size()}));
 
   EXPECT_EQ(
-      "track_uuid: 4 cc_scheduler_state: { deadline_us: 7 state_machine: { "
-      "minor_state: { commit_count: 8 } } observing_begin_frame_source: true } "
+      "track_uuid: 4 cc_scheduler_state { deadline_us: 7 state_machine { "
+      "minor_state { commit_count: 8 } } observing_begin_frame_source: true } "
       "timestamp_delta_us: 3",
       ShortDebugTrackEventProtozeroToText(
           ".perfetto.protos.TrackEvent",
@@ -152,10 +152,10 @@ TEST(ProtozeroToTextTest, CustomDescriptorPoolNestedMsg) {
 
   EXPECT_EQ(
       R"(track_uuid: 4
-cc_scheduler_state: {
+cc_scheduler_state {
   deadline_us: 7
-  state_machine: {
-    minor_state: {
+  state_machine {
+    minor_state {
       commit_count: 8
     }
   }
@@ -166,8 +166,8 @@ timestamp_delta_us: 3)",
                       kIncludeNewLines));
 
   EXPECT_EQ(
-      "track_uuid: 4 cc_scheduler_state: { deadline_us: 7 state_machine: { "
-      "minor_state: { commit_count: 8 } } observing_begin_frame_source: true } "
+      "track_uuid: 4 cc_scheduler_state { deadline_us: 7 state_machine { "
+      "minor_state { commit_count: 8 } } observing_begin_frame_source: true } "
       "timestamp_delta_us: 3",
       ProtozeroToText(pool, ".perfetto.protos.TrackEvent", binary_proto,
                       kSkipNewLines));
@@ -669,6 +669,38 @@ TEST_F(ProtozeroToTextTestMessageTest, FieldLengthLimitedPackedVarIntGarbage) {
       "field_int32: 42\n"
       "field_int32: 105\n"
       "# Packed decoding failure for field field_int32\n");
+}
+
+TEST_F(ProtozeroToTextTestMessageTest, ExtraBytes) {
+  protozero::HeapBuffered<EveryField> msg;
+  EveryField* nested = msg->add_field_nested();
+  nested->set_field_string("hello");
+  std::string garbage("\377\377");
+  nested->AppendRawProtoBytes(garbage.data(), garbage.size());
+
+  // "protoc --decode", instead:
+  // * doesn't output anything.
+  // * returns an error on stderr.
+  EXPECT_EQ(ProtozeroToText(pool_, ".protozero.test.protos.EveryField",
+                            msg.SerializeAsArray(), kIncludeNewLines),
+            R"(field_nested {
+  field_string: "hello"
+  # Extra bytes: "\377\377"
+
+})");
+}
+
+TEST_F(ProtozeroToTextTestMessageTest, NonExistingType) {
+  protozero::HeapBuffered<EveryField> msg;
+  msg->set_field_string("hello");
+  ASSERT_EQ(EveryField::kFieldStringFieldNumber, 500);
+
+  // "protoc --decode", instead:
+  // * doesn't output anything.
+  // * returns an error on stderr.
+  EXPECT_EQ(ProtozeroToText(pool_, ".non.existing.type", msg.SerializeAsArray(),
+                            kIncludeNewLines),
+            R"(500: "hello")");
 }
 
 }  // namespace

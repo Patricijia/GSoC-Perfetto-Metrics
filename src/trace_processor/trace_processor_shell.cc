@@ -46,6 +46,7 @@
 #include "src/trace_processor/metrics/all_chrome_metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
+#include "src/trace_processor/read_trace_internal.h"
 #include "src/trace_processor/util/proto_to_json.h"
 #include "src/trace_processor/util/status_macros.h"
 
@@ -198,7 +199,7 @@ base::Status PrintStats() {
       "where severity IN ('error', 'data_loss') and value > 0");
 
   bool first = true;
-  for (uint32_t rows = 0; it.Next(); rows++) {
+  while (it.Next()) {
     if (first) {
       fprintf(stderr, "Error stats for this trace:\n");
 
@@ -269,7 +270,7 @@ base::Status ExportTraceToDatabase(const std::string& output_name) {
   auto tables_it = g_tp->ExecuteQuery(
       "SELECT name FROM perfetto_tables UNION "
       "SELECT name FROM sqlite_master WHERE type='table'");
-  for (uint32_t rows = 0; tables_it.Next(); rows++) {
+  while (tables_it.Next()) {
     std::string table_name = tables_it.Get(0).string_value;
     PERFETTO_CHECK(!base::Contains(table_name, '\''));
     std::string export_sql = "CREATE TABLE perfetto_export." + table_name +
@@ -290,7 +291,7 @@ base::Status ExportTraceToDatabase(const std::string& output_name) {
   // Export views.
   auto views_it =
       g_tp->ExecuteQuery("SELECT sql FROM sqlite_master WHERE type='view'");
-  for (uint32_t rows = 0; views_it.Next(); rows++) {
+  while (views_it.Next()) {
     std::string sql = views_it.Get(0).string_value;
     // View statements are of the form "CREATE VIEW name AS stmt". We need to
     // rewrite name to point to the exported db.
@@ -523,8 +524,7 @@ base::Status PrintQueryResultAsCsv(Iterator* it, bool has_more, FILE* output) {
   }
   fprintf(output, "\n");
 
-  uint32_t rows;
-  for (rows = 0; has_more; rows++, has_more = it->Next()) {
+  for (; has_more; has_more = it->Next()) {
     for (uint32_t c = 0; c < it->ColumnCount(); c++) {
       if (c > 0)
         fprintf(output, ",");
@@ -902,7 +902,7 @@ void ExtendPoolWithBinaryDescriptor(google::protobuf::DescriptorPool& pool,
                                     int size,
                                     std::vector<std::string>& skip_prefixes) {
   google::protobuf::FileDescriptorSet desc_set;
-  desc_set.ParseFromArray(data, size);
+  PERFETTO_CHECK(desc_set.ParseFromArray(data, size));
   for (const auto& file_desc : desc_set.file()) {
     if (base::StartsWithAny(file_desc.name(), skip_prefixes))
       continue;
@@ -911,11 +911,12 @@ void ExtendPoolWithBinaryDescriptor(google::protobuf::DescriptorPool& pool,
 }
 
 base::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
-  base::Status read_status =
-      ReadTrace(g_tp, trace_file_path.c_str(), [&size_mb](size_t parsed_size) {
+  base::Status read_status = ReadTraceUnfinalized(
+      g_tp, trace_file_path.c_str(), [&size_mb](size_t parsed_size) {
         *size_mb = static_cast<double>(parsed_size) / 1E6;
         fprintf(stderr, "\rLoading trace: %.2f MB\r", *size_mb);
       });
+  g_tp->Flush();
   if (!read_status.ok()) {
     return base::ErrStatus("Could not read trace file (path: %s): %s",
                            trace_file_path.c_str(), read_status.c_message());
@@ -937,7 +938,7 @@ base::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
             return;
           }
         });
-    g_tp->NotifyEndOfFile();
+    g_tp->Flush();
   }
 
   auto maybe_map = profiling::GetPerfettoProguardMapPath();
@@ -954,6 +955,7 @@ base::Status LoadTrace(const std::string& trace_file_path, double* size_mb) {
           }
         });
   }
+  g_tp->NotifyEndOfFile();
   return base::OkStatus();
 }
 

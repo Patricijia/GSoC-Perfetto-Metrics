@@ -33,8 +33,10 @@ CREATE VIEW blocking_tasks_no_threadcontroller_active AS
 -- Sort track ids to optimize joining with slices
 -- as engine doesn't do the sort to join in O(LogN)
 -- per row by default
-DROP VIEW IF EXISTS chrome_annotated_threads_and_processes;
-CREATE VIEW chrome_annotated_threads_and_processes AS
+-- TODO(243897379): switch this back to a view once we understand why rolling SQLite to
+-- 3.39.2 causes slowdowns.
+DROP TABLE IF EXISTS chrome_annotated_threads_and_processes;
+CREATE TABLE chrome_annotated_threads_and_processes AS
   SELECT
     thread_track.id AS track_id,
     chrome_thread.canonical_name AS thread_name,
@@ -51,8 +53,10 @@ CREATE VIEW chrome_annotated_threads_and_processes AS
 -- See b/166441398 & crbug/1094361 for why we remove threadpool (originally
 -- the -to-End step). In essence -to-End is often reported on the ThreadPool
 -- after the fact with explicit timestamps so it being blocked isn't noteworthy.
-DROP VIEW IF EXISTS blocking_chrome_tasks_without_threadpool;
-CREATE VIEW blocking_chrome_tasks_without_threadpool AS
+-- TODO(243897379): switch this back to a view once we understand why rolling SQLite to
+-- 3.39.2 causes slowdowns.
+DROP TABLE IF EXISTS blocking_chrome_tasks_without_threadpool;
+CREATE TABLE blocking_chrome_tasks_without_threadpool AS
   SELECT
      slice.*,
      annotations.thread_name AS thread_name,
@@ -135,6 +139,8 @@ CREATE VIEW all_descendant_blocking_tasks_queuing_delay AS
               "chrome_mojo_event_info.mojo_interface_tag"),
           NULL),
       descendant.name) AS descendant_name,
+    EXTRACT_ARG(descendant.arg_set_id,
+        "chrome_mojo_event_info.ipc_hash") AS descendant_ipc_hash,
     descendant.parent_id As descendant_parent_id,
     descendant.depth AS descendant_depth,
     descendant.category AS descendant_category,
@@ -293,6 +299,8 @@ CREATE VIEW descendant_blocking_tasks_queuing_delay AS
         NULL
       END
     , "-") AS mojom_name,
+    -- All ipc_hashes should be equal so just select the first non-null one.
+    MIN(descendant_ipc_hash) AS mojom_ipc_hash,
     GROUP_CONCAT(
       CASE WHEN
         descendant_category = "toplevel" AND
@@ -443,8 +451,10 @@ CREATE VIEW scroll_jank_cause_queuing_delay_temp AS
     TopLevelName(name, function, file) || COALESCE(
       "-" || descendant_name, "") AS location,
     TopLevelName(name, function, file) || COALESCE(
-      "-" || GetFirstSliceNameOrNull(mojom_name),
-      "-" || GetFirstSliceNameOrNull(toplevel_name),
+      "-" || GetFirstSliceNameOrNull(mojom_name)
+          || COALESCE("(ipc=" || mojom_ipc_hash || ")", ""),
+      "-" || GetFirstSliceNameOrNull(toplevel_name)
+          || COALESCE("(ipc=" || mojom_ipc_hash || ")", ""),
       "-" || GetJavaSliceSummaryOrNull(java_name),
       UnknownEventOrEmptyString(name, category, descendant_name)
     ) AS restricted_location,

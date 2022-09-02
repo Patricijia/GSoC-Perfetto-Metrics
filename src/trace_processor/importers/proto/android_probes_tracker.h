@@ -31,12 +31,13 @@ class TraceProcessorContext;
 
 class AndroidProbesTracker : public Destructible {
  public:
-  explicit AndroidProbesTracker(TraceProcessorContext*);
+  explicit AndroidProbesTracker(TraceStorage*);
   ~AndroidProbesTracker() override;
 
   static AndroidProbesTracker* GetOrCreate(TraceProcessorContext* context) {
     if (!context->android_probes_tracker) {
-      context->android_probes_tracker.reset(new AndroidProbesTracker(context));
+      context->android_probes_tracker.reset(
+          new AndroidProbesTracker(context->storage.get()));
     }
     return static_cast<AndroidProbesTracker*>(
         context->android_probes_tracker.get());
@@ -51,21 +52,23 @@ class AndroidProbesTracker : public Destructible {
     seen_packages_.emplace(std::move(package_name));
   }
 
-  base::Optional<StringId> GetPowerRailName(uint32_t index) {
-    if (index >= power_rails_strs_id_.size())
+  base::Optional<TrackId> GetPowerRailTrack(uint32_t index) {
+    if (index >= power_rail_tracks_.size())
       return base::nullopt;
-    return power_rails_strs_id_[index];
+    TrackId track_id = power_rail_tracks_[index];
+    return track_id == kInvalidTrackId ? base::nullopt
+                                       : base::make_optional(track_id);
   }
 
-  void SetPowerRailName(uint32_t index, StringId name) {
-    if (power_rails_strs_id_.size() <= index)
-      power_rails_strs_id_.resize(index + 1);
-    power_rails_strs_id_[index] = name;
+  void SetPowerRailTrack(uint32_t index, TrackId track_id) {
+    if (power_rail_tracks_.size() <= index)
+      power_rail_tracks_.resize(index + 1, kInvalidTrackId);
+    power_rail_tracks_[index] = track_id;
   }
 
  private:
   std::set<std::string> seen_packages_;
-  std::vector<StringId> power_rails_strs_id_;
+  std::vector<TrackId> power_rail_tracks_;
 };
 
 }  // namespace trace_processor

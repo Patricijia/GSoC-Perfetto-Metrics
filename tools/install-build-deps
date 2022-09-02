@@ -126,22 +126,22 @@ BUILD_DEPS_TOOLCHAIN_HOST = [
     # tools/clang/scripts/update.py.
     Dependency(
         'buildtools/linux64/clang.tgz',
-        'https://commondatastorage.googleapis.com/chromium-browser-clang/Linux_x64/clang-llvmorg-14-init-3191-g0e03450a-1.tgz',
-        'dd7479d43ce61401e057a5dee8b7e32bc2bd0d0e15d4f46c6858daf9170c9978',
+        'https://commondatastorage.googleapis.com/chromium-browser-clang/Linux_x64/clang-llvmorg-16-init-907-g8b740747-1.tgz',
+        'fc874a199fcb217e246c70a8280f959ad1bfed5de27ab25877421e8588237194',
         'linux', 'x64'),
     Dependency(
         'buildtools/win/clang.tgz',
-        'https://commondatastorage.googleapis.com/chromium-browser-clang/Win/clang-llvmorg-14-init-3191-g0e03450a-1.tgz',
-        '4292d191742e7120200c63224f02e1f2f2a7be8b57c0f18edf6ca0955bdd43df',
+        'https://commondatastorage.googleapis.com/chromium-browser-clang/Win/clang-llvmorg-16-init-907-g8b740747-1.tgz',
+        'f8bb1ca55edcccd5a02eb6d55a89b1131ac4d023b102108db41c8c413716116e',
         'windows', 'x64'),
 ]
 
 BUILD_DEPS_HOST = [
-    # Keep in sync with Android's //external/googletest/README.version.
+    # Keep in sync with Android's //external/googletest/METADATA.
     Dependency(
         'buildtools/googletest',
         'https://android.googlesource.com/platform/external/googletest.git',
-        '3f05f651ae3621db58468153e32016bc1397800b', 'all', 'all'),
+        '609281088cfefc76f9d0ce82e1ff6c30cc3591e5', 'all', 'all'),
 
     # Keep in sync with Chromium's //third_party/protobuf.
     Dependency(
@@ -176,7 +176,7 @@ BUILD_DEPS_HOST = [
     Dependency(
         'buildtools/benchmark',
         'https://chromium.googlesource.com/external/github.com/google/benchmark.git',
-        '090faecb454fbd6e6e17a75ef8146acb037118d4', 'all', 'all'),
+        'e991355c02b93fe17713efe04cbc2e278e00fdbd', 'all', 'all'),
 
     # Libbacktrace, for stacktraces in Linux/Android debug builds.
     # From https://github.com/ianlancetaylor/libbacktrace/archive/177940370e4a6b2509e92a0aaa9749184e64af43.zip
@@ -190,20 +190,22 @@ BUILD_DEPS_HOST = [
     # This is the amalgamated source whose compiled output is meant to be faster.
     # We still pull the full source for the extensions (which are not available
     # in the amalgamation).
+    # If updating the version, also update bazel/deps.bzl.
     Dependency(
         'buildtools/sqlite.zip',
-        'https://storage.googleapis.com/perfetto/sqlite-amalgamation-3350400.zip',
-        'f3bf0df69f5de0675196f4644e05d07dbc698d674dc563a12eff17d5b215cdf5',
+        'https://storage.googleapis.com/perfetto/sqlite-amalgamation-3390200.zip',
+        '87775784f8b22d0d0f1d7811870d39feaa7896319c7c20b849a4181c5a50609b',
         'all', 'all'),
     Dependency(
         'buildtools/sqlite_src',
         'https://chromium.googlesource.com/external/github.com/sqlite/sqlite.git',
-        'ee3686eb50c0e3dbb087c9a0976f7e37e1b014ae',  # refs/tags/version-3.32.3.
+        '202b2a7b54ea2dd13a8a5adfd75523abe4dcf17f',  # refs/tags/version-3.39.2.
         'all',
         'all'),
 
     # JsonCpp for legacy json import. Used only by the trace processor in
     # standalone builds.
+    # If updating the version, also update bazel/deps.bzl.
     Dependency(
         'buildtools/jsoncpp',
         'https://chromium.googlesource.com/external/github.com/open-source-parsers/jsoncpp.git',
@@ -229,7 +231,7 @@ BUILD_DEPS_HOST = [
     Dependency(
         'buildtools/android-unwinding',
         'https://android.googlesource.com/platform/system/unwinding.git',
-        'b61aebb7f7afaad9b775a59dcd0ea6289fc4325a', 'all', 'all'),
+        '215644709bd7bbda4c05a9db4d55e96be61bcf64', 'all', 'all'),
     Dependency('buildtools/android-logging',
                'https://android.googlesource.com/platform/system/logging.git',
                '7b36b566c9113fc703d68f76e8f40c0c2432481c', 'all', 'all'),
@@ -243,14 +245,19 @@ BUILD_DEPS_HOST = [
     Dependency('buildtools/lzma',
                'https://android.googlesource.com/platform/external/lzma.git',
                '7851dce6f4ca17f5caa1c93a4e0a45686b1d56c3', 'all', 'all'),
-    Dependency('buildtools/zlib',
-               'https://android.googlesource.com/platform/external/zlib.git',
-               '5c85a2da4c13eda07f69d81a1579a5afddd35f59', 'all', 'all'),
     Dependency('buildtools/bionic',
                'https://android.googlesource.com/platform/bionic.git',
                '332065d57e734b65f56474d136d22d767e36cbcd', 'all', 'all'),
 
+    # Zlib used both in the tracing binaries, as well as the trace processor and
+    # assorted tools.
+    # If updating the version, also update bazel/deps.bzl.
+    Dependency('buildtools/zlib',
+               'https://android.googlesource.com/platform/external/zlib.git',
+               '5c85a2da4c13eda07f69d81a1579a5afddd35f59', 'all', 'all'),
+
     # Linenoise, used only by trace_processor in standalone builds.
+    # If updating the version, also update bazel/deps.bzl.
     Dependency('buildtools/linenoise',
                'https://fuchsia.googlesource.com/third_party/linenoise.git',
                'c894b9e59f02203dbe4e2be657572cf88c4230c3', 'all', 'all'),
@@ -317,13 +324,18 @@ TYPEFACES_SHA256 = 'f5f78f8f4395db65cdf5fdc1bf51da65f2161e6d61a305091d6ea54d3094
 UI_DEPS = [
     Dependency(
         'buildtools/mac/nodejs.tgz',
-        'https://storage.googleapis.com/chromium-nodejs/14.15.4/17ba7216e09de1bffb9dc80b7ec617a1cee40330',
-        'b81a466347d2ae34b1370b6681ba173e9fb082338170a41624b37be7a2052b7e',
-        'darwin', 'all'),
+        'https://storage.googleapis.com/chromium-nodejs/16.13.0/31859fc1fa0994a95f44f09c367d6ff63607cfde',
+        'd9cf1f36b16e08ce52cfbdef427c6596eed2bd2f3608a79112d25b4ec8f75753',
+        'darwin', 'arm64'),
+    Dependency(
+        'buildtools/mac/nodejs.tgz',
+        'https://storage.googleapis.com/chromium-nodejs/16.13.0/16dfd094763b71988933a31735f9dea966f9abd6',
+        '065ced7e93f0e26276cb74d9688706674323865c4a8fc89e4adfa6868d4ebb4d',
+        'darwin', 'x64'),
     Dependency(
         'buildtools/linux64/nodejs.tgz',
-        'https://storage.googleapis.com/chromium-nodejs/14.15.4/b2e40ddbac04d05baafbb007f203c6663c9d4ca9',
-        '5aa88f1e2bf036950790277f3431634f64044ec78362f3e4f0dc8da28d61e9a4',
+        'https://storage.googleapis.com/chromium-nodejs/16.13.0/ab9544e24e752d3d17f335fb7b2055062e582d11',
+        '3b5ca150a55f3aadfa18f3a10a4495aaf9653614ba3e460647170fef5287ec4f',
         'linux', 'x64'),
     Dependency(
         'buildtools/mac/emsdk.tgz',
@@ -600,7 +612,7 @@ def Main():
       # Decompress the archive.
       if local_path.endswith('.tgz'):
         MkdirRecursive(zip_target_dir)
-        subprocess.check_call(['tar', '-xf', local_path], cwd=zip_target_dir)
+        subprocess.check_call(['tar', '-oxf', local_path], cwd=zip_target_dir)
       elif local_path.endswith('.zip'):
         with zipfile.ZipFile(local_path, 'r') as zf:
           for info in zf.infolist():

@@ -37,6 +37,7 @@
 #include "protos/perfetto/trace/ftrace/ftrace_event.pbzero.h"
 #include "protos/perfetto/trace/ftrace/g2d.pbzero.h"
 #include "protos/perfetto/trace/ftrace/irq.pbzero.h"
+#include "protos/perfetto/trace/ftrace/mdss.pbzero.h"
 #include "protos/perfetto/trace/ftrace/power.pbzero.h"
 #include "protos/perfetto/trace/ftrace/sched.pbzero.h"
 #include "protos/perfetto/trace/ftrace/workqueue.pbzero.h"
@@ -430,6 +431,18 @@ void ArgsSerializer::SerializeArgs() {
     });
     writer_->AppendString("]");
     return;
+  } else if (event_name_ == "tracing_mark_write") {
+    using TMW = protos::pbzero::TracingMarkWriteFtraceEvent;
+    WriteValueForField(TMW::kTraceBeginFieldNumber,
+                       [this](const Variadic& value) {
+                         PERFETTO_DCHECK(value.type == Variadic::Type::kUint);
+                         writer_->AppendChar(value.uint_value ? 'B' : 'E');
+                       });
+    writer_->AppendString("|");
+    WriteValueForField(TMW::kPidFieldNumber, DVW());
+    writer_->AppendString("|");
+    WriteValueForField(TMW::kTraceNameFieldNumber, DVW());
+    return;
   } else if (event_name_ == "dpu_tracing_mark_write") {
     using TMW = protos::pbzero::DpuTracingMarkWriteFtraceEvent;
     WriteValueForField(TMW::kTypeFieldNumber, [this](const Variadic& value) {
@@ -619,7 +632,7 @@ void SystraceSerializer::SerializePrefix(uint32_t raw_row,
   if (opt_upid.has_value()) {
     tgid = storage_->process_table().pid()[*opt_upid];
   }
-  auto name = storage_->GetString(storage_->thread_table().name()[utid]);
+  auto name = storage_->thread_table().name().GetString(utid);
 
   FtraceTime ftrace_time(ts);
   if (tid == 0) {

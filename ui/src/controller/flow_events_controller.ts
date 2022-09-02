@@ -21,12 +21,12 @@ import {Flow} from '../frontend/globals';
 import {publishConnectedFlows, publishSelectedFlows} from '../frontend/publish';
 import {
   ACTUAL_FRAMES_SLICE_TRACK_KIND,
-  Config as ActualConfig
-} from '../tracks/actual_frames/common';
+  Config as ActualConfig,
+} from '../tracks/actual_frames';
 import {
   Config as SliceConfig,
-  SLICE_TRACK_KIND
-} from '../tracks/chrome_slices/common';
+  SLICE_TRACK_KIND,
+} from '../tracks/chrome_slices';
 
 import {Controller} from './controller';
 import {globals} from './globals';
@@ -51,26 +51,57 @@ export class FlowEventsController extends Controller<'main'> {
 
   constructor(private args: FlowEventsControllerArgs) {
     super('main');
+
+    // Create |CHROME_CUSTOME_SLICE_NAME| helper, which combines slice name
+    // and args for some slices (scheduler tasks and mojo messages) for more
+    // helpful messages.
+    // In the future, it should be replaced with this a more scalable and
+    // customisable solution.
+    // Note that a function here is significantly faster than a join.
+    this.args.engine.query(`
+      SELECT CREATE_FUNCTION(
+        'CHROME_CUSTOM_SLICE_NAME(slice_id LONG)',
+        'STRING',
+        'select case
+           when name="Receive mojo message" then
+            printf("Receive mojo message (interface=%s, hash=%s)",
+              EXTRACT_ARG(arg_set_id,
+                          "chrome_mojo_event_info.mojo_interface_tag"),
+              EXTRACT_ARG(arg_set_id, "chrome_mojo_event_info.ipc_hash"))
+           when name="ThreadControllerImpl::RunTask" or
+                name="ThreadPool_RunTask" then
+            printf("RunTask(posted_from=%s:%s)",
+             EXTRACT_ARG(arg_set_id, "task.posted_from.file_name"),
+             EXTRACT_ARG(arg_set_id, "task.posted_from.function_name"))
+         end
+         from slice where id=$slice_id'
+    );`);
   }
 
   queryFlowEvents(query: string, callback: (flows: Flow[]) => void) {
-    this.args.engine.query(query).then(result => {
+    this.args.engine.query(query).then((result) => {
       const flows: Flow[] = [];
       const it = result.iter({
         beginSliceId: NUM,
         beginTrackId: NUM,
         beginSliceName: STR_NULL,
+        beginSliceChromeCustomName: STR_NULL,
         beginSliceCategory: STR_NULL,
         beginSliceStartTs: NUM,
         beginSliceEndTs: NUM,
         beginDepth: NUM,
+        beginThreadName: STR_NULL,
+        beginProcessName: STR_NULL,
         endSliceId: NUM,
         endTrackId: NUM,
         endSliceName: STR_NULL,
+        endSliceChromeCustomName: STR_NULL,
         endSliceCategory: STR_NULL,
         endSliceStartTs: NUM,
         endSliceEndTs: NUM,
         endDepth: NUM,
+        endThreadName: STR_NULL,
+        endProcessName: STR_NULL,
         name: STR_NULL,
         category: STR_NULL,
         id: NUM,
@@ -80,21 +111,36 @@ export class FlowEventsController extends Controller<'main'> {
         const beginTrackId = it.beginTrackId;
         const beginSliceName =
             it.beginSliceName === null ? 'NULL' : it.beginSliceName;
+        const beginSliceChromeCustomName =
+            it.beginSliceChromeCustomName === null ?
+            undefined :
+            it.beginSliceChromeCustomName;
         const beginSliceCategory =
             it.beginSliceCategory === null ? 'NULL' : it.beginSliceCategory;
         const beginSliceStartTs = fromNs(it.beginSliceStartTs);
         const beginSliceEndTs = fromNs(it.beginSliceEndTs);
         const beginDepth = it.beginDepth;
+        const beginThreadName =
+            it.beginThreadName === null ? 'NULL' : it.beginThreadName;
+        const beginProcessName =
+            it.beginProcessName === null ? 'NULL' : it.beginProcessName;
 
         const endSliceId = it.endSliceId;
         const endTrackId = it.endTrackId;
         const endSliceName =
             it.endSliceName === null ? 'NULL' : it.endSliceName;
+        const endSliceChromeCustomName = it.endSliceChromeCustomName === null ?
+            undefined :
+            it.endSliceChromeCustomName;
         const endSliceCategory =
             it.endSliceCategory === null ? 'NULL' : it.endSliceCategory;
         const endSliceStartTs = fromNs(it.endSliceStartTs);
         const endSliceEndTs = fromNs(it.endSliceEndTs);
         const endDepth = it.endDepth;
+        const endThreadName =
+            it.endThreadName === null ? 'NULL' : it.endThreadName;
+        const endProcessName =
+            it.endProcessName === null ? 'NULL' : it.endProcessName;
 
         // Category and name present only in version 1 flow events
         // It is most likelly NULL for all other versions
@@ -108,23 +154,29 @@ export class FlowEventsController extends Controller<'main'> {
             trackId: beginTrackId,
             sliceId: beginSliceId,
             sliceName: beginSliceName,
+            sliceChromeCustomName: beginSliceChromeCustomName,
             sliceCategory: beginSliceCategory,
             sliceStartTs: beginSliceStartTs,
             sliceEndTs: beginSliceEndTs,
-            depth: beginDepth
+            depth: beginDepth,
+            threadName: beginThreadName,
+            processName: beginProcessName,
           },
           end: {
             trackId: endTrackId,
             sliceId: endSliceId,
             sliceName: endSliceName,
+            sliceChromeCustomName: endSliceChromeCustomName,
             sliceCategory: endSliceCategory,
             sliceStartTs: endSliceStartTs,
             sliceEndTs: endSliceEndTs,
-            depth: endDepth
+            depth: endDepth,
+            threadName: endThreadName,
+            processName: endProcessName,
           },
           dur: endSliceStartTs - beginSliceEndTs,
           category,
-          name
+          name,
         });
       }
       callback(flows);
@@ -152,23 +204,35 @@ export class FlowEventsController extends Controller<'main'> {
       f.slice_out as beginSliceId,
       t1.track_id as beginTrackId,
       t1.name as beginSliceName,
+      CHROME_CUSTOM_SLICE_NAME(t1.slice_id) as beginSliceChromeCustomName,
       t1.category as beginSliceCategory,
       t1.ts as beginSliceStartTs,
       (t1.ts+t1.dur) as beginSliceEndTs,
       t1.depth as beginDepth,
+      (thread_out.name || ' ' || thread_out.tid) as beginThreadName,
+      (process_out.name || ' ' || process_out.pid) as beginProcessName,
       f.slice_in as endSliceId,
       t2.track_id as endTrackId,
       t2.name as endSliceName,
+      CHROME_CUSTOM_SLICE_NAME(t2.slice_id) as endSliceChromeCustomName,
       t2.category as endSliceCategory,
       t2.ts as endSliceStartTs,
       (t2.ts+t2.dur) as endSliceEndTs,
       t2.depth as endDepth,
+      (thread_in.name || ' ' || thread_in.tid) as endThreadName,
+      (process_in.name || ' ' || process_in.pid) as endProcessName,
       extract_arg(f.arg_set_id, 'cat') as category,
       extract_arg(f.arg_set_id, 'name') as name,
       f.id as id
     from ${connectedFlows} f
     join slice t1 on f.slice_out = t1.slice_id
     join slice t2 on f.slice_in = t2.slice_id
+    left join thread_track track_out on track_out.id = t1.track_id
+    left join thread thread_out on thread_out.utid = track_out.utid
+    left join thread_track track_in on track_in.id = t2.track_id
+    left join thread thread_in on thread_in.utid = track_in.utid
+    left join process process_out on process_out.upid = thread_out.upid
+    left join process process_in on process_in.upid = thread_in.upid
     `;
     this.queryFlowEvents(
         query, (flows: Flow[]) => publishConnectedFlows(flows));
@@ -213,17 +277,23 @@ export class FlowEventsController extends Controller<'main'> {
       f.slice_out as beginSliceId,
       t1.track_id as beginTrackId,
       t1.name as beginSliceName,
+      CHROME_CUSTOM_SLICE_NAME(t1.slice_id) as beginSliceChromeCustomName,
       t1.category as beginSliceCategory,
       t1.ts as beginSliceStartTs,
       (t1.ts+t1.dur) as beginSliceEndTs,
       t1.depth as beginDepth,
+      NULL as beginThreadName,
+      NULL as beginProcessName,
       f.slice_in as endSliceId,
       t2.track_id as endTrackId,
       t2.name as endSliceName,
+      CHROME_CUSTOM_SLICE_NAME(t2.slice_id) as endSliceChromeCustomName,
       t2.category as endSliceCategory,
       t2.ts as endSliceStartTs,
       (t2.ts+t2.dur) as endSliceEndTs,
       t2.depth as endDepth,
+      NULL as endThreadName,
+      NULL as endProcessName,
       extract_arg(f.arg_set_id, 'cat') as category,
       extract_arg(f.arg_set_id, 'name') as name,
       f.id as id

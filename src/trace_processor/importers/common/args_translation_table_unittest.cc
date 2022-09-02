@@ -25,9 +25,10 @@ TEST(ArgsTranslationTable, EmptyTableByDefault) {
   TraceStorage storage;
   ArgsTranslationTable table(&storage);
   EXPECT_EQ(table.TranslateChromeHistogramHashForTesting(1), base::nullopt);
+  EXPECT_EQ(table.TranslateChromeUserEventHashForTesting(1), base::nullopt);
 }
 
-TEST(ArgsTranslationTable, TranslatesHashes) {
+TEST(ArgsTranslationTable, TranslatesHistogramHashes) {
   TraceStorage storage;
   ArgsTranslationTable table(&storage);
   table.AddChromeHistogramTranslationRule(1, "hash1");
@@ -37,6 +38,71 @@ TEST(ArgsTranslationTable, TranslatesHashes) {
   EXPECT_EQ(table.TranslateChromeHistogramHashForTesting(10),
             base::Optional<base::StringView>("hash2"));
   EXPECT_EQ(table.TranslateChromeHistogramHashForTesting(2), base::nullopt);
+}
+
+TEST(ArgsTranslationTable, TranslatesUserEventHashes) {
+  TraceStorage storage;
+  ArgsTranslationTable table(&storage);
+  table.AddChromeUserEventTranslationRule(1, "action1");
+  table.AddChromeUserEventTranslationRule(10, "action2");
+  EXPECT_EQ(table.TranslateChromeUserEventHashForTesting(1),
+            base::Optional<base::StringView>("action1"));
+  EXPECT_EQ(table.TranslateChromeUserEventHashForTesting(10),
+            base::Optional<base::StringView>("action2"));
+  EXPECT_EQ(table.TranslateChromeUserEventHashForTesting(2), base::nullopt);
+}
+
+TEST(ArgsTranslationTable, TranslatesPerformanceMarkSiteHashes) {
+  TraceStorage storage;
+  ArgsTranslationTable table(&storage);
+  table.AddChromePerformanceMarkSiteTranslationRule(1, "hash1");
+  table.AddChromePerformanceMarkSiteTranslationRule(10, "hash2");
+  EXPECT_EQ(table.TranslateChromePerformanceMarkSiteHashForTesting(1),
+            base::Optional<base::StringView>("hash1"));
+  EXPECT_EQ(table.TranslateChromePerformanceMarkSiteHashForTesting(10),
+            base::Optional<base::StringView>("hash2"));
+  EXPECT_EQ(table.TranslateChromePerformanceMarkSiteHashForTesting(2),
+            base::nullopt);
+}
+
+TEST(ArgsTranslationTable, TranslatesPerformanceMarkMarkHashes) {
+  TraceStorage storage;
+  ArgsTranslationTable table(&storage);
+  table.AddChromePerformanceMarkMarkTranslationRule(1, "hash1");
+  table.AddChromePerformanceMarkMarkTranslationRule(10, "hash2");
+  EXPECT_EQ(table.TranslateChromePerformanceMarkMarkHashForTesting(1),
+            base::Optional<base::StringView>("hash1"));
+  EXPECT_EQ(table.TranslateChromePerformanceMarkMarkHashForTesting(10),
+            base::Optional<base::StringView>("hash2"));
+  EXPECT_EQ(table.TranslateChromePerformanceMarkMarkHashForTesting(2),
+            base::nullopt);
+}
+
+TEST(ArgsTranslationTable, NeedsTranslation) {
+  TraceStorage storage;
+  ArgsTranslationTable table(&storage);
+
+  EXPECT_TRUE(table.NeedsTranslation(
+      storage.InternString("chrome_histogram_sample.name_hash"),
+      Variadic::Type::kUint));
+  EXPECT_TRUE(table.NeedsTranslation(
+      storage.InternString("chrome_user_event.action_hash"),
+      Variadic::Type::kUint));
+  EXPECT_TRUE(table.NeedsTranslation(
+      storage.InternString("chrome_hashed_performance_mark.site_hash"),
+      Variadic::Type::kUint));
+  EXPECT_TRUE(table.NeedsTranslation(
+      storage.InternString("chrome_hashed_performance_mark.mark_hash"),
+      Variadic::Type::kUint));
+
+  // The key needs translation, but the arg type is wrong (not uint).
+  EXPECT_FALSE(table.NeedsTranslation(
+      storage.InternString("chrome_histogram_sample.name_hash"),
+      Variadic::Type::kInt));
+  // The key does not require translation.
+  EXPECT_FALSE(table.NeedsTranslation(
+      storage.InternString("chrome_histogram_sample.name"),
+      Variadic::Type::kUint));
 }
 
 }  // namespace

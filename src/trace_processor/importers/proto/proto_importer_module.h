@@ -117,6 +117,12 @@ class ProtoImporterModule {
   // packet sequence.
   virtual void OnIncrementalStateCleared(uint32_t /* packet_sequence_id */) {}
 
+  // Called by ProtoTraceReader during the tokenization stage i.e. before
+  // sorting. Indicates that sequence with id |packet_sequence_id| has a packet
+  // with first_packet_on_sequence = true. This implies that there was no data
+  // loss, including ring buffer overwrittes, on this sequence.
+  virtual void OnFirstPacketOnSequence(uint32_t /* packet_sequence_id */) {}
+
   // Called by ProtoTraceParser after the sorting stage for each non-ftrace
   // TracePacket that contains fields for which the module was registered.
   virtual void ParsePacket(const protos::pbzero::TracePacket_Decoder&,
@@ -131,6 +137,10 @@ class ProtoImporterModule {
 
  protected:
   void RegisterForField(uint32_t field_id, TraceProcessorContext*);
+  // Primarily intended for special modules that need to get all TracePacket's,
+  // for example for trace proto content analysis. Most modules need to register
+  // for specific fields using the method above.
+  void RegisterForAllFields(TraceProcessorContext*);
 };
 
 }  // namespace trace_processor

@@ -35,11 +35,19 @@ INNER JOIN process_track
 ON dropped_pipeline_reporter_slice.track_id = process_track.id;
 
 -- Find the name and pid of the processes.
+-- If the process name represents a file's pathname, the path part will be
+-- removed from the display name of the process.
 DROP VIEW IF EXISTS dropped_frames_with_process_info;
 CREATE VIEW dropped_frames_with_process_info AS
 SELECT
   dropped_frames_with_upid.ts,
-  process.name AS process_name,
+  REPLACE(
+    process.name,
+    RTRIM(
+      process.name,
+      REPLACE(process.name, '/', '')
+    ),
+    '') AS process_name,
   process.pid AS process_id
 FROM dropped_frames_with_upid
 INNER JOIN process
@@ -73,7 +81,7 @@ SELECT
   'Dropped Frame' AS slice_name,
   'Dropped Frames' AS group_name
 FROM dropped_frames_with_process_info
-GROUP BY ts;
+GROUP BY process_id, ts;
 
 -- Create the dropped frames metric output.
 DROP VIEW IF EXISTS chrome_dropped_frames_output;
@@ -84,7 +92,7 @@ SELECT ChromeDroppedFrames(
       ChromeDroppedFrames_DroppedFrame(
         'ts', ts,
         'process_name', process_name,
-        'process_id', process_id
+        'pid', process_id
       )
     )
     FROM dropped_frames_with_process_info

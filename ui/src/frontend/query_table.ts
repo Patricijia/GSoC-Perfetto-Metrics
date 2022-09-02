@@ -25,8 +25,8 @@ import {globals} from './globals';
 import {Panel} from './panel';
 import {Router} from './router';
 import {
-  horizontalScrollAndZoomToRange,
-  verticalScrollToTrack
+  focusHorizontalRange,
+  verticalScrollToTrack,
 } from './scroll_helper';
 
 interface QueryTableRowAttrs {
@@ -59,7 +59,7 @@ class QueryTableRow implements m.ClassComponent<QueryTableRowAttrs> {
     const uiTrackId = globals.state.uiTrackIdByTraceTrackId[trackId];
     if (uiTrackId === undefined) return;
     verticalScrollToTrack(uiTrackId, true);
-    horizontalScrollAndZoomToRange(sliceStart, sliceEnd);
+    focusHorizontalRange(sliceStart, sliceEnd);
     let sliceId: number|undefined;
     if (row.type?.toString().includes('slice')) {
       sliceId = row.id as number | undefined;
@@ -93,11 +93,11 @@ class QueryTableRow implements m.ClassComponent<QueryTableRowAttrs> {
     return m(
         'tr',
         {
-          onclick: maybeOnClick,
+          'onclick': maybeOnClick,
           // TODO(altimin): Consider improving the logic here (e.g. delay?) to
           // account for cases when dblclick fires late.
-          ondblclick: maybeOnDblClick,
-          'clickable': containsSliceLocation
+          'ondblclick': maybeOnDblClick,
+          'clickable': containsSliceLocation,
         },
         cells);
   }
@@ -138,8 +138,9 @@ export class QueryTable extends Panel<QueryTableAttrs> {
     const headers = [
       m(
           'header.overview',
-          `Query result - ${Math.round(resp.durationMs)} ms`,
+          m('span', `Query result - ${Math.round(resp.durationMs)} ms`),
           m('span.code', resp.query),
+          m('span.spacer'),
           resp.error ? null :
                        m('button.query-ctrl',
                          {
@@ -153,7 +154,7 @@ export class QueryTable extends Panel<QueryTableAttrs> {
               onclick: () => {
                 globals.queryResults.delete(queryId);
                 globals.rafScheduler.scheduleFullRedraw();
-              }
+              },
             },
             'Close'),
           ),

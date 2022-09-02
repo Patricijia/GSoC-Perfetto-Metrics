@@ -45,8 +45,7 @@ class QueryInput implements m.ClassComponent {
         query = query.substring(selectionStart, selectionEnd);
       }
       if (!query) return;
-      globals.dispatch(
-          Actions.executeQuery({engineId: '0', queryId: QUERY_ID, query}));
+      globals.dispatch(Actions.executeQuery({queryId: QUERY_ID, query}));
     }
 
     if (event.code === 'Tab') {
@@ -166,5 +165,5 @@ export const AnalyzePage = createPage({
         m(QueryInput),
         m(QueryTable, {queryId: QUERY_ID}),
     );
-  }
+  },
 });

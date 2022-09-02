@@ -18,143 +18,16 @@
 
 #include "perfetto/base/status.h"
 #include "perfetto/trace_processor/basic_types.h"
+#include "src/trace_processor/sqlite/create_function_internal.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/sqlite_utils.h"
+#include "src/trace_processor/tp_metatrace.h"
 #include "src/trace_processor/util/status_macros.h"
 
 namespace perfetto {
 namespace trace_processor {
 
 namespace {
-
-bool IsValidName(base::StringView str) {
-  auto pred = [](char c) { return !(isalnum(c) || c == '_'); };
-  return std::find_if(str.begin(), str.end(), pred) == str.end();
-}
-
-base::Optional<SqlValue::Type> ParseType(base::StringView str) {
-  if (str == "INT" || str == "LONG" || str == "BOOL") {
-    return SqlValue::Type::kLong;
-  } else if (str == "DOUBLE" || str == "FLOAT") {
-    return SqlValue::Type::kDouble;
-  } else if (str == "STRING") {
-    return SqlValue::Type::kString;
-  } else if (str == "PROTO" || str == "BYTES") {
-    return SqlValue::Type::kBytes;
-  }
-  return base::nullopt;
-}
-
-const char* SqliteTypeToFriendlyString(SqlValue::Type type) {
-  switch (type) {
-    case SqlValue::Type::kNull:
-      return "NULL";
-    case SqlValue::Type::kLong:
-      return "INT/LONG/BOOL";
-    case SqlValue::Type::kDouble:
-      return "FLOAT/DOUBLE";
-    case SqlValue::Type::kString:
-      return "STRING";
-    case SqlValue::Type::kBytes:
-      return "BYTES/PROTO";
-  }
-  PERFETTO_FATAL("For GCC");
-}
-
-base::Status TypeCheckSqliteValue(sqlite3_value* value,
-                                  SqlValue::Type expected_type) {
-  SqlValue::Type actual_type =
-      sqlite_utils::SqliteTypeToSqlValueType(sqlite3_value_type(value));
-  if (actual_type != SqlValue::Type::kNull && actual_type != expected_type) {
-    return base::ErrStatus(
-        "does not have expected type: expected %s, actual %s",
-        SqliteTypeToFriendlyString(expected_type),
-        SqliteTypeToFriendlyString(actual_type));
-  }
-  return base::OkStatus();
-}
-
-struct Prototype {
-  struct Argument {
-    std::string dollar_name;
-    SqlValue::Type type;
-
-    bool operator==(const Argument& other) const {
-      return dollar_name == other.dollar_name && type == other.type;
-    }
-  };
-  std::string function_name;
-  std::vector<Argument> arguments;
-
-  bool operator==(const Prototype& other) const {
-    return function_name == other.function_name && arguments == other.arguments;
-  }
-  bool operator!=(const Prototype& other) const { return !(*this == other); }
-};
-
-base::Status ParsePrototype(base::StringView raw, Prototype& out) {
-  // Examples of function prototypes:
-  // ANDROID_SDK_LEVEL()
-  // STARTUP_SLICE(dur_ns INT)
-  // FIND_NEXT_SLICE_WITH_NAME(ts INT, name STRING)
-
-  size_t function_name_end = raw.find('(');
-  if (function_name_end == base::StringView::npos) {
-    return base::ErrStatus(
-        "CREATE_FUNCTION[prototype=%s]: unable to find bracket starting "
-        "argument list",
-        raw.ToStdString().c_str());
-  }
-
-  base::StringView function_name = raw.substr(0, function_name_end);
-  if (!IsValidName(function_name)) {
-    return base::ErrStatus(
-        "CREATE_FUNCTION[prototype=%s]: function name %s is not alphanumeric",
-        raw.ToStdString().c_str(), function_name.ToStdString().c_str());
-  }
-
-  size_t args_start = function_name_end + 1;
-  size_t args_end = raw.find(')', function_name_end);
-  if (args_end == base::StringView::npos) {
-    return base::ErrStatus(
-        "CREATE_FUNCTION[prototype=%s]: unable to find bracket ending "
-        "argument list",
-        raw.ToStdString().c_str());
-  }
-
-  base::StringView args_str = raw.substr(args_start, args_end - args_start);
-  for (const auto& arg : base::SplitString(args_str.ToStdString(), ",")) {
-    const auto& arg_name_and_type = base::SplitString(arg, " ");
-    if (arg_name_and_type.size() != 2) {
-      return base::ErrStatus(
-          "CREATE_FUNCTION[prototype=%s, arg=%s]: argument in function "
-          "prototye should be of the form `name type`",
-          raw.ToStdString().c_str(), arg.c_str());
-    }
-
-    const auto& arg_name = arg_name_and_type[0];
-    const auto& arg_type_str = arg_name_and_type[1];
-    if (!IsValidName(base::StringView(arg_name))) {
-      return base::ErrStatus(
-          "CREATE_FUNCTION[prototype=%s, arg=%s]: argument is not alphanumeric",
-          raw.ToStdString().c_str(), arg.c_str());
-    }
-
-    auto opt_arg_type = ParseType(base::StringView(arg_type_str));
-    if (!opt_arg_type) {
-      return base::ErrStatus(
-          "CREATE_FUNCTION[prototype=%s, arg=%s]: unknown arg type",
-          raw.ToStdString().c_str(), arg.c_str());
-    }
-
-    SqlValue::Type arg_type = *opt_arg_type;
-    PERFETTO_DCHECK(arg_type != SqlValue::Type::kNull);
-    out.arguments.push_back({"$" + arg_name, arg_type});
-  }
-
-  out.function_name = function_name.ToStdString();
-  return base::OkStatus();
-}
 
 struct CreatedFunction : public SqlFunction {
   struct Context {
@@ -170,17 +43,9 @@ struct CreatedFunction : public SqlFunction {
                           sqlite3_value** argv,
                           SqlValue& out,
                           Destructors&);
-  static base::Status Cleanup(Context*);
+  static base::Status VerifyPostConditions(Context*);
+  static void Cleanup(Context*);
 };
-
-base::Status SqliteRetToStatus(CreatedFunction::Context* ctx, int ret) {
-  if (ret != SQLITE_ROW && ret != SQLITE_DONE) {
-    return base::ErrStatus("%s: SQLite error while executing function body: %s",
-                           ctx->prototype.function_name.c_str(),
-                           sqlite3_errmsg(ctx->db));
-  }
-  return base::OkStatus();
-}
 
 base::Status CreatedFunction::Run(CreatedFunction::Context* ctx,
                                   size_t argc,
@@ -206,30 +71,30 @@ base::Status CreatedFunction::Run(CreatedFunction::Context* ctx,
     }
   }
 
+  PERFETTO_TP_TRACE("CREATE_FUNCTION", [ctx, argv](metatrace::Record* r) {
+    r->AddArg("Function", ctx->prototype.function_name.c_str());
+    for (uint32_t i = 0; i < ctx->prototype.arguments.size(); ++i) {
+      std::string key = "Arg " + std::to_string(i);
+      const char* value =
+          reinterpret_cast<const char*>(sqlite3_value_text(argv[i]));
+      r->AddArg(base::StringView(key),
+                value ? base::StringView(value) : base::StringView("NULL"));
+    }
+  });
+
   // Bind all the arguments to the appropriate places in the function.
   for (size_t i = 0; i < argc; ++i) {
-    const auto& arg = ctx->prototype.arguments[i];
-    int index =
-        sqlite3_bind_parameter_index(ctx->stmt, arg.dollar_name.c_str());
-
-    // If the argument is not in the query, this just means its an unused
-    // argument which we can just ignore.
-    if (index == 0)
-      continue;
-
-    int ret = sqlite3_bind_value(ctx->stmt, index, argv[i]);
-    if (ret != SQLITE_OK) {
-      return base::ErrStatus(
-          "%s: SQLite error while binding value to argument %zu: %s",
-          ctx->prototype.function_name.c_str(), i, sqlite3_errmsg(ctx->db));
-    }
+    RETURN_IF_ERROR(MaybeBindArgument(ctx->stmt, ctx->prototype.function_name,
+                                      ctx->prototype.arguments[i], argv[i]));
   }
 
   int ret = sqlite3_step(ctx->stmt);
-  RETURN_IF_ERROR(SqliteRetToStatus(ctx, ret));
-  if (ret == SQLITE_DONE)
+  RETURN_IF_ERROR(
+      SqliteRetToStatus(ctx->db, ctx->prototype.function_name, ret));
+  if (ret == SQLITE_DONE) {
     // No return value means we just return don't set |out|.
     return base::OkStatus();
+  }
 
   PERFETTO_DCHECK(ret == SQLITE_ROW);
   size_t col_count = static_cast<size_t>(sqlite3_column_count(ctx->stmt));
@@ -241,26 +106,35 @@ base::Status CreatedFunction::Run(CreatedFunction::Context* ctx,
   }
 
   out = sqlite_utils::SqliteValueToSqlValue(sqlite3_column_value(ctx->stmt, 0));
+
+  // If we return a bytes type but have a null pointer, SQLite will convert this
+  // to an SQL null. However, for proto build functions, we actively want to
+  // distinguish between nulls and 0 byte strings. Therefore, change the value
+  // to an empty string.
+  if (out.type == SqlValue::kBytes && out.bytes_value == nullptr) {
+    PERFETTO_DCHECK(out.bytes_count == 0);
+    out.bytes_value = "";
+  }
   return base::OkStatus();
 }
 
-base::Status CreatedFunction::Cleanup(CreatedFunction::Context* ctx) {
+base::Status CreatedFunction::VerifyPostConditions(Context* ctx) {
   int ret = sqlite3_step(ctx->stmt);
-  RETURN_IF_ERROR(SqliteRetToStatus(ctx, ret));
+  RETURN_IF_ERROR(
+      SqliteRetToStatus(ctx->db, ctx->prototype.function_name, ret));
   if (ret == SQLITE_ROW) {
     return base::ErrStatus(
-        "%s: multiple values were returned when executing function body",
-        ctx->prototype.function_name.c_str());
+        "%s: multiple values were returned when executing function body. "
+        "Executed SQL was %s",
+        ctx->prototype.function_name.c_str(), sqlite3_expanded_sql(ctx->stmt));
   }
   PERFETTO_DCHECK(ret == SQLITE_DONE);
-
-  // Make sure to reset the statement to remove any bindings.
-  ret = sqlite3_reset(ctx->stmt);
-  if (ret != SQLITE_OK) {
-    return base::ErrStatus("%s: error while resetting metric",
-                           ctx->prototype.function_name.c_str());
-  }
   return base::OkStatus();
+}
+
+void CreatedFunction::Cleanup(CreatedFunction::Context* ctx) {
+  sqlite3_reset(ctx->stmt);
+  sqlite3_clear_bindings(ctx->stmt);
 }
 
 }  // namespace
@@ -302,7 +176,7 @@ base::Status CreateFunction::Run(CreateFunction::Context* ctx,
     };
 
     RETURN_IF_ERROR(type_check(prototype_value, SqlValue::Type::kString,
-                               "function name (first argument)"));
+                               "function prototype (first argument)"));
     RETURN_IF_ERROR(type_check(return_type_value, SqlValue::Type::kString,
                                "return type (second argument)"));
     RETURN_IF_ERROR(type_check(sql_defn_value, SqlValue::Type::kString,
@@ -319,7 +193,12 @@ base::Status CreateFunction::Run(CreateFunction::Context* ctx,
 
   // Parse all the arguments into a more friendly form.
   Prototype prototype;
-  RETURN_IF_ERROR(ParsePrototype(prototype_str, prototype));
+  base::Status status = ParsePrototype(prototype_str, prototype);
+  if (!status.ok()) {
+    return base::ErrStatus("CREATE_FUNCTION[prototype=%s]: %s",
+                           prototype_str.ToStdString().c_str(),
+                           status.c_message());
+  }
 
   // Parse the return type into a enum format.
   auto opt_return_type = ParseType(return_type_str);

@@ -6,6 +6,7 @@
 .cproject
 .deps_sha1
 .DS_Store
+.eslintcache
 .gclient*
 .gm-actuals
 .gradle
@@ -28,3 +29,5 @@
 /venv/*
 perf.data*
 TAGS
+/*.pftrace
+examples/sdk/build/

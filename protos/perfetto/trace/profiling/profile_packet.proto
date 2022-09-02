@@ -271,6 +271,9 @@ message Profiling {
     UNWIND_ERROR_SYSTEM_CALL = 9;
     UNWIND_ERROR_THREAD_TIMEOUT = 10;
     UNWIND_ERROR_THREAD_DOES_NOT_EXIST = 11;
+    UNWIND_ERROR_BAD_ARCH = 12;
+    UNWIND_ERROR_MAPS_PARSE = 13;
+    UNWIND_ERROR_INVALID_PARAMETER = 14;
   }
 }
 
@@ -351,4 +354,9 @@ message PerfSampleDefaults {
   // The sampling timebase. Might not be identical to the data source config if
   // the implementation decided to default/override some parameters.
   optional PerfEvents.Timebase timebase = 1;
+
+  // If the config requested process sharding, report back the count and which
+  // of those bins was selected. Never changes for the duration of a trace.
+  optional uint32 process_shard_count = 2;
+  optional uint32 chosen_process_shard = 3;
 }

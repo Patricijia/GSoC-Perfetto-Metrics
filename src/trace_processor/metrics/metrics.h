@@ -163,7 +163,7 @@ struct BuildProto : public SqlFunction {
   struct Context {
     TraceProcessor* tp;
     const DescriptorPool* pool;
-    const ProtoDescriptor* desc;
+    uint32_t descriptor_idx;
   };
   static base::Status Run(Context* ctx,
                           size_t argc,
@@ -178,6 +178,7 @@ struct RunMetric : public SqlFunction {
     TraceProcessor* tp;
     std::vector<SqlMetricFile>* metrics;
   };
+  static constexpr bool kVoidReturn = true;
   static base::Status Run(Context* ctx,
                           size_t argc,
                           sqlite3_value** argv,

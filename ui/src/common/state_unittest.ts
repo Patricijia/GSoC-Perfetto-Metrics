@@ -13,11 +13,11 @@
 // limitations under the License.
 
 import {createEmptyState} from './empty_state';
-import {getContainingTrackId, State, TrackKindPriority} from './state';
+import {getContainingTrackId, PrimaryTrackSortKey, State} from './state';
 
 test('createEmptyState', () => {
   const state: State = createEmptyState();
-  expect(state.nextId).toEqual(0);
+  expect(state.currentEngineId).toEqual(undefined);
 });
 
 test('getContainingTrackId', () => {
@@ -27,7 +27,7 @@ test('getContainingTrackId', () => {
     engineId: 'engine',
     kind: 'Foo',
     name: 'a track',
-    trackKindPriority: TrackKindPriority.ORDINARY,
+    trackSortKey: PrimaryTrackSortKey.ORDINARY_TRACK,
     config: {},
   };
 
@@ -36,7 +36,7 @@ test('getContainingTrackId', () => {
     engineId: 'engine',
     kind: 'Foo',
     name: 'b track',
-    trackKindPriority: TrackKindPriority.ORDINARY,
+    trackSortKey: PrimaryTrackSortKey.ORDINARY_TRACK,
     config: {},
     trackGroup: 'containsB',
   };

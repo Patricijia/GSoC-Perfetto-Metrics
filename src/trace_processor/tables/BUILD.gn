@@ -26,10 +26,12 @@ source_set("tables") {
     "profiler_tables.h",
     "slice_tables.h",
     "table_destructors.cc",
+    "trace_proto_tables.h",
     "track_tables.h",
   ]
   deps = [
     "../../../gn:default_deps",
+    "../../../include/perfetto/ext/base",
     "../db",
   ]
 }

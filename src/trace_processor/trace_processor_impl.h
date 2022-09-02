@@ -30,6 +30,7 @@
 #include "perfetto/trace_processor/status.h"
 #include "perfetto/trace_processor/trace_processor.h"
 #include "src/trace_processor/sqlite/create_function.h"
+#include "src/trace_processor/sqlite/create_view_function.h"
 #include "src/trace_processor/sqlite/db_sqlite_table.h"
 #include "src/trace_processor/sqlite/query_cache.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
@@ -58,6 +59,7 @@ class TraceProcessorImpl : public TraceProcessor,
 
   // TraceProcessorStorage implementation:
   base::Status Parse(TraceBlobView) override;
+  void Flush() override;
   void NotifyEndOfFile() override;
 
   // TraceProcessor implementation:
@@ -101,14 +103,16 @@ class TraceProcessorImpl : public TraceProcessor,
   template <typename Table>
   void RegisterDbTable(const Table& table) {
     DbSqliteTable::RegisterTable(*db_, query_cache_.get(), Table::Schema(),
-                                 &table, table.table_name());
+                                 &table, Table::Name());
   }
 
-  void RegisterDynamicTable(
-      std::unique_ptr<DbSqliteTable::DynamicTableGenerator> generator) {
+  void RegisterDynamicTable(std::unique_ptr<DynamicTableGenerator> generator) {
     DbSqliteTable::RegisterTable(*db_, query_cache_.get(),
                                  std::move(generator));
   }
+
+  template <typename View>
+  void RegisterView(const View& view);
 
   bool IsRootMetricField(const std::string& metric_name);
 
@@ -137,6 +141,10 @@ class TraceProcessorImpl : public TraceProcessor,
 
   std::string current_trace_name_;
   uint64_t bytes_parsed_ = 0;
+
+  // NotifyEndOfFile should only be called once. Set to true whenever it is
+  // called.
+  bool notify_eof_called_ = false;
 };
 
 }  // namespace trace_processor

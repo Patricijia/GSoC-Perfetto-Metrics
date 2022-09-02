@@ -35,9 +35,11 @@
 #include "src/trace_processor/dynamic/experimental_flat_slice_generator.h"
 #include "src/trace_processor/dynamic/experimental_sched_upid_generator.h"
 #include "src/trace_processor/dynamic/experimental_slice_layout_generator.h"
-#include "src/trace_processor/dynamic/thread_state_generator.h"
+#include "src/trace_processor/dynamic/view_generator.h"
 #include "src/trace_processor/export_json.h"
 #include "src/trace_processor/importers/additional_modules.h"
+#include "src/trace_processor/importers/android_bugreport/android_bugreport_parser.h"
+#include "src/trace_processor/importers/common/clock_tracker.h"
 #include "src/trace_processor/importers/ftrace/sched_event_tracker.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_trace_parser.h"
 #include "src/trace_processor/importers/fuchsia/fuchsia_trace_tokenizer.h"
@@ -48,6 +50,7 @@
 #include "src/trace_processor/importers/systrace/systrace_trace_parser.h"
 #include "src/trace_processor/iterator_impl.h"
 #include "src/trace_processor/sqlite/create_function.h"
+#include "src/trace_processor/sqlite/create_view_function.h"
 #include "src/trace_processor/sqlite/register_function.h"
 #include "src/trace_processor/sqlite/scoped_db.h"
 #include "src/trace_processor/sqlite/span_join_operator_table.h"
@@ -71,7 +74,6 @@
 #include "src/trace_processor/metrics/metrics.descriptor.h"
 #include "src/trace_processor/metrics/metrics.h"
 #include "src/trace_processor/metrics/sql/amalgamated_sql_metrics.h"
-
 
 // In Android and Chromium tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -104,15 +106,10 @@ void RegisterFunction(sqlite3* db,
 
 void InitializeSqlite(sqlite3* db) {
   char* error = nullptr;
-  sqlite3_exec(db, "PRAGMA temp_store=2", 0, 0, &error);
+  sqlite3_exec(db, "PRAGMA temp_store=2", nullptr, nullptr, &error);
   if (error) {
     PERFETTO_FATAL("Error setting pragma temp_store: %s", error);
   }
-  sqlite3_exec(db, "PRAGMA case_sensitive_like = 1", 0, 0, &error);
-  if (error) {
-    PERFETTO_FATAL("Error setting pragma case_sensitive_like: %s", error);
-  }
-
   sqlite3_str_split_init(db);
 // In Android tree builds, we don't have the percentile module.
 // Just don't include it.
@@ -138,7 +135,7 @@ void BuildBoundsTable(sqlite3* db, std::pair<int64_t, int64_t> bounds) {
                                      ", %" PRId64 ")",
                                      bounds.first, bounds.second);
 
-  sqlite3_exec(db, insert_sql, 0, 0, &error);
+  sqlite3_exec(db, insert_sql, nullptr, nullptr, &error);
   sqlite3_free(insert_sql);
   if (error) {
     PERFETTO_ELOG("Error inserting bounds table: %s", error);
@@ -148,14 +145,15 @@ void BuildBoundsTable(sqlite3* db, std::pair<int64_t, int64_t> bounds) {
 
 void CreateBuiltinTables(sqlite3* db) {
   char* error = nullptr;
-  sqlite3_exec(db, "CREATE TABLE perfetto_tables(name STRING)", 0, 0, &error);
+  sqlite3_exec(db, "CREATE TABLE perfetto_tables(name STRING)", nullptr,
+               nullptr, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
   }
   sqlite3_exec(db,
-               "CREATE TABLE trace_bounds(start_ts BIG INT, end_ts BIG INT)", 0,
-               0, &error);
+               "CREATE TABLE trace_bounds(start_ts BIG INT, end_ts BIG INT)",
+               nullptr, nullptr, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
@@ -166,12 +164,13 @@ void CreateBuiltinTables(sqlite3* db) {
                "CREATE TABLE power_profile("
                "device STRING, cpu INT, cluster INT, freq INT, power DOUBLE,"
                "UNIQUE(device, cpu, cluster, freq));",
-               0, 0, &error);
+               nullptr, nullptr, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
   }
-  sqlite3_exec(db, "CREATE TABLE trace_metrics(name STRING)", 0, 0, &error);
+  sqlite3_exec(db, "CREATE TABLE trace_metrics(name STRING)", nullptr, nullptr,
+               &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
@@ -182,7 +181,7 @@ void CreateBuiltinTables(sqlite3* db) {
   sqlite3_exec(db,
                "CREATE TABLE debug_slices (id BIG INT, name STRING, ts BIG INT,"
                "dur BIG INT, depth BIG INT)",
-               0, 0, &error);
+               nullptr, nullptr, &error);
   if (error) {
     PERFETTO_ELOG("Error initializing: %s", error);
     sqlite3_free(error);
@@ -193,6 +192,13 @@ void CreateBuiltinTables(sqlite3* db) {
   BuildBoundsTable(db, std::make_pair(0, 0));
 }
 
+void MaybeRegisterError(char* error) {
+  if (error) {
+    PERFETTO_ELOG("Error initializing: %s", error);
+    sqlite3_free(error);
+  }
+}
+
 void CreateBuiltinViews(sqlite3* db) {
   char* error = nullptr;
   sqlite3_exec(db,
@@ -201,11 +207,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "  *, "
                "  id AS counter_id "
                "FROM counter_track",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW counter_values AS "
@@ -213,11 +216,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "  *, "
                "  track_id as counter_id "
                "FROM counter",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW counters AS "
@@ -226,11 +226,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "INNER JOIN counter_track t "
                "ON v.track_id = t.id "
                "ORDER BY ts;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW slice AS "
@@ -239,24 +236,17 @@ void CreateBuiltinViews(sqlite3* db) {
                "  category AS cat, "
                "  id AS slice_id "
                "FROM internal_slice;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
-               "CREATE VIEW instants AS "
+               "CREATE VIEW instant AS "
                "SELECT "
-               "*, "
-               "0.0 as value "
-               "FROM instant;",
-               0, 0, &error);
-
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               "ts, track_id, name, arg_set_id "
+               "FROM slice "
+               "WHERE dur = 0;",
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW sched AS "
@@ -264,23 +254,16 @@ void CreateBuiltinViews(sqlite3* db) {
                "*, "
                "ts + dur as ts_end "
                "FROM sched_slice;",
-               0, 0, &error);
-
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   // Legacy view for "slice" table with a deprecated table name.
   // TODO(eseckler): Remove this view when all users have switched to "slice".
   sqlite3_exec(db,
                "CREATE VIEW slices AS "
                "SELECT * FROM slice;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW thread AS "
@@ -288,11 +271,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "id as utid, "
                "* "
                "FROM internal_thread;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   sqlite3_exec(db,
                "CREATE VIEW process AS "
@@ -300,11 +280,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "id as upid, "
                "* "
                "FROM internal_process;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 
   // This should be kept in sync with GlobalArgsTracker::AddArgSet.
   sqlite3_exec(db,
@@ -323,11 +300,8 @@ void CreateBuiltinViews(sqlite3* db) {
                "  WHEN 'json' THEN string_value "
                "ELSE NULL END AS display_value "
                "FROM internal_args;",
-               0, 0, &error);
-  if (error) {
-    PERFETTO_ELOG("Error initializing: %s", error);
-    sqlite3_free(error);
-  }
+               nullptr, nullptr, &error);
+  MaybeRegisterError(error);
 }
 
 struct ExportJson : public SqlFunction {
@@ -526,6 +500,7 @@ void ValueAtMaxTsStep(sqlite3_context* ctx, int, sqlite3_value** argv) {
       return;
     }
 
+    fn_ctx->max_ts = std::numeric_limits<int64_t>::min();
     fn_ctx->initialized = true;
   }
 
@@ -544,7 +519,7 @@ void ValueAtMaxTsStep(sqlite3_context* ctx, int, sqlite3_value** argv) {
 #endif
 
   int64_t ts_int = sqlite3_value_int64(ts);
-  if (PERFETTO_LIKELY(fn_ctx->max_ts < ts_int)) {
+  if (PERFETTO_LIKELY(fn_ctx->max_ts <= ts_int)) {
     fn_ctx->max_ts = ts_int;
 
     if (fn_ctx->value_type == SQLITE_INTEGER) {
@@ -645,6 +620,47 @@ base::Status ExtractArg::Run(TraceStorage* storage,
       return base::OkStatus();
   }
   PERFETTO_FATAL("For GCC");
+}
+
+struct AbsTimeStr : public SqlFunction {
+  using Context = ClockTracker;
+  static base::Status Run(ClockTracker* tracker,
+                          size_t argc,
+                          sqlite3_value** argv,
+                          SqlValue& out,
+                          Destructors& destructors);
+};
+
+base::Status AbsTimeStr::Run(ClockTracker* tracker,
+                             size_t argc,
+                             sqlite3_value** argv,
+                             SqlValue& out,
+                             Destructors& destructors) {
+  if (argc != 1) {
+    return base::ErrStatus("ABS_TIME_STR: 1 arg required");
+  }
+
+  // If the timestamp is null, just return null as the result.
+  if (sqlite3_value_type(argv[0]) == SQLITE_NULL) {
+    return base::OkStatus();
+  }
+  if (sqlite3_value_type(argv[0]) != SQLITE_INTEGER) {
+    return base::ErrStatus("ABS_TIME_STR: first argument should be timestamp");
+  }
+
+  int64_t ts = sqlite3_value_int64(argv[0]);
+  base::Optional<std::string> iso8601 = tracker->FromTraceTimeAsISO8601(ts);
+  if (!iso8601.has_value()) {
+    return base::OkStatus();
+  }
+
+  std::unique_ptr<char, base::FreeDeleter> s(
+      static_cast<char*>(malloc(iso8601->size() + 1)));
+  memcpy(s.get(), iso8601->c_str(), iso8601->size() + 1);
+
+  destructors.string_destructor = free;
+  out = SqlValue::String(s.release());
+  return base::OkStatus();
 }
 
 std::vector<std::string> SanitizeMetricMountPaths(
@@ -763,15 +779,26 @@ void IncrementCountForStmt(sqlite3_stmt* stmt,
   if (sqlite_utils::IsStmtDone(stmt))
     return;
 
-  // If the statement only has a single column and that column is named
-  // "suppress_query_output", treat it as a statement without output for
-  // accounting purposes. This is done so that embedders (e.g. shell) can
-  // strictly check that only the last query produces output while also
-  // providing an escape hatch for SELECT RUN_METRIC() invocations (which
-  // sadly produce output).
-  if (sqlite3_column_count(stmt) == 1 &&
-      strcmp(sqlite3_column_name(stmt, 0), "suppress_query_output") == 0) {
-    return;
+  if (sqlite3_column_count(stmt) == 1) {
+    sqlite3_value* value = sqlite3_column_value(stmt, 0);
+
+    // If the "VOID" pointer associated to the return value is not null,
+    // that means this is a function which is forced to return a value
+    // (because all functions in SQLite have to) but doesn't actually
+    // wait to (i.e. it wants to be treated like CREATE TABLE or similar).
+    // Because of this, ignore the return value of this function.
+    // See |WrapSqlFunction| for where this is set.
+    if (sqlite3_value_pointer(value, "VOID") != nullptr) {
+      return;
+    }
+
+    // If the statement only has a single column and that column is named
+    // "suppress_query_output", treat it as a statement without output for
+    // accounting purposes. This allows an escape hatch for cases where the
+    // user explicitly wants to ignore functions as having output.
+    if (strcmp(sqlite3_column_name(stmt, 0), "suppress_query_output") == 0) {
+      return;
+    }
   }
 
   // Otherwise, the statement has output and so increment the count.
@@ -825,16 +852,28 @@ base::Status PrepareAndStepUntilLastValidStmt(
     // Before stepping into |cur_stmt|, we need to finish iterating through
     // the previous statement so we don't have two clashing statements (e.g.
     // SELECT * FROM v and DROP VIEW v) partially stepped into.
-    if (prev_stmt)
+    if (prev_stmt) {
+      PERFETTO_TP_TRACE(
+          "STMT_STEP_UNTIL_DONE", [&prev_stmt](metatrace::Record* record) {
+            record->AddArg("SQL", sqlite3_expanded_sql(*prev_stmt));
+          });
       RETURN_IF_ERROR(sqlite_utils::StepStmtUntilDone(prev_stmt.get()));
+    }
 
     PERFETTO_DLOG("Executing statement: %s", sqlite3_sql(*cur_stmt));
 
-    // Now step once into |cur_stmt| so that when we prepare the next statment
-    // we will have executed any dependent bytecode in this one.
-    int err = sqlite3_step(*cur_stmt);
-    if (err != SQLITE_ROW && err != SQLITE_DONE)
-      return base::ErrStatus("%s (errcode: %d)", sqlite3_errmsg(db), err);
+    {
+      PERFETTO_TP_TRACE(
+          "STMT_FIRST_STEP", [&cur_stmt](metatrace::Record* record) {
+            record->AddArg("SQL", sqlite3_expanded_sql(*cur_stmt));
+          });
+
+      // Now step once into |cur_stmt| so that when we prepare the next statment
+      // we will have executed any dependent bytecode in this one.
+      int err = sqlite3_step(*cur_stmt);
+      if (err != SQLITE_ROW && err != SQLITE_DONE)
+        return base::ErrStatus("%s (errcode: %d)", sqlite3_errmsg(db), err);
+    }
 
     // Increment the neecessary counts for the statement.
     IncrementCountForStmt(cur_stmt.get(), metadata);
@@ -857,6 +896,12 @@ base::Status PrepareAndStepUntilLastValidStmt(
 
 }  // namespace
 
+template <typename View>
+void TraceProcessorImpl::RegisterView(const View& view) {
+  RegisterDynamicTable(
+      std::unique_ptr<ViewGenerator>(new ViewGenerator(&view, View::Name())));
+}
+
 TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
     : TraceProcessorStorageImpl(cfg) {
   context_.fuchsia_trace_tokenizer.reset(new FuchsiaTraceTokenizer(&context_));
@@ -864,8 +909,11 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
 
   context_.systrace_trace_parser.reset(new SystraceTraceParser(&context_));
 
-  if (util::IsGzipSupported())
+  if (util::IsGzipSupported()) {
     context_.gzip_trace_parser.reset(new GzipTraceParser(&context_));
+    context_.android_bugreport_parser.reset(
+        new AndroidBugreportParser(&context_));
+  }
 
   if (json::IsJsonSupported()) {
     context_.json_trace_tokenizer.reset(new JsonTraceTokenizer(&context_));
@@ -890,10 +938,16 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterFunction<ExportJson>(db, "EXPORT_JSON", 1, context_.storage.get(),
                                false);
   RegisterFunction<ExtractArg>(db, "EXTRACT_ARG", 2, context_.storage.get());
+  RegisterFunction<AbsTimeStr>(db, "ABS_TIME_STR", 1,
+                               context_.clock_tracker.get());
   RegisterFunction<CreateFunction>(
       db, "CREATE_FUNCTION", 3,
       std::unique_ptr<CreateFunction::Context>(
           new CreateFunction::Context{db_.get(), &create_function_state_}));
+  RegisterFunction<CreateViewFunction>(
+      db, "CREATE_VIEW_FUNCTION", 3,
+      std::unique_ptr<CreateViewFunction::Context>(
+          new CreateViewFunction::Context{db_.get()}));
 
   // Old style function registration.
   // TODO(lalitm): migrate this over to using RegisterFunction once aggregate
@@ -914,6 +968,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   // Operator tables.
   SpanJoinOperatorTable::RegisterTable(*db_, storage);
   WindowOperatorTable::RegisterTable(*db_, storage);
+  CreateViewFunction::RegisterTable(*db_);
 
   // New style tables but with some custom logic.
   SqliteRawTable::RegisterTable(*db_, query_cache_.get(), &context_);
@@ -953,14 +1008,18 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDynamicTable(std::unique_ptr<ExperimentalSchedUpidGenerator>(
       new ExperimentalSchedUpidGenerator(storage->sched_slice_table(),
                                          storage->thread_table())));
-  RegisterDynamicTable(std::unique_ptr<ThreadStateGenerator>(
-      new ThreadStateGenerator(&context_)));
   RegisterDynamicTable(std::unique_ptr<ExperimentalAnnotatedStackGenerator>(
       new ExperimentalAnnotatedStackGenerator(&context_)));
   RegisterDynamicTable(std::unique_ptr<ExperimentalFlatSliceGenerator>(
       new ExperimentalFlatSliceGenerator(&context_)));
 
+  // Views.
+  RegisterView(storage->thread_slice_view());
+
   // New style db-backed tables.
+  // Note: if adding a table here which might potentially contain many rows
+  // (O(rows in sched/slice/counter)), then consider calling ShrinkToFit on
+  // that table in TraceStorage::ShrinkToFitTables.
   RegisterDbTable(storage->arg_table());
   RegisterDbTable(storage->thread_table());
   RegisterDbTable(storage->process_table());
@@ -969,7 +1028,7 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->flow_table());
   RegisterDbTable(storage->thread_slice_table());
   RegisterDbTable(storage->sched_slice_table());
-  RegisterDbTable(storage->instant_table());
+  RegisterDbTable(storage->thread_state_table());
   RegisterDbTable(storage->gpu_slice_table());
 
   RegisterDbTable(storage->track_table());
@@ -1004,6 +1063,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->profiler_smaps_table());
 
   RegisterDbTable(storage->android_log_table());
+  RegisterDbTable(storage->android_dumpstate_table());
+  RegisterDbTable(storage->android_game_intervention_list_table());
 
   RegisterDbTable(storage->vulkan_memory_allocations_table());
 
@@ -1021,6 +1082,8 @@ TraceProcessorImpl::TraceProcessorImpl(const Config& cfg)
   RegisterDbTable(storage->process_memory_snapshot_table());
   RegisterDbTable(storage->memory_snapshot_node_table());
   RegisterDbTable(storage->memory_snapshot_edge_table());
+
+  RegisterDbTable(storage->experimental_proto_content_table());
 }
 
 TraceProcessorImpl::~TraceProcessorImpl() = default;
@@ -1041,21 +1104,35 @@ void TraceProcessorImpl::SetCurrentTraceName(const std::string& name) {
   current_trace_name_ = name;
 }
 
-void TraceProcessorImpl::NotifyEndOfFile() {
-  if (current_trace_name_.empty())
-    current_trace_name_ = "Unnamed trace";
+void TraceProcessorImpl::Flush() {
+  TraceProcessorStorageImpl::Flush();
 
-  TraceProcessorStorageImpl::NotifyEndOfFile();
-
-  SchedEventTracker::GetOrCreate(&context_)->FlushPendingEvents();
   context_.metadata_tracker->SetMetadata(
       metadata::trace_size_bytes,
       Variadic::Integer(static_cast<int64_t>(bytes_parsed_)));
   BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
+}
 
-  // Create a snapshot of all tables and views created so far. This is so later
-  // we can drop all extra tables created by the UI and reset to the original
-  // state (see RestoreInitialTables).
+void TraceProcessorImpl::NotifyEndOfFile() {
+  if (notify_eof_called_) {
+    PERFETTO_ELOG(
+        "NotifyEndOfFile should only be called once. Try calling Flush instead "
+        "if trying to commit the contents of the trace to tables.");
+    return;
+  }
+  notify_eof_called_ = true;
+
+  if (current_trace_name_.empty())
+    current_trace_name_ = "Unnamed trace";
+
+  // Last opportunity to flush all pending data.
+  Flush();
+
+  TraceProcessorStorageImpl::NotifyEndOfFile();
+
+  // Create a snapshot list of all tables and views created so far. This is so
+  // later we can drop all extra tables created by the UI and reset to the
+  // original state (see RestoreInitialTables).
   initial_tables_.clear();
   auto it = ExecuteQuery(kAllTablesQuery);
   while (it.Next()) {
@@ -1063,6 +1140,17 @@ void TraceProcessorImpl::NotifyEndOfFile() {
     PERFETTO_CHECK(value.type == SqlValue::Type::kString);
     initial_tables_.push_back(value.string_value);
   }
+
+  context_.storage->ShrinkToFitTables();
+
+  // Rebuild the bounds table once everything has been completed: we do this
+  // so that if any data was added to tables in
+  // TraceProcessorStorageImpl::NotifyEndOfFile, this will be counted in
+  // trace bounds: this is important for parsers like ninja which wait until
+  // the end to flush all their data.
+  BuildBoundsTable(*db_, context_.storage->GetTraceTimestampBoundsNs());
+
+  TraceProcessorStorageImpl::DestroyContext();
 }
 
 size_t TraceProcessorImpl::RestoreInitialTables() {
@@ -1206,15 +1294,16 @@ base::Status TraceProcessorImpl::ExtendMetricsProto(
   if (!status.ok())
     return status;
 
-  for (const auto& desc : pool_.descriptors()) {
+  for (uint32_t i = 0; i < pool_.descriptors().size(); ++i) {
     // Convert the full name (e.g. .perfetto.protos.TraceMetrics.SubMetric)
     // into a function name of the form (TraceMetrics_SubMetric).
+    const auto& desc = pool_.descriptors()[i];
     auto fn_name = desc.full_name().substr(desc.package_name().size() + 1);
     std::replace(fn_name.begin(), fn_name.end(), '.', '_');
     RegisterFunction<metrics::BuildProto>(
         db_.get(), fn_name.c_str(), -1,
         std::unique_ptr<metrics::BuildProto::Context>(
-            new metrics::BuildProto::Context{this, &pool_, &desc}));
+            new metrics::BuildProto::Context{this, &pool_, i}));
   }
   return base::OkStatus();
 }

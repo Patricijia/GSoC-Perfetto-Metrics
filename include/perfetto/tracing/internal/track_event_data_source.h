@@ -53,7 +53,7 @@ template <>
 struct TraceTimestampTraits<uint64_t> {
   static inline TraceTimestamp ConvertTimestampToTraceTimeNs(
       const uint64_t& timestamp) {
-    return {internal::TrackEventInternal::GetClockId(), timestamp};
+    return {static_cast<uint32_t>(internal::TrackEventInternal::GetClockId()), timestamp};
   }
 };
 
@@ -95,6 +95,29 @@ template <typename T,
               typename std::enable_if<!IsValidTraceLambda<T>()>::type>
 static constexpr bool IsValidTimestamp() {
   return true;
+}
+
+// Taken from C++17
+template <typename...>
+using void_t = void;
+
+// Returns true iff `GetStaticString(T)` is defined OR T == DynamicString.
+template <typename T, typename = void>
+struct IsValidEventNameType
+    : std::is_same<perfetto::DynamicString, typename std::decay<T>::type> {};
+
+template <typename T>
+struct IsValidEventNameType<
+    T,
+    void_t<decltype(GetStaticString(std::declval<T>()))>> : std::true_type {};
+
+template <typename T>
+inline void ValidateEventNameType() {
+  static_assert(
+      IsValidEventNameType<T>::value,
+      "Event names must be static strings. To use dynamic event names, see "
+      "https://perfetto.dev/docs/instrumentation/"
+      "track-events#dynamic-event-names");
 }
 
 }  // namespace
@@ -157,14 +180,14 @@ class TrackEventDataSource
  public:
   // Add or remove a session observer for this track event data source. The
   // observer will be notified about started and stopped tracing sessions.
-  // Returns |true| if the observer was succesfully added (i.e., the maximum
+  // Returns |true| if the observer was successfully added (i.e., the maximum
   // number of observers wasn't exceeded).
   static bool AddSessionObserver(TrackEventSessionObserver* observer) {
-    return TrackEventInternal::AddSessionObserver(observer);
+    return TrackEventInternal::AddSessionObserver(*Registry, observer);
   }
 
   static void RemoveSessionObserver(TrackEventSessionObserver* observer) {
-    TrackEventInternal::RemoveSessionObserver(observer);
+    TrackEventInternal::RemoveSessionObserver(*Registry, observer);
   }
 
   // DataSource implementation.
@@ -176,11 +199,16 @@ class TrackEventDataSource
   }
 
   void OnStart(const DataSourceBase::StartArgs& args) override {
-    TrackEventInternal::OnStart(args);
+    TrackEventInternal::OnStart(*Registry, args);
   }
 
   void OnStop(const DataSourceBase::StopArgs& args) override {
     TrackEventInternal::DisableTracing(*Registry, args);
+  }
+
+  void WillClearIncrementalState(
+      const DataSourceBase::ClearIncrementalStateArgs& args) override {
+    TrackEventInternal::WillClearIncrementalState(*Registry, args);
   }
 
   static void Flush() {
@@ -234,10 +262,12 @@ class TrackEventDataSource
   // - Zero or one lambda.
 
   // Trace point which does not take a track or timestamp.
-  template <typename CategoryType, typename... Arguments>
+  template <typename CategoryType,
+            typename EventNameType,
+            typename... Arguments>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char* event_name,
+                               const EventNameType& event_name,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                Arguments&&... args) PERFETTO_NO_INLINE {
     TraceForCategoryImpl(instances, category, event_name, type,
@@ -253,12 +283,13 @@ class TrackEventDataSource
   // parsing track as a part of Arguments...).
   template <typename TrackType,
             typename CategoryType,
+            typename EventNameType,
             typename... Arguments,
             typename TrackTypeCheck = typename std::enable_if<
                 std::is_convertible<TrackType, Track>::value>::type>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char* event_name,
+                               const EventNameType& event_name,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                TrackType&& track,
                                Arguments&&... args) PERFETTO_NO_INLINE {
@@ -269,13 +300,14 @@ class TrackEventDataSource
 
   // Trace point which takes a timestamp, but not track.
   template <typename CategoryType,
+            typename EventNameType,
             typename TimestampType = uint64_t,
             typename... Arguments,
             typename TimestampTypeCheck = typename std::enable_if<
                 IsValidTimestamp<TimestampType>()>::type>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char* event_name,
+                               const EventNameType& event_name,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                TimestampType&& timestamp,
                                Arguments&&... args) PERFETTO_NO_INLINE {
@@ -288,6 +320,7 @@ class TrackEventDataSource
   // Trace point which takes a timestamp and a track.
   template <typename TrackType,
             typename CategoryType,
+            typename EventNameType,
             typename TimestampType = uint64_t,
             typename... Arguments,
             typename TrackTypeCheck = typename std::enable_if<
@@ -296,7 +329,7 @@ class TrackEventDataSource
                 IsValidTimestamp<TimestampType>()>::type>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char* event_name,
+                               const EventNameType& event_name,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                TrackType&& track,
                                TimestampType&& timestamp,
@@ -308,10 +341,10 @@ class TrackEventDataSource
   }
 
   // Trace point with with a counter sample.
-  template <typename CategoryType, typename ValueType>
+  template <typename CategoryType, typename EventNameType, typename ValueType>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char*,
+                               const EventNameType&,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                CounterTrack track,
                                ValueType value) PERFETTO_ALWAYS_INLINE {
@@ -322,13 +355,14 @@ class TrackEventDataSource
 
   // Trace point with with a timestamp and a counter sample.
   template <typename CategoryType,
+            typename EventNameType,
             typename TimestampType = uint64_t,
             typename TimestampTypeCheck = typename std::enable_if<
                 IsValidTimestamp<TimestampType>()>::type,
             typename ValueType>
   static void TraceForCategory(uint32_t instances,
                                const CategoryType& category,
-                               const char*,
+                               const EventNameType&,
                                perfetto::protos::pbzero::TrackEvent::Type type,
                                CounterTrack track,
                                TimestampType timestamp,
@@ -338,7 +372,19 @@ class TrackEventDataSource
         instances, category, /*name=*/nullptr, type, track, timestamp,
         [&](EventContext event_ctx) {
           if (std::is_integral<ValueType>::value) {
-            event_ctx.event()->set_counter_value(static_cast<int64_t>(value));
+            int64_t value_int64 = static_cast<int64_t>(value);
+            if (track.is_incremental()) {
+              TrackEventIncrementalState* incr_state =
+                  event_ctx.GetIncrementalState();
+              PERFETTO_DCHECK(incr_state != nullptr);
+              auto prv_value =
+                  incr_state->last_counter_value_per_track[track.uuid];
+              event_ctx.event()->set_counter_value(value_int64 - prv_value);
+              prv_value = value_int64;
+              incr_state->last_counter_value_per_track[track.uuid] = prv_value;
+            } else {
+              event_ctx.event()->set_counter_value(value_int64);
+            }
           } else {
             event_ctx.event()->set_double_counter_value(
                 static_cast<double>(value));
@@ -423,6 +469,7 @@ class TrackEventDataSource
   };
 
   template <typename CategoryType,
+            typename EventNameType,
             typename TrackType = Track,
             typename TimestampType = uint64_t,
             typename TimestampTypeCheck = typename std::enable_if<
@@ -433,7 +480,7 @@ class TrackEventDataSource
   static void TraceForCategoryImpl(
       uint32_t instances,
       const CategoryType& category,
-      const char* event_name,
+      const EventNameType& event_name,
       perfetto::protos::pbzero::TrackEvent::Type type,
       const TrackType& track,
       const TimestampType& timestamp,
@@ -468,9 +515,17 @@ class TrackEventDataSource
 
           // Write the event itself.
           {
+            bool on_current_thread_track =
+                (&track == &TrackEventInternal::kDefaultTrack);
             auto event_ctx = TrackEventInternal::WriteEvent(
-                trace_writer, incr_state, tls_state, static_category,
-                event_name, type, trace_timestamp);
+                trace_writer, incr_state, tls_state, static_category, type,
+                trace_timestamp, on_current_thread_track);
+            // event name should be emitted with `TRACE_EVENT_BEGIN` macros
+            // but not with `TRACE_EVENT_END`.
+            if (type != protos::pbzero::TrackEvent::TYPE_SLICE_END) {
+              TrackEventInternal::WriteEventName(event_name, event_ctx,
+                                                 tls_state);
+            }
             // Write dynamic categories (except for events that don't require
             // categories). For counter events, the counter name (and optional
             // category) is stored as part of the track descriptor instead being
@@ -487,8 +542,21 @@ class TrackEventDataSource
                     return true;
                   });
             }
-            if (&track != &TrackEventInternal::kDefaultTrack)
+            if (type == protos::pbzero::TrackEvent::TYPE_UNSPECIFIED) {
+              // Explicitly clear the track, so that the event is not associated
+              // with the default track, but instead uses the legacy mechanism
+              // based on the phase and pid/tid override.
+              event_ctx.event()->set_track_uuid(0);
+            } else if (!on_current_thread_track) {
+              // We emit these events using TrackDescriptors, and we cannot emit
+              // events on behalf of other processes using the TrackDescriptor
+              // format. Chrome is the only user of events with explicit process
+              // ids and currently only Chrome emits PHASE_MEMORY_DUMP events
+              // with an explicit process id, so we should be fine here.
+              // TODO(mohitms): Get rid of events with explicit process ids
+              // entirely.
               event_ctx.event()->set_track_uuid(track.uuid);
+            }
             WriteTrackEventArgs(std::move(event_ctx),
                                 std::forward<Arguments>(args)...);
           }  // event_ctx

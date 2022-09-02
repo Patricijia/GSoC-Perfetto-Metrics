@@ -26,6 +26,15 @@
 #include "src/trace_processor/storage/trace_storage.h"
 #include "src/trace_processor/util/proto_to_args_parser.h"
 
+template <>
+struct std::hash<std::pair<perfetto::trace_processor::MappingId, uint64_t>> {
+  size_t operator()(const std::pair<perfetto::trace_processor::MappingId,
+                                    uint64_t>& p) const {
+    return std::hash<perfetto::trace_processor::MappingId>{}(p.first) ^
+           std::hash<uint64_t>{}(p.second);
+  }
+};
+
 namespace perfetto {
 namespace trace_processor {
 
@@ -34,33 +43,140 @@ namespace trace_processor {
 class ArgsTranslationTable {
  public:
   using Key = util::ProtoToArgsParser::Key;
+  using NativeSymbolKey = std::pair<MappingId, uint64_t>;
+  struct SourceLocation {
+    std::string file_name;
+    std::string function_name;
+    uint32_t line_number;
+  };
 
-  ArgsTranslationTable(TraceStorage* storage);
+  explicit ArgsTranslationTable(TraceStorage* storage);
 
-  // Returns true if the translation table fully handles the arg, in which case
-  // the original arg doesn't need to be processed. This function has not added
-  // anything if returning false.
-  bool TranslateUnsignedIntegerArg(const Key& key,
-                                   uint64_t value,
-                                   ArgsTracker::BoundInserter& inserter);
+  // Returns true if an arg with the given key and type requires translation.
+  bool NeedsTranslation(StringId key_id, Variadic::Type type) const;
 
-  void AddChromeHistogramTranslationRule(uint64_t hash, base::StringView name);
+  void TranslateArgs(const ArgsTracker::CompactArgSet& arg_set,
+                     ArgsTracker::BoundInserter& inserter) const;
+
+  void AddChromeHistogramTranslationRule(uint64_t hash, base::StringView name) {
+    chrome_histogram_hash_to_name_.Insert(hash, name.ToStdString());
+  }
+  void AddChromeUserEventTranslationRule(uint64_t hash,
+                                         base::StringView action) {
+    chrome_user_event_hash_to_action_.Insert(hash, action.ToStdString());
+  }
+  void AddChromePerformanceMarkSiteTranslationRule(uint64_t hash,
+                                                   base::StringView name) {
+    chrome_performance_mark_site_hash_to_name_.Insert(hash, name.ToStdString());
+  }
+  void AddChromePerformanceMarkMarkTranslationRule(uint64_t hash,
+                                                   base::StringView name) {
+    chrome_performance_mark_mark_hash_to_name_.Insert(hash, name.ToStdString());
+  }
+  void AddNativeSymbolTranslationRule(MappingId mapping_id,
+                                      uint64_t rel_pc,
+                                      const SourceLocation& loc) {
+    native_symbol_to_location_.Insert(std::make_pair(mapping_id, rel_pc), loc);
+  }
 
   base::Optional<base::StringView> TranslateChromeHistogramHashForTesting(
-      uint64_t hash) const;
+      uint64_t hash) const {
+    return TranslateChromeHistogramHash(hash);
+  }
+  base::Optional<base::StringView> TranslateChromeUserEventHashForTesting(
+      uint64_t hash) const {
+    return TranslateChromeUserEventHash(hash);
+  }
+  base::Optional<base::StringView>
+  TranslateChromePerformanceMarkSiteHashForTesting(uint64_t hash) const {
+    return TranslateChromePerformanceMarkSiteHash(hash);
+  }
+  base::Optional<base::StringView>
+  TranslateChromePerformanceMarkMarkHashForTesting(uint64_t hash) const {
+    return TranslateChromePerformanceMarkMarkHash(hash);
+  }
 
  private:
+  enum class KeyType {
+    kChromeHistogramHash = 0,
+    kChromeUserEventHash = 1,
+    kChromePerformanceMarkMarkHash = 2,
+    kChromePerformanceMarkSiteHash = 3,
+    kMojoMethodMappingId = 4,
+    kMojoMethodRelPc = 5,
+  };
+
   static constexpr char kChromeHistogramHashKey[] =
       "chrome_histogram_sample.name_hash";
   static constexpr char kChromeHistogramNameKey[] =
       "chrome_histogram_sample.name";
 
+  static constexpr char kChromeUserEventHashKey[] =
+      "chrome_user_event.action_hash";
+  static constexpr char kChromeUserEventActionKey[] =
+      "chrome_user_event.action";
+
+  static constexpr char kChromePerformanceMarkSiteHashKey[] =
+      "chrome_hashed_performance_mark.site_hash";
+  static constexpr char kChromePerformanceMarkSiteKey[] =
+      "chrome_hashed_performance_mark.site";
+
+  static constexpr char kChromePerformanceMarkMarkHashKey[] =
+      "chrome_hashed_performance_mark.mark_hash";
+  static constexpr char kChromePerformanceMarkMarkKey[] =
+      "chrome_hashed_performance_mark.mark";
+
+  static constexpr char kMojoMethodMappingIdKey[] =
+      "chrome_mojo_event_info.mojo_interface_method.native_symbol.mapping_id";
+  static constexpr char kMojoMethodRelPcKey[] =
+      "chrome_mojo_event_info.mojo_interface_method.native_symbol.rel_pc";
+  static constexpr char kMojoMethodNameKey[] =
+      "chrome_mojo_event_info.mojo_method_name";
+  static constexpr char kMojoIntefaceTagKey[] =
+      "chrome_mojo_event_info.mojo_interface_tag";
+
   TraceStorage* storage_;
+  StringId interned_chrome_histogram_hash_key_;
   StringId interned_chrome_histogram_name_key_;
+  StringId interned_chrome_user_event_hash_key_;
+  StringId interned_chrome_user_event_action_key_;
+  StringId interned_chrome_performance_mark_site_hash_key_;
+  StringId interned_chrome_performance_mark_site_key_;
+  StringId interned_chrome_performance_mark_mark_hash_key_;
+  StringId interned_chrome_performance_mark_mark_key_;
+
+  StringId interned_mojo_method_mapping_id_;
+  StringId interned_mojo_method_rel_pc_;
+  StringId interned_mojo_method_name_;
+  StringId interned_mojo_interface_tag_;
+
   base::FlatHashMap<uint64_t, std::string> chrome_histogram_hash_to_name_;
+  base::FlatHashMap<uint64_t, std::string> chrome_user_event_hash_to_action_;
+  base::FlatHashMap<uint64_t, std::string>
+      chrome_performance_mark_site_hash_to_name_;
+  base::FlatHashMap<uint64_t, std::string>
+      chrome_performance_mark_mark_hash_to_name_;
+  base::FlatHashMap<NativeSymbolKey, SourceLocation> native_symbol_to_location_;
+
+  // Returns the corresponding SupportedKey enum if the table knows how to
+  // translate the argument with the given key and type, and nullopt otherwise.
+  base::Optional<KeyType> KeyIdAndTypeToEnum(StringId key_id,
+                                             Variadic::Type type) const;
 
   base::Optional<base::StringView> TranslateChromeHistogramHash(
       uint64_t hash) const;
+  base::Optional<base::StringView> TranslateChromeUserEventHash(
+      uint64_t hash) const;
+  base::Optional<base::StringView> TranslateChromePerformanceMarkSiteHash(
+      uint64_t hash) const;
+  base::Optional<base::StringView> TranslateChromePerformanceMarkMarkHash(
+      uint64_t hash) const;
+  base::Optional<SourceLocation> TranslateNativeSymbol(MappingId mapping_id,
+                                                       uint64_t rel_pc) const;
+
+  void EmitMojoMethodLocation(base::Optional<uint64_t> mapping_id,
+                              base::Optional<uint64_t> rel_pc,
+                              ArgsTracker::BoundInserter& inserter) const;
 };
 
 }  // namespace trace_processor

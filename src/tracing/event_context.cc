@@ -24,10 +24,12 @@ namespace perfetto {
 
 EventContext::EventContext(
     EventContext::TracePacketHandle trace_packet,
-    internal::TrackEventIncrementalState* incremental_state)
+    internal::TrackEventIncrementalState* incremental_state,
+    const internal::TrackEventTlsState* tls_state)
     : trace_packet_(std::move(trace_packet)),
       event_(trace_packet_->set_track_event()),
-      incremental_state_(incremental_state) {}
+      incremental_state_(incremental_state),
+      tls_state_(tls_state) {}
 
 EventContext::~EventContext() {
   if (!trace_packet_)
@@ -56,6 +58,13 @@ protos::pbzero::DebugAnnotation* EventContext::AddDebugAnnotation(
   auto annotation = event()->add_debug_annotations();
   annotation->set_name_iid(
       internal::InternedDebugAnnotationName::Get(this, name));
+  return annotation;
+}
+
+protos::pbzero::DebugAnnotation* EventContext::AddDebugAnnotation(
+    ::perfetto::DynamicString name) {
+  auto annotation = event()->add_debug_annotations();
+  annotation->set_name(name.value);
   return annotation;
 }
 

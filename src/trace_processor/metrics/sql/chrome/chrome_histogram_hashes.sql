@@ -21,6 +21,6 @@ SELECT ChromeHistogramHashes(
     SELECT RepeatedField(int_value)
     FROM args
     WHERE key = 'chrome_histogram_sample.name_hash'
-    ORDER BY arg_set_id
+    ORDER BY int_value
   )
 );

@@ -15,6 +15,8 @@
  */
 
 #include "src/trace_processor/importers/proto/proto_importer_module.h"
+
+#include "src/trace_processor/timestamped_trace_piece.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
@@ -47,6 +49,10 @@ void ProtoImporterModule::RegisterForField(uint32_t field_id,
     context->modules_by_field.resize(field_id + 1);
   }
   context->modules_by_field[field_id].push_back(this);
+}
+
+void ProtoImporterModule::RegisterForAllFields(TraceProcessorContext* context) {
+  context->modules_for_all_fields.push_back(this);
 }
 
 }  // namespace trace_processor

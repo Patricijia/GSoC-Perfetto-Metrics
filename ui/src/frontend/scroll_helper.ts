@@ -20,10 +20,8 @@ import {globals} from './globals';
 
 const INCOMPLETE_SLICE_TIME_S = 0.00003;
 
-/**
- * Given a timestamp, if |ts| is not currently in view move the view to
- * center |ts|, keeping the same zoom level.
- */
+// Given a timestamp, if |ts| is not currently in view move the view to
+// center |ts|, keeping the same zoom level.
 export function horizontalScrollToTs(ts: number) {
   const startNs = toNs(globals.frontendLocalState.visibleWindowTime.start);
   const endNs = toNs(globals.frontendLocalState.visibleWindowTime.end);
@@ -35,32 +33,68 @@ export function horizontalScrollToTs(ts: number) {
   }
 }
 
-/**
- * Given a start and end timestamp (in ns), move the view to center this range
- * and zoom to a level where the range is 1/5 of the viewport.
- */
-export function horizontalScrollAndZoomToRange(startTs: number, endTs: number) {
+// Given a start and end timestamp (in ns), move the viewport to center this
+// range and zoom if necessary:
+// - If the new range is more than 50% of the viewport, zoom out to a level
+// where
+//   the range is 1/5 of the viewport.
+// - If the new range is already centered, update the zoom level for the
+// viewport
+//   to cover 1/5 of the viewport.
+// - Otherwise, preserve the zoom range.
+export function focusHorizontalRange(startTs: number, endTs: number) {
   const visibleDur = globals.frontendLocalState.visibleWindowTime.end -
       globals.frontendLocalState.visibleWindowTime.start;
   let selectDur = endTs - startTs;
+  // TODO(altimin): We go from `ts` and `dur` to `startTs` and `endTs` and back
+  // to `dur`. We should fix that.
   if (toNs(selectDur) === -1) {  // Unfinished slice
     selectDur = INCOMPLETE_SLICE_TIME_S;
     endTs = startTs;
   }
-  const viewStartNs = toNs(globals.frontendLocalState.visibleWindowTime.start);
-  const viewEndNs = toNs(globals.frontendLocalState.visibleWindowTime.end);
-  if (selectDur / visibleDur < 0.05 || startTs < viewStartNs ||
-      endTs > viewEndNs) {
+  // If the range is too large to fit on the current zoom level, resize.
+  if (selectDur > 0.5 * visibleDur) {
     globals.frontendLocalState.updateVisibleTime(
         new TimeSpan(startTs - (selectDur * 2), endTs + (selectDur * 2)));
+    return;
   }
+  const midpointTs = (endTs + startTs) / 2;
+  // Calculate the new visible window preserving the zoom level.
+  let newStartTs = midpointTs - visibleDur / 2;
+  let newEndTs = midpointTs + visibleDur / 2;
+
+  // Adjust the new visible window if it intersects with the trace boundaries.
+  // It's needed to make the "update the zoom level if visible window doesn't
+  // change" logic reliable.
+  if (newEndTs > globals.state.traceTime.endSec) {
+    newStartTs = globals.state.traceTime.endSec - visibleDur;
+    newEndTs = globals.state.traceTime.endSec;
+  }
+  if (newStartTs < globals.state.traceTime.startSec) {
+    newStartTs = globals.state.traceTime.startSec;
+    newEndTs = globals.state.traceTime.startSec + visibleDur;
+  }
+
+  const newStartNs = toNs(newStartTs);
+  const newEndNs = toNs(newEndTs);
+
+  const viewStartNs = toNs(globals.frontendLocalState.visibleWindowTime.start);
+  const viewEndNs = toNs(globals.frontendLocalState.visibleWindowTime.end);
+
+  // If preserving the zoom doesn't change the visible window, update the zoom
+  // level.
+  if (newStartNs === viewStartNs && newEndNs === viewEndNs) {
+    globals.frontendLocalState.updateVisibleTime(
+        new TimeSpan(startTs - (selectDur * 2), endTs + (selectDur * 2)));
+    return;
+  }
+  globals.frontendLocalState.updateVisibleTime(
+      new TimeSpan(newStartTs, newEndTs));
 }
 
-/**
- * Given a track id, find a track with that id and scroll it into view. If the
- * track is nested inside a track group, scroll to that track group instead.
- * If |openGroup| then open the track group and scroll to the track.
- */
+// Given a track id, find a track with that id and scroll it into view. If the
+// track is nested inside a track group, scroll to that track group instead.
+// If |openGroup| then open the track group and scroll to the track.
 export function verticalScrollToTrack(
     trackId: string|number, openGroup = false) {
   const trackIdString = `${trackId}`;
@@ -97,9 +131,7 @@ export function verticalScrollToTrack(
 }
 
 
-/**
- * Scroll vertically and horizontally to reach track (|trackId|) at |ts|.
- */
+// Scroll vertically and horizontally to reach track (|trackId|) at |ts|.
 export function scrollToTrackAndTs(
     trackId: string|number|undefined, ts: number, openGroup = false) {
   if (trackId !== undefined) {

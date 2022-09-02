@@ -42,6 +42,9 @@ class FtraceProcfs {
   explicit FtraceProcfs(const std::string& root);
   virtual ~FtraceProcfs();
 
+  // Set the filter for syscall events. If empty, clear the filter.
+  bool SetSyscallFilter(const std::set<size_t>& filter);
+
   // Enable the event under with the given |group| and |name|.
   bool EnableEvent(const std::string& group, const std::string& name);
 
@@ -58,9 +61,34 @@ class FtraceProcfs {
 
   virtual std::string ReadPageHeaderFormat() const;
 
-  // Read the triggers for event with the given |group| and |name|.
-  std::string ReadEventTrigger(const std::string& group,
-                               const std::string& name) const;
+  // Get all triggers for event with the given |group| and |name|.
+  std::vector<std::string> ReadEventTriggers(const std::string& group,
+                                             const std::string& name) const;
+
+  // Create an event trigger for the given |group| and |name|.
+  bool CreateEventTrigger(const std::string& group,
+                          const std::string& name,
+                          const std::string& trigger);
+
+  // Remove an event trigger for the given |group| and |name|.
+  bool RemoveEventTrigger(const std::string& group,
+                          const std::string& name,
+                          const std::string& trigger);
+
+  // Remove all event trigger for the given |group| and |name|.
+  bool RemoveAllEventTriggers(const std::string& group,
+                              const std::string& name);
+
+  // Sets up any associated event trigger before enabling the event
+  bool MaybeSetUpEventTriggers(const std::string& group,
+                               const std::string& name);
+
+  // Tears down any associated event trigger after disabling the event
+  bool MaybeTearDownEventTriggers(const std::string& group,
+                                  const std::string& name);
+
+  // Returns true if rss_stat_throttled synthetic event is supported
+  bool SupportsRssStatThrottled();
 
   // Read the printk formats file.
   std::string ReadPrintkFormats() const;

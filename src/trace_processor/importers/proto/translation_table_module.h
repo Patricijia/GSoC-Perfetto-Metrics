@@ -33,12 +33,18 @@ class TranslationTableModule : public ProtoImporterModule {
 
   ~TranslationTableModule() override;
 
-  void ParsePacket(const protos::pbzero::TracePacket::Decoder& decoder,
-                   const TimestampedTracePiece& ttp,
-                   uint32_t field_id) override;
+  ModuleResult TokenizePacket(
+      const protos::pbzero::TracePacket_Decoder& decoder,
+      TraceBlobView* packet,
+      int64_t packet_timestamp,
+      PacketSequenceState* state,
+      uint32_t field_id) override;
 
  private:
   void ParseChromeHistogramRules(protozero::ConstBytes bytes);
+  void ParseChromeUserEventRules(protozero::ConstBytes bytes);
+  void ParseChromePerformanceMarkRules(protozero::ConstBytes bytes);
+  void ParseSliceNameRules(protozero::ConstBytes bytes);
 
   TraceProcessorContext* context_;
 };

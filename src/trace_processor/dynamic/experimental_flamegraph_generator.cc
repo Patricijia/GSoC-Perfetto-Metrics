@@ -23,6 +23,7 @@
 
 #include "src/trace_processor/importers/proto/heap_graph_tracker.h"
 #include "src/trace_processor/importers/proto/heap_profile_tracker.h"
+#include "src/trace_processor/sqlite/sqlite_utils.h"
 #include "src/trace_processor/types/trace_processor_context.h"
 
 namespace perfetto {
@@ -36,7 +37,7 @@ ExperimentalFlamegraphGenerator::ProfileType extractProfileType(
     return ExperimentalFlamegraphGenerator::ProfileType::kGraph;
   }
   if (profile_name == "native") {
-    return ExperimentalFlamegraphGenerator::ProfileType::kNative;
+    return ExperimentalFlamegraphGenerator::ProfileType::kHeapProfile;
   }
   if (profile_name == "perf") {
     return ExperimentalFlamegraphGenerator::ProfileType::kPerf;
@@ -45,9 +46,9 @@ ExperimentalFlamegraphGenerator::ProfileType extractProfileType(
 }
 
 bool IsValidTimestampOp(int op) {
-  return op == SQLITE_INDEX_CONSTRAINT_EQ || op == SQLITE_INDEX_CONSTRAINT_GT ||
-         op == SQLITE_INDEX_CONSTRAINT_LE || op == SQLITE_INDEX_CONSTRAINT_LT ||
-         op == SQLITE_INDEX_CONSTRAINT_GE;
+  return sqlite_utils::IsOpEq(op) || sqlite_utils::IsOpGt(op) ||
+         sqlite_utils::IsOpLe(op) || sqlite_utils::IsOpLt(op) ||
+         sqlite_utils::IsOpGe(op);
 }
 
 bool IsValidFilterOp(FilterOp filterOp) {
@@ -334,9 +335,9 @@ base::Status ExperimentalFlamegraphGenerator::ComputeTable(
   if (values.profile_type == ProfileType::kGraph) {
     auto* tracker = HeapGraphTracker::GetOrCreate(context_);
     table = tracker->BuildFlamegraph(values.ts, *values.upid);
-  } else if (values.profile_type == ProfileType::kNative) {
-    table = BuildNativeHeapProfileFlamegraph(context_->storage.get(),
-                                             *values.upid, values.ts);
+  } else if (values.profile_type == ProfileType::kHeapProfile) {
+    table = BuildHeapProfileFlamegraph(context_->storage.get(), *values.upid,
+                                       values.ts);
   } else if (values.profile_type == ProfileType::kPerf) {
     table = BuildNativeCallStackSamplingFlamegraph(
         context_->storage.get(), values.upid, values.upid_group,

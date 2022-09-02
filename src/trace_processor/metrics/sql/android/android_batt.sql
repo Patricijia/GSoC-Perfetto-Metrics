@@ -85,108 +85,31 @@ GROUP BY group_id;
 
 DROP TABLE IF EXISTS suspend_slice_;
 CREATE TABLE suspend_slice_ AS
--- Traces from after b/70292203 was fixed have the action string so just look
--- for it.
 SELECT
     ts,
-    dur,
-    true as trustworthy
-FROM (
-    SELECT
-        ts,
-        LEAD(ts) OVER (ORDER BY ts, start DESC) - ts AS dur,
-        start
-    FROM (
-        SELECT
-               ts,
-               EXTRACT_ARG(arg_set_id, 'action') AS action,
-               EXTRACT_ARG(arg_set_id, 'start') AS start
-        FROM raw
-        WHERE name = 'suspend_resume'
-    )
-    -- Different device kernels log different actions when suspending.
-    -- Fortunately each action only appears in the kernel in which it's
-    -- relevant so we can simply look for any of them.
-    WHERE action IN ('timekeeping_freeze', 'syscore_resume')
-)
-WHERE start = 1
-UNION ALL
--- Traces from before b/70292203 was fixed (approx Nov 2020) do not have the
--- action string so we do some convoluted pattern matching that mostly works.
--- TODO(simonmacm) remove this when we no longer need suspend-resume from R
--- phones.
-SELECT
-    ts,
-    dur,
-    false as trustworthy
-FROM (
-    SELECT
-       ts,
-       ts - lag(ts) OVER w AS lag_dur,
-       lead(ts) OVER w - ts AS dur,
-       action,
-       start,
-       event,
-       lag(start) OVER w AS lag_start,
-       lag(event) OVER w AS lag_event,
-       lag(start, 2) OVER w AS lag_2_start,
-       lag(event, 2) OVER w AS lag_2_event,
-       lead(start) OVER w AS lead_start,
-       lead(event) OVER w AS lead_event,
-       lead(start, 2) OVER w AS lead_2_start,
-       lead(event, 2) OVER w AS lead_2_event
-    FROM (
-        SELECT
-               ts,
-               EXTRACT_ARG(arg_set_id, 'action') AS action,
-               EXTRACT_ARG(arg_set_id, 'start') AS start,
-               EXTRACT_ARG(arg_set_id, 'val') AS event
-        FROM raw
-        WHERE name = 'suspend_resume'
-    )
-    WINDOW w AS (ORDER BY ts)
-)
-WHERE action IS NULL AND (
--- We want to find the start and end events with action='timekeeping_freeze'.
--- In practice, these events often show up in a sequence like the following:
--- start = 1, event = 1     [string would have been 'machine_suspend']
--- start = 1, event = (any) [string would have been 'timekeeping_freeze'] *
---
---                             (sleep happens here)
---
--- start = 0, event = (any) [string would have been 'timekeeping_freeze']
--- start = 0, event = 1     [string would have been 'machine_suspend']
---
--- So we look for this pattern of start and event, anchored on the event marked
--- with "*".
-    (
-        lag_start = 1 AND lag_event = 1
-        AND start = 1
-        AND lead_start = 0
-        AND lead_2_start = 0 AND lead_2_event = 1
-    )
--- Or in newer kernels we seem to have a very different pattern. We can take
--- advantage of that fact that we get several events with identical timestamp
--- just before sleeping (normally this never happens):
--- gap = 0, start = 1, event = 3
--- gap = 0, start = 0, event = 3
--- gap = 0, start = 1, event = 0
---
---  (sleep happens here)
---
--- gap = (any), start = 0, event = 0
-    OR (
-        lag_dur = 0
-        AND lead_start = 0 AND lead_event = 0
-        AND start = 1 AND event = 0
-        AND lag_start = 0 AND lag_event = 3
-        AND lag_2_start = 1 AND lag_2_event = 3
-    )
-);
+    dur
+FROM
+    slice
+    JOIN
+    track
+    ON slice.track_id = track.id
+WHERE
+    track.name = 'Suspend/Resume Latency'
+    AND slice.name = 'syscore_resume(0)'
+    AND dur != -1
+;
 
-SELECT RUN_METRIC('android/global_counter_span_view.sql',
+SELECT RUN_METRIC('android/global_counter_span_view_merged.sql',
   'table_name', 'screen_state',
   'counter_name', 'ScreenState');
+
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
+  'table_name', 'doze_light_state',
+  'counter_name', 'DozeLightState');
+
+SELECT RUN_METRIC('android/process_counter_span_view.sql',
+  'table_name', 'doze_deep_state',
+  'counter_name', 'DozeDeepState');
 
 DROP TABLE IF EXISTS screen_state_span_with_suspend;
 CREATE VIRTUAL TABLE screen_state_span_with_suspend
@@ -200,10 +123,56 @@ SELECT
        'Suspended' AS slice_name,
        'Suspend / resume' AS track_name,
        'slice' AS track_type
-FROM suspend_slice_;
+FROM suspend_slice_
+UNION ALL
+SELECT ts,
+       dur,
+       CASE screen_state_val
+         WHEN 1 THEN 'Screen off'
+         WHEN 2 THEN 'Screen on'
+         WHEN 3 THEN 'Always-on display (doze)'
+         ELSE 'unknown'
+       END AS slice_name,
+       'Screen state' AS track_name,
+       'slice' AS track_type
+FROM screen_state_span
+UNION ALL
+-- See DeviceIdleController.java for where these states come from and how
+-- they transition.
+SELECT ts,
+       dur,
+       CASE doze_light_state_val
+         WHEN 0 THEN 'active'
+         WHEN 1 THEN 'inactive'
+         WHEN 4 THEN 'idle'
+         WHEN 5 THEN 'waiting_for_network'
+         WHEN 6 THEN 'idle_maintenance'
+         WHEN 7 THEN 'override'
+         ELSE 'unknown'
+       END AS slice_name,
+       'Doze light state' AS track_name,
+       'slice' AS track_type
+FROM doze_light_state_span
+UNION ALL
+SELECT ts,
+       dur,
+       CASE doze_deep_state_val
+         WHEN 0 THEN 'active'
+         WHEN 1 THEN 'inactive'
+         WHEN 2 THEN 'idle_pending'
+         WHEN 3 THEN 'sensing'
+         WHEN 4 THEN 'locating'
+         WHEN 5 THEN 'idle'
+         WHEN 6 THEN 'idle_maintenance'
+         WHEN 7 THEN 'quick_doze_delay'
+         ELSE 'unknown'
+       END AS slice_name,
+       'Doze deep state' AS track_name,
+       'slice' AS track_type
+FROM doze_deep_state_span;
 
 DROP VIEW IF EXISTS android_batt_output;
-CREATE VIEW android_batt_output AS
+CREATE VIEW android_batt_output AS 
 SELECT AndroidBatteryMetric(
   'battery_counters', (
     SELECT RepeatedField(
@@ -252,6 +221,5 @@ SELECT AndroidBatteryMetric(
       )
     )
     FROM suspend_slice_
-    WHERE trustworthy
   )
 );

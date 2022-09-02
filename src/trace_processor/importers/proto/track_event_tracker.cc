@@ -17,6 +17,7 @@
 #include "src/trace_processor/importers/proto/track_event_tracker.h"
 
 #include "src/trace_processor/importers/common/args_tracker.h"
+#include "src/trace_processor/importers/common/args_translation_table.h"
 #include "src/trace_processor/importers/common/process_tracker.h"
 #include "src/trace_processor/importers/common/track_tracker.h"
 
@@ -31,6 +32,8 @@ TrackEventTracker::TrackEventTracker(TraceProcessorContext* context)
       source_id_key_(context->storage->InternString("source_id")),
       is_root_in_scope_key_(context->storage->InternString("is_root_in_scope")),
       category_key_(context->storage->InternString("category")),
+      has_first_packet_on_sequence_key_id_(
+          context->storage->InternString("has_first_packet_on_sequence")),
       descriptor_source_(context->storage->InternString("descriptor")),
       default_descriptor_track_name_(
           context->storage->InternString("Default Track")),
@@ -160,8 +163,10 @@ void TrackEventTracker::ReserveDescriptorChildTrack(uint64_t uuid,
 
 base::Optional<TrackId> TrackEventTracker::GetDescriptorTrack(
     uint64_t uuid,
-    StringId event_name) {
-  base::Optional<TrackId> track_id = GetDescriptorTrackImpl(uuid);
+    StringId event_name,
+    base::Optional<uint32_t> packet_sequence_id) {
+  base::Optional<TrackId> track_id =
+      GetDescriptorTrackImpl(uuid, packet_sequence_id);
   if (!track_id || event_name.is_null())
     return track_id;
 
@@ -185,7 +190,8 @@ base::Optional<TrackId> TrackEventTracker::GetDescriptorTrack(
 }
 
 base::Optional<TrackId> TrackEventTracker::GetDescriptorTrackImpl(
-    uint64_t uuid) {
+    uint64_t uuid,
+    base::Optional<uint32_t> packet_sequence_id) {
   auto it = descriptor_tracks_.find(uuid);
   if (it != descriptor_tracks_.end())
     return it->second;
@@ -201,6 +207,14 @@ base::Optional<TrackId> TrackEventTracker::GetDescriptorTrackImpl(
   PERFETTO_CHECK(reserved_it != reserved_descriptor_tracks_.end());
 
   const auto& reservation = reserved_it->second;
+
+  // We resolve parent_id here to ensure that it's going to be smaller
+  // than the id of the child.
+  base::Optional<TrackId> parent_id;
+  if (reservation.parent_uuid != 0) {
+    parent_id = GetDescriptorTrackImpl(reservation.parent_uuid);
+  }
+
   TrackId track_id = CreateTrackFromResolved(*resolved_track);
   descriptor_tracks_[uuid] = track_id;
 
@@ -211,15 +225,24 @@ base::Optional<TrackId> TrackEventTracker::GetDescriptorTrackImpl(
               Variadic::Boolean(resolved_track->is_root_in_scope()));
   if (!reservation.category.is_null())
     args.AddArg(category_key_, Variadic::String(reservation.category));
+  if (packet_sequence_id &&
+      sequences_with_first_packet_.find(*packet_sequence_id) !=
+          sequences_with_first_packet_.end()) {
+    args.AddArg(has_first_packet_on_sequence_key_id_, Variadic::Boolean(true));
+  }
+
+  auto* tracks = context_->storage->mutable_track_table();
+  auto row_ref = *tracks->FindById(track_id);
+  if (parent_id) {
+    row_ref.set_parent_id(*parent_id);
+  }
 
   if (reservation.name.is_null())
     return track_id;
 
   // Initialize the track name here, so that, if a name was given in the
   // reservation, it is set immediately after resolution takes place.
-  auto* tracks = context_->storage->mutable_track_table();
-  tracks->mutable_name()->Set(*tracks->id().IndexOf(track_id),
-                              reservation.name);
+  row_ref.set_name(reservation.name);
   return track_id;
 }
 
@@ -311,13 +334,16 @@ TrackEventTracker::ResolveDescriptorTrack(
       reservation.pid = *opt_resolved_pid;
   }
 
-  auto resolved_track =
+  base::Optional<ResolvedDescriptorTrack> resolved_track =
       ResolveDescriptorTrackImpl(uuid, reservation, descendent_uuids);
-  resolved_descriptor_tracks_[uuid] = resolved_track;
+  if (!resolved_track) {
+    return base::nullopt;
+  }
+  resolved_descriptor_tracks_[uuid] = *resolved_track;
   return resolved_track;
 }
 
-TrackEventTracker::ResolvedDescriptorTrack
+base::Optional<TrackEventTracker::ResolvedDescriptorTrack>
 TrackEventTracker::ResolveDescriptorTrackImpl(
     uint64_t uuid,
     const DescriptorTrackReservation& reservation,
@@ -342,19 +368,23 @@ TrackEventTracker::ResolveDescriptorTrackImpl(
           "Too many ancestors in parent_track_uuid hierarchy at track %" PRIu64
           " with parent %" PRIu64,
           uuid, reservation.parent_uuid);
-    } else if (std::find(descendent_uuids->begin(), descendent_uuids->end(),
-                         reservation.parent_uuid) != descendent_uuids->end()) {
+      return base::nullopt;
+    }
+
+    if (std::find(descendent_uuids->begin(), descendent_uuids->end(),
+                  reservation.parent_uuid) != descendent_uuids->end()) {
       PERFETTO_ELOG(
           "Loop detected in parent_track_uuid hierarchy at track %" PRIu64
           " with parent %" PRIu64,
           uuid, reservation.parent_uuid);
-    } else {
-      parent_resolved_track =
-          ResolveDescriptorTrack(reservation.parent_uuid, descendent_uuids);
-      if (!parent_resolved_track) {
-        PERFETTO_ELOG("Unknown parent track %" PRIu64 " for track %" PRIu64,
-                      reservation.parent_uuid, uuid);
-      }
+      return base::nullopt;
+    }
+
+    parent_resolved_track =
+        ResolveDescriptorTrack(reservation.parent_uuid, descendent_uuids);
+    if (!parent_resolved_track) {
+      PERFETTO_ELOG("Unknown parent track %" PRIu64 " for track %" PRIu64,
+                    reservation.parent_uuid, uuid);
     }
 
     descendent_uuids->pop_back();
@@ -455,10 +485,11 @@ TrackEventTracker::ResolveDescriptorTrackImpl(
           "Loop detected in parent_track_uuid hierarchy at track %" PRIu64
           " with parent %" PRIu64,
           uuid, kDefaultDescriptorTrackUuid);
-    } else {
-      // This track will be implicitly a child of the default global track.
-      is_root_in_scope = false;
+      return base::nullopt;
     }
+
+    // This track will be implicitly a child of the default global track.
+    is_root_in_scope = false;
   }
   return ResolvedDescriptorTrack::Global(reservation.is_counter,
                                          is_root_in_scope);
@@ -532,6 +563,10 @@ void TrackEventTracker::OnIncrementalStateCleared(uint32_t packet_sequence_id) {
     // Reset their value to 0, see CounterDescriptor's |is_incremental|.
     reservation.latest_value = 0;
   }
+}
+
+void TrackEventTracker::OnFirstPacketOnSequence(uint32_t packet_sequence_id) {
+  sequences_with_first_packet_.insert(packet_sequence_id);
 }
 
 TrackEventTracker::ResolvedDescriptorTrack

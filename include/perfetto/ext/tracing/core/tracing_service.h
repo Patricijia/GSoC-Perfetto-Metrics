@@ -54,9 +54,14 @@ std::string GetBugreportPath();
 //    to the ConnectProducer() method.
 // 2. The transport layer (e.g., src/ipc) when the producer and
 //    the service don't talk locally but via some IPC mechanism.
-class PERFETTO_EXPORT ProducerEndpoint {
+class PERFETTO_EXPORT_COMPONENT ProducerEndpoint {
  public:
   virtual ~ProducerEndpoint();
+
+  // Disconnects the endpoint from the service, while keeping the shared memory
+  // valid. After calling this, the endpoint will no longer call any methods
+  // on the Producer.
+  virtual void Disconnect() = 0;
 
   // Called by the Producer to (un)register data sources. Data sources are
   // identified by their name (i.e. DataSourceDescriptor.name)
@@ -156,7 +161,7 @@ class PERFETTO_EXPORT ProducerEndpoint {
 //    the ConnectConsumer() method.
 // 2. The transport layer (e.g., src/ipc) when the consumer and
 //    the service don't talk locally but via some IPC mechanism.
-class PERFETTO_EXPORT ConsumerEndpoint {
+class PERFETTO_EXPORT_COMPONENT ConsumerEndpoint {
  public:
   virtual ~ConsumerEndpoint();
 
@@ -253,10 +258,14 @@ class PERFETTO_EXPORT ConsumerEndpoint {
 //
 // Subclassed by:
 //   The service business logic in src/core/tracing_service_impl.cc.
-class PERFETTO_EXPORT TracingService {
+class PERFETTO_EXPORT_COMPONENT TracingService {
  public:
   using ProducerEndpoint = perfetto::ProducerEndpoint;
   using ConsumerEndpoint = perfetto::ConsumerEndpoint;
+
+  // Default sizes used by the service implementation and client library.
+  static constexpr size_t kDefaultShmPageSize = 4096ul;
+  static constexpr size_t kDefaultShmSize = 256 * 1024ul;
 
   enum class ProducerSMBScrapingMode {
     // Use service's default setting for SMB scraping. Currently, the default
