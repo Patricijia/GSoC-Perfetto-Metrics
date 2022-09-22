@@ -37,18 +37,43 @@ library for analyzing traces using SQL and a web-based UI to visualize and
 explore multi-GB traces.
 
 See https://perfetto.dev/docs or the /docs/ directory for documentation.
+### Perfetto build instructions
+
+The source of truth for the Perfetto codebase lives in AOSP: https://android.googlesource.com/platform/external/perfetto/
+
+A read-only mirror is also available at https://github.com/google/perfetto
+
+
+**1. Clone the repo**
+
+   ```sh
+   git clone https://github.com/Patricijia/GSoC-Perfetto-Metrics.git
+   ```
+**2. Pull dependent libraries and toolchains**
+
+   ```sh
+   tools/install-build-deps [--ui] [--linux-arm]
+   ```
+**3. Build the UI**
+
+   ```js
+   ui/build
+   ```
+**4. Test your changes on a local server**
+
+   ```js
+   ui/run-dev-server
+   ```
 
 <!-- ABOUT THE PROJECT -->
-## About The Project - Make Perfetto Perfect!
-
-
+# About The Project - Make Perfetto Perfect!
 
 On Perfetto, users can get brilliant insights into the performance of applications through trace visualizations and metrics. Recently, core web vitals shaped a different view of a smooth website by bringing [Interaction to Next Paint](https://web.dev/inp/) metric to the light. Therefore, there is a need to update the Perfetto with the latest revolutionary metrics to provide better and faster insights to the developers of their web applications. The goal of this project is to improve the Perfetto tracing tool and visualize the core web vital metrics and INP in a consistent manner.
 <br />
 <br />
 ![INP](https://uploads-ssl.webflow.com/60e7ccafe29b4a10a36c0407/628d68347acd2d55e97c5065_inp-interaction-example.jpg)
 
-#### Interaction to Next Paint Definition on Perfetto
+## Interaction to Next Paint Definition on Perfetto
 To begin with, the Interaction to Next Paint (INP) is an experimental field metric that assesses responsiveness. It consists of 3 main ingredients: input delay, processing time and presentation delay. They all together describe the duration of an event from the point at which the user interacted with the page until the next frame is presented after all associated event handlers have executed. To provide the best insight into the responsiveness of Perfetto we will be looking at the longest interaction durations *per frame*.
 
 The very first step in obtaining the INP metric on Perfetto is analysing the EventTiming timeline. The EvenTiming track can be accessed by including the "devtools.timeline" checkmark in Additional Categories (recording configurations) when tracing any web app. Each renderer process has its own Event Timing timeline that can be found below EventLatency displaying some key statistics such as name, category, start time, duration, interactionId, etc. The interactions are determined to be the events of the EventTiming that have positive interactionId.
