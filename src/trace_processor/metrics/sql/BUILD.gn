@@ -147,6 +147,7 @@ sql_files = [
   "trace_metadata.sql",
   "trace_stats.sql",
   "webview/webview_power_usage.sql",
+  "experimental/chrome_inp.sql",
 ]
 
 config("gen_config") {
