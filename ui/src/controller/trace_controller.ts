@@ -114,6 +114,7 @@ const METRICS = [
   'chrome_long_latency',
   'trace_metadata',
   'android_trusty_workqueues',
+  'chrome_inp',
 ];
 const FLAGGED_METRICS: Array<[Flag, string]> = METRICS.map((m) => {
   const id = `forceMetric${m}`;
