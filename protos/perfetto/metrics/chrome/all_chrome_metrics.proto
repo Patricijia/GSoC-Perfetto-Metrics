@@ -51,4 +51,5 @@ extend TraceMetrics {
   optional ChromePerformanceMarkHashes chrome_performance_mark_hashes = 1012;
   optional ChromeSliceNames chrome_slice_names = 1013;
   optional ChromeUnsymbolizedArgs chrome_unsymbolized_args = 1014;
+  optional ChromeInp chrome_inp = 1015;
 }
