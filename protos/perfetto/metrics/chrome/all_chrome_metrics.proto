@@ -33,6 +33,7 @@ import "protos/perfetto/metrics/chrome/test_chrome_metric.proto";
 import "protos/perfetto/metrics/chrome/touch_jank.proto";
 import "protos/perfetto/metrics/chrome/user_event_hashes.proto";
 import "protos/perfetto/metrics/chrome/unsymbolized_args.proto";
+import "protos/perfetto/metrics/chrome/inp.proto";
 
 // TODO(lalitm): rename metrics below to include a "chrome_" prefix.
 extend TraceMetrics {
