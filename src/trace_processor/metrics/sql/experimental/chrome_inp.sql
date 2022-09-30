@@ -18,58 +18,55 @@
 -- Find all interactions and their types, frames, etc.
 DROP VIEW IF EXISTS event_timings;
 CREATE VIEW event_timings AS
-    SELECT slice.*,
-         EXTRACT_ARG(arg_set_id, 'debug.data.interactionId') as "interaction_id",
-         EXTRACT_ARG(arg_set_id, 'debug.data.type') as "event_type",
-         EXTRACT_ARG(arg_set_id, 'debug.data.timeStamp')*1000000 as "time_stamp",
-         EXTRACT_ARG(arg_set_id, 'debug.data.processingStart')*1000000 as "processing_start",
-         EXTRACT_ARG(arg_set_id, 'debug.data.processingEnd')*1000000 as "processing_end"
-    FROM slice
-    WHERE
-        name = "EventTiming"
-    ORDER BY ts;
+SELECT
+--  *,
+  (ts) AS event_start_ts,
+  (ts + slice.dur) AS event_end_ts,
+  (dur) AS event_dur,
 
--- Find process id of each interaction (upid)
-DROP VIEW IF EXISTS event_timings_with_upid;
-CREATE VIEW event_timings_with_upid AS
-    SELECT
-    event_timings.interaction_id, 
-    event_timings.ts as event_ts,
-    event_timings.ts + event_timings.dur AS event_end_ts,
-    event_timings.dur as event_dur, 
-    event_timings.time_stamp, 
-    event_timings.processing_start, 
-    event_timings.processing_end,
-    event_type, 
-    process_track.upid
-    FROM event_timings
-        INNER JOIN process_track
-            ON event_timings.track_id = process_track.id;
+  EXTRACT_ARG(arg_set_id, 'debug.data.timeStamp') * 1000000 AS time_stamp,
+  EXTRACT_ARG(arg_set_id, 'debug.data.processingStart') * 1000000 AS processing_start,
+  EXTRACT_ARG(arg_set_id, 'debug.data.processingEnd') * 1000000 AS processing_end,
+
+  EXTRACT_ARG(arg_set_id, 'debug.data.interactionId') AS interaction_id,
+  EXTRACT_ARG(arg_set_id, 'debug.data.type') AS event_type,
+
+  process_track.upid
+FROM
+  slice
+INNER JOIN
+  process_track
+ON
+  slice.track_id = process_track.id
+WHERE
+  slice.name = "EventTiming"
+ORDER BY
+  ts;
+
+
 
 -- Find inp metric based on using ANY event with first processing time and first timestamp.
-DROP VIEW IF EXISTS inp_1;
-CREATE VIEW inp_1 AS
-  SELECT 
-    COUNT(CASE WHEN interaction_id > 0 THEN 1 END) as interaction_num,
-    GROUP_CONCAT(interaction_id) as events,
-    MIN(processing_start) - MIN(time_stamp) as input_delay,
-    MAX(processing_end) - MIN(processing_start) as processing_time,
-    event_end_ts - (MIN(event_ts)- MIN(time_stamp) + MAX(processing_end)) as presentation_delay,
+DROP VIEW IF EXISTS interaction_frames;
+CREATE VIEW interaction_frames AS
+  SELECT
+    COUNT(CASE WHEN interaction_id > 0 THEN 1 END) AS interaction_count,
+    GROUP_CONCAT(interaction_id) AS interaction_ids,
+    GROUP_CONCAT(event_type) AS event_types,
+    (CASE WHEN event_dur > 200000000 THEN 'needs improvement' ELSE 'good' END) AS inp_group,
+      
+    (MIN(processing_start) - MIN(time_stamp)) AS input_delay,
+    (MAX(processing_end) - MIN(processing_start)) AS processing_time,
+    (event_end_ts - (MIN(event_start_ts)- MIN(time_stamp) + MAX(processing_end))) AS presentation_delay,
+    MIN(event_start_ts) AS event_start_ts,
     event_end_ts,
-    event_dur,
-    MIN(event_ts) as event_ts
+    event_dur
+
   FROM
-    event_timings_with_upid
+    event_timings
   GROUP BY
-    event_end_ts;
-
-
---Taking frames that have at least one interaction
-DROP VIEW IF EXISTS inp;
-CREATE VIEW inp AS
-SELECT *,   CASE WHEN event_dur > 200000000 THEN 'needs improvement'
-            ELSE 'good' END AS inp_group
-FROM inp_1 WHERE interaction_num >0;
+    event_end_ts
+  HAVING
+    interaction_count > 0;
 
 
 -- Create the derived event track for inp metric.
@@ -78,14 +75,14 @@ FROM inp_1 WHERE interaction_num >0;
 
 DROP VIEW IF EXISTS chrome_inp_event;
 CREATE VIEW chrome_inp_event AS
-SELECT 'slice' as track_type, inp_group AS track_name, event_ts as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM inp) THEN input_delay ELSE 0 END as dur, 'Input_delay' AS slice_name,
-  'Inp' AS group_name FROM inp
+SELECT 'slice' as track_type, inp_group AS track_name, event_start_ts as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM interaction_frames) THEN input_delay ELSE 0 END as dur, 'Input_delay' AS slice_name,
+  'Inp' AS group_name FROM interaction_frames
 UNION ALL
-SELECT 'slice' as track_type, inp_group AS track_name, event_ts+input_delay+1 as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM inp) THEN processing_time ELSE 0 END as dur, 'Processing_time' AS slice_name,
-  'Inp' AS group_name FROM inp
+SELECT 'slice' as track_type, inp_group AS track_name, event_start_ts+input_delay+1 as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM interaction_frames) THEN processing_time ELSE 0 END as dur, 'Processing_time' AS slice_name,
+  'Inp' AS group_name FROM interaction_frames
 UNION ALL
-SELECT 'slice' as track_type, inp_group AS track_name, event_ts+processing_time+input_delay+2 as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM inp) THEN presentation_delay ELSE 0 END as dur, 'Presentation_delay' AS slice_name,
-  'Inp' AS group_name FROM inp;
+SELECT 'slice' as track_type, inp_group AS track_name, event_start_ts+processing_time+input_delay+2 as ts, CASE WHEN event_dur = (SELECT MAX(event_dur) FROM interaction_frames) THEN presentation_delay ELSE 0 END as dur, 'Presentation_delay' AS slice_name,
+  'Inp' AS group_name FROM interaction_frames;
 
 -- Create the inp metric output.
 DROP VIEW IF EXISTS chrome_inp_output;
@@ -94,19 +91,19 @@ SELECT ChromeInp(
   'inp', (
     SELECT RepeatedField(
       ChromeInp_Inp(
-        'start_ts', event_ts,
+        'start_ts', event_start_ts,
         'dur', event_dur,
         'input_delay', input_delay,
         'processing_time', processing_time,
         'presentation_delay', presentation_delay,
-        'nr_of_interactions', interaction_num,
-        'all_events', events,
+        'nr_of_interactions', interaction_count,
+        'all_events', event_types,
         'input_delay_pct', input_delay * 1.0 / event_dur * 100,
   	'processing_time_pct', processing_time * 1.0 / event_dur * 100,
   	'presentation_delay_pct', presentation_delay * 1.0 / event_dur * 100
       )
     )
-    FROM inp
+    FROM interaction_frames
     ORDER BY event_dur DESC
   )
 );
