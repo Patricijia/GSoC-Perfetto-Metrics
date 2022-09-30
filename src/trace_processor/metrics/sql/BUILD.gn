@@ -144,10 +144,10 @@ sql_files = [
   "experimental/frame_times.sql",
   "experimental/media_metric.sql",
   "experimental/reported_by_page.sql",
+  "experimental/chrome_inp.sql",
   "trace_metadata.sql",
   "trace_stats.sql",
   "webview/webview_power_usage.sql",
-  "experimental/chrome_inp.sql",
 ]
 
 config("gen_config") {
